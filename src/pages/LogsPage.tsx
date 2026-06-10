@@ -9,12 +9,27 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJobLogs } from "@/hooks/useLogs";
 import { useSessionStore } from "@/stores/sessionStore";
+import type { AppError } from "@/types/domain";
 
 export function LogsPage() {
-  const selectedJobId = useSessionStore((state) => state.selectedJobId) ?? "job-preview";
+  const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
-  const logs = useJobLogs(selectedJobId, undefined, autoRefresh);
+  const [logGroupName, setLogGroupName] = useState("");
+  const [streamNamePrefix, setStreamNamePrefix] = useState("");
+  const [nextToken, setNextToken] = useState<string | undefined>();
+  const logs = useJobLogs(
+    selectedJobId
+      ? {
+          jobId: selectedJobId,
+          nextForwardToken: nextToken,
+          logGroupName: logGroupName || undefined,
+          streamNamePrefix: streamNamePrefix || undefined,
+          filterPattern: search || undefined
+        }
+      : undefined,
+    autoRefresh
+  );
   const logLines = useMemo(
     () =>
       (logs.data?.entries ?? [])
@@ -55,6 +70,11 @@ export function LogsPage() {
           <CardDescription>Log data is loaded through Tauri commands backed by CloudWatch Logs.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          {!selectedJobId ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              Select a job from Job History to view logs.
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
@@ -63,6 +83,9 @@ export function LogsPage() {
             <Button variant="outline" onClick={() => logs.refetch()}>
               <RefreshCw data-icon="inline-start" />
               Refresh
+            </Button>
+            <Button variant="outline" disabled={!logs.data?.nextForwardToken} onClick={() => setNextToken(logs.data?.nextForwardToken)}>
+              Next
             </Button>
             <Button variant="outline" onClick={copyLogs}>
               <Copy data-icon="inline-start" />
@@ -73,6 +96,30 @@ export function LogsPage() {
               Download
             </Button>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              placeholder={selectedJobId ? `/aws/emr-containers/jobs/${selectedJobId}` : "Manual CloudWatch log group"}
+              value={logGroupName}
+              onChange={(event) => {
+                setNextToken(undefined);
+                setLogGroupName(event.target.value);
+              }}
+            />
+            <Input
+              placeholder="Optional stream name prefix"
+              value={streamNamePrefix}
+              onChange={(event) => {
+                setNextToken(undefined);
+                setStreamNamePrefix(event.target.value);
+              }}
+            />
+          </div>
+          {logs.isLoading ? <p className="text-sm text-muted-foreground">Loading logs...</p> : null}
+          {logs.error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {errorMessage(logs.error)}
+            </p>
+          ) : null}
           <Tabs defaultValue="driver">
             <TabsList>
               <TabsTrigger value="driver">Driver Log</TabsTrigger>
@@ -93,4 +140,12 @@ export function LogsPage() {
       </Card>
     </div>
   );
+}
+
+function errorMessage(error: unknown) {
+  const appError = error as Partial<AppError>;
+  if (appError.code === "DemoModeUnavailable") {
+    return "Logs require the Tauri desktop runtime. Start with npm run tauri -- dev.";
+  }
+  return appError.message ?? "Failed to load logs.";
 }

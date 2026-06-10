@@ -26,3 +26,21 @@ export function useDuplicateTemplate() {
     onSuccess: (templates) => queryClient.setQueryData(["templates"], templates)
   });
 }
+
+export function useUpdateTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (template: ApplicationTemplate | ResourceTemplate) => templateService.update(template),
+    onSuccess: (templates) => queryClient.setQueryData(["templates"], templates)
+  });
+}
+
+export function useDeleteTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, type }: { id: string; type: "application" | "resource" }) => templateService.delete(id, type),
+    onSuccess: (templates) => queryClient.setQueryData(["templates"], templates)
+  });
+}

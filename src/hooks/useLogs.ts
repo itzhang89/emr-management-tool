@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
+import type { JobLogsRequest } from "@/types/domain";
 
-export function useJobLogs(jobId?: string, nextForwardToken?: string, autoRefresh = false) {
+export function useJobLogs(request: JobLogsRequest | undefined, autoRefresh = false) {
   return useQuery({
-    queryKey: ["job-logs", jobId, nextForwardToken],
-    queryFn: () => cloudWatchLogsService.getJobLogs(jobId!, nextForwardToken),
-    enabled: Boolean(jobId),
+    queryKey: ["job-logs", request],
+    queryFn: () => cloudWatchLogsService.getJobLogs(request!),
+    enabled: Boolean(request?.jobId),
     refetchInterval: autoRefresh ? 10_000 : false
   });
 }

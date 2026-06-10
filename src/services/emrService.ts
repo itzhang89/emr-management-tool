@@ -1,8 +1,8 @@
-import type { StartJobRunRequest } from "@/types/domain";
+import type { ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { tauriClient } from "./tauriClient";
 
 export const emrService = {
-  listVirtualClusters: (region: string) => tauriClient.listVirtualClusters({ region }),
+  listVirtualClusters: (request: ListVirtualClustersRequest = {}) => tauriClient.listVirtualClusters(request),
   listJobRuns: (virtualClusterId?: string) => tauriClient.listJobRuns({ virtualClusterId }),
   describeJobRun: (id: string, virtualClusterId: string) => tauriClient.describeJobRun({ id, virtualClusterId }),
   startJobRun: (request: StartJobRunRequest) => tauriClient.startJobRun(request),

@@ -35,7 +35,7 @@ pub async fn create_template(request: serde_json::Value) -> AppResult<TemplatesR
     } else if let Ok(template) = serde_json::from_value::<ResourceTemplate>(request) {
         repository::upsert_resource_template(&pool, &template).await?;
     } else {
-        return Err(AppError::Validation("Unsupported template payload.".to_string()));
+        return Err(AppError::validation("Unsupported template payload."));
     }
 
     list_templates().await
@@ -49,7 +49,7 @@ pub async fn update_template(request: serde_json::Value) -> AppResult<TemplatesR
     } else if let Ok(template) = serde_json::from_value::<ResourceTemplate>(request) {
         repository::upsert_resource_template(&pool, &template).await?;
     } else {
-        return Err(AppError::Validation("Unsupported template payload.".to_string()));
+        return Err(AppError::validation("Unsupported template payload."));
     }
 
     list_templates().await
@@ -73,7 +73,7 @@ pub async fn duplicate_template(request: TemplateMutationRequest) -> AppResult<T
                 .iter()
                 .find(|template| template.id == request.id)
                 .cloned()
-                .ok_or_else(|| AppError::Validation("Template was not found.".to_string()))?;
+                .ok_or_else(|| AppError::validation("Template was not found."))?;
             copy.id = uuid::Uuid::new_v4().to_string();
             copy.name = format!("{} Copy", copy.name);
             repository::upsert_application_template(&pool, &copy).await?;
@@ -84,13 +84,13 @@ pub async fn duplicate_template(request: TemplateMutationRequest) -> AppResult<T
                 .iter()
                 .find(|template| template.id == request.id)
                 .cloned()
-                .ok_or_else(|| AppError::Validation("Template was not found.".to_string()))?;
+                .ok_or_else(|| AppError::validation("Template was not found."))?;
             copy.id = uuid::Uuid::new_v4().to_string();
             copy.name = format!("{} Copy", copy.name);
             copy.built_in = false;
             repository::upsert_resource_template(&pool, &copy).await?;
         }
-        _ => return Err(AppError::Validation("Template type must be application or resource.".to_string())),
+        _ => return Err(AppError::validation("Template type must be application or resource.")),
     }
 
     list_templates().await

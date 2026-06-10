@@ -1,5 +1,6 @@
 import { tauriClient } from "./tauriClient";
+import type { JobLogsRequest } from "@/types/domain";
 
 export const cloudWatchLogsService = {
-  getJobLogs: (jobId: string, nextForwardToken?: string) => tauriClient.getJobLogs({ jobId, nextForwardToken })
+  getJobLogs: (request: JobLogsRequest) => tauriClient.getJobLogs(request)
 };
