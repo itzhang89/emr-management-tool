@@ -1,21 +1,36 @@
-import { Copy, Square, ZoomIn } from "lucide-react";
+import { Copy, FileText, Play, Search, Skull, ZoomIn } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useCancelJobRun, useJobRuns } from "@/hooks/useEmr";
+import { useCancelJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { AppError } from "@/types/domain";
+import type { AppError, JobRunSummary } from "@/types/domain";
 
-export function JobHistoryPage() {
+const pageSize = 10;
+
+export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
-  const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
   const jobs = useJobRuns(selectedVirtualClusterId);
   const cancelJob = useCancelJobRun();
-  const selectedJob = jobs.data?.find((job) => job.id === selectedJobId);
+  const startJob = useStartJobRun();
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const filteredJobs = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) return jobs.data ?? [];
+    return (jobs.data ?? []).filter((job) =>
+      [job.name, job.id, job.state].some((value) => value.toLowerCase().includes(keyword))
+    );
+  }, [jobs.data, search]);
+  const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
+  const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
+  const selectedJob = filteredJobs.find((job) => job.id === selectedJobId);
 
   return (
     <div className="flex flex-col gap-6">
@@ -29,6 +44,21 @@ export function JobHistoryPage() {
           <CardDescription>Local history and remote job states share the same view.</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 flex items-center gap-2">
+            <div className="relative max-w-md flex-1">
+              <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search jobs by name, id, state, or keyword"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+            <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
+          </div>
           {jobs.isLoading ? <p className="text-sm text-muted-foreground">Loading job history...</p> : null}
           {jobs.error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -42,12 +72,11 @@ export function JobHistoryPage() {
                 <TableHead>State</TableHead>
                 <TableHead>Created Time</TableHead>
                 <TableHead>Duration</TableHead>
-                <TableHead>Virtual Cluster</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(jobs.data ?? []).map((job) => (
+              {visibleJobs.map((job) => (
                 <TableRow key={job.id}>
                   <TableCell className="font-medium">{job.name}</TableCell>
                   <TableCell>
@@ -57,8 +86,7 @@ export function JobHistoryPage() {
                   </TableCell>
                   <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
                   <TableCell>{job.durationSeconds ? `${Math.round(job.durationSeconds / 60)}m` : "-"}</TableCell>
-                  <TableCell>{job.virtualClusterName ?? job.virtualClusterId}</TableCell>
-                  <TableCell className="flex justify-end gap-2">
+                  <TableCell className="relative flex justify-end gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
                       <ZoomIn data-icon="inline-start" />
                       Detail
@@ -67,63 +95,118 @@ export function JobHistoryPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        if (!job.sourceRequest) {
-                          toast.error("This job was discovered from EMR and has no locally saved submit configuration to clone.");
-                          return;
-                        }
-                        setClonedJobRequest(job.sourceRequest);
+                        setSelectedJobId(job.id);
+                        onOpenLogs?.();
                       }}
                     >
-                      <Copy data-icon="inline-start" />
-                      Clone
+                      <FileText data-icon="inline-start" />
+                      Logs
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={cancelJob.isPending || !["PENDING", "SUBMITTED", "RUNNING"].includes(job.state)}
-                      onClick={() =>
-                        cancelJob.mutate(
-                          { id: job.id, virtualClusterId: job.virtualClusterId },
-                          {
-                            onSuccess: () => toast.success("Cancel requested."),
-                            onError: (error) => toast.error(errorMessage(error))
+                    {job.state === "RUNNING" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={cancelJob.isPending}
+                        onClick={() =>
+                          cancelJob.mutate(
+                            { id: job.id, virtualClusterId: job.virtualClusterId },
+                            {
+                              onSuccess: () => toast.success("Kill requested."),
+                              onError: (error) => toast.error(errorMessage(error))
+                            }
+                          )
+                        }
+                      >
+                        <Skull data-icon="inline-start" />
+                        Kill
+                      </Button>
+                    ) : null}
+                    {job.state === "FAILED" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={startJob.isPending}
+                        onClick={() => {
+                          if (!job.sourceRequest) {
+                            toast.error("This failed job has no locally saved submit configuration to rerun.");
+                            return;
                           }
-                        )
-                      }
-                    >
-                      <Square data-icon="inline-start" />
-                      Cancel
-                    </Button>
+                          startJob.mutate(job.sourceRequest, {
+                            onSuccess: () => toast.success("Rerun submitted."),
+                            onError: (error) => toast.error(errorMessage(error))
+                          });
+                        }}
+                      >
+                        <Play data-icon="inline-start" />
+                        Rerun
+                      </Button>
+                    ) : null}
+                    {selectedJob?.id === job.id ? <JobDetailPopover job={selectedJob} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
-              {jobs.data?.length === 0 ? (
+              {filteredJobs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
-                    No submitted jobs yet.
+                  <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
+                    No jobs match the current filters.
                   </TableCell>
                 </TableRow>
               ) : null}
             </TableBody>
           </Table>
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {pageCount}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={page === pageCount}
+                onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
-      {selectedJob ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Job Detail</CardTitle>
-            <CardDescription>{selectedJob.id}</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 text-sm md:grid-cols-2">
-            <Detail label="Name" value={selectedJob.name} />
-            <Detail label="State" value={selectedJob.state} />
-            <Detail label="Virtual Cluster" value={selectedJob.virtualClusterName ?? selectedJob.virtualClusterId} />
-            <Detail label="Created" value={new Date(selectedJob.createdAt).toLocaleString()} />
-            <Detail label="Started" value={selectedJob.startedAt ? new Date(selectedJob.startedAt).toLocaleString() : "-"} />
-            <Detail label="Finished" value={selectedJob.finishedAt ? new Date(selectedJob.finishedAt).toLocaleString() : "-"} />
-          </CardContent>
-        </Card>
-      ) : null}
+    </div>
+  );
+}
+
+function JobDetailPopover({ job }: { job: JobRunSummary }) {
+  const copyJobId = async () => {
+    await navigator.clipboard?.writeText(job.id);
+    toast.success("Job ID copied.");
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Job Detail"
+      className="absolute right-0 top-10 z-20 w-[360px] rounded-lg border bg-background p-4 text-left shadow-lg"
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold">Job Detail</p>
+          <p className="break-all text-xs text-muted-foreground">{job.id}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={copyJobId}>
+          <Copy data-icon="inline-start" />
+          Copy Job ID
+        </Button>
+      </div>
+      <div className="grid gap-3 text-sm">
+        <Detail label="Name" value={job.name} />
+        <Detail label="State" value={job.state} />
+        <Detail label="Created" value={new Date(job.createdAt).toLocaleString()} />
+        <Detail label="Started" value={job.startedAt ? new Date(job.startedAt).toLocaleString() : "-"} />
+        <Detail label="Finished" value={job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "-"} />
+      </div>
     </div>
   );
 }
