@@ -197,6 +197,7 @@ pub async fn cancel_job_run(request: JobRunRequest) -> AppResult<JobRunSummary> 
         });
     job.state = "CANCELLED".to_string();
     job.finished_at = Some(Utc::now().to_rfc3339());
+    job.duration_seconds = duration_seconds(job.started_at.as_deref().unwrap_or(&job.created_at), job.finished_at.as_deref());
     repository::upsert_job_history(&pool, &job).await?;
 
     Ok(job)
@@ -266,6 +267,12 @@ fn map_job_run(
     account_id: Option<String>,
     region: Option<String>,
 ) -> JobRunSummary {
+    let created_at = job
+        .created_at()
+        .map(|created_at| created_at.to_string())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+    let finished_at = job.finished_at().map(|finished_at| finished_at.to_string());
+
     JobRunSummary {
         id: job.id().unwrap_or_default().to_string(),
         name: job.name().unwrap_or_default().to_string(),
@@ -277,13 +284,17 @@ fn map_job_run(
         region,
         virtual_cluster_id: job.virtual_cluster_id().unwrap_or_default().to_string(),
         virtual_cluster_name: None,
-        created_at: job
-            .created_at()
-            .map(|created_at| created_at.to_string())
-            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+        created_at: created_at.clone(),
         started_at: None,
-        finished_at: job.finished_at().map(|finished_at| finished_at.to_string()),
-        duration_seconds: None,
+        finished_at: finished_at.clone(),
+        duration_seconds: duration_seconds(&created_at, finished_at.as_deref()),
         source_request: None,
     }
+}
+
+fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> {
+    let finished_at = finished_at?;
+    let start = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
+    let end = chrono::DateTime::parse_from_rfc3339(finished_at).ok()?;
+    Some((end - start).num_seconds().max(0))
 }

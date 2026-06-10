@@ -75,6 +75,21 @@ describe("JobHistoryPage", () => {
 
     await user.click(screen.getByRole("button", { name: /Copy Job ID/i }));
     expect(writeText).toHaveBeenCalledWith("job-running");
+    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+  });
+
+  it("derives duration from timestamps and closes detail on outside click", async () => {
+    const user = userEvent.setup();
+
+    render(<JobHistoryPage />);
+
+    expect(screen.getByRole("row", { name: /completed-duration COMPLETED/i })).toHaveTextContent("1m 30s");
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
+    expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+
+    await user.click(screen.getByPlaceholderText(/search jobs/i));
+    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
   });
 });
 
@@ -86,6 +101,15 @@ function makeJobs(): JobRunSummary[] {
       state: "RUNNING",
       virtualClusterId: "vc-1",
       createdAt: "2026-06-10T00:00:00Z"
+    },
+    {
+      id: "job-completed-duration",
+      name: "completed-duration",
+      state: "COMPLETED",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:00:00Z",
+      startedAt: "2026-06-10T00:00:30Z",
+      finishedAt: "2026-06-10T00:02:00Z"
     },
     {
       id: "job-failed",
