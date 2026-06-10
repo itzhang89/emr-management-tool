@@ -1,5 +1,5 @@
 import { Copy, Download, RefreshCw, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +13,19 @@ import type { AppError } from "@/types/domain";
 
 export function LogsPage() {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
+  const selectedJobLogGroupName = useSessionStore((state) => state.selectedJobLogGroupName);
+  const selectedJobLogStreamNamePrefix = useSessionStore((state) => state.selectedJobLogStreamNamePrefix);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [search, setSearch] = useState("");
-  const [logGroupName, setLogGroupName] = useState("");
-  const [streamNamePrefix, setStreamNamePrefix] = useState("");
+  const [logGroupName, setLogGroupName] = useState(selectedJobLogGroupName ?? "");
+  const [streamNamePrefix, setStreamNamePrefix] = useState(selectedJobLogStreamNamePrefix ?? "");
   const [nextToken, setNextToken] = useState<string | undefined>();
+
+  useEffect(() => {
+    setLogGroupName(selectedJobLogGroupName ?? "");
+    setStreamNamePrefix(selectedJobLogStreamNamePrefix ?? "");
+    setNextToken(undefined);
+  }, [selectedJobId, selectedJobLogGroupName, selectedJobLogStreamNamePrefix]);
   const logs = useJobLogs(
     selectedJobId
       ? {

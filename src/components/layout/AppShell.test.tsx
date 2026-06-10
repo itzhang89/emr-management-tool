@@ -27,6 +27,15 @@ vi.mock("@/hooks/useEmr", () => ({
   useStartJobRun: () => ({ mutate: vi.fn(), isPending: false })
 }));
 
+vi.mock("@/hooks/useLogs", () => ({
+  useJobLogs: () => ({
+    data: { jobId: "job-running", entries: [] },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn()
+  })
+}));
+
 describe("AppShell", () => {
   it("prioritizes Submit Job and switches pages from the sidebar", async () => {
     const user = userEvent.setup();
@@ -57,5 +66,7 @@ describe("AppShell", () => {
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     expect(screen.getByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("/aws/emr-containers/jobs/job-running")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("job-running")).toBeInTheDocument();
   });
 });
