@@ -15,22 +15,21 @@ import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { TemplatesPage } from "@/pages/TemplatesPage";
 import { VirtualClustersPage } from "@/pages/VirtualClustersPage";
 
-const pageComponents: Record<PageId, ReactElement> = {
-  dashboard: <DashboardPage />,
-  submit: <SubmitJobPage />,
-  history: <JobHistoryPage />,
-  logs: <LogsPage />,
-  templates: <TemplatesPage />,
-  clusters: <VirtualClustersPage />,
-  s3: <S3BrowserPage />,
-  settings: <SettingsPage />
-};
-
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const activeMeta = useMemo(() => navigationItems.find((item) => item.id === activePage), [activePage]);
   const accounts = useAwsAccounts();
   const activeAccount = accounts.data?.find((account) => account.isActive);
+  const pageComponents: Record<PageId, ReactElement> = {
+    dashboard: <DashboardPage />,
+    submit: <SubmitJobPage />,
+    history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} />,
+    logs: <LogsPage />,
+    templates: <TemplatesPage />,
+    clusters: <VirtualClustersPage />,
+    s3: <S3BrowserPage />,
+    settings: <SettingsPage />
+  };
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
