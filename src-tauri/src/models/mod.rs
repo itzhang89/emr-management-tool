@@ -28,6 +28,53 @@ pub struct AwsSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AwsAccount {
+    pub id: String,
+    pub name: String,
+    pub region: String,
+    pub access_key_id_masked: String,
+    pub identity: Option<AwsIdentity>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsAccountSummary {
+    pub id: String,
+    pub name: String,
+    pub region: String,
+    pub access_key_id_masked: String,
+    pub identity: Option<AwsIdentity>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveAccount {
+    pub account: Option<AwsAccountSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsCommandContext {
+    pub account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsAccountCredentialsInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub region: String,
+    pub make_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegionRequest {
     pub region: String,
 }
@@ -45,23 +92,44 @@ pub struct VirtualCluster {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ListVirtualClustersRequest {
+    pub account_id: Option<String>,
+    pub next_token: Option<String>,
+    pub max_results: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListVirtualClustersResponse {
+    pub clusters: Vec<VirtualCluster>,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobRunSummary {
     pub id: String,
     pub name: String,
     pub state: String,
+    pub account_id: Option<String>,
+    pub region: Option<String>,
     pub virtual_cluster_id: String,
     pub virtual_cluster_name: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub duration_seconds: Option<i64>,
+    pub source_request: Option<StartJobRunRequest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobRunRequest {
+    pub account_id: Option<String>,
     pub id: Option<String>,
     pub virtual_cluster_id: Option<String>,
+    pub next_token: Option<String>,
+    pub max_results: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +167,7 @@ pub struct JobDriverRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartJobRunRequest {
+    pub account_id: Option<String>,
     pub name: String,
     pub virtual_cluster_id: String,
     pub execution_role_arn: String,
@@ -163,9 +232,13 @@ pub struct LogEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobLogsRequest {
+    pub account_id: Option<String>,
     pub job_id: String,
     pub next_forward_token: Option<String>,
     pub log_group_name: Option<String>,
+    pub stream_name_prefix: Option<String>,
+    pub filter_pattern: Option<String>,
+    pub limit: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,13 +270,16 @@ pub struct S3ObjectEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3ListObjectsRequest {
+    pub account_id: Option<String>,
     pub bucket: String,
     pub prefix: Option<String>,
+    pub continuation_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3ObjectRequest {
+    pub account_id: Option<String>,
     pub bucket: String,
     pub key: String,
 }
@@ -211,6 +287,7 @@ pub struct S3ObjectRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct S3TextObject {
+    pub account_id: Option<String>,
     pub bucket: String,
     pub key: String,
     pub content: String,

@@ -4,11 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useVirtualClusters } from "@/hooks/useEmr";
-import { useSessionStore } from "@/stores/sessionStore";
+import type { AppError } from "@/types/domain";
 
 export function VirtualClustersPage() {
-  const region = useSessionStore((state) => state.region);
-  const clusters = useVirtualClusters(region);
+  const clusters = useVirtualClusters();
 
   return (
     <div className="flex flex-col gap-6">
@@ -28,6 +27,17 @@ export function VirtualClustersPage() {
           <CardDescription>Cluster operations are read-only by design.</CardDescription>
         </CardHeader>
         <CardContent>
+          {clusters.isLoading ? <p className="text-sm text-muted-foreground">Loading virtual clusters...</p> : null}
+          {clusters.error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {errorMessage(clusters.error)}
+            </p>
+          ) : null}
+          {clusters.data?.clusters.length === 0 ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No virtual clusters were returned for the active account and region.
+            </p>
+          ) : null}
           <Table>
             <TableHeader>
               <TableRow>
@@ -40,7 +50,7 @@ export function VirtualClustersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(clusters.data ?? []).map((cluster) => (
+              {(clusters.data?.clusters ?? []).map((cluster) => (
                 <TableRow key={cluster.id}>
                   <TableCell className="font-medium">{cluster.name}</TableCell>
                   <TableCell>
@@ -63,4 +73,12 @@ export function VirtualClustersPage() {
       </Card>
     </div>
   );
+}
+
+function errorMessage(error: unknown) {
+  const appError = error as Partial<AppError>;
+  if (appError.code === "DemoModeUnavailable") {
+    return "Virtual clusters require the Tauri desktop runtime. Start with npm run tauri -- dev.";
+  }
+  return appError.message ?? "Failed to load virtual clusters.";
 }

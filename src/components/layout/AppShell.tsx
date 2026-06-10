@@ -2,6 +2,7 @@ import { type ReactElement, useMemo, useState } from "react";
 import { Cloud, PanelLeftClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useAwsAccounts } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -28,6 +29,8 @@ const pageComponents: Record<PageId, ReactElement> = {
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const activeMeta = useMemo(() => navigationItems.find((item) => item.id === activePage), [activePage]);
+  const accounts = useAwsAccounts();
+  const activeAccount = accounts.data?.find((account) => account.isActive);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -45,8 +48,8 @@ export function AppShell() {
         <div className="px-4 py-4">
           <Card className="bg-secondary/60 p-3 shadow-none">
             <div className="text-xs font-medium text-muted-foreground">Current Region</div>
-            <div className="mt-1 text-sm font-semibold">us-east-1</div>
-            <div className="text-xs text-muted-foreground">Credentials not tested</div>
+            <div className="mt-1 text-sm font-semibold">{activeAccount?.region ?? "No active account"}</div>
+            <div className="text-xs text-muted-foreground">{activeAccount?.name ?? "Configure Settings first"}</div>
           </Card>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label="Primary">

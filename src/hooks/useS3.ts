@@ -36,3 +36,33 @@ export function useSaveS3TextObject() {
     }
   });
 }
+
+export function useUploadS3Object() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ bucket, key, content }: { bucket: string; key: string; content: string }) =>
+      s3Service.uploadObject(bucket, key, content),
+    onSuccess: (object) => {
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects", object.bucket] });
+    }
+  });
+}
+
+export function useDownloadS3Object() {
+  return useMutation({
+    mutationFn: ({ bucket, key }: { bucket: string; key: string }) => s3Service.downloadObject(bucket, key)
+  });
+}
+
+export function useDeleteS3Object() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ bucket, key }: { bucket: string; key: string }) => s3Service.deleteObject(bucket, key),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects", variables.bucket] });
+      queryClient.removeQueries({ queryKey: ["s3-text-object", variables.bucket, variables.key] });
+    }
+  });
+}
