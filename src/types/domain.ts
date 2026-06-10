@@ -18,6 +18,39 @@ export interface AwsIdentity {
   userId: string;
 }
 
+export interface AwsAccount {
+  id: string;
+  name: string;
+  region: AwsRegion;
+  accessKeyIdMasked: string;
+  identity?: AwsIdentity;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AwsAccountSummary {
+  id: string;
+  name: string;
+  region: AwsRegion;
+  accessKeyIdMasked: string;
+  identity?: AwsIdentity;
+  isActive: boolean;
+}
+
+export interface AwsAccountCredentialsInput {
+  id?: string;
+  name: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: AwsRegion;
+  makeActive: boolean;
+}
+
+export interface AwsCommandContext {
+  accountId?: string;
+}
+
 export interface VirtualCluster {
   id: string;
   name: string;
@@ -27,18 +60,31 @@ export interface VirtualCluster {
   createdAt: string;
 }
 
+export interface ListVirtualClustersRequest extends AwsCommandContext {
+  nextToken?: string;
+  maxResults?: number;
+}
+
+export interface ListVirtualClustersResponse {
+  clusters: VirtualCluster[];
+  nextToken?: string;
+}
+
 export type JobState = "PENDING" | "SUBMITTED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
 export interface JobRunSummary {
   id: string;
   name: string;
   state: JobState;
+  accountId?: string;
+  region?: string;
   virtualClusterId: string;
   virtualClusterName?: string;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
   durationSeconds?: number;
+  sourceRequest?: StartJobRunRequest;
 }
 
 export interface SparkResourceConfig {
@@ -67,6 +113,7 @@ export interface SubmitJobFormValues {
 }
 
 export interface StartJobRunRequest extends SubmitJobFormValues {
+  accountId?: string;
   jobDriver: {
     sparkSubmitJobDriver: {
       entryPoint: string;
@@ -111,6 +158,15 @@ export interface JobLogsResponse {
   nextForwardToken?: string;
 }
 
+export interface JobLogsRequest extends AwsCommandContext {
+  jobId: string;
+  nextForwardToken?: string;
+  logGroupName?: string;
+  streamNamePrefix?: string;
+  filterPattern?: string;
+  limit?: number;
+}
+
 export interface S3Bucket {
   name: string;
   createdAt?: string;
@@ -126,6 +182,7 @@ export interface S3ObjectEntry {
 }
 
 export interface S3TextObject {
+  accountId?: string;
   bucket: string;
   key: string;
   content: string;
@@ -135,7 +192,11 @@ export interface S3TextObject {
 }
 
 export interface AppError {
+  kind: "aws" | "storage" | "validation" | "internal" | "demo";
   code: string;
   message: string;
   service?: string;
+  requestId?: string;
+  retryable?: boolean;
+  accountId?: string;
 }

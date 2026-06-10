@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { StartJobRunRequest } from "@/types/domain";
+import type { ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { emrService } from "@/services/emrService";
 
-export function useVirtualClusters(region: string) {
+export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
   return useQuery({
-    queryKey: ["virtual-clusters", region],
-    queryFn: () => emrService.listVirtualClusters(region)
+    queryKey: ["virtual-clusters", request.accountId, request.nextToken],
+    queryFn: () => emrService.listVirtualClusters(request)
   });
 }
 
