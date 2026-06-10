@@ -1,5 +1,5 @@
 import { Copy, FileText, Play, Search, Skull, ZoomIn } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
+  const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
   const jobs = useJobRuns(selectedVirtualClusterId);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
@@ -72,7 +73,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
                 <TableHead>State</TableHead>
                 <TableHead>Created Time</TableHead>
                 <TableHead>Duration</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-[360px] min-w-[360px] text-left">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -85,24 +86,25 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
                     </Badge>
                   </TableCell>
                   <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
-                  <TableCell>{job.durationSeconds ? `${Math.round(job.durationSeconds / 60)}m` : "-"}</TableCell>
-                  <TableCell className="relative flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
-                      <ZoomIn data-icon="inline-start" />
-                      Detail
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedJobId(job.id);
-                        onOpenLogs?.();
-                      }}
-                    >
-                      <FileText data-icon="inline-start" />
-                      Logs
-                    </Button>
-                    {job.state === "RUNNING" ? (
+                  <TableCell>{formatDuration(job)}</TableCell>
+                  <TableCell className="relative w-[360px] min-w-[360px]">
+                    <div className="flex justify-start gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
+                        <ZoomIn data-icon="inline-start" />
+                        Detail
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedJobForLogs(job.id, defaultLogGroupName(job), defaultLogStreamPrefix(job));
+                          onOpenLogs?.();
+                        }}
+                      >
+                        <FileText data-icon="inline-start" />
+                        Logs
+                      </Button>
+                      {job.state === "RUNNING" ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -120,8 +122,8 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
                         <Skull data-icon="inline-start" />
                         Kill
                       </Button>
-                    ) : null}
-                    {job.state === "FAILED" ? (
+                      ) : null}
+                      {job.state === "FAILED" ? (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -140,8 +142,9 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
                         <Play data-icon="inline-start" />
                         Rerun
                       </Button>
-                    ) : null}
-                    {selectedJob?.id === job.id ? <JobDetailPopover job={selectedJob} /> : null}
+                      ) : null}
+                    </div>
+                    {selectedJob?.id === job.id ? <JobDetailPopover job={selectedJob} onClose={() => setSelectedJobId(undefined)} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -178,14 +181,28 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   );
 }
 
-function JobDetailPopover({ job }: { job: JobRunSummary }) {
+function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [onClose]);
+
   const copyJobId = async () => {
     await navigator.clipboard?.writeText(job.id);
     toast.success("Job ID copied.");
+    onClose();
   };
 
   return (
     <div
+      ref={ref}
       role="dialog"
       aria-label="Job Detail"
       className="absolute right-0 top-10 z-20 w-[360px] rounded-lg border bg-background p-4 text-left shadow-lg"
@@ -209,6 +226,31 @@ function JobDetailPopover({ job }: { job: JobRunSummary }) {
       </div>
     </div>
   );
+}
+
+function formatDuration(job: JobRunSummary) {
+  const seconds = job.durationSeconds ?? durationFromTimestamps(job);
+  if (!seconds || seconds < 0) return "-";
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes === 0) return `${remainingSeconds}s`;
+  if (remainingSeconds === 0) return `${minutes}m`;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function durationFromTimestamps(job: JobRunSummary) {
+  const start = Date.parse(job.startedAt ?? job.createdAt);
+  const end = Date.parse(job.finishedAt ?? "");
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
+  return Math.max(0, Math.round((end - start) / 1000));
+}
+
+function defaultLogGroupName(job: JobRunSummary) {
+  return `/aws/emr-containers/jobs/${job.id}`;
+}
+
+function defaultLogStreamPrefix(job: JobRunSummary) {
+  return job.id;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
