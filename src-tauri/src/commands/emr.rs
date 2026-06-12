@@ -338,13 +338,7 @@ fn map_configuration_overrides(
         .collect::<Vec<_>>();
     let monitoring_configuration = overrides
         .monitoring_configuration()
-        .map(|monitoring| {
-            serde_json::json!({
-                "persistentAppUi": monitoring.persistent_app_ui().map(|value| format!("{value:?}")),
-                "cloudWatchMonitoringConfiguration": monitoring.cloud_watch_monitoring_configuration().map(|value| format!("{value:?}")),
-                "s3MonitoringConfiguration": monitoring.s3_monitoring_configuration().map(|value| format!("{value:?}")),
-            })
-        });
+        .map(map_monitoring_configuration);
 
     if application_configuration.is_empty() && monitoring_configuration.is_none() {
         return None;
@@ -354,6 +348,29 @@ fn map_configuration_overrides(
         "applicationConfiguration": application_configuration,
         "monitoringConfiguration": monitoring_configuration,
     }))
+}
+
+fn map_monitoring_configuration(
+    monitoring: &aws_sdk_emrcontainers::types::MonitoringConfiguration,
+) -> serde_json::Value {
+    serde_json::json!({
+        "persistentAppUi": monitoring.persistent_app_ui().map(|value| format!("{value:?}")),
+        "cloudWatchMonitoringConfiguration": monitoring
+            .cloud_watch_monitoring_configuration()
+            .map(|cloud_watch| {
+                serde_json::json!({
+                    "logGroupName": cloud_watch.log_group_name(),
+                    "logStreamNamePrefix": cloud_watch.log_stream_name_prefix(),
+                })
+            }),
+        "s3MonitoringConfiguration": monitoring
+            .s3_monitoring_configuration()
+            .map(|s3| {
+                serde_json::json!({
+                    "logUri": s3.log_uri(),
+                })
+            }),
+    })
 }
 
 fn map_configuration(config: &aws_sdk_emrcontainers::types::Configuration) -> serde_json::Value {
@@ -395,7 +412,11 @@ fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> 
 #[cfg(test)]
 mod tests {
     use super::map_job_run;
-    use aws_sdk_emrcontainers::types::{JobRun, JobRunState, RetryPolicyConfiguration, RetryPolicyExecution, SparkSubmitJobDriver};
+    use aws_sdk_emrcontainers::types::{
+        CloudWatchMonitoringConfiguration, ConfigurationOverrides, JobRun, JobRunState,
+        MonitoringConfiguration, RetryPolicyConfiguration, RetryPolicyExecution, S3MonitoringConfiguration,
+        SparkSubmitJobDriver,
+    };
 
     #[test]
     fn maps_describe_job_run_details_without_dropping_remote_fields() {
@@ -447,5 +468,53 @@ mod tests {
         assert_eq!(details.retry_current_attempt_count, Some(1));
         assert_eq!(details.tags.as_ref().and_then(|values| values.get("owner")).map(String::as_str), Some("analytics"));
         assert_eq!(details.job_driver.as_ref().and_then(|value| value.get("entryPoint")).and_then(|value| value.as_str()), Some("s3://bucket/app.jar"));
+    }
+
+    #[test]
+    fn maps_structured_monitoring_configuration() {
+        let overrides = ConfigurationOverrides::builder()
+            .monitoring_configuration(
+                MonitoringConfiguration::builder()
+                    .cloud_watch_monitoring_configuration(
+                        CloudWatchMonitoringConfiguration::builder()
+                            .log_group_name("/aws/emr-containers/jobs/custom")
+                            .log_stream_name_prefix("custom-prefix")
+                            .build()
+                            .expect("cloudwatch config builds"),
+                    )
+                    .s3_monitoring_configuration(
+                        S3MonitoringConfiguration::builder()
+                            .log_uri("s3://logs-bucket/emr/")
+                            .build()
+                            .expect("s3 config builds"),
+                    )
+                    .build(),
+            )
+            .build();
+
+        let monitoring = super::map_configuration_overrides(&overrides)
+            .and_then(|value| value.get("monitoringConfiguration").cloned())
+            .expect("monitoring configuration exists");
+        let cloud_watch = monitoring
+            .get("cloudWatchMonitoringConfiguration")
+            .expect("cloudwatch config exists");
+        let s3 = monitoring
+            .get("s3MonitoringConfiguration")
+            .expect("s3 config exists");
+
+        assert_eq!(
+            cloud_watch.get("logGroupName").and_then(|value| value.as_str()),
+            Some("/aws/emr-containers/jobs/custom")
+        );
+        assert_eq!(
+            cloud_watch
+                .get("logStreamNamePrefix")
+                .and_then(|value| value.as_str()),
+            Some("custom-prefix")
+        );
+        assert_eq!(
+            s3.get("logUri").and_then(|value| value.as_str()),
+            Some("s3://logs-bucket/emr/")
+        );
     }
 }

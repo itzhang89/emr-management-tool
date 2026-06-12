@@ -96,6 +96,26 @@ export interface JobRunDescribeJobDriver {
   sparkSqlParameters?: string;
 }
 
+export interface CloudWatchMonitoringConfiguration {
+  logGroupName?: string;
+  logStreamNamePrefix?: string;
+}
+
+export interface S3MonitoringConfiguration {
+  logUri?: string;
+}
+
+export interface JobRunMonitoringConfiguration {
+  persistentAppUi?: string;
+  cloudWatchMonitoringConfiguration?: CloudWatchMonitoringConfiguration;
+  s3MonitoringConfiguration?: S3MonitoringConfiguration;
+}
+
+export interface JobRunConfigurationOverrides {
+  applicationConfiguration?: unknown[];
+  monitoringConfiguration?: JobRunMonitoringConfiguration;
+}
+
 export interface JobRunDescribeDetails {
   arn?: string;
   clientToken?: string;
@@ -108,7 +128,7 @@ export interface JobRunDescribeDetails {
   retryMaxAttempts?: number;
   retryCurrentAttemptCount?: number;
   jobDriver?: JobRunDescribeJobDriver;
-  configurationOverrides?: Record<string, unknown>;
+  configurationOverrides?: JobRunConfigurationOverrides;
 }
 
 export interface JobRunSummary {
