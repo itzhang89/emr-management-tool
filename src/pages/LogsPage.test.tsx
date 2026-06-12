@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,8 @@ const useJobLogStreams = vi.fn();
 const useJobLogs = vi.fn();
 const useS3JobLogObjects = vi.fn();
 const useS3JobLogObject = vi.fn();
+const getJobLogs = vi.fn();
+const getJobLogObject = vi.fn();
 
 vi.mock("@/hooks/useEmr", () => ({
   useDescribeJobRun: (...args: unknown[]) => useDescribeJobRun(...args)
@@ -20,6 +22,18 @@ vi.mock("@/hooks/useLogs", () => ({
   useJobLogs: (...args: unknown[]) => useJobLogs(...args),
   useS3JobLogObjects: (...args: unknown[]) => useS3JobLogObjects(...args),
   useS3JobLogObject: (...args: unknown[]) => useS3JobLogObject(...args)
+}));
+
+vi.mock("@/services/cloudWatchLogsService", () => ({
+  cloudWatchLogsService: {
+    getJobLogs: (...args: unknown[]) => getJobLogs(...args)
+  }
+}));
+
+vi.mock("@/services/s3Service", () => ({
+  s3Service: {
+    getJobLogObject: (...args: unknown[]) => getJobLogObject(...args)
+  }
 }));
 
 describe("LogsPage", () => {
@@ -37,7 +51,7 @@ describe("LogsPage", () => {
     useSessionStore.setState({
       selectedJobId: "job-running",
       selectedJobVirtualClusterId: "vc-1",
-      selectedVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1",
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
@@ -78,6 +92,16 @@ describe("LogsPage", () => {
             pod: "driver",
             stream: "stdout",
             cloudWatchStreamName: "20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout"
+          },
+          {
+            source: "cloudwatch",
+            id: "cw-driver-stderr",
+            label: "driver stderr",
+            type: "driver",
+            container: "spark-app",
+            pod: "driver",
+            stream: "stderr",
+            cloudWatchStreamName: "20260612/vc-1/jobs/job-running/containers/spark-app/driver/stderr"
           }
         ]
       },
@@ -117,6 +141,59 @@ describe("LogsPage", () => {
       isLoading: false,
       error: null
     });
+    getJobLogs.mockImplementation(async (request) => ({
+      jobId: "job-running",
+      entries: [
+        {
+          timestamp: "2026-06-10T00:00:00Z",
+          level: "info",
+          message: `downloaded ${request.logStreamName}`,
+          streamName: request.logStreamName
+        }
+      ]
+    }));
+    getJobLogObject.mockImplementation(async (_bucket, key) => ({
+      bucket: "logs-bucket",
+      key,
+      content: `downloaded ${key}`
+    }));
+  });
+
+  it("lets users enter a job id directly and view its logs in the selected virtual cluster", async () => {
+    const user = userEvent.setup();
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual");
+    await user.click(screen.getByRole("button", { name: /View Logs/i }));
+
+    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
+    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
+    expect(useDescribeJobRun).toHaveBeenLastCalledWith("job-manual", "vc-1");
+  });
+
+  it("uses the same virtual cluster for manual job entry display and submit", async () => {
+    const user = userEvent.setup();
+    useSessionStore.setState({
+      selectedJobId: "old-job",
+      selectedJobVirtualClusterId: "stale-vc",
+      selectedVirtualClusterId: "current-vc"
+    });
+
+    renderLogsPage();
+
+    expect(screen.getByText("current-vc")).toBeInTheDocument();
+    await user.clear(screen.getByPlaceholderText(/Enter job id/i));
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual");
+    await user.click(screen.getByRole("button", { name: /View Logs/i }));
+
+    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
+    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("current-vc");
   });
 
   it("resolves destinations from describe, defaults to CloudWatch, and keeps S3 as a tab", async () => {
@@ -148,9 +225,9 @@ describe("LogsPage", () => {
     expect(screen.queryByRole("button", { name: /Refresh/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Next$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Copy$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download Current Log/i })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Download Current Log/i })).toBeInTheDocument();
   });
 
   it("defaults to S3 when the job only has S3 monitoring configured", () => {
@@ -205,7 +282,7 @@ describe("LogsPage", () => {
     expect(screen.getByText("job-running")).toBeInTheDocument();
   });
 
-  it("downloads the currently selected log text with a stable filename", async () => {
+  it("downloads the right-clicked log item", async () => {
     const user = userEvent.setup();
     const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:log");
     const revokeObjectUrl = vi.fn();
@@ -217,18 +294,94 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    await user.click(screen.getByRole("button", { name: /stdout/i }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
     vi.spyOn(document, "createElement").mockReturnValue(anchor);
-    await user.click(screen.getByRole("button", { name: /Download Current Log/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
 
     expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob));
     await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toBe(
-      "2026-06-10T00:00:00Z INFO hello cloudwatch"
+      [
+        "20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout",
+        "2026-06-10T00:00:00Z INFO downloaded 20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout"
+      ].join("\n")
     );
     expect(anchor.download).toBe("job-running-driver-stdout.log");
     expect(appendChild).toHaveBeenCalled();
     expect(click).toHaveBeenCalled();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:log");
+  });
+
+  it("downloads all CloudWatch pages for the right-clicked log item", async () => {
+    const user = userEvent.setup();
+    const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:log");
+    const anchor = document.createElement("a");
+    vi.spyOn(anchor, "click").mockImplementation(() => {});
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    getJobLogs
+      .mockResolvedValueOnce({
+        jobId: "job-running",
+        nextForwardToken: "page-2",
+        entries: [{ timestamp: "2026-06-10T00:00:00Z", level: "info", message: "first page", streamName: "cw" }]
+      })
+      .mockResolvedValueOnce({
+        jobId: "job-running",
+        entries: [{ timestamp: "2026-06-10T00:00:01Z", level: "info", message: "second page", streamName: "cw" }]
+      });
+
+    renderLogsPage();
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
+    vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+
+    expect(getJobLogs).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        nextForwardToken: "page-2"
+      })
+    );
+    await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toContain("first page");
+    await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toContain("second page");
+  });
+
+  it("downloads all logs under the right-clicked log group", async () => {
+    const user = userEvent.setup();
+    const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:log");
+    const anchor = document.createElement("a");
+    vi.spyOn(anchor, "click").mockImplementation(() => {});
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    renderLogsPage();
+
+    fireEvent.contextMenu(screen.getByText("driver"));
+    vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+
+    expect(getJobLogs).toHaveBeenCalledTimes(2);
+    await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toContain("driver/stdout");
+    await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toContain("driver/stderr");
+    expect(anchor.download).toBe("job-running-driver.log");
+  });
+
+  it("downloads the right-clicked S3 log object", async () => {
+    const user = userEvent.setup();
+    const createObjectUrl = vi.fn<(blob: Blob) => string>(() => "blob:log");
+    const anchor = document.createElement("a");
+    vi.spyOn(anchor, "click").mockImplementation(() => {});
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+
+    renderLogsPage();
+
+    await user.click(screen.getByRole("tab", { name: /S3 Archive/i }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
+    vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+
+    expect(getJobLogObject).toHaveBeenCalledWith("logs-bucket", "logs/vc-1/jobs/job-running/containers/spark-app/driver/stdout.gz");
+    await expect((createObjectUrl.mock.calls[0][0] as Blob).text()).resolves.toContain("downloaded logs/vc-1/jobs/job-running");
   });
 });
 

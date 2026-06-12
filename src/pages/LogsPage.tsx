@@ -1,21 +1,39 @@
 import { Archive, Cloud, Download } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDescribeJobRun } from "@/hooks/useEmr";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
 import { cn } from "@/lib/utils";
+import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
 import { buildEmrLogTree } from "@/services/emrLogTree";
-import { defaultCloudWatchDestination, resolveJobLogDestinations } from "@/services/jobLogDestinations";
+import {
+  defaultCloudWatchDestination,
+  resolveJobLogDestinations,
+  type CloudWatchLogDestination,
+  type S3LogDestination
+} from "@/services/jobLogDestinations";
+import { s3Service } from "@/services/s3Service";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
+
+type DownloadMenuState = {
+  x: number;
+  y: number;
+  label: string;
+  items: Array<JobLogStream | JobLogObject>;
+};
 
 export function LogsPage() {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const selectedJobVirtualClusterId = useSessionStore((state) => state.selectedJobVirtualClusterId);
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
+  const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
+  const [jobIdInput, setJobIdInput] = useState(selectedJobId ?? "");
   const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? selectedVirtualClusterId);
   const destinations = useMemo(() => {
     if (!describedJob.data) return {};
@@ -27,8 +45,12 @@ export function LogsPage() {
   const [activeSource, setActiveSource] = useState<"cloudwatch" | "s3" | undefined>();
   const [selectedCloudWatchStream, setSelectedCloudWatchStream] = useState<string>();
   const [selectedS3Key, setSelectedS3Key] = useState<string>();
+  const [downloadMenu, setDownloadMenu] = useState<DownloadMenuState>();
   const resolvedActiveSource = activeSource ?? (cloudWatchDestination ? "cloudwatch" : s3Destination ? "s3" : "cloudwatch");
 
+  useEffect(() => {
+    setJobIdInput(selectedJobId ?? "");
+  }, [selectedJobId]);
   useEffect(() => {
     setActiveSource(undefined);
     setSelectedCloudWatchStream(undefined);
@@ -90,16 +112,28 @@ export function LogsPage() {
         ? `s3://${s3Destination.bucket}/${selectedS3Item.s3Key}`
         : undefined;
   const selectedLabel = resolvedActiveSource === "cloudwatch" ? selectedCloudWatchItem?.label : selectedS3Item?.label;
-  const downloadLogs = () => {
-    if (!logText) return;
-    const url = URL.createObjectURL(new Blob([logText], { type: "text/plain" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = sanitizeFileName(`${selectedJobId ?? "job"}-${selectedLabel ?? resolvedActiveSource}.log`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  const manualVirtualClusterId = selectedVirtualClusterId ?? selectedJobVirtualClusterId;
+  const submitJobId = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedJobId = jobIdInput.trim();
+    if (!trimmedJobId) return;
+    setSelectedJobForLogs(trimmedJobId, manualVirtualClusterId);
+  };
+  const openDownloadMenu = (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => {
+    event.preventDefault();
+    if (items.length === 0) return;
+    setDownloadMenu({ x: event.clientX, y: event.clientY, items, label });
+  };
+  const downloadTargetLogs = async (target: DownloadMenuState) => {
+    if (!selectedJobId) return;
+
+    try {
+      const chunks = await Promise.all(target.items.map((item) => getDownloadChunk(item, selectedJobId, cloudWatchDestination, s3Destination)));
+      downloadText(`${selectedJobId}-${target.label}.log`, chunks.join("\n\n"));
+      setDownloadMenu(undefined);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
   };
 
   return (
@@ -116,9 +150,23 @@ export function LogsPage() {
           <CardDescription>Browse EMR on EKS controller, driver, and executor logs from CloudWatch or S3 archives.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <form className="flex flex-col gap-2 rounded-md border bg-secondary/40 p-3 sm:flex-row sm:items-center" onSubmit={submitJobId}>
+            <Input
+              className="sm:max-w-md"
+              placeholder="Enter job id"
+              value={jobIdInput}
+              onChange={(event) => setJobIdInput(event.target.value)}
+            />
+            <Button type="submit" disabled={!jobIdInput.trim() || !manualVirtualClusterId}>
+              View Logs
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Virtual cluster: <span className="font-medium">{manualVirtualClusterId ?? "select one first"}</span>
+            </span>
+          </form>
           {!selectedJobId ? (
             <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              Select a job from Job History to view logs.
+              Select a job from Job History or enter a job id to view logs.
             </p>
           ) : null}
           {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job log configuration...</p> : null}
@@ -132,12 +180,6 @@ export function LogsPage() {
               No CloudWatch or S3 monitoring configuration was found for this job.
             </p>
           ) : null}
-          <div className="flex justify-end">
-            <Button variant="outline" disabled={!logText} onClick={downloadLogs}>
-              <Download data-icon="inline-start" />
-              Download Current Log
-            </Button>
-          </div>
           <Tabs
             value={resolvedActiveSource}
             onValueChange={(value) => {
@@ -170,6 +212,7 @@ export function LogsPage() {
               <LogViewerLayout
                 tree={cloudWatchTree}
                 selectedId={selectedCloudWatchStream}
+                onContextDownload={openDownloadMenu}
                 onSelect={(item) => {
                   setSelectedCloudWatchStream((item as JobLogStream).cloudWatchStreamName);
                 }}
@@ -189,6 +232,7 @@ export function LogsPage() {
               <LogViewerLayout
                 tree={s3Tree}
                 selectedId={selectedS3Key}
+                onContextDownload={openDownloadMenu}
                 onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
                 selectedLabel={selectedLabel}
                 path={selectedPath}
@@ -196,6 +240,23 @@ export function LogsPage() {
               />
             </TabsContent>
           </Tabs>
+          {downloadMenu ? (
+            <div
+              role="menu"
+              className="fixed z-50 min-w-44 rounded-md border bg-background p-1 shadow-lg"
+              style={{ left: downloadMenu.x, top: downloadMenu.y }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-accent"
+                onClick={() => void downloadTargetLogs(downloadMenu)}
+              >
+                <Download data-icon="inline-start" />
+                Download logs
+              </button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
@@ -219,6 +280,7 @@ function LogViewerLayout({
   tree,
   selectedId,
   onSelect,
+  onContextDownload,
   selectedLabel,
   path,
   logText
@@ -226,6 +288,7 @@ function LogViewerLayout({
   tree: JobLogTreeSection[];
   selectedId?: string;
   onSelect: (item: JobLogStream | JobLogObject) => void;
+  onContextDownload: (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => void;
   selectedLabel?: string;
   path?: string;
   logText: string;
@@ -241,10 +304,26 @@ function LogViewerLayout({
           {tree.length === 0 ? <p className="p-3 text-sm text-muted-foreground">No log streams found for this job.</p> : null}
           {tree.map((section) => (
             <div key={section.type} className="mb-3">
-              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.label}</div>
+              <div
+                className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                onContextMenu={(event) =>
+                  onContextDownload(
+                    event,
+                    section.groups.flatMap((group) => group.items),
+                    section.label
+                  )
+                }
+              >
+                {section.label}
+              </div>
               {section.groups.map((group) => (
                 <div key={group.label} className="mb-2">
-                  <div className="break-all px-2 py-1 text-xs text-muted-foreground">{group.label}</div>
+                  <div
+                    className="break-all px-2 py-1 text-xs text-muted-foreground"
+                    onContextMenu={(event) => onContextDownload(event, group.items, group.label)}
+                  >
+                    {group.label}
+                  </div>
                   {group.items.map((item) => (
                     <button
                       key={item.id}
@@ -254,6 +333,7 @@ function LogViewerLayout({
                         item.id === selectedId ? "bg-primary text-primary-foreground hover:bg-primary" : undefined
                       )}
                       onClick={() => onSelect(item)}
+                      onContextMenu={(event) => openItemDownloadMenu(event, item, onContextDownload)}
                     >
                       <span className="font-medium">{item.stream}</span>
                       <span className={cn("text-xs", item.id === selectedId ? "text-primary-foreground/80" : "text-muted-foreground")}>
@@ -286,6 +366,68 @@ function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function openItemDownloadMenu(
+  event: MouseEvent,
+  item: JobLogStream | JobLogObject,
+  onContextDownload: (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => void
+) {
+  event.stopPropagation();
+  onContextDownload(event, [item], item.label);
+}
+
+async function getDownloadChunk(
+  item: JobLogStream | JobLogObject,
+  jobId: string,
+  cloudWatchDestination?: CloudWatchLogDestination,
+  s3Destination?: S3LogDestination
+) {
+  if (item.source === "cloudwatch") {
+    if (!cloudWatchDestination) {
+      throw new Error("CloudWatch log configuration is unavailable.");
+    }
+    const lines = await getCloudWatchDownloadLines(item, jobId, cloudWatchDestination);
+    return [item.cloudWatchStreamName, ...lines].join("\n");
+  }
+
+  if (!s3Destination) {
+    throw new Error("S3 log configuration is unavailable.");
+  }
+  const response = await s3Service.getJobLogObject(s3Destination.bucket, item.s3Key);
+  return [`s3://${s3Destination.bucket}/${item.s3Key}`, response.content].join("\n");
+}
+
+async function getCloudWatchDownloadLines(item: JobLogStream, jobId: string, cloudWatchDestination: CloudWatchLogDestination) {
+  const lines: string[] = [];
+  let nextForwardToken: string | undefined;
+
+  do {
+    const requestToken = nextForwardToken;
+    const response = await cloudWatchLogsService.getJobLogs({
+      jobId,
+      logGroupName: cloudWatchDestination.logGroupName,
+      streamNamePrefix: cloudWatchDestination.streamNamePrefix,
+      logStreamName: item.cloudWatchStreamName,
+      nextForwardToken,
+      limit: 10_000
+    });
+    lines.push(...response.entries.map((entry) => `${entry.timestamp} ${entry.level.toUpperCase()} ${entry.message}`));
+    nextForwardToken = response.nextForwardToken && response.nextForwardToken !== requestToken ? response.nextForwardToken : undefined;
+  } while (nextForwardToken);
+
+  return lines;
+}
+
+function downloadText(fileName: string, content: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = sanitizeFileName(fileName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function sanitizeFileName(value: string) {
