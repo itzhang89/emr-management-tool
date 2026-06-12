@@ -1,4 +1,7 @@
-use crate::models::{ApplicationTemplate, AwsIdentity, AwsSettings, JobRunSummary, ResourceTemplate, SparkResourceConfig};
+use crate::models::{
+    ApplicationTemplate, AwsIdentity, AwsSettings, JobRunSummary, ResourceTemplate,
+    SparkResourceConfig,
+};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -35,7 +38,10 @@ pub fn default_application_template() -> ApplicationTemplate {
         jar_path: "s3://bucket/jobs/app.jar".to_string(),
         main_class: "com.example.Main".to_string(),
         default_arguments: vec!["--date=${date}".to_string(), "--env=prod".to_string()],
-        spark_config: HashMap::from([("spark.sql.shuffle.partitions".to_string(), "200".to_string())]),
+        spark_config: HashMap::from([(
+            "spark.sql.shuffle.partitions".to_string(),
+            "200".to_string(),
+        )]),
         resource_template_id: Some("small".to_string()),
         created_at: now,
         updated_at: now,

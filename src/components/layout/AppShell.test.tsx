@@ -41,8 +41,26 @@ vi.mock("@/services/emrService", () => ({
 }));
 
 vi.mock("@/hooks/useLogs", () => ({
+  useJobLogStreams: () => ({
+    data: { jobId: "job-running", streams: [] },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn()
+  }),
   useJobLogs: () => ({
     data: { jobId: "job-running", entries: [] },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn()
+  }),
+  useS3JobLogObjects: () => ({
+    data: { bucket: "logs-bucket", objects: [] },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn()
+  }),
+  useS3JobLogObject: () => ({
+    data: undefined,
     isLoading: false,
     error: null,
     refetch: vi.fn()

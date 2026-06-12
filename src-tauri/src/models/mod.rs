@@ -269,12 +269,46 @@ pub struct LogEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JobLogStream {
+    pub source: String,
+    pub id: String,
+    pub label: String,
+    pub r#type: String,
+    pub container: String,
+    pub pod: String,
+    pub stream: String,
+    pub cloud_watch_stream_name: String,
+    pub last_event_timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobLogStreamsRequest {
+    pub account_id: Option<String>,
+    pub job_id: String,
+    pub log_group_name: String,
+    pub stream_name_prefix: String,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobLogStreamsResponse {
+    pub job_id: String,
+    pub streams: Vec<JobLogStream>,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobLogsRequest {
     pub account_id: Option<String>,
     pub job_id: String,
     pub next_forward_token: Option<String>,
     pub log_group_name: Option<String>,
     pub stream_name_prefix: Option<String>,
+    pub log_stream_name: Option<String>,
+    pub log_type: Option<String>,
     pub filter_pattern: Option<String>,
     pub limit: Option<i32>,
 }
@@ -332,4 +366,36 @@ pub struct S3TextObject {
     pub etag: Option<String>,
     pub content_type: Option<String>,
     pub last_modified: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3JobLogObject {
+    pub source: String,
+    pub id: String,
+    pub label: String,
+    pub r#type: String,
+    pub container: String,
+    pub pod: String,
+    pub stream: String,
+    pub s3_key: String,
+    pub size: i64,
+    pub last_modified: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3JobLogObjectsRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub prefix: String,
+    pub continuation_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3JobLogObjectsResponse {
+    pub bucket: String,
+    pub objects: Vec<S3JobLogObject>,
+    pub next_token: Option<String>,
 }

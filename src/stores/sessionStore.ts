@@ -31,7 +31,13 @@ export const useSessionStore = create<SessionState>((set) => ({
   setSelectedVirtualClusterId: (selectedVirtualClusterId) => set({ selectedVirtualClusterId }),
   setSelectedJobId: (selectedJobId) => set({ selectedJobId }),
   setSelectedJobForLogs: (selectedJobId, selectedJobLogGroupName, selectedJobLogStreamNamePrefix) =>
-    set({ selectedJobId, selectedJobLogGroupName, selectedJobLogStreamNamePrefix }),
+    set({
+      selectedJobId,
+      selectedJobLogGroupName,
+      selectedJobLogStreamNamePrefix,
+      selectedS3Bucket: undefined,
+      selectedS3Prefix: undefined
+    }),
   setSelectedS3Location: (selectedS3Bucket, selectedS3Prefix) => set({ selectedS3Bucket, selectedS3Prefix }),
   setClonedJobRequest: (clonedJobRequest) => set({ clonedJobRequest })
 }));

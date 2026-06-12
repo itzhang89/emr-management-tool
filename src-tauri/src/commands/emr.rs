@@ -2,18 +2,24 @@ use crate::aws::runtime::runtime_for_context;
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsCommandContext, JobRunDescribeDetails, JobRunRequest, JobRunSummary, ListVirtualClustersRequest,
-    ListVirtualClustersResponse, StartJobRunRequest, VirtualCluster,
+    AwsCommandContext, JobRunDescribeDetails, JobRunRequest, JobRunSummary,
+    ListVirtualClustersRequest, ListVirtualClustersResponse, StartJobRunRequest, VirtualCluster,
 };
 use aws_sdk_emrcontainers::types::{ContainerInfo, JobDriver, SparkSubmitJobDriver};
 use chrono::Utc;
 use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn list_virtual_clusters(app: AppHandle, request: ListVirtualClustersRequest) -> AppResult<ListVirtualClustersResponse> {
-    let runtime = runtime_for_context(&app, AwsCommandContext {
-        account_id: request.account_id.clone(),
-    })
+pub async fn list_virtual_clusters(
+    app: AppHandle,
+    request: ListVirtualClustersRequest,
+) -> AppResult<ListVirtualClustersResponse> {
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
     .await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
     let mut operation = client.list_virtual_clusters();
@@ -24,10 +30,9 @@ pub async fn list_virtual_clusters(app: AppHandle, request: ListVirtualClustersR
         operation = operation.max_results(max_results);
     }
 
-    let response = operation
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error))?;
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+    })?;
 
     let clusters = response
         .virtual_clusters()
@@ -42,11 +47,17 @@ pub async fn list_virtual_clusters(app: AppHandle, request: ListVirtualClustersR
 }
 
 #[tauri::command]
-pub async fn list_job_runs(app: AppHandle, _request: JobRunRequest) -> AppResult<Vec<JobRunSummary>> {
+pub async fn list_job_runs(
+    app: AppHandle,
+    _request: JobRunRequest,
+) -> AppResult<Vec<JobRunSummary>> {
     let request = _request;
-    let runtime = runtime_for_context(&app, AwsCommandContext {
-        account_id: request.account_id.clone(),
-    })
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
     .await?;
     let pool = repository::pool().await?;
     let Some(virtual_cluster_id) = request.virtual_cluster_id else {
@@ -54,7 +65,9 @@ pub async fn list_job_runs(app: AppHandle, _request: JobRunRequest) -> AppResult
     };
 
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut operation = client.list_job_runs().virtual_cluster_id(&virtual_cluster_id);
+    let mut operation = client
+        .list_job_runs()
+        .virtual_cluster_id(&virtual_cluster_id);
     if let Some(next_token) = request.next_token {
         operation = operation.next_token(next_token);
     }
@@ -62,14 +75,19 @@ pub async fn list_job_runs(app: AppHandle, _request: JobRunRequest) -> AppResult
         operation = operation.max_results(max_results);
     }
 
-    let response = operation
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error))?;
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+    })?;
     let jobs: Vec<JobRunSummary> = response
         .job_runs()
         .iter()
-        .map(|job| map_job_run(job, Some(runtime.account.id.clone()), Some(runtime.account.region.clone())))
+        .map(|job| {
+            map_job_run(
+                job,
+                Some(runtime.account.id.clone()),
+                Some(runtime.account.region.clone()),
+            )
+        })
         .collect();
     for job in &jobs {
         repository::upsert_job_history(&pool, job).await?;
@@ -92,7 +110,9 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
             .await?
             .into_iter()
             .find(|job| job.id == id)
-            .ok_or_else(|| AppError::validation(format!("Job {id} was not found in local history.")));
+            .ok_or_else(|| {
+                AppError::validation(format!("Job {id} was not found in local history."))
+            });
     };
 
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
@@ -102,17 +122,20 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
         .virtual_cluster_id(&virtual_cluster_id)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error))?;
+        .map_err(|error| {
+            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        })?;
     let job_run = response
         .job_run()
         .ok_or_else(|| AppError::validation(format!("Job {id} was not returned by EMR.")))?;
     let account_id = runtime.account.id.clone();
     let region = runtime.account.region.clone();
     let mut job = map_job_run(job_run, Some(account_id.clone()), Some(region));
-    if let Some(existing) = repository::list_job_history(&pool, Some(&account_id), Some(&virtual_cluster_id))
-        .await?
-        .into_iter()
-        .find(|existing| existing.id == id)
+    if let Some(existing) =
+        repository::list_job_history(&pool, Some(&account_id), Some(&virtual_cluster_id))
+            .await?
+            .into_iter()
+            .find(|existing| existing.id == id)
     {
         job.source_request = existing.source_request.or(job.source_request);
     }
@@ -121,11 +144,17 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
 }
 
 #[tauri::command]
-pub async fn start_job_run(app: AppHandle, request: StartJobRunRequest) -> AppResult<JobRunSummary> {
+pub async fn start_job_run(
+    app: AppHandle,
+    request: StartJobRunRequest,
+) -> AppResult<JobRunSummary> {
     validate_start_job_request(&request)?;
-    let runtime = runtime_for_context(&app, AwsCommandContext {
-        account_id: request.account_id.clone(),
-    })
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
     .await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
     let job_driver = build_job_driver(&request)?;
@@ -141,7 +170,9 @@ pub async fn start_job_run(app: AppHandle, request: StartJobRunRequest) -> AppRe
         .job_driver(job_driver)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error))?;
+        .map_err(|error| {
+            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        })?;
     let now = Utc::now();
     let job = JobRunSummary {
         id: response
@@ -152,7 +183,10 @@ pub async fn start_job_run(app: AppHandle, request: StartJobRunRequest) -> AppRe
         state: "SUBMITTED".to_string(),
         account_id: Some(runtime.account.id),
         region: Some(runtime.account.region),
-        virtual_cluster_id: response.virtual_cluster_id().unwrap_or(&virtual_cluster_id).to_string(),
+        virtual_cluster_id: response
+            .virtual_cluster_id()
+            .unwrap_or(&virtual_cluster_id)
+            .to_string(),
         virtual_cluster_name: None,
         created_at: now.to_rfc3339(),
         started_at: Some(now.to_rfc3339()),
@@ -185,31 +219,37 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
         .virtual_cluster_id(&virtual_cluster_id)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error))?;
+        .map_err(|error| {
+            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        })?;
 
     let pool = repository::pool().await?;
-    let mut job = repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id))
-        .await?
-        .into_iter()
-        .find(|job| job.id == id)
-        .unwrap_or_else(|| JobRunSummary {
-            id: id.clone(),
-            name: id.clone(),
-            state: "CANCELLED".to_string(),
-            account_id: Some(runtime.account.id.clone()),
-            region: Some(runtime.account.region.clone()),
-            virtual_cluster_id: virtual_cluster_id.clone(),
-            virtual_cluster_name: None,
-            created_at: Utc::now().to_rfc3339(),
-            started_at: None,
-            finished_at: None,
-            duration_seconds: None,
-            source_request: None,
-            describe_details: None,
-        });
+    let mut job =
+        repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id))
+            .await?
+            .into_iter()
+            .find(|job| job.id == id)
+            .unwrap_or_else(|| JobRunSummary {
+                id: id.clone(),
+                name: id.clone(),
+                state: "CANCELLED".to_string(),
+                account_id: Some(runtime.account.id.clone()),
+                region: Some(runtime.account.region.clone()),
+                virtual_cluster_id: virtual_cluster_id.clone(),
+                virtual_cluster_name: None,
+                created_at: Utc::now().to_rfc3339(),
+                started_at: None,
+                finished_at: None,
+                duration_seconds: None,
+                source_request: None,
+                describe_details: None,
+            });
     job.state = "CANCELLED".to_string();
     job.finished_at = Some(Utc::now().to_rfc3339());
-    job.duration_seconds = duration_seconds(job.started_at.as_deref().unwrap_or(&job.created_at), job.finished_at.as_deref());
+    job.duration_seconds = duration_seconds(
+        job.started_at.as_deref().unwrap_or(&job.created_at),
+        job.finished_at.as_deref(),
+    );
     repository::upsert_job_history(&pool, &job).await?;
 
     Ok(job)
@@ -217,7 +257,13 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
 
 fn build_job_driver(request: &StartJobRunRequest) -> AppResult<JobDriver> {
     let spark_driver = SparkSubmitJobDriver::builder()
-        .entry_point(request.job_driver.spark_submit_job_driver.entry_point.clone())
+        .entry_point(
+            request
+                .job_driver
+                .spark_submit_job_driver
+                .entry_point
+                .clone(),
+        )
         .set_entry_point_arguments(Some(
             request
                 .job_driver
@@ -225,11 +271,19 @@ fn build_job_driver(request: &StartJobRunRequest) -> AppResult<JobDriver> {
                 .entry_point_arguments
                 .clone(),
         ))
-        .spark_submit_parameters(request.job_driver.spark_submit_job_driver.spark_submit_parameters.clone())
+        .spark_submit_parameters(
+            request
+                .job_driver
+                .spark_submit_job_driver
+                .spark_submit_parameters
+                .clone(),
+        )
         .build()
         .map_err(|error| AppError::validation(error.to_string()))?;
 
-    Ok(JobDriver::builder().spark_submit_job_driver(spark_driver).build())
+    Ok(JobDriver::builder()
+        .spark_submit_job_driver(spark_driver)
+        .build())
 }
 
 fn validate_start_job_request(request: &StartJobRunRequest) -> AppResult<()> {
@@ -313,7 +367,9 @@ fn map_describe_details(job: &aws_sdk_emrcontainers::types::JobRun) -> JobRunDes
         release_label: job.release_label().map(ToString::to_string),
         created_by: job.created_by().map(ToString::to_string),
         state_details: job.state_details().map(ToString::to_string),
-        failure_reason: job.failure_reason().map(|reason| reason.as_str().to_string()),
+        failure_reason: job
+            .failure_reason()
+            .map(|reason| reason.as_str().to_string()),
         tags: job.tags().cloned(),
         retry_max_attempts: job
             .retry_policy_configuration()
@@ -381,7 +437,9 @@ fn map_configuration(config: &aws_sdk_emrcontainers::types::Configuration) -> se
     })
 }
 
-fn map_job_driver(job_driver: &aws_sdk_emrcontainers::types::JobDriver) -> Option<serde_json::Value> {
+fn map_job_driver(
+    job_driver: &aws_sdk_emrcontainers::types::JobDriver,
+) -> Option<serde_json::Value> {
     if let Some(spark_submit) = job_driver.spark_submit_job_driver() {
         return Some(serde_json::json!({
             "type": "sparkSubmit",
@@ -414,8 +472,8 @@ mod tests {
     use super::map_job_run;
     use aws_sdk_emrcontainers::types::{
         CloudWatchMonitoringConfiguration, ConfigurationOverrides, JobRun, JobRunState,
-        MonitoringConfiguration, RetryPolicyConfiguration, RetryPolicyExecution, S3MonitoringConfiguration,
-        SparkSubmitJobDriver,
+        MonitoringConfiguration, RetryPolicyConfiguration, RetryPolicyExecution,
+        S3MonitoringConfiguration, SparkSubmitJobDriver,
     };
 
     #[test]
@@ -458,16 +516,37 @@ mod tests {
             )
             .build();
 
-        let summary = map_job_run(&job, Some("account".to_string()), Some("us-east-1".to_string()));
+        let summary = map_job_run(
+            &job,
+            Some("account".to_string()),
+            Some("us-east-1".to_string()),
+        );
         let details = summary.describe_details.expect("describe details exist");
 
         assert_eq!(details.release_label.as_deref(), Some("emr-7.2.0-latest"));
-        assert_eq!(details.execution_role_arn.as_deref(), Some("arn:aws:iam::123456789012:role/EMR"));
+        assert_eq!(
+            details.execution_role_arn.as_deref(),
+            Some("arn:aws:iam::123456789012:role/EMR")
+        );
         assert_eq!(details.state_details.as_deref(), Some("Job is running"));
         assert_eq!(details.retry_max_attempts, Some(3));
         assert_eq!(details.retry_current_attempt_count, Some(1));
-        assert_eq!(details.tags.as_ref().and_then(|values| values.get("owner")).map(String::as_str), Some("analytics"));
-        assert_eq!(details.job_driver.as_ref().and_then(|value| value.get("entryPoint")).and_then(|value| value.as_str()), Some("s3://bucket/app.jar"));
+        assert_eq!(
+            details
+                .tags
+                .as_ref()
+                .and_then(|values| values.get("owner"))
+                .map(String::as_str),
+            Some("analytics")
+        );
+        assert_eq!(
+            details
+                .job_driver
+                .as_ref()
+                .and_then(|value| value.get("entryPoint"))
+                .and_then(|value| value.as_str()),
+            Some("s3://bucket/app.jar")
+        );
     }
 
     #[test]
@@ -503,7 +582,9 @@ mod tests {
             .expect("s3 config exists");
 
         assert_eq!(
-            cloud_watch.get("logGroupName").and_then(|value| value.as_str()),
+            cloud_watch
+                .get("logGroupName")
+                .and_then(|value| value.as_str()),
             Some("/aws/emr-containers/jobs/custom")
         );
         assert_eq!(

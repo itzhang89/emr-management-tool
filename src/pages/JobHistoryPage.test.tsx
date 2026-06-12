@@ -189,7 +189,7 @@ describe("JobHistoryPage", () => {
     expect(describeJobRun).toHaveBeenCalledWith("job-running", "vc-1");
     expect(useSessionStore.getState().selectedJobId).toBe("job-running");
     expect(useSessionStore.getState().selectedJobLogGroupName).toBe("/aws/emr-containers/jobs/custom");
-    expect(useSessionStore.getState().selectedJobLogStreamNamePrefix).toBe("custom-prefix");
+    expect(useSessionStore.getState().selectedJobLogStreamNamePrefix).toBe("custom-prefix/vc-1/jobs/job-running/");
     expect(onOpenLogs).toHaveBeenCalled();
     expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
   });

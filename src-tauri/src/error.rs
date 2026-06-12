@@ -27,7 +27,11 @@ impl AppError {
         }
     }
 
-    pub fn aws_for_account(service: &'static str, account_id: impl Into<String>, error: impl std::fmt::Display) -> Self {
+    pub fn aws_for_account(
+        service: &'static str,
+        account_id: impl Into<String>,
+        error: impl std::fmt::Display,
+    ) -> Self {
         Self {
             account_id: Some(account_id.into()),
             ..Self::aws(service, error)

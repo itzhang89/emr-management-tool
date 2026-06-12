@@ -9,12 +9,17 @@ pub struct AwsRuntime {
     pub config: aws_config::SdkConfig,
 }
 
-pub async fn runtime_for_context(app: &AppHandle, context: AwsCommandContext) -> AppResult<AwsRuntime> {
+pub async fn runtime_for_context(
+    app: &AppHandle,
+    context: AwsCommandContext,
+) -> AppResult<AwsRuntime> {
     let pool = repository::pool().await?;
     let account = match context.account_id {
         Some(account_id) => repository::get_aws_account(&pool, &account_id)
             .await?
-            .ok_or_else(|| AppError::validation(format!("AWS account {account_id} was not found.")))?,
+            .ok_or_else(|| {
+                AppError::validation(format!("AWS account {account_id} was not found."))
+            })?,
         None => repository::active_aws_account(&pool)
             .await?
             .ok_or_else(|| AppError::validation("No active AWS account is configured."))?,

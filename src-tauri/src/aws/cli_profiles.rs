@@ -25,7 +25,10 @@ pub fn load_aws_cli_profile_credentials(profile_name: &str) -> AppResult<Importa
     importable_profile_credentials(profile_name, &credentials, &config)
 }
 
-pub fn discover_profiles_from_contents(credentials: &str, config: &str) -> Vec<AwsCliProfileSummary> {
+pub fn discover_profiles_from_contents(
+    credentials: &str,
+    config: &str,
+) -> Vec<AwsCliProfileSummary> {
     let credential_profiles = parse_ini(credentials, IniSectionKind::Credentials);
     let config_profiles = parse_ini(config, IniSectionKind::Config);
     let mut names = BTreeSet::new();
@@ -59,17 +62,28 @@ pub fn discover_profiles_from_contents(credentials: &str, config: &str) -> Vec<A
         .collect()
 }
 
-pub fn importable_profile_credentials(profile_name: &str, credentials: &str, config: &str) -> AppResult<ImportableAwsCliProfile> {
+pub fn importable_profile_credentials(
+    profile_name: &str,
+    credentials: &str,
+    config: &str,
+) -> AppResult<ImportableAwsCliProfile> {
     let credential_profiles = parse_ini(credentials, IniSectionKind::Credentials);
     let config_profiles = parse_ini(config, IniSectionKind::Config);
-    let credential_section = credential_profiles
-        .get(profile_name)
-        .ok_or_else(|| AppError::validation(format!("AWS CLI profile {profile_name} was not found in credentials.")))?;
+    let credential_section = credential_profiles.get(profile_name).ok_or_else(|| {
+        AppError::validation(format!(
+            "AWS CLI profile {profile_name} was not found in credentials."
+        ))
+    })?;
     let access_key_id = required_value(credential_section, "aws_access_key_id", profile_name)?;
-    let secret_access_key = required_value(credential_section, "aws_secret_access_key", profile_name)?;
+    let secret_access_key =
+        required_value(credential_section, "aws_secret_access_key", profile_name)?;
     let region = credential_section
         .get("region")
-        .or_else(|| config_profiles.get(profile_name).and_then(|section| section.get("region")))
+        .or_else(|| {
+            config_profiles
+                .get(profile_name)
+                .and_then(|section| section.get("region"))
+        })
         .cloned()
         .unwrap_or_else(|| "us-east-1".to_string());
 
@@ -85,12 +99,18 @@ pub fn importable_profile_credentials(profile_name: &str, credentials: &str, con
     })
 }
 
-fn required_value(section: &BTreeMap<String, String>, key: &str, profile_name: &str) -> AppResult<String> {
+fn required_value(
+    section: &BTreeMap<String, String>,
+    key: &str,
+    profile_name: &str,
+) -> AppResult<String> {
     section
         .get(key)
         .filter(|value| !value.trim().is_empty())
         .cloned()
-        .ok_or_else(|| AppError::validation(format!("AWS CLI profile {profile_name} is missing {key}.")))
+        .ok_or_else(|| {
+            AppError::validation(format!("AWS CLI profile {profile_name} is missing {key}."))
+        })
 }
 
 fn read_aws_file(file_name: &str) -> AppResult<String> {
@@ -98,14 +118,16 @@ fn read_aws_file(file_name: &str) -> AppResult<String> {
     match fs::read_to_string(&path) {
         Ok(contents) => Ok(contents),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(error) => Err(AppError::storage(format!("Unable to read AWS CLI {file_name}: {error}"))),
+        Err(error) => Err(AppError::storage(format!(
+            "Unable to read AWS CLI {file_name}: {error}"
+        ))),
     }
 }
 
 fn aws_dir() -> AppResult<PathBuf> {
-    dirs::home_dir()
-        .map(|dir| dir.join(".aws"))
-        .ok_or_else(|| AppError::storage("Unable to locate the home directory for AWS CLI profile discovery."))
+    dirs::home_dir().map(|dir| dir.join(".aws")).ok_or_else(|| {
+        AppError::storage("Unable to locate the home directory for AWS CLI profile discovery.")
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -114,7 +136,10 @@ enum IniSectionKind {
     Config,
 }
 
-fn parse_ini(contents: &str, section_kind: IniSectionKind) -> BTreeMap<String, BTreeMap<String, String>> {
+fn parse_ini(
+    contents: &str,
+    section_kind: IniSectionKind,
+) -> BTreeMap<String, BTreeMap<String, String>> {
     let mut sections: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     let mut current_section: Option<String> = None;
 
@@ -123,7 +148,10 @@ fn parse_ini(contents: &str, section_kind: IniSectionKind) -> BTreeMap<String, B
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
-        if let Some(section_name) = line.strip_prefix('[').and_then(|value| value.strip_suffix(']')) {
+        if let Some(section_name) = line
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        {
             current_section = normalize_section_name(section_name.trim(), section_kind);
             if let Some(name) = &current_section {
                 sections.entry(name.clone()).or_default();
@@ -152,7 +180,9 @@ fn normalize_section_name(section_name: &str, section_kind: IniSectionKind) -> O
             if section_name == "default" {
                 Some(section_name.to_string())
             } else {
-                section_name.strip_prefix("profile ").map(ToString::to_string)
+                section_name
+                    .strip_prefix("profile ")
+                    .map(ToString::to_string)
             }
         }
     }
@@ -194,11 +224,17 @@ region = us-east-1
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].profile_name, "default");
         assert_eq!(profiles[0].region.as_deref(), Some("us-west-2"));
-        assert_eq!(profiles[0].access_key_id_masked.as_deref(), Some("AKIA****1234"));
+        assert_eq!(
+            profiles[0].access_key_id_masked.as_deref(),
+            Some("AKIA****1234")
+        );
         assert!(profiles[0].can_import);
         assert_eq!(profiles[1].profile_name, "dev");
         assert_eq!(profiles[1].region.as_deref(), Some("us-east-1"));
-        assert_eq!(profiles[1].access_key_id_masked.as_deref(), Some("AKIA****5678"));
+        assert_eq!(
+            profiles[1].access_key_id_masked.as_deref(),
+            Some("AKIA****5678")
+        );
         assert!(profiles[1].can_import);
     }
 
@@ -218,7 +254,10 @@ sso_session = team
 
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].profile_name, "sso-dev");
-        assert_eq!(profiles[0].access_key_id_masked.as_deref(), Some("AKIA****1234"));
+        assert_eq!(
+            profiles[0].access_key_id_masked.as_deref(),
+            Some("AKIA****1234")
+        );
         assert!(!profiles[0].can_import);
         assert_eq!(
             profiles[0].import_error.as_deref(),
@@ -238,7 +277,8 @@ aws_secret_access_key = dev-secret
 region = us-east-1
 "#;
 
-        let profile = importable_profile_credentials("dev", credentials, config).expect("profile imports");
+        let profile =
+            importable_profile_credentials("dev", credentials, config).expect("profile imports");
 
         assert_eq!(profile.profile_name, "dev");
         assert_eq!(profile.region, "us-east-1");

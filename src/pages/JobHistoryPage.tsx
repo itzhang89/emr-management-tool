@@ -189,6 +189,7 @@ function JobLogActions({
   onOpenS3?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
   const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
   const setSelectedS3Location = useSessionStore((state) => state.setSelectedS3Location);
   const [loading, setLoading] = useState(false);
@@ -213,6 +214,7 @@ function JobLogActions({
   };
 
   const openS3 = (destination: S3LogDestination) => {
+    setSelectedJobId(job.id);
     setSelectedS3Location(destination.bucket, destination.prefix);
     onOpenS3?.();
   };

@@ -22,6 +22,16 @@ export function defaultCloudWatchDestination(job: Pick<JobRunSummary, "id">): Cl
   };
 }
 
+export function buildJobCloudWatchStreamPrefix(
+  logStreamNamePrefix: string | undefined,
+  virtualClusterId: string,
+  jobId: string
+) {
+  const basePrefix = logStreamNamePrefix?.trim() ?? "";
+  const normalizedBasePrefix = basePrefix && !basePrefix.endsWith("/") ? `${basePrefix}/` : basePrefix;
+  return `${normalizedBasePrefix}${virtualClusterId}/jobs/${jobId}/`;
+}
+
 export function parseS3Uri(uri: string): { bucket: string; prefix: string } | undefined {
   const trimmed = uri.trim();
   const match = /^s3:\/\/([^/]+)\/?(.*)$/.exec(trimmed);
@@ -62,7 +72,7 @@ export function resolveJobLogDestinations(job: JobRunSummary): JobLogDestination
   if (cloudWatchConfig?.logGroupName?.trim()) {
     destinations.cloudWatch = {
       logGroupName: cloudWatchConfig.logGroupName.trim(),
-      streamNamePrefix: cloudWatchConfig.logStreamNamePrefix?.trim() || undefined
+      streamNamePrefix: buildJobCloudWatchStreamPrefix(cloudWatchConfig.logStreamNamePrefix, job.virtualClusterId, job.id)
     };
   }
 

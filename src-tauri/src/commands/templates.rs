@@ -1,6 +1,8 @@
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
-use crate::models::{ApplicationTemplate, ResourceTemplate, TemplateMutationRequest, TemplatesResponse};
+use crate::models::{
+    ApplicationTemplate, ResourceTemplate, TemplateMutationRequest, TemplatesResponse,
+};
 use crate::state::{default_application_template, default_resource_templates};
 
 #[tauri::command]
@@ -90,7 +92,11 @@ pub async fn duplicate_template(request: TemplateMutationRequest) -> AppResult<T
             copy.built_in = false;
             repository::upsert_resource_template(&pool, &copy).await?;
         }
-        _ => return Err(AppError::validation("Template type must be application or resource.")),
+        _ => {
+            return Err(AppError::validation(
+                "Template type must be application or resource.",
+            ))
+        }
     }
 
     list_templates().await
