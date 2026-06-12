@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AwsAccountCredentialsInput, AwsCredentialsInput } from "@/types/domain";
+import type { AwsAccountCredentialsInput, AwsCredentialsInput, ImportAwsCliProfileRequest } from "@/types/domain";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
 
 export function useAwsSettings() {
@@ -16,11 +16,30 @@ export function useAwsAccounts() {
   });
 }
 
+export function useAwsCliProfiles() {
+  return useQuery({
+    queryKey: ["aws-cli-profiles"],
+    queryFn: awsCredentialsService.listCliProfiles
+  });
+}
+
 export function useCreateAwsAccount() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (account: AwsAccountCredentialsInput) => awsCredentialsService.createAccount(account),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });
+    }
+  });
+}
+
+export function useImportAwsCliProfile() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (request: ImportAwsCliProfileRequest) => awsCredentialsService.importCliProfile(request),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
       void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });

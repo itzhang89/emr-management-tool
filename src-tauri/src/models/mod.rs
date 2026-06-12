@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct AwsCredentialsInput {
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub session_token: Option<String>,
     pub region: String,
 }
 
@@ -69,7 +70,26 @@ pub struct AwsAccountCredentialsInput {
     pub name: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub session_token: Option<String>,
     pub region: String,
+    pub make_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsCliProfileSummary {
+    pub profile_name: String,
+    pub region: Option<String>,
+    pub access_key_id_masked: Option<String>,
+    pub can_import: bool,
+    pub import_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAwsCliProfileRequest {
+    pub profile_name: String,
+    pub name: Option<String>,
     pub make_active: bool,
 }
 

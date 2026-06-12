@@ -4,10 +4,11 @@ use crate::error::{AppError, AppResult};
 use crate::models::{AwsCommandContext, S3Bucket, S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3TextObject};
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::Utc;
+use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn list_s3_buckets() -> AppResult<Vec<S3Bucket>> {
-    let runtime = runtime_for_context(AwsCommandContext { account_id: None }).await?;
+pub async fn list_s3_buckets(app: AppHandle) -> AppResult<Vec<S3Bucket>> {
+    let runtime = runtime_for_context(&app, AwsCommandContext { account_id: None }).await?;
     let client = aws_sdk_s3::Client::new(&runtime.config);
     let response = client
         .list_buckets()
@@ -26,12 +27,12 @@ pub async fn list_s3_buckets() -> AppResult<Vec<S3Bucket>> {
 }
 
 #[tauri::command]
-pub async fn list_s3_objects(request: S3ListObjectsRequest) -> AppResult<Vec<S3ObjectEntry>> {
+pub async fn list_s3_objects(app: AppHandle, request: S3ListObjectsRequest) -> AppResult<Vec<S3ObjectEntry>> {
     if request.bucket.trim().is_empty() {
         return Err(AppError::validation("Bucket is required."));
     }
 
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -69,8 +70,8 @@ pub async fn list_s3_objects(request: S3ListObjectsRequest) -> AppResult<Vec<S3O
 }
 
 #[tauri::command]
-pub async fn get_s3_text_object(request: S3ObjectRequest) -> AppResult<S3TextObject> {
-    let runtime = runtime_for_context(AwsCommandContext {
+pub async fn get_s3_text_object(app: AppHandle, request: S3ObjectRequest) -> AppResult<S3TextObject> {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -112,7 +113,7 @@ pub async fn get_s3_text_object(request: S3ObjectRequest) -> AppResult<S3TextObj
 }
 
 #[tauri::command]
-pub async fn put_s3_text_object(request: S3TextObject) -> AppResult<S3TextObject> {
+pub async fn put_s3_text_object(app: AppHandle, request: S3TextObject) -> AppResult<S3TextObject> {
     let editability = s3_object_editability(&request.key, request.content.len() as u64);
     if !editability.editable {
         return Err(AppError::validation(
@@ -120,7 +121,7 @@ pub async fn put_s3_text_object(request: S3TextObject) -> AppResult<S3TextObject
         ));
     }
 
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -149,8 +150,8 @@ pub async fn put_s3_text_object(request: S3TextObject) -> AppResult<S3TextObject
 }
 
 #[tauri::command]
-pub async fn upload_s3_object(request: S3TextObject) -> AppResult<S3ObjectEntry> {
-    let saved = put_s3_text_object(request).await?;
+pub async fn upload_s3_object(app: AppHandle, request: S3TextObject) -> AppResult<S3ObjectEntry> {
+    let saved = put_s3_text_object(app, request).await?;
     Ok(object(
         &saved.bucket,
         saved.key,
@@ -162,17 +163,17 @@ pub async fn upload_s3_object(request: S3TextObject) -> AppResult<S3ObjectEntry>
 }
 
 #[tauri::command]
-pub async fn download_s3_object(request: S3ObjectRequest) -> AppResult<S3TextObject> {
-    get_s3_text_object(request).await
+pub async fn download_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppResult<S3TextObject> {
+    get_s3_text_object(app, request).await
 }
 
 #[tauri::command]
-pub async fn delete_s3_object(request: S3ObjectRequest) -> AppResult<()> {
+pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppResult<()> {
     if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
         return Err(AppError::validation("Bucket and key are required."));
     }
 
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;

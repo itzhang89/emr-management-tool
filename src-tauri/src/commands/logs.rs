@@ -2,14 +2,15 @@ use crate::aws::runtime::runtime_for_context;
 use crate::error::{AppError, AppResult};
 use crate::models::{AwsCommandContext, JobLogsRequest, JobLogsResponse, LogEntry};
 use chrono::{TimeZone, Utc};
+use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn get_job_logs(request: JobLogsRequest) -> AppResult<JobLogsResponse> {
+pub async fn get_job_logs(app: AppHandle, request: JobLogsRequest) -> AppResult<JobLogsResponse> {
     if request.job_id.trim().is_empty() {
         return Err(AppError::validation("Job id is required to load logs."));
     }
 
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;

@@ -9,6 +9,7 @@ use state::AppState;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::credentials::test_aws_credentials,
@@ -20,6 +21,8 @@ pub fn run() {
             commands::credentials::set_active_aws_account,
             commands::credentials::delete_aws_account,
             commands::credentials::clear_aws_account_credentials,
+            commands::credentials::list_aws_cli_profiles,
+            commands::credentials::import_aws_cli_profile,
             commands::emr::list_virtual_clusters,
             commands::emr::list_job_runs,
             commands::emr::describe_job_run,

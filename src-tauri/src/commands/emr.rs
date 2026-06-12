@@ -7,10 +7,11 @@ use crate::models::{
 };
 use aws_sdk_emrcontainers::types::{ContainerInfo, JobDriver, SparkSubmitJobDriver};
 use chrono::Utc;
+use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn list_virtual_clusters(request: ListVirtualClustersRequest) -> AppResult<ListVirtualClustersResponse> {
-    let runtime = runtime_for_context(AwsCommandContext {
+pub async fn list_virtual_clusters(app: AppHandle, request: ListVirtualClustersRequest) -> AppResult<ListVirtualClustersResponse> {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -41,9 +42,9 @@ pub async fn list_virtual_clusters(request: ListVirtualClustersRequest) -> AppRe
 }
 
 #[tauri::command]
-pub async fn list_job_runs(_request: JobRunRequest) -> AppResult<Vec<JobRunSummary>> {
+pub async fn list_job_runs(app: AppHandle, _request: JobRunRequest) -> AppResult<Vec<JobRunSummary>> {
     let request = _request;
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -78,12 +79,12 @@ pub async fn list_job_runs(_request: JobRunRequest) -> AppResult<Vec<JobRunSumma
 }
 
 #[tauri::command]
-pub async fn describe_job_run(request: JobRunRequest) -> AppResult<JobRunSummary> {
+pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResult<JobRunSummary> {
     let account_id = request.account_id.clone();
     let id = request
         .id
         .ok_or_else(|| AppError::validation("Job id is required."))?;
-    let runtime = runtime_for_context(AwsCommandContext { account_id }).await?;
+    let runtime = runtime_for_context(&app, AwsCommandContext { account_id }).await?;
 
     let pool = repository::pool().await?;
     let Some(virtual_cluster_id) = request.virtual_cluster_id else {
@@ -111,9 +112,9 @@ pub async fn describe_job_run(request: JobRunRequest) -> AppResult<JobRunSummary
 }
 
 #[tauri::command]
-pub async fn start_job_run(request: StartJobRunRequest) -> AppResult<JobRunSummary> {
+pub async fn start_job_run(app: AppHandle, request: StartJobRunRequest) -> AppResult<JobRunSummary> {
     validate_start_job_request(&request)?;
-    let runtime = runtime_for_context(AwsCommandContext {
+    let runtime = runtime_for_context(&app, AwsCommandContext {
         account_id: request.account_id.clone(),
     })
     .await?;
@@ -158,7 +159,7 @@ pub async fn start_job_run(request: StartJobRunRequest) -> AppResult<JobRunSumma
 }
 
 #[tauri::command]
-pub async fn cancel_job_run(request: JobRunRequest) -> AppResult<JobRunSummary> {
+pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult<JobRunSummary> {
     let account_id = request.account_id.clone();
     let id = request
         .id
@@ -166,7 +167,7 @@ pub async fn cancel_job_run(request: JobRunRequest) -> AppResult<JobRunSummary> 
     let virtual_cluster_id = request
         .virtual_cluster_id
         .ok_or_else(|| AppError::validation("Virtual cluster id is required."))?;
-    let runtime = runtime_for_context(AwsCommandContext { account_id }).await?;
+    let runtime = runtime_for_context(&app, AwsCommandContext { account_id }).await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
     client
         .cancel_job_run()
