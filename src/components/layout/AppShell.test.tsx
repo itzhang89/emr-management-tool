@@ -97,7 +97,7 @@ describe("AppShell", () => {
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     expect(screen.getByRole("heading", { name: "Logs" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("/aws/emr-containers/jobs/job-running")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("job-running")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });
 });

@@ -1,60 +1,54 @@
-import { Archive, Cloud, Copy, Download, RefreshCw, Search } from "lucide-react";
+import { Archive, Cloud, Download } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useDescribeJobRun } from "@/hooks/useEmr";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
 import { cn } from "@/lib/utils";
 import { buildEmrLogTree } from "@/services/emrLogTree";
+import { defaultCloudWatchDestination, resolveJobLogDestinations } from "@/services/jobLogDestinations";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
 
 export function LogsPage() {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
-  const selectedJobLogGroupName = useSessionStore((state) => state.selectedJobLogGroupName);
-  const selectedJobLogStreamNamePrefix = useSessionStore((state) => state.selectedJobLogStreamNamePrefix);
-  const selectedS3Bucket = useSessionStore((state) => state.selectedS3Bucket);
-  const selectedS3Prefix = useSessionStore((state) => state.selectedS3Prefix);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [search, setSearch] = useState("");
-  const [logGroupName, setLogGroupName] = useState(selectedJobLogGroupName ?? "");
-  const [streamNamePrefix, setStreamNamePrefix] = useState(selectedJobLogStreamNamePrefix ?? "");
-  const [nextToken, setNextToken] = useState<string | undefined>();
-  const [activeSource, setActiveSource] = useState<"cloudwatch" | "s3">(selectedS3Bucket ? "s3" : "cloudwatch");
+  const selectedJobVirtualClusterId = useSessionStore((state) => state.selectedJobVirtualClusterId);
+  const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
+  const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? selectedVirtualClusterId);
+  const destinations = useMemo(() => {
+    if (!describedJob.data) return {};
+    const resolved = resolveJobLogDestinations(describedJob.data);
+    return resolved.cloudWatch || resolved.s3 ? resolved : { cloudWatch: defaultCloudWatchDestination(describedJob.data) };
+  }, [describedJob.data]);
+  const cloudWatchDestination = destinations.cloudWatch;
+  const s3Destination = destinations.s3;
+  const [activeSource, setActiveSource] = useState<"cloudwatch" | "s3" | undefined>();
   const [selectedCloudWatchStream, setSelectedCloudWatchStream] = useState<string>();
   const [selectedS3Key, setSelectedS3Key] = useState<string>();
+  const resolvedActiveSource = activeSource ?? (cloudWatchDestination ? "cloudwatch" : s3Destination ? "s3" : "cloudwatch");
 
   useEffect(() => {
-    setLogGroupName(selectedJobLogGroupName ?? "");
-    setStreamNamePrefix(selectedJobLogStreamNamePrefix ?? "");
-    setNextToken(undefined);
+    setActiveSource(undefined);
     setSelectedCloudWatchStream(undefined);
-  }, [selectedJobId, selectedJobLogGroupName, selectedJobLogStreamNamePrefix]);
-  useEffect(() => {
-    if (selectedS3Bucket) {
-      setActiveSource("s3");
-      setSelectedS3Key(undefined);
-    }
-  }, [selectedS3Bucket, selectedS3Prefix]);
+    setSelectedS3Key(undefined);
+  }, [selectedJobId]);
   const logStreams = useJobLogStreams(
-    selectedJobId && logGroupName && streamNamePrefix
+    selectedJobId && cloudWatchDestination
       ? {
           jobId: selectedJobId,
-          logGroupName,
-          streamNamePrefix
+          logGroupName: cloudWatchDestination.logGroupName,
+          streamNamePrefix: cloudWatchDestination.streamNamePrefix ?? ""
         }
       : undefined,
-    autoRefresh
+    false
   );
   const s3LogObjects = useS3JobLogObjects(
-    selectedS3Bucket && selectedS3Prefix
+    s3Destination
       ? {
-          bucket: selectedS3Bucket,
-          prefix: selectedS3Prefix
+          bucket: s3Destination.bucket,
+          prefix: s3Destination.prefix
         }
       : undefined
   );
@@ -74,41 +68,37 @@ export function LogsPage() {
     }
   }, [s3LogObjects.data?.objects, selectedS3Key]);
   const logs = useJobLogs(
-    selectedJobId && activeSource === "cloudwatch" && selectedCloudWatchStream
+    selectedJobId && resolvedActiveSource === "cloudwatch" && selectedCloudWatchStream && cloudWatchDestination
       ? {
           jobId: selectedJobId,
-          nextForwardToken: nextToken,
-          logGroupName: logGroupName || undefined,
-          streamNamePrefix: streamNamePrefix || undefined,
-          logStreamName: selectedCloudWatchStream,
-          filterPattern: search || undefined
+          logGroupName: cloudWatchDestination.logGroupName,
+          streamNamePrefix: cloudWatchDestination.streamNamePrefix,
+          logStreamName: selectedCloudWatchStream
         }
       : undefined,
-    autoRefresh
+    false
   );
-  const s3LogObject = useS3JobLogObject(activeSource === "s3" ? selectedS3Bucket : undefined, selectedS3Key);
-  const logLines = useMemo(
-    () => {
-      const sourceLines =
-        activeSource === "cloudwatch"
-          ? (logs.data?.entries ?? []).map((entry) => `${entry.timestamp} ${entry.level.toUpperCase()} ${entry.message}`)
-          : (s3LogObject.data?.content ?? "").split("\n");
-      return sourceLines.filter((line) => line.toLowerCase().includes(search.toLowerCase()));
-    },
-    [activeSource, logs.data?.entries, s3LogObject.data?.content, search]
-  );
-
-  const logText = logLines.join("\n");
-  const copyLogs = async () => {
-    await navigator.clipboard?.writeText(logText);
-    toast.success("Logs copied.");
-  };
+  const s3LogObject = useS3JobLogObject(resolvedActiveSource === "s3" ? s3Destination?.bucket : undefined, selectedS3Key);
+  const logText =
+    resolvedActiveSource === "cloudwatch"
+      ? (logs.data?.entries ?? []).map((entry) => `${entry.timestamp} ${entry.level.toUpperCase()} ${entry.message}`).join("\n")
+      : s3LogObject.data?.content ?? "";
+  const selectedPath =
+    resolvedActiveSource === "cloudwatch"
+      ? selectedCloudWatchItem?.cloudWatchStreamName
+      : selectedS3Item && s3Destination
+        ? `s3://${s3Destination.bucket}/${selectedS3Item.s3Key}`
+        : undefined;
+  const selectedLabel = resolvedActiveSource === "cloudwatch" ? selectedCloudWatchItem?.label : selectedS3Item?.label;
   const downloadLogs = () => {
+    if (!logText) return;
     const url = URL.createObjectURL(new Blob([logText], { type: "text/plain" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${selectedJobId}-${activeSource}.log`;
+    link.download = sanitizeFileName(`${selectedJobId ?? "job"}-${selectedLabel ?? resolvedActiveSource}.log`);
+    document.body.appendChild(link);
     link.click();
+    link.remove();
     URL.revokeObjectURL(url);
   };
 
@@ -118,10 +108,6 @@ export function LogsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Logs</h1>
           <p className="text-sm text-muted-foreground">Browse driver, executor, and CloudWatch log streams.</p>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          Auto Refresh
-          <Switch aria-label="Auto refresh logs" checked={autoRefresh} onCheckedChange={setAutoRefresh} />
         </div>
       </div>
       <Card>
@@ -135,80 +121,46 @@ export function LogsPage() {
               Select a job from Job History to view logs.
             </p>
           ) : null}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-              <Input className="pl-9" placeholder="Search log text" value={search} onChange={(event) => setSearch(event.target.value)} />
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (activeSource === "cloudwatch") {
-                  void logStreams.refetch();
-                  void logs.refetch();
-                } else {
-                  void s3LogObjects.refetch();
-                  void s3LogObject.refetch();
-                }
-              }}
-            >
-              <RefreshCw data-icon="inline-start" />
-              Refresh
-            </Button>
-            <Button
-              variant="outline"
-              disabled={activeSource !== "cloudwatch" || !logs.data?.nextForwardToken}
-              onClick={() => setNextToken(logs.data?.nextForwardToken)}
-            >
-              Next
-            </Button>
-            <Button variant="outline" onClick={copyLogs}>
-              <Copy data-icon="inline-start" />
-              Copy
-            </Button>
-            <Button variant="outline" onClick={downloadLogs}>
+          {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job log configuration...</p> : null}
+          {describedJob.error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {errorMessage(describedJob.error)}
+            </p>
+          ) : null}
+          {!describedJob.isLoading && selectedJobId && !cloudWatchDestination && !s3Destination ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No CloudWatch or S3 monitoring configuration was found for this job.
+            </p>
+          ) : null}
+          <div className="flex justify-end">
+            <Button variant="outline" disabled={!logText} onClick={downloadLogs}>
               <Download data-icon="inline-start" />
-              Download
+              Download Current Log
             </Button>
           </div>
           <Tabs
-            value={activeSource}
+            value={resolvedActiveSource}
             onValueChange={(value) => {
-              setNextToken(undefined);
               setActiveSource(value as "cloudwatch" | "s3");
             }}
           >
             <TabsList>
-              <TabsTrigger value="cloudwatch">
+              <TabsTrigger value="cloudwatch" disabled={!cloudWatchDestination}>
                 <Cloud data-icon="inline-start" />
                 CloudWatch Live
               </TabsTrigger>
-              <TabsTrigger value="s3" disabled={!selectedS3Bucket || !selectedS3Prefix}>
+              <TabsTrigger value="s3" disabled={!s3Destination}>
                 <Archive data-icon="inline-start" />
                 S3 Archive
               </TabsTrigger>
             </TabsList>
             <TabsContent value="cloudwatch" className="mt-4">
-              <div className="mb-4 grid grid-cols-2 gap-2">
-                <Input
-                  placeholder={selectedJobId ? `/aws/emr-containers/jobs/${selectedJobId}` : "Manual CloudWatch log group"}
-                  value={logGroupName}
-                  onChange={(event) => {
-                    setNextToken(undefined);
-                    setSelectedCloudWatchStream(undefined);
-                    setLogGroupName(event.target.value);
-                  }}
-                />
-                <Input
-                  placeholder="Job-level stream prefix"
-                  value={streamNamePrefix}
-                  onChange={(event) => {
-                    setNextToken(undefined);
-                    setSelectedCloudWatchStream(undefined);
-                    setStreamNamePrefix(event.target.value);
-                  }}
-                />
-              </div>
+              <LogDestinationSummary
+                items={[
+                  ["Log group", cloudWatchDestination?.logGroupName],
+                  ["Stream prefix", cloudWatchDestination?.streamNamePrefix]
+                ]}
+              />
               {logStreams.isLoading || logs.isLoading ? <p className="text-sm text-muted-foreground">Loading CloudWatch logs...</p> : null}
               {logStreams.error || logs.error ? (
                 <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -219,19 +171,15 @@ export function LogsPage() {
                 tree={cloudWatchTree}
                 selectedId={selectedCloudWatchStream}
                 onSelect={(item) => {
-                  setNextToken(undefined);
                   setSelectedCloudWatchStream((item as JobLogStream).cloudWatchStreamName);
                 }}
-                selectedLabel={selectedCloudWatchItem?.label}
-                path={selectedCloudWatchItem?.cloudWatchStreamName}
+                selectedLabel={selectedLabel}
+                path={selectedPath}
                 logText={logText}
               />
             </TabsContent>
             <TabsContent value="s3" className="mt-4">
-              <div className="mb-4 rounded-md border bg-secondary/40 p-3 text-sm">
-                <div className="font-medium">S3 archive prefix</div>
-                <div className="break-all text-muted-foreground">s3://{selectedS3Bucket ?? "-"}/{selectedS3Prefix ?? ""}</div>
-              </div>
+              <LogDestinationSummary items={[["S3 archive prefix", s3Destination ? `s3://${s3Destination.bucket}/${s3Destination.prefix}` : undefined]]} />
               {s3LogObjects.isLoading || s3LogObject.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 archive logs...</p> : null}
               {s3LogObjects.error || s3LogObject.error ? (
                 <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -242,14 +190,27 @@ export function LogsPage() {
                 tree={s3Tree}
                 selectedId={selectedS3Key}
                 onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
-                selectedLabel={selectedS3Item?.label}
-                path={selectedS3Item ? `s3://${selectedS3Bucket}/${selectedS3Item.s3Key}` : undefined}
+                selectedLabel={selectedLabel}
+                path={selectedPath}
                 logText={logText}
               />
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function LogDestinationSummary({ items }: { items: Array<[string, string | undefined]> }) {
+  return (
+    <div className="mb-4 grid gap-2 rounded-md border bg-secondary/40 p-3 text-sm">
+      {items.map(([label, value]) => (
+        <div key={label}>
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="break-all font-medium">{value || "-"}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -313,7 +274,7 @@ function LogViewerLayout({
         </div>
         <ScrollArea className="h-[560px] bg-slate-950 p-4">
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100">
-            {logText || "No log lines match the current filters."}
+            {logText || "Select a log to view its content."}
           </pre>
         </ScrollArea>
       </div>
@@ -325,6 +286,10 @@ function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sanitizeFileName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "job.log";
 }
 
 function errorMessage(error: unknown) {
