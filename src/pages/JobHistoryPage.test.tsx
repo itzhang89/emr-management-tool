@@ -6,6 +6,8 @@ import type { JobRunSummary } from "@/types/domain";
 
 const mutate = vi.fn();
 const startMutate = vi.fn();
+const describeJob = vi.fn();
+let describedJob: JobRunSummary | undefined;
 
 vi.mock("@/hooks/useEmr", () => ({
   useJobRuns: () => ({
@@ -13,6 +15,14 @@ vi.mock("@/hooks/useEmr", () => ({
     isLoading: false,
     error: null
   }),
+  useDescribeJobRun: (id?: string, virtualClusterId?: string) => {
+    describeJob(id, virtualClusterId);
+    return {
+      data: describedJob,
+      isLoading: false,
+      error: null
+    };
+  },
   useCancelJobRun: () => ({
     mutate,
     isPending: false
@@ -29,6 +39,8 @@ describe("JobHistoryPage", () => {
   beforeEach(() => {
     mutate.mockClear();
     startMutate.mockClear();
+    describeJob.mockClear();
+    describedJob = undefined;
     jobs = makeJobs();
   });
 
@@ -72,10 +84,43 @@ describe("JobHistoryPage", () => {
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
     expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+    expect(describeJob).toHaveBeenCalledWith("job-running", "vc-1");
 
     await user.click(screen.getByRole("button", { name: /Copy Job ID/i }));
     expect(writeText).toHaveBeenCalledWith("job-running");
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+  });
+
+  it("shows describe_job_run details in the detail popover", async () => {
+    const user = userEvent.setup();
+    describedJob = {
+      ...jobs[0],
+      describeDetails: {
+        arn: "arn:aws:emr-containers:us-east-1:123456789012:/virtualclusters/vc-1/jobruns/job-running",
+        releaseLabel: "emr-7.2.0-latest",
+        executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+        stateDetails: "Job is running",
+        jobDriver: {
+          type: "sparkSubmit",
+          entryPoint: "s3://bucket/app.jar",
+          entryPointArguments: ["--date", "2026-06-10"],
+          sparkSubmitParameters: "--class Main"
+        },
+        tags: { owner: "analytics" }
+      }
+    };
+
+    render(<JobHistoryPage />);
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /Job Detail/i });
+    expect(within(dialog).getByRole("button", { name: /Copy Job ID/i })).toBeInTheDocument();
+    expect(within(dialog).getByText("emr-7.2.0-latest")).toBeInTheDocument();
+    expect(within(dialog).getByText("arn:aws:iam::123456789012:role/EMR")).toBeInTheDocument();
+    expect(within(dialog).getByText("Job is running")).toBeInTheDocument();
+    expect(within(dialog).getByText(/s3:\/\/bucket\/app.jar/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/"owner": "analytics"/)).toBeInTheDocument();
   });
 
   it("derives duration from timestamps and closes detail on outside click", async () => {

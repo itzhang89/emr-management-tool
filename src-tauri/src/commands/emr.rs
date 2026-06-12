@@ -2,8 +2,8 @@ use crate::aws::runtime::runtime_for_context;
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsCommandContext, JobRunRequest, JobRunSummary, ListVirtualClustersRequest, ListVirtualClustersResponse,
-    StartJobRunRequest, VirtualCluster,
+    AwsCommandContext, JobRunDescribeDetails, JobRunRequest, JobRunSummary, ListVirtualClustersRequest,
+    ListVirtualClustersResponse, StartJobRunRequest, VirtualCluster,
 };
 use aws_sdk_emrcontainers::types::{ContainerInfo, JobDriver, SparkSubmitJobDriver};
 use chrono::Utc;
@@ -106,7 +106,16 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
     let job_run = response
         .job_run()
         .ok_or_else(|| AppError::validation(format!("Job {id} was not returned by EMR.")))?;
-    let job = map_job_run(job_run, Some(runtime.account.id), Some(runtime.account.region));
+    let account_id = runtime.account.id.clone();
+    let region = runtime.account.region.clone();
+    let mut job = map_job_run(job_run, Some(account_id.clone()), Some(region));
+    if let Some(existing) = repository::list_job_history(&pool, Some(&account_id), Some(&virtual_cluster_id))
+        .await?
+        .into_iter()
+        .find(|existing| existing.id == id)
+    {
+        job.source_request = existing.source_request.or(job.source_request);
+    }
     repository::upsert_job_history(&pool, &job).await?;
     Ok(job)
 }
@@ -150,6 +159,7 @@ pub async fn start_job_run(app: AppHandle, request: StartJobRunRequest) -> AppRe
         finished_at: None,
         duration_seconds: None,
         source_request: Some(request),
+        describe_details: None,
     };
 
     let pool = repository::pool().await?;
@@ -195,6 +205,7 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
             finished_at: None,
             duration_seconds: None,
             source_request: None,
+            describe_details: None,
         });
     job.state = "CANCELLED".to_string();
     job.finished_at = Some(Utc::now().to_rfc3339());
@@ -290,7 +301,88 @@ fn map_job_run(
         finished_at: finished_at.clone(),
         duration_seconds: duration_seconds(&created_at, finished_at.as_deref()),
         source_request: None,
+        describe_details: Some(map_describe_details(job)),
     }
+}
+
+fn map_describe_details(job: &aws_sdk_emrcontainers::types::JobRun) -> JobRunDescribeDetails {
+    JobRunDescribeDetails {
+        arn: job.arn().map(ToString::to_string),
+        client_token: job.client_token().map(ToString::to_string),
+        execution_role_arn: job.execution_role_arn().map(ToString::to_string),
+        release_label: job.release_label().map(ToString::to_string),
+        created_by: job.created_by().map(ToString::to_string),
+        state_details: job.state_details().map(ToString::to_string),
+        failure_reason: job.failure_reason().map(|reason| reason.as_str().to_string()),
+        tags: job.tags().cloned(),
+        retry_max_attempts: job
+            .retry_policy_configuration()
+            .map(|config| config.max_attempts()),
+        retry_current_attempt_count: job
+            .retry_policy_execution()
+            .map(|execution| execution.current_attempt_count()),
+        job_driver: job.job_driver().and_then(map_job_driver),
+        configuration_overrides: job
+            .configuration_overrides()
+            .and_then(map_configuration_overrides),
+    }
+}
+
+fn map_configuration_overrides(
+    overrides: &aws_sdk_emrcontainers::types::ConfigurationOverrides,
+) -> Option<serde_json::Value> {
+    let application_configuration = overrides
+        .application_configuration()
+        .iter()
+        .map(map_configuration)
+        .collect::<Vec<_>>();
+    let monitoring_configuration = overrides
+        .monitoring_configuration()
+        .map(|monitoring| {
+            serde_json::json!({
+                "persistentAppUi": monitoring.persistent_app_ui().map(|value| format!("{value:?}")),
+                "cloudWatchMonitoringConfiguration": monitoring.cloud_watch_monitoring_configuration().map(|value| format!("{value:?}")),
+                "s3MonitoringConfiguration": monitoring.s3_monitoring_configuration().map(|value| format!("{value:?}")),
+            })
+        });
+
+    if application_configuration.is_empty() && monitoring_configuration.is_none() {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "applicationConfiguration": application_configuration,
+        "monitoringConfiguration": monitoring_configuration,
+    }))
+}
+
+fn map_configuration(config: &aws_sdk_emrcontainers::types::Configuration) -> serde_json::Value {
+    serde_json::json!({
+        "classification": config.classification(),
+        "properties": config.properties(),
+        "configurations": config.configurations().iter().map(map_configuration).collect::<Vec<_>>(),
+    })
+}
+
+fn map_job_driver(job_driver: &aws_sdk_emrcontainers::types::JobDriver) -> Option<serde_json::Value> {
+    if let Some(spark_submit) = job_driver.spark_submit_job_driver() {
+        return Some(serde_json::json!({
+            "type": "sparkSubmit",
+            "entryPoint": spark_submit.entry_point(),
+            "entryPointArguments": spark_submit.entry_point_arguments(),
+            "sparkSubmitParameters": spark_submit.spark_submit_parameters(),
+        }));
+    }
+
+    if let Some(spark_sql) = job_driver.spark_sql_job_driver() {
+        return Some(serde_json::json!({
+            "type": "sparkSql",
+            "entryPoint": spark_sql.entry_point(),
+            "sparkSqlParameters": spark_sql.spark_sql_parameters(),
+        }));
+    }
+
+    None
 }
 
 fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> {
@@ -298,4 +390,62 @@ fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> 
     let start = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
     let end = chrono::DateTime::parse_from_rfc3339(finished_at).ok()?;
     Some((end - start).num_seconds().max(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_job_run;
+    use aws_sdk_emrcontainers::types::{JobRun, JobRunState, RetryPolicyConfiguration, RetryPolicyExecution, SparkSubmitJobDriver};
+
+    #[test]
+    fn maps_describe_job_run_details_without_dropping_remote_fields() {
+        let job_driver = aws_sdk_emrcontainers::types::JobDriver::builder()
+            .spark_submit_job_driver(
+                SparkSubmitJobDriver::builder()
+                    .entry_point("s3://bucket/app.jar")
+                    .entry_point_arguments("--date")
+                    .entry_point_arguments("2026-06-10")
+                    .spark_submit_parameters("--class Main")
+                    .build()
+                    .expect("spark driver builds"),
+            )
+            .build();
+        let job = JobRun::builder()
+            .id("job-running")
+            .name("running-etl")
+            .virtual_cluster_id("vc-1")
+            .arn("arn:aws:emr-containers:us-east-1:123456789012:/virtualclusters/vc-1/jobruns/job-running")
+            .state(JobRunState::Running)
+            .client_token("client-token")
+            .execution_role_arn("arn:aws:iam::123456789012:role/EMR")
+            .release_label("emr-7.2.0-latest")
+            .job_driver(job_driver)
+            .created_by("tester")
+            .state_details("Job is running")
+            .tags("owner", "analytics")
+            .retry_policy_configuration(
+                RetryPolicyConfiguration::builder()
+                    .max_attempts(3)
+                    .build()
+                    .expect("retry config builds"),
+            )
+            .retry_policy_execution(
+                RetryPolicyExecution::builder()
+                    .current_attempt_count(1)
+                    .build()
+                    .expect("retry execution builds"),
+            )
+            .build();
+
+        let summary = map_job_run(&job, Some("account".to_string()), Some("us-east-1".to_string()));
+        let details = summary.describe_details.expect("describe details exist");
+
+        assert_eq!(details.release_label.as_deref(), Some("emr-7.2.0-latest"));
+        assert_eq!(details.execution_role_arn.as_deref(), Some("arn:aws:iam::123456789012:role/EMR"));
+        assert_eq!(details.state_details.as_deref(), Some("Job is running"));
+        assert_eq!(details.retry_max_attempts, Some(3));
+        assert_eq!(details.retry_current_attempt_count, Some(1));
+        assert_eq!(details.tags.as_ref().and_then(|values| values.get("owner")).map(String::as_str), Some("analytics"));
+        assert_eq!(details.job_driver.as_ref().and_then(|value| value.get("entryPoint")).and_then(|value| value.as_str()), Some("s3://bucket/app.jar"));
+    }
 }
