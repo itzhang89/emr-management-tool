@@ -127,6 +127,23 @@ pub struct ListVirtualClustersResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JobRunDescribeDetails {
+    pub arn: Option<String>,
+    pub client_token: Option<String>,
+    pub execution_role_arn: Option<String>,
+    pub release_label: Option<String>,
+    pub created_by: Option<String>,
+    pub state_details: Option<String>,
+    pub failure_reason: Option<String>,
+    pub tags: Option<HashMap<String, String>>,
+    pub retry_max_attempts: Option<i32>,
+    pub retry_current_attempt_count: Option<i32>,
+    pub job_driver: Option<serde_json::Value>,
+    pub configuration_overrides: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobRunSummary {
     pub id: String,
     pub name: String,
@@ -140,6 +157,7 @@ pub struct JobRunSummary {
     pub finished_at: Option<String>,
     pub duration_seconds: Option<i64>,
     pub source_request: Option<StartJobRunRequest>,
+    pub describe_details: Option<JobRunDescribeDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

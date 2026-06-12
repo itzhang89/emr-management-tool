@@ -88,6 +88,29 @@ export interface ListVirtualClustersResponse {
 
 export type JobState = "PENDING" | "SUBMITTED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
+export interface JobRunDescribeJobDriver {
+  type: "sparkSubmit" | "sparkSql";
+  entryPoint?: string;
+  entryPointArguments?: string[];
+  sparkSubmitParameters?: string;
+  sparkSqlParameters?: string;
+}
+
+export interface JobRunDescribeDetails {
+  arn?: string;
+  clientToken?: string;
+  executionRoleArn?: string;
+  releaseLabel?: string;
+  createdBy?: string;
+  stateDetails?: string;
+  failureReason?: string;
+  tags?: Record<string, string>;
+  retryMaxAttempts?: number;
+  retryCurrentAttemptCount?: number;
+  jobDriver?: JobRunDescribeJobDriver;
+  configurationOverrides?: Record<string, unknown>;
+}
+
 export interface JobRunSummary {
   id: string;
   name: string;
@@ -101,6 +124,7 @@ export interface JobRunSummary {
   finishedAt?: string;
   durationSeconds?: number;
   sourceRequest?: StartJobRunRequest;
+  describeDetails?: JobRunDescribeDetails;
 }
 
 export interface SparkResourceConfig {
