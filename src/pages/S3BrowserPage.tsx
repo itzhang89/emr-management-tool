@@ -18,16 +18,19 @@ import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError } from "@/types/domain";
 
+const lastS3PathStorageKey = "emr-eks:last-s3-path";
+
 export function S3BrowserPage() {
   const selectedS3Bucket = useSessionStore((state) => state.selectedS3Bucket);
   const selectedS3Prefix = useSessionStore((state) => state.selectedS3Prefix);
   const buckets = useS3Buckets();
-  const [bucket, setBucket] = useState<string>();
+  const [bucket, setBucket] = useState<string | undefined>(() => readLastS3Path()?.bucket);
+  const [prefix, setPrefix] = useState(() => readLastS3Path()?.prefix ?? "");
   const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
-  const [prefix, setPrefix] = useState(selectedS3Prefix ?? "");
   const currentS3Path = formatS3Path(selectedBucket, prefix);
+  const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
   const [editingPath, setEditingPath] = useState(false);
-  const [pathInput, setPathInput] = useState(currentS3Path);
+  const [pathInput, setPathInput] = useState(formatPathInput(selectedBucket, prefix));
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
   const selectedObject = useMemo(
@@ -52,14 +55,22 @@ export function S3BrowserPage() {
 
   useEffect(() => {
     if (!editingPath) {
-      setPathInput(currentS3Path);
+      setPathInput(formatPathInput(selectedBucket, prefix));
     }
-  }, [currentS3Path, editingPath]);
+  }, [editingPath, prefix, selectedBucket]);
 
   useEffect(() => {
-    setPrefix(selectedS3Prefix ?? "");
-    setSelectedKey(undefined);
+    if (selectedS3Bucket !== undefined || selectedS3Prefix !== undefined) {
+      setPrefix(selectedS3Prefix ?? "");
+      setSelectedKey(undefined);
+    }
   }, [selectedS3Bucket, selectedS3Prefix]);
+
+  useEffect(() => {
+    if (selectedBucket) {
+      writeLastS3Path(selectedBucket, prefix);
+    }
+  }, [prefix, selectedBucket]);
 
   useEffect(() => {
     if (!selectedKey && objects.data?.[0]) {
@@ -119,9 +130,9 @@ export function S3BrowserPage() {
 
   const openPath = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const parsed = parseS3Path(pathInput);
+    const parsed = parseS3PathInput(pathInput);
     if (!parsed) {
-      setPathInput(currentS3Path);
+      setPathInput(formatPathInput(selectedBucket, prefix));
       setEditingPath(false);
       return;
     }
@@ -174,20 +185,21 @@ export function S3BrowserPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               {editingPath ? (
-                <form className="flex min-w-0 flex-1" onSubmit={openPath}>
+                <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={openPath}>
+                  <span className="text-muted-foreground">s3://</span>
                   <Input
                     autoFocus
                     list="s3-path-options"
                     value={pathInput}
                     onChange={(event) => setPathInput(event.target.value)}
                     onBlur={() => {
-                      setPathInput(currentS3Path);
+                      setPathInput(formatPathInput(selectedBucket, prefix));
                       setEditingPath(false);
                     }}
                   />
                   <datalist id="s3-path-options">
                     {(buckets.data ?? []).map((entry) => (
-                      <option key={entry.name} value={`s3://${entry.name}/`}>
+                      <option key={entry.name} value={`${entry.name}/`}>
                         {entry.name}
                       </option>
                     ))}
@@ -196,13 +208,14 @@ export function S3BrowserPage() {
               ) : (
                 <button
                   type="button"
+                  title={currentS3Path}
                   className="min-w-0 break-all rounded-sm text-left hover:underline"
                   onClick={() => {
-                    setPathInput(currentS3Path);
+                    setPathInput(formatPathInput(selectedBucket, prefix));
                     setEditingPath(true);
                   }}
                 >
-                  {currentS3Path}
+                  {displayedS3Path}
                 </button>
               )}
               <Button
@@ -310,14 +323,52 @@ function formatS3Path(bucket: string | undefined, prefix: string) {
   return bucket ? `s3://${bucket}/${prefix}` : "s3://";
 }
 
-function parseS3Path(value: string) {
-  const match = /^s3:\/\/([^/\s]+)\/?(.*)$/.exec(value.trim());
+function formatCompactS3Path(bucket: string | undefined, prefix: string) {
+  if (!bucket) return "s3://";
+  const parts = prefix.split("/").filter(Boolean);
+  if (parts.length <= 2) return formatS3Path(bucket, prefix);
+  return `s3://${bucket}/.../${parts.slice(-2).join("/")}/`;
+}
+
+function formatPathInput(bucket: string | undefined, prefix: string) {
+  return bucket ? `${bucket}/${prefix}` : "";
+}
+
+function parseS3PathInput(value: string) {
+  const trimmed = value.trim();
+  const withoutScheme = trimmed.startsWith("s3://") ? trimmed.slice("s3://".length) : trimmed;
+  const match = /^([^/\s]+)\/?(.*)$/.exec(withoutScheme);
   if (!match) return undefined;
   const prefix = match[2] ?? "";
   return {
     bucket: match[1],
     prefix: prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
   };
+}
+
+function readLastS3Path() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(lastS3PathStorageKey);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { bucket?: unknown; prefix?: unknown };
+    if (typeof parsed.bucket !== "string" || !parsed.bucket.trim()) return undefined;
+    return {
+      bucket: parsed.bucket,
+      prefix: typeof parsed.prefix === "string" ? parsed.prefix : ""
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeLastS3Path(bucket: string, prefix: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(lastS3PathStorageKey, JSON.stringify({ bucket, prefix }));
+  } catch {
+    // Local storage can be unavailable in hardened browser contexts.
+  }
 }
 
 function errorMessage(error: unknown, fallback: string) {
