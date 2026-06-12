@@ -119,6 +119,7 @@ pub async fn get_job_logs(app: AppHandle, request: JobLogsRequest) -> AppResult<
         .send()
         .await
         .map_err(|error| AppError::aws_for_account("cloudwatchlogs", runtime.account.id, error))?;
+
     let entries = response
         .events()
         .iter()
@@ -175,24 +176,25 @@ fn normalize_json_message(value: &Value) -> Option<NormalizedLogMessage> {
                 .iter()
                 .find_map(|key| object.get(*key));
             let Some(message_value) = message_value else {
-                return serde_json::to_string(value)
-                    .ok()
-                    .map(|message| normalized_message_from_string(&message, explicit_level));
+                return normalized_json_fallback(value, explicit_level);
             };
 
             match message_value {
                 Value::String(message) => {
                     Some(normalized_message_from_string(message, explicit_level))
                 }
-                nested => serde_json::to_string(nested)
-                    .ok()
-                    .map(|message| normalized_message_from_string(&message, explicit_level)),
+                nested => normalized_json_fallback(nested, explicit_level),
             }
         }
-        _ => serde_json::to_string(value)
-            .ok()
-            .map(|message| normalized_message_from_string(&message, None)),
+        _ => normalized_json_fallback(value, None),
     }
+}
+
+fn normalized_json_fallback(value: &Value, explicit_level: Option<&str>) -> Option<NormalizedLogMessage> {
+    let message = serde_json::to_string(value).ok()?;
+    let level = normalize_level(explicit_level, &message)
+        .unwrap_or_else(|| infer_level(&message).to_string());
+    Some(NormalizedLogMessage { message, level })
 }
 
 fn normalized_message_from_string(
@@ -384,6 +386,17 @@ mod tests {
             "2026-06-10 00:00:00 WARN Retrying failed task"
         );
         assert_eq!(normalized.level, "warn");
+    }
+
+    #[test]
+    fn normalizes_json_without_message_field_without_recursing() {
+        let normalized = normalize_event_message(r#"{"time":"2026-06-12T16:33:32+00:00"}"#);
+
+        assert_eq!(
+            normalized.message,
+            r#"{"time":"2026-06-12T16:33:32+00:00"}"#
+        );
+        assert_eq!(normalized.level, "info");
     }
 
     #[test]

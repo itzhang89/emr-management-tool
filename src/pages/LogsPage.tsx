@@ -69,11 +69,6 @@ export function LogsPage() {
     [s3LogObjects.data?.objects, selectedS3Key]
   );
   useEffect(() => {
-    if (!selectedCloudWatchStream && logStreams.data?.streams[0]) {
-      setSelectedCloudWatchStream(logStreams.data.streams[0].cloudWatchStreamName);
-    }
-  }, [logStreams.data?.streams, selectedCloudWatchStream]);
-  useEffect(() => {
     if (!selectedS3Key && s3LogObjects.data?.objects[0]) {
       setSelectedS3Key(s3LogObjects.data.objects[0].s3Key);
     }
