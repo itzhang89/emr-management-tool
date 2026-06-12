@@ -65,8 +65,7 @@ describe("JobHistoryPage", () => {
     useSessionStore.setState({
       selectedVirtualClusterId: "vc-1",
       selectedJobId: undefined,
-      selectedJobLogGroupName: undefined,
-      selectedJobLogStreamNamePrefix: undefined,
+      selectedJobVirtualClusterId: undefined,
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
@@ -165,90 +164,19 @@ describe("JobHistoryPage", () => {
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
   });
 
-  it("routes cloudwatch-only jobs to the logs page using describe monitoring configuration", async () => {
+  it("opens logs with only the job context and lets Logs resolve destinations", async () => {
     const user = userEvent.setup();
     const onOpenLogs = vi.fn();
-    describeJobRun.mockResolvedValue({
-      ...jobs[0],
-      describeDetails: {
-        configurationOverrides: {
-          monitoringConfiguration: {
-            cloudWatchMonitoringConfiguration: {
-              logGroupName: "/aws/emr-containers/jobs/custom",
-              logStreamNamePrefix: "custom-prefix"
-            }
-          }
-        }
-      }
-    });
 
     renderJobHistoryPage({ onOpenLogs });
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
-    expect(describeJobRun).toHaveBeenCalledWith("job-running", "vc-1");
+    expect(describeJobRun).not.toHaveBeenCalled();
     expect(useSessionStore.getState().selectedJobId).toBe("job-running");
-    expect(useSessionStore.getState().selectedJobLogGroupName).toBe("/aws/emr-containers/jobs/custom");
-    expect(useSessionStore.getState().selectedJobLogStreamNamePrefix).toBe("custom-prefix/vc-1/jobs/job-running/");
+    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
     expect(onOpenLogs).toHaveBeenCalled();
     expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
-  });
-
-  it("routes s3-only jobs to the s3 browser using describe monitoring configuration", async () => {
-    const user = userEvent.setup();
-    const onOpenS3 = vi.fn();
-    describeJobRun.mockResolvedValue({
-      ...jobs[0],
-      describeDetails: {
-        configurationOverrides: {
-          monitoringConfiguration: {
-            s3MonitoringConfiguration: {
-              logUri: "s3://logs-bucket/emr/"
-            }
-          }
-        }
-      }
-    });
-
-    renderJobHistoryPage({ onOpenS3 });
-
-    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
-
-    expect(useSessionStore.getState().selectedS3Bucket).toBe("logs-bucket");
-    expect(useSessionStore.getState().selectedS3Prefix).toBe("emr/vc-1/jobs/job-running/");
-    expect(onOpenS3).toHaveBeenCalled();
-    expect(useSessionStore.getState().selectedJobLogGroupName).toBeUndefined();
-  });
-
-  it("offers both cloudwatch and s3 destinations when monitoring configures both", async () => {
-    const user = userEvent.setup();
-    const onOpenLogs = vi.fn();
-    const onOpenS3 = vi.fn();
-    describeJobRun.mockResolvedValue({
-      ...jobs[0],
-      describeDetails: {
-        configurationOverrides: {
-          monitoringConfiguration: {
-            cloudWatchMonitoringConfiguration: {
-              logGroupName: "/aws/emr-containers/jobs/custom"
-            },
-            s3MonitoringConfiguration: {
-              logUri: "s3://logs-bucket/emr/"
-            }
-          }
-        }
-      }
-    });
-
-    renderJobHistoryPage({ onOpenLogs, onOpenS3 });
-
-    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
-    expect(screen.getByText(/Choose a log destination/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /S3 Archive/i }));
-    expect(useSessionStore.getState().selectedS3Bucket).toBe("logs-bucket");
-    expect(useSessionStore.getState().selectedS3Prefix).toBe("emr/vc-1/jobs/job-running/");
-    expect(onOpenS3).toHaveBeenCalled();
   });
 });
 

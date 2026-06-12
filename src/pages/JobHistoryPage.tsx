@@ -1,6 +1,5 @@
-import { Copy, FileText, FolderOpen, Play, Search, Skull, ZoomIn } from "lucide-react";
+import { Copy, FileText, Play, Search, Skull, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,20 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
-import { emrService } from "@/services/emrService";
-import {
-  defaultCloudWatchDestination,
-  resolveJobLogDestinations,
-  type CloudWatchLogDestination,
-  type JobLogDestinations,
-  type S3LogDestination
-} from "@/services/jobLogDestinations";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
 const pageSize = 10;
 
-export function JobHistoryPage({ onOpenLogs, onOpenS3 }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
+export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
@@ -101,7 +92,7 @@ export function JobHistoryPage({ onOpenLogs, onOpenS3 }: { onOpenLogs?: () => vo
                         <ZoomIn data-icon="inline-start" />
                         Detail
                       </Button>
-                      <JobLogActions job={job} onOpenLogs={onOpenLogs} onOpenS3={onOpenS3} />
+                      <JobLogActions job={job} onOpenLogs={onOpenLogs} />
                       {job.state === "RUNNING" ? (
                       <Button
                         variant="ghost"
@@ -179,117 +170,21 @@ export function JobHistoryPage({ onOpenLogs, onOpenS3 }: { onOpenLogs?: () => vo
   );
 }
 
-function JobLogActions({
-  job,
-  onOpenLogs,
-  onOpenS3
-}: {
-  job: JobRunSummary;
-  onOpenLogs?: () => void;
-  onOpenS3?: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
+function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: () => void }) {
   const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
-  const setSelectedS3Location = useSessionStore((state) => state.setSelectedS3Location);
-  const [loading, setLoading] = useState(false);
-  const [choice, setChoice] = useState<{ destinations: JobLogDestinations } | undefined>();
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!choice) return;
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        setChoice(undefined);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [choice]);
-
-  const openCloudWatch = (destination: CloudWatchLogDestination) => {
-    setSelectedJobForLogs(job.id, destination.logGroupName, destination.streamNamePrefix);
-    onOpenLogs?.();
-  };
-
-  const openS3 = (destination: S3LogDestination) => {
-    setSelectedJobId(job.id);
-    setSelectedS3Location(destination.bucket, destination.prefix);
-    onOpenS3?.();
-  };
-
-  const resolveDestinations = async () => {
-    const described = await queryClient.fetchQuery({
-      queryKey: ["job-run", job.id, job.virtualClusterId],
-      queryFn: () => emrService.describeJobRun(job.id, job.virtualClusterId)
-    });
-    return resolveJobLogDestinations(described);
-  };
-
-  const handleLogsClick = async () => {
-    setLoading(true);
-    try {
-      const destinations = await resolveDestinations();
-      const hasCloudWatch = Boolean(destinations.cloudWatch);
-      const hasS3 = Boolean(destinations.s3);
-
-      if (hasCloudWatch && hasS3) {
-        setChoice({ destinations });
-        return;
-      }
-
-      if (hasCloudWatch) {
-        openCloudWatch(destinations.cloudWatch!);
-        return;
-      }
-
-      if (hasS3) {
-        openS3(destinations.s3!);
-        return;
-      }
-
-      openCloudWatch(defaultCloudWatchDestination(job));
-      toast.info("No monitoring configuration found; using the default CloudWatch log group.");
-    } catch (error) {
-      toast.error(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const chooseCloudWatch = () => {
-    if (!choice?.destinations.cloudWatch) return;
-    openCloudWatch(choice.destinations.cloudWatch);
-    setChoice(undefined);
-  };
-
-  const chooseS3 = () => {
-    if (!choice?.destinations.s3) return;
-    openS3(choice.destinations.s3);
-    setChoice(undefined);
-  };
 
   return (
-    <div ref={ref} className="relative">
-      <Button variant="ghost" size="sm" disabled={loading} onClick={handleLogsClick}>
-        <FileText data-icon="inline-start" />
-        {loading ? "Loading..." : "Logs"}
-      </Button>
-      {choice ? (
-        <div className="absolute right-0 top-9 z-20 w-56 rounded-lg border bg-background p-2 shadow-lg">
-          <p className="px-2 py-1 text-xs text-muted-foreground">Choose a log destination</p>
-          <Button variant="ghost" size="sm" className="w-full justify-start" onClick={chooseCloudWatch}>
-            <FileText data-icon="inline-start" />
-            CloudWatch Logs
-          </Button>
-          <Button variant="ghost" size="sm" className="w-full justify-start" onClick={chooseS3}>
-            <FolderOpen data-icon="inline-start" />
-            S3 Archive
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => {
+        setSelectedJobForLogs(job.id, job.virtualClusterId);
+        onOpenLogs?.();
+      }}
+    >
+      <FileText data-icon="inline-start" />
+      Logs
+    </Button>
   );
 }
 
