@@ -12,7 +12,11 @@ pub fn s3_object_editability(key: &str, size: u64) -> S3ObjectEditability {
     let extension = key
         .rsplit('/')
         .next()
-        .and_then(|file_name| file_name.rsplit_once('.').map(|(_, extension)| extension.to_lowercase()))
+        .and_then(|file_name| {
+            file_name
+                .rsplit_once('.')
+                .map(|(_, extension)| extension.to_lowercase())
+        })
         .unwrap_or_default();
 
     if !EDITABLE_EXTENSIONS.contains(&extension.as_str()) {

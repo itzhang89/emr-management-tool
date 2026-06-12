@@ -23,7 +23,7 @@ export function AppShell() {
   const pageComponents: Record<PageId, ReactElement> = {
     dashboard: <DashboardPage />,
     submit: <SubmitJobPage />,
-    history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} onOpenS3={() => setActivePage("s3")} />,
+    history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} onOpenS3={() => setActivePage("logs")} />,
     logs: <LogsPage />,
     templates: <TemplatesPage />,
     clusters: <VirtualClustersPage />,

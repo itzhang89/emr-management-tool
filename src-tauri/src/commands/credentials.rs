@@ -1,13 +1,13 @@
-use crate::aws::credentials::{
-    aws_config_from_credentials, clear_account_credentials, clear_credentials as clear_saved_credentials,
-    save_account_credentials, save_credentials,
-};
 use crate::aws::cli_profiles::{discover_aws_cli_profiles, load_aws_cli_profile_credentials};
+use crate::aws::credentials::{
+    aws_config_from_credentials, clear_account_credentials,
+    clear_credentials as clear_saved_credentials, save_account_credentials, save_credentials,
+};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsAccount, AwsAccountCredentialsInput, AwsAccountSummary, AwsCliProfileSummary, AwsCredentialsInput, AwsIdentity,
-    AwsSettings, ImportAwsCliProfileRequest,
+    AwsAccount, AwsAccountCredentialsInput, AwsAccountSummary, AwsCliProfileSummary,
+    AwsCredentialsInput, AwsIdentity, AwsSettings, ImportAwsCliProfileRequest,
 };
 use crate::state::AppState;
 use chrono::Utc;
@@ -41,7 +41,10 @@ pub async fn list_aws_accounts() -> AppResult<Vec<AwsAccountSummary>> {
 }
 
 #[tauri::command]
-pub async fn create_aws_account(app: AppHandle, request: AwsAccountCredentialsInput) -> AppResult<AwsAccount> {
+pub async fn create_aws_account(
+    app: AppHandle,
+    request: AwsAccountCredentialsInput,
+) -> AppResult<AwsAccount> {
     if request.name.trim().is_empty() {
         return Err(AppError::validation("Account name is required."));
     }
@@ -57,7 +60,9 @@ pub async fn create_aws_account(app: AppHandle, request: AwsAccountCredentialsIn
     })
     .await?;
 
-    let account_id = request.id.unwrap_or_else(|| format!("aws-{}", uuid::Uuid::new_v4()));
+    let account_id = request
+        .id
+        .unwrap_or_else(|| format!("aws-{}", uuid::Uuid::new_v4()));
     let account = build_account(
         account_id,
         request.name.trim().to_string(),
@@ -83,7 +88,10 @@ pub async fn list_aws_cli_profiles() -> AppResult<Vec<AwsCliProfileSummary>> {
 }
 
 #[tauri::command]
-pub async fn import_aws_cli_profile(app: AppHandle, request: ImportAwsCliProfileRequest) -> AppResult<AwsAccount> {
+pub async fn import_aws_cli_profile(
+    app: AppHandle,
+    request: ImportAwsCliProfileRequest,
+) -> AppResult<AwsAccount> {
     if request.profile_name.trim().is_empty() {
         return Err(AppError::validation("AWS CLI profile name is required."));
     }
@@ -128,7 +136,13 @@ async fn save_account_with_credentials(
     account.created_at = now;
     account.updated_at = now;
 
-    save_account_credentials(app, &account.id, access_key_id, secret_access_key, session_token)?;
+    save_account_credentials(
+        app,
+        &account.id,
+        access_key_id,
+        secret_access_key,
+        session_token,
+    )?;
 
     if account.is_active {
         let accounts = repository::list_aws_accounts(&pool).await?;
@@ -160,7 +174,10 @@ pub async fn set_active_aws_account(request: serde_json::Value) -> AppResult<Aws
 }
 
 #[tauri::command]
-pub async fn delete_aws_account(app: AppHandle, request: serde_json::Value) -> AppResult<Vec<AwsAccountSummary>> {
+pub async fn delete_aws_account(
+    app: AppHandle,
+    request: serde_json::Value,
+) -> AppResult<Vec<AwsAccountSummary>> {
     let account_id = request
         .get("accountId")
         .and_then(|value| value.as_str())
@@ -181,7 +198,10 @@ pub async fn delete_aws_account(app: AppHandle, request: serde_json::Value) -> A
 }
 
 #[tauri::command]
-pub async fn clear_aws_account_credentials(app: AppHandle, request: serde_json::Value) -> AppResult<()> {
+pub async fn clear_aws_account_credentials(
+    app: AppHandle,
+    request: serde_json::Value,
+) -> AppResult<()> {
     let account_id = request
         .get("accountId")
         .and_then(|value| value.as_str())
@@ -190,7 +210,11 @@ pub async fn clear_aws_account_credentials(app: AppHandle, request: serde_json::
 }
 
 #[tauri::command]
-pub async fn save_aws_credentials(app: AppHandle, state: State<'_, AppState>, request: AwsCredentialsInput) -> AppResult<AwsSettings> {
+pub async fn save_aws_credentials(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AwsCredentialsInput,
+) -> AppResult<AwsSettings> {
     let identity = test_aws_credentials(request.clone()).await?;
     save_credentials(&app, &request)?;
 
@@ -217,7 +241,10 @@ pub async fn get_aws_settings(state: State<'_, AppState>) -> AppResult<AwsSettin
 }
 
 #[tauri::command]
-pub async fn clear_aws_credentials(app: AppHandle, state: State<'_, AppState>) -> AppResult<AwsSettings> {
+pub async fn clear_aws_credentials(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<AwsSettings> {
     clear_saved_credentials(&app)?;
     let settings = AwsSettings {
         region: "us-east-1".to_string(),

@@ -40,7 +40,7 @@ describe("jobLogDestinations", () => {
     expect(resolveJobLogDestinations(job)).toEqual({
       cloudWatch: {
         logGroupName: "/aws/emr-containers/jobs/custom",
-        streamNamePrefix: "custom-prefix"
+        streamNamePrefix: "custom-prefix/vc-1/jobs/job-running/"
       },
       s3: {
         bucket: "logs-bucket",
@@ -76,7 +76,7 @@ describe("jobLogDestinations", () => {
     expect(resolveJobLogDestinations(cloudWatchOnly)).toEqual({
       cloudWatch: {
         logGroupName: "/aws/emr-containers/jobs/custom",
-        streamNamePrefix: undefined
+        streamNamePrefix: "vc-1/jobs/job-running/"
       }
     });
     expect(resolveJobLogDestinations(s3Only)).toEqual({

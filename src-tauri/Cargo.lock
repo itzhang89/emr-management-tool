@@ -2138,6 +2138,7 @@ dependencies = [
  "aws-types",
  "chrono",
  "dirs",
+ "flate2",
  "keyring",
  "keyring-core",
  "serde",
