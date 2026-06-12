@@ -1,4 +1,4 @@
-import { CheckCircle2, KeyRound, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, KeyRound, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   useAwsAccounts,
+  useAwsCliProfiles,
   useCreateAwsAccount,
   useDeleteAwsAccount,
+  useImportAwsCliProfile,
   useSetActiveAwsAccount,
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
@@ -22,7 +24,9 @@ const regions = ["us-east-1", "us-west-2", "ap-southeast-1", "ap-northeast-1", "
 
 export function SettingsPage() {
   const accounts = useAwsAccounts();
+  const cliProfiles = useAwsCliProfiles();
   const createAccount = useCreateAwsAccount();
+  const importCliProfile = useImportAwsCliProfile();
   const setActiveAccount = useSetActiveAwsAccount();
   const deleteAccount = useDeleteAwsAccount();
   const testCredentials = useTestAwsCredentials();
@@ -61,7 +65,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Manage named AWS accounts. Metadata is stored locally; access keys and secret keys stay in the OS keychain.
+          Manage named AWS accounts. Debug builds store secrets in a local development store; production builds use the OS keychain.
         </p>
       </div>
 
@@ -121,6 +125,55 @@ export function SettingsPage() {
                   Delete
                 </Button>
               </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AWS CLI Profiles</CardTitle>
+          <CardDescription>
+            Detect local AWS CLI static credential profiles and import them without exposing secret values to the UI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {cliProfiles.isLoading ? <p className="text-sm text-muted-foreground">Scanning AWS CLI profiles...</p> : null}
+          {cliProfiles.error ? <DemoError error={cliProfiles.error} /> : null}
+          {cliProfiles.data?.length === 0 ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No AWS CLI profiles were found in the local credentials or config files.
+            </p>
+          ) : null}
+          {cliProfiles.data?.map((profile) => (
+            <div key={profile.profileName} className="flex items-center justify-between rounded-lg border p-4">
+              <div className="min-w-0 space-y-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{profile.profileName}</p>
+                  {profile.canImport ? <Badge variant="secondary">Importable</Badge> : <Badge variant="outline">Unsupported</Badge>}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {profile.region ?? "No region"} · {profile.accessKeyIdMasked ?? "No static access key"}
+                </p>
+                {profile.importError ? <p className="text-xs text-muted-foreground">{profile.importError}</p> : null}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!profile.canImport || importCliProfile.isPending}
+                onClick={() => {
+                  importCliProfile.mutate(
+                    { profileName: profile.profileName, makeActive: true },
+                    {
+                      onSuccess: () => toast.success(`${profile.profileName} imported.`),
+                      onError: (error) => toast.error(errorMessage(error, "Failed to import AWS CLI profile."))
+                    }
+                  );
+                }}
+              >
+                <Download data-icon="inline-start" />
+                Import
+              </Button>
             </div>
           ))}
         </CardContent>
