@@ -3,6 +3,7 @@ export type AwsRegion = string;
 export interface AwsCredentialsInput {
   accessKeyId: string;
   secretAccessKey: string;
+  sessionToken?: string;
   region: AwsRegion;
 }
 
@@ -43,7 +44,22 @@ export interface AwsAccountCredentialsInput {
   name: string;
   accessKeyId: string;
   secretAccessKey: string;
+  sessionToken?: string;
   region: AwsRegion;
+  makeActive: boolean;
+}
+
+export interface AwsCliProfileSummary {
+  profileName: string;
+  region?: AwsRegion;
+  accessKeyIdMasked?: string;
+  canImport: boolean;
+  importError?: string;
+}
+
+export interface ImportAwsCliProfileRequest {
+  profileName: string;
+  name?: string;
   makeActive: boolean;
 }
 

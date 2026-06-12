@@ -3,16 +3,32 @@ use crate::models::{AwsAccount, AwsCredentialsInput};
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_types::region::Region;
+use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
-const KEYRING_SERVICE: &str = "emr-management-tool";
+#[cfg(not(debug_assertions))]
+const KEYCHAIN_SERVICE_NAME: &str = "emr-management-tool";
 const KEYRING_USER: &str = "default/access_key";
 const KEYRING_SECRET: &str = "default/secret_key";
+const KEYRING_SESSION_TOKEN: &str = "default/session_token";
+#[cfg(debug_assertions)]
+const DEV_CREDENTIAL_STORE_PATH: &str = "emr-management-tool.credentials.dev.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredAwsCredentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+}
 
 pub async fn aws_config_from_credentials(credentials: &AwsCredentialsInput) -> aws_config::SdkConfig {
     let provider = Credentials::new(
         credentials.access_key_id.clone(),
         credentials.secret_access_key.clone(),
-        None,
+        credentials
+            .session_token
+            .clone()
+            .filter(|token| !token.trim().is_empty()),
         None,
         "emr-management-tool",
     );
@@ -24,12 +40,12 @@ pub async fn aws_config_from_credentials(credentials: &AwsCredentialsInput) -> a
         .await
 }
 
-pub async fn aws_config_from_account(account: &AwsAccount) -> AppResult<aws_config::SdkConfig> {
-    let access_key_id = read_account_secret(&account.id, "access_key")?;
-    let secret_access_key = read_account_secret(&account.id, "secret_key")?;
+pub async fn aws_config_from_account(app: &AppHandle, account: &AwsAccount) -> AppResult<aws_config::SdkConfig> {
+    let credentials = read_account_credentials(app, &account.id)?;
     Ok(aws_config_from_credentials(&AwsCredentialsInput {
-        access_key_id,
-        secret_access_key,
+        access_key_id: credentials.access_key_id,
+        secret_access_key: credentials.secret_access_key,
+        session_token: credentials.session_token,
         region: account.region.clone(),
     })
     .await)
@@ -39,59 +55,142 @@ pub fn credential_key(account_id: &str, secret_name: &str) -> String {
     format!("{account_id}/{secret_name}")
 }
 
-pub fn save_account_credentials(account_id: &str, access_key_id: &str, secret_access_key: &str) -> AppResult<()> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYRING_SERVICE, &credential_key(account_id, "access_key"))
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .set_password(access_key_id)
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYRING_SERVICE, &credential_key(account_id, "secret_key"))
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .set_password(secret_access_key)
-        .map_err(|error| AppError::storage(error.to_string()))?;
+pub fn save_account_credentials(
+    app: &AppHandle,
+    account_id: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+    session_token: Option<&str>,
+) -> AppResult<()> {
+    write_secret(app, &credential_key(account_id, "access_key"), access_key_id)?;
+    write_secret(app, &credential_key(account_id, "secret_key"), secret_access_key)?;
+    write_optional_secret(app, &credential_key(account_id, "session_token"), session_token)?;
     Ok(())
 }
 
-pub fn read_account_secret(account_id: &str, secret_name: &str) -> AppResult<String> {
+pub fn read_account_credentials(app: &AppHandle, account_id: &str) -> AppResult<StoredAwsCredentials> {
+    Ok(StoredAwsCredentials {
+        access_key_id: read_secret(app, &credential_key(account_id, "access_key"))?,
+        secret_access_key: read_secret(app, &credential_key(account_id, "secret_key"))?,
+        session_token: read_optional_secret(app, &credential_key(account_id, "session_token"))?,
+    })
+}
+
+pub fn clear_account_credentials(app: &AppHandle, account_id: &str) -> AppResult<()> {
+    for secret_name in ["access_key", "secret_key", "session_token"] {
+        delete_secret(app, &credential_key(account_id, secret_name))?;
+    }
+    Ok(())
+}
+
+pub fn save_credentials(app: &AppHandle, credentials: &AwsCredentialsInput) -> AppResult<()> {
+    write_secret(app, KEYRING_USER, &credentials.access_key_id)?;
+    write_secret(app, KEYRING_SECRET, &credentials.secret_access_key)?;
+    write_optional_secret(app, KEYRING_SESSION_TOKEN, credentials.session_token.as_deref())?;
+    Ok(())
+}
+
+pub fn clear_credentials(app: &AppHandle) -> AppResult<()> {
+    for user in [KEYRING_USER, KEYRING_SECRET, KEYRING_SESSION_TOKEN] {
+        delete_secret(app, user)?;
+    }
+    Ok(())
+}
+
+fn write_optional_secret(app: &AppHandle, key: &str, value: Option<&str>) -> AppResult<()> {
+    match value.filter(|value| !value.trim().is_empty()) {
+        Some(value) => write_secret(app, key, value),
+        None => delete_secret(app, key),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn write_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
+    use serde_json::json;
+    use tauri_plugin_store::StoreExt;
+
+    let store = app
+        .store(DEV_CREDENTIAL_STORE_PATH)
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    store.set(key, json!(value));
+    store.save().map_err(|error| AppError::storage(error.to_string()))
+}
+
+#[cfg(not(debug_assertions))]
+fn write_secret(_app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYRING_SERVICE, &credential_key(account_id, secret_name))
+    keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .set_password(value)
+        .map_err(|error| AppError::storage(error.to_string()))
+}
+
+#[cfg(debug_assertions)]
+fn read_secret(app: &AppHandle, key: &str) -> AppResult<String> {
+    read_optional_secret(app, key)?.ok_or_else(|| AppError::storage(format!("Credential {key} was not found in debug store.")))
+}
+
+#[cfg(not(debug_assertions))]
+fn read_secret(_app: &AppHandle, key: &str) -> AppResult<String> {
+    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
+    keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
         .get_password()
         .map_err(|error| AppError::storage(error.to_string()))
 }
 
-pub fn clear_account_credentials(account_id: &str) -> AppResult<()> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    for secret_name in ["access_key", "secret_key"] {
-        let entry = keyring_core::Entry::new(KEYRING_SERVICE, &credential_key(account_id, secret_name))
-            .map_err(|error| AppError::storage(error.to_string()))?;
-        entry
-            .delete_credential()
-            .map_err(|error| AppError::storage(error.to_string()))?;
-    }
-    Ok(())
+#[cfg(debug_assertions)]
+fn read_optional_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>> {
+    use tauri_plugin_store::StoreExt;
+
+    let store = app
+        .store(DEV_CREDENTIAL_STORE_PATH)
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(store
+        .get(key)
+        .and_then(|value| value.as_str().map(ToString::to_string))
+        .filter(|value| !value.trim().is_empty()))
 }
 
-pub fn save_credentials(credentials: &AwsCredentialsInput) -> AppResult<()> {
+#[cfg(not(debug_assertions))]
+fn read_optional_secret(_app: &AppHandle, key: &str) -> AppResult<Option<String>> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+    match keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
-        .set_password(&credentials.access_key_id)
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYRING_SERVICE, KEYRING_SECRET)
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .set_password(&credentials.secret_access_key)
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    Ok(())
+        .get_password()
+    {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
 }
 
-pub fn clear_credentials() -> AppResult<()> {
+#[cfg(debug_assertions)]
+fn delete_secret(app: &AppHandle, key: &str) -> AppResult<()> {
+    use tauri_plugin_store::StoreExt;
+
+    let store = app
+        .store(DEV_CREDENTIAL_STORE_PATH)
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    store.delete(key);
+    store.save().map_err(|error| AppError::storage(error.to_string()))
+}
+
+#[cfg(not(debug_assertions))]
+fn delete_secret(_app: &AppHandle, key: &str) -> AppResult<()> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    for user in [KEYRING_USER, KEYRING_SECRET] {
-        let entry = keyring_core::Entry::new(KEYRING_SERVICE, user).map_err(|error| AppError::storage(error.to_string()))?;
-        entry.delete_credential().map_err(|error| AppError::storage(error.to_string()))?;
+    let entry = keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key).map_err(|error| AppError::storage(error.to_string()))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let message = error.to_string();
+            if message.to_lowercase().contains("not found") {
+                Ok(())
+            } else {
+                Err(AppError::storage(message))
+            }
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
