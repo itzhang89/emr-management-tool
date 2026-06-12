@@ -21,7 +21,9 @@ pub struct StoredAwsCredentials {
     pub session_token: Option<String>,
 }
 
-pub async fn aws_config_from_credentials(credentials: &AwsCredentialsInput) -> aws_config::SdkConfig {
+pub async fn aws_config_from_credentials(
+    credentials: &AwsCredentialsInput,
+) -> aws_config::SdkConfig {
     let provider = Credentials::new(
         credentials.access_key_id.clone(),
         credentials.secret_access_key.clone(),
@@ -40,7 +42,10 @@ pub async fn aws_config_from_credentials(credentials: &AwsCredentialsInput) -> a
         .await
 }
 
-pub async fn aws_config_from_account(app: &AppHandle, account: &AwsAccount) -> AppResult<aws_config::SdkConfig> {
+pub async fn aws_config_from_account(
+    app: &AppHandle,
+    account: &AwsAccount,
+) -> AppResult<aws_config::SdkConfig> {
     let credentials = read_account_credentials(app, &account.id)?;
     Ok(aws_config_from_credentials(&AwsCredentialsInput {
         access_key_id: credentials.access_key_id,
@@ -62,13 +67,28 @@ pub fn save_account_credentials(
     secret_access_key: &str,
     session_token: Option<&str>,
 ) -> AppResult<()> {
-    write_secret(app, &credential_key(account_id, "access_key"), access_key_id)?;
-    write_secret(app, &credential_key(account_id, "secret_key"), secret_access_key)?;
-    write_optional_secret(app, &credential_key(account_id, "session_token"), session_token)?;
+    write_secret(
+        app,
+        &credential_key(account_id, "access_key"),
+        access_key_id,
+    )?;
+    write_secret(
+        app,
+        &credential_key(account_id, "secret_key"),
+        secret_access_key,
+    )?;
+    write_optional_secret(
+        app,
+        &credential_key(account_id, "session_token"),
+        session_token,
+    )?;
     Ok(())
 }
 
-pub fn read_account_credentials(app: &AppHandle, account_id: &str) -> AppResult<StoredAwsCredentials> {
+pub fn read_account_credentials(
+    app: &AppHandle,
+    account_id: &str,
+) -> AppResult<StoredAwsCredentials> {
     Ok(StoredAwsCredentials {
         access_key_id: read_secret(app, &credential_key(account_id, "access_key"))?,
         secret_access_key: read_secret(app, &credential_key(account_id, "secret_key"))?,
@@ -86,7 +106,11 @@ pub fn clear_account_credentials(app: &AppHandle, account_id: &str) -> AppResult
 pub fn save_credentials(app: &AppHandle, credentials: &AwsCredentialsInput) -> AppResult<()> {
     write_secret(app, KEYRING_USER, &credentials.access_key_id)?;
     write_secret(app, KEYRING_SECRET, &credentials.secret_access_key)?;
-    write_optional_secret(app, KEYRING_SESSION_TOKEN, credentials.session_token.as_deref())?;
+    write_optional_secret(
+        app,
+        KEYRING_SESSION_TOKEN,
+        credentials.session_token.as_deref(),
+    )?;
     Ok(())
 }
 
@@ -113,7 +137,9 @@ fn write_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
         .store(DEV_CREDENTIAL_STORE_PATH)
         .map_err(|error| AppError::storage(error.to_string()))?;
     store.set(key, json!(value));
-    store.save().map_err(|error| AppError::storage(error.to_string()))
+    store
+        .save()
+        .map_err(|error| AppError::storage(error.to_string()))
 }
 
 #[cfg(not(debug_assertions))]
@@ -127,7 +153,8 @@ fn write_secret(_app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
 
 #[cfg(debug_assertions)]
 fn read_secret(app: &AppHandle, key: &str) -> AppResult<String> {
-    read_optional_secret(app, key)?.ok_or_else(|| AppError::storage(format!("Credential {key} was not found in debug store.")))
+    read_optional_secret(app, key)?
+        .ok_or_else(|| AppError::storage(format!("Credential {key} was not found in debug store.")))
 }
 
 #[cfg(not(debug_assertions))]
@@ -173,13 +200,16 @@ fn delete_secret(app: &AppHandle, key: &str) -> AppResult<()> {
         .store(DEV_CREDENTIAL_STORE_PATH)
         .map_err(|error| AppError::storage(error.to_string()))?;
     store.delete(key);
-    store.save().map_err(|error| AppError::storage(error.to_string()))
+    store
+        .save()
+        .map_err(|error| AppError::storage(error.to_string()))
 }
 
 #[cfg(not(debug_assertions))]
 fn delete_secret(_app: &AppHandle, key: &str) -> AppResult<()> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    let entry = keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key).map_err(|error| AppError::storage(error.to_string()))?;
+    let entry = keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
+        .map_err(|error| AppError::storage(error.to_string()))?;
     match entry.delete_credential() {
         Ok(()) => Ok(()),
         Err(error) => {

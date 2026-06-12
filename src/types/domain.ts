@@ -212,6 +212,59 @@ export interface LogEntry {
   streamName: string;
 }
 
+export type JobLogType = "controller" | "driver" | "executor";
+export type JobLogSource = "cloudwatch" | "s3";
+export type JobLogOutputStream = "stdout" | "stderr" | string;
+
+export interface JobLogStream {
+  source: "cloudwatch";
+  id: string;
+  label: string;
+  type: JobLogType;
+  container: string;
+  pod: string;
+  stream: JobLogOutputStream;
+  cloudWatchStreamName: string;
+  lastEventTimestamp?: string;
+}
+
+export interface JobLogObject {
+  source: "s3";
+  id: string;
+  label: string;
+  type: JobLogType;
+  container: string;
+  pod: string;
+  stream: JobLogOutputStream;
+  s3Key: string;
+  size: number;
+  lastModified?: string;
+}
+
+export interface JobLogGroup {
+  label: string;
+  items: Array<JobLogStream | JobLogObject>;
+}
+
+export interface JobLogTreeSection {
+  type: JobLogType;
+  label: string;
+  groups: JobLogGroup[];
+}
+
+export interface JobLogStreamsRequest extends AwsCommandContext {
+  jobId: string;
+  logGroupName: string;
+  streamNamePrefix: string;
+  nextToken?: string;
+}
+
+export interface JobLogStreamsResponse {
+  jobId: string;
+  streams: JobLogStream[];
+  nextToken?: string;
+}
+
 export interface JobLogsResponse {
   jobId: string;
   entries: LogEntry[];
@@ -223,6 +276,8 @@ export interface JobLogsRequest extends AwsCommandContext {
   nextForwardToken?: string;
   logGroupName?: string;
   streamNamePrefix?: string;
+  logStreamName?: string;
+  logType?: "driver" | "executor" | "controller" | "all";
   filterPattern?: string;
   limit?: number;
 }
@@ -249,6 +304,18 @@ export interface S3TextObject {
   etag?: string;
   contentType?: string;
   lastModified?: string;
+}
+
+export interface S3JobLogObjectsRequest extends AwsCommandContext {
+  bucket: string;
+  prefix: string;
+  continuationToken?: string;
+}
+
+export interface S3JobLogObjectsResponse {
+  bucket: string;
+  objects: JobLogObject[];
+  nextToken?: string;
 }
 
 export interface AppError {

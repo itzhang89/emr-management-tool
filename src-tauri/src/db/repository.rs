@@ -33,8 +33,12 @@ pub async fn list_application_templates(pool: &SqlitePool) -> AppResult<Vec<Appl
         .collect()
 }
 
-pub async fn upsert_application_template(pool: &SqlitePool, template: &ApplicationTemplate) -> AppResult<()> {
-    let payload = serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
+pub async fn upsert_application_template(
+    pool: &SqlitePool,
+    template: &ApplicationTemplate,
+) -> AppResult<()> {
+    let payload =
+        serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
         "insert into application_templates (id, name, payload) values (?1, ?2, ?3)
          on conflict(id) do update set name = excluded.name, payload = excluded.payload",
@@ -59,8 +63,12 @@ pub async fn list_resource_templates(pool: &SqlitePool) -> AppResult<Vec<Resourc
         .collect()
 }
 
-pub async fn upsert_resource_template(pool: &SqlitePool, template: &ResourceTemplate) -> AppResult<()> {
-    let payload = serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
+pub async fn upsert_resource_template(
+    pool: &SqlitePool,
+    template: &ResourceTemplate,
+) -> AppResult<()> {
+    let payload =
+        serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
         "insert into resource_templates (id, name, payload) values (?1, ?2, ?3)
          on conflict(id) do update set name = excluded.name, payload = excluded.payload",
@@ -88,18 +96,22 @@ pub async fn delete_template(pool: &SqlitePool, table: &str, id: &str) -> AppRes
     Ok(())
 }
 
-pub async fn list_job_history(pool: &SqlitePool, account_id: Option<&str>, virtual_cluster_id: Option<&str>) -> AppResult<Vec<JobRunSummary>> {
+pub async fn list_job_history(
+    pool: &SqlitePool,
+    account_id: Option<&str>,
+    virtual_cluster_id: Option<&str>,
+) -> AppResult<Vec<JobRunSummary>> {
     let rows = sqlx::query(
         "select payload from job_history
          where (?1 is null or account_id = ?1)
            and (?2 is null or virtual_cluster_id = ?2)
          order by created_at desc",
     )
-        .bind(account_id)
-        .bind(virtual_cluster_id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    .bind(account_id)
+    .bind(virtual_cluster_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.into_iter()
         .map(|row| from_payload(row.get::<String, _>("payload")))
@@ -107,7 +119,8 @@ pub async fn list_job_history(pool: &SqlitePool, account_id: Option<&str>, virtu
 }
 
 pub async fn upsert_job_history(pool: &SqlitePool, job: &JobRunSummary) -> AppResult<()> {
-    let payload = serde_json::to_string(job).map_err(|error| AppError::storage(error.to_string()))?;
+    let payload =
+        serde_json::to_string(job).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
         "insert into job_history (id, account_id, region, virtual_cluster_id, created_at, payload) values (?1, ?2, ?3, ?4, ?5, ?6)
          on conflict(id) do update set account_id = excluded.account_id, region = excluded.region, virtual_cluster_id = excluded.virtual_cluster_id, created_at = excluded.created_at, payload = excluded.payload",
@@ -147,7 +160,8 @@ pub async fn get_aws_account(pool: &SqlitePool, id: &str) -> AppResult<Option<Aw
 }
 
 pub async fn upsert_aws_account(pool: &SqlitePool, account: &AwsAccount) -> AppResult<()> {
-    let payload = serde_json::to_string(account).map_err(|error| AppError::storage(error.to_string()))?;
+    let payload =
+        serde_json::to_string(account).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
         "insert into aws_accounts (id, name, region, is_active, payload) values (?1, ?2, ?3, ?4, ?5)
          on conflict(id) do update set name = excluded.name, region = excluded.region, is_active = excluded.is_active, payload = excluded.payload",
@@ -184,7 +198,9 @@ pub async fn set_active_aws_account(pool: &SqlitePool, id: &str) -> AppResult<()
     if found {
         Ok(())
     } else {
-        Err(AppError::validation(format!("AWS account {id} was not found.")))
+        Err(AppError::validation(format!(
+            "AWS account {id} was not found."
+        )))
     }
 }
 

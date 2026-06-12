@@ -44,6 +44,47 @@ describe("createTauriClient", () => {
     });
   });
 
+  it("exposes job log discovery commands through the invoke boundary", async () => {
+    const invoke = vi.fn().mockResolvedValue([]);
+    const client = createTauriClient(invoke);
+
+    await client.listJobLogStreams({
+      jobId: "job-1",
+      logGroupName: "/emr-containers/jobs",
+      streamNamePrefix: "prefix/vc-1/jobs/job-1/"
+    });
+    await client.listS3JobLogObjects({
+      bucket: "logs-bucket",
+      prefix: "logs/vc-1/jobs/job-1/"
+    });
+
+    expect(invoke).toHaveBeenCalledWith("list_job_log_streams", {
+      request: {
+        jobId: "job-1",
+        logGroupName: "/emr-containers/jobs",
+        streamNamePrefix: "prefix/vc-1/jobs/job-1/"
+      }
+    });
+    expect(invoke).toHaveBeenCalledWith("list_s3_job_log_objects", {
+      request: {
+        bucket: "logs-bucket",
+        prefix: "logs/vc-1/jobs/job-1/"
+      }
+    });
+  });
+
+  it("loads a read-only S3 job log object without using the editable text object command", async () => {
+    const invoke = vi.fn().mockResolvedValue({ bucket: "logs-bucket", key: "stderr.gz", content: "hello log\n" });
+    const client = createTauriClient(invoke);
+
+    const result = await client.getS3JobLogObject({ bucket: "logs-bucket", key: "stderr.gz" });
+
+    expect(result.content).toBe("hello log\n");
+    expect(invoke).toHaveBeenCalledWith("get_s3_job_log_object", {
+      request: { bucket: "logs-bucket", key: "stderr.gz" }
+    });
+  });
+
   it("does not silently return production mock data outside Tauri", async () => {
     const client = createTauriClient();
 
