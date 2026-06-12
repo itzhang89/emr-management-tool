@@ -55,19 +55,31 @@ describe("S3BrowserPage", () => {
     useDeleteS3Object.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   });
 
-  it("lets users type or autocomplete a bucket name and keeps browsing inside that bucket", async () => {
+  it("edits the displayed S3 path directly and reverts invalid input", async () => {
     const user = userEvent.setup();
 
     render(<S3BrowserPage />);
 
-    const bucketInput = screen.getByPlaceholderText(/Bucket name/i);
-    expect(bucketInput).toHaveAttribute("list", "s3-bucket-options");
-    expect(document.querySelector('option[value="logs-bucket"]')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Bucket name/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open Bucket/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "logs-bucket" })).not.toBeInTheDocument();
 
-    await user.clear(bucketInput);
-    await user.type(bucketInput, "data-bucket");
-    await user.click(screen.getByRole("button", { name: /Open Bucket/i }));
+    await user.click(screen.getByRole("button", { name: "s3://logs-bucket/" }));
+
+    const pathInput = screen.getByDisplayValue("s3://logs-bucket/");
+    expect(pathInput).toHaveAttribute("list", "s3-path-options");
+    expect(document.querySelector('option[value="s3://data-bucket/"]')).toBeInTheDocument();
+
+    await user.clear(pathInput);
+    await user.type(pathInput, "s3://data-bucket/{Enter}");
+
+    expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
+    expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "s3://data-bucket/" }));
+    const invalidPathInput = screen.getByDisplayValue("s3://data-bucket/");
+    await user.clear(invalidPathInput);
+    await user.type(invalidPathInput, "not-an-s3-path{Enter}");
 
     expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
     expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
@@ -77,10 +89,6 @@ describe("S3BrowserPage", () => {
     const user = userEvent.setup();
 
     render(<S3BrowserPage />);
-
-    await user.clear(screen.getByPlaceholderText(/Bucket name/i));
-    await user.type(screen.getByPlaceholderText(/Bucket name/i), "logs-bucket");
-    await user.click(screen.getByRole("button", { name: /Open Bucket/i }));
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     expect(within(browser).getByRole("button", { name: /logs\//i })).toBeInTheDocument();
@@ -95,10 +103,14 @@ describe("S3BrowserPage", () => {
     expect(within(browser).getByRole("button", { name: /stdout\.log/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/stdout.log")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Refresh/i }));
+    const refreshButton = screen.getByRole("button", { name: /^Refresh$/i });
+    expect(refreshButton).not.toHaveTextContent(/Refresh/i);
+    await user.click(refreshButton);
     expect(refetchObjects).toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /^Up$/i }));
+    const upButton = screen.getByRole("button", { name: /^Up$/i });
+    expect(upButton).not.toHaveTextContent(/Up/i);
+    await user.click(upButton);
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "");
     expect(screen.getByText("s3://logs-bucket/")).toBeInTheDocument();

@@ -24,8 +24,10 @@ export function S3BrowserPage() {
   const buckets = useS3Buckets();
   const [bucket, setBucket] = useState<string>();
   const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
-  const [bucketInput, setBucketInput] = useState(selectedBucket ?? "");
   const [prefix, setPrefix] = useState(selectedS3Prefix ?? "");
+  const currentS3Path = formatS3Path(selectedBucket, prefix);
+  const [editingPath, setEditingPath] = useState(false);
+  const [pathInput, setPathInput] = useState(currentS3Path);
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
   const selectedObject = useMemo(
@@ -45,15 +47,14 @@ export function S3BrowserPage() {
   useEffect(() => {
     if (selectedS3Bucket) {
       setBucket(selectedS3Bucket);
-      setBucketInput(selectedS3Bucket);
     }
   }, [selectedS3Bucket]);
 
   useEffect(() => {
-    if (!bucket && !selectedS3Bucket && buckets.data?.[0]?.name) {
-      setBucketInput(buckets.data[0].name);
+    if (!editingPath) {
+      setPathInput(currentS3Path);
     }
-  }, [bucket, buckets.data, selectedS3Bucket]);
+  }, [currentS3Path, editingPath]);
 
   useEffect(() => {
     setPrefix(selectedS3Prefix ?? "");
@@ -116,14 +117,19 @@ export function S3BrowserPage() {
     }
   };
 
-  const openBucket = (event: FormEvent<HTMLFormElement>) => {
+  const openPath = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const nextBucket = bucketInput.trim();
-    if (!nextBucket) return;
-    setBucket(nextBucket);
-    setPrefix("");
+    const parsed = parseS3Path(pathInput);
+    if (!parsed) {
+      setPathInput(currentS3Path);
+      setEditingPath(false);
+      return;
+    }
+    setBucket(parsed.bucket);
+    setPrefix(parsed.prefix);
     setSelectedKey(undefined);
     setContent("");
+    setEditingPath(false);
   };
 
   const goUp = () => {
@@ -166,40 +172,58 @@ export function S3BrowserPage() {
       <div className="grid grid-cols-[340px_1fr] gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>
-              s3://{selectedBucket ?? "loading"}/{prefix}
+            <CardTitle className="flex items-center gap-2">
+              {editingPath ? (
+                <form className="flex min-w-0 flex-1" onSubmit={openPath}>
+                  <Input
+                    autoFocus
+                    list="s3-path-options"
+                    value={pathInput}
+                    onChange={(event) => setPathInput(event.target.value)}
+                    onBlur={() => {
+                      setPathInput(currentS3Path);
+                      setEditingPath(false);
+                    }}
+                  />
+                  <datalist id="s3-path-options">
+                    {(buckets.data ?? []).map((entry) => (
+                      <option key={entry.name} value={`s3://${entry.name}/`}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </datalist>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="min-w-0 break-all rounded-sm text-left hover:underline"
+                  onClick={() => {
+                    setPathInput(currentS3Path);
+                    setEditingPath(true);
+                  }}
+                >
+                  {currentS3Path}
+                </button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-label="Refresh"
+                disabled={!selectedBucket || objects.isLoading}
+                onClick={() => void objects.refetch()}
+              >
+                <RefreshCw data-icon="inline-start" />
+              </Button>
             </CardTitle>
             <CardDescription>
               {selectedS3Prefix ? "Opened from job monitoring configuration." : "Supported text files can be edited in place."}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            <form className="flex gap-2" onSubmit={openBucket}>
-              <Input
-                list="s3-bucket-options"
-                placeholder="Bucket name"
-                value={bucketInput}
-                onChange={(event) => setBucketInput(event.target.value)}
-              />
-              <datalist id="s3-bucket-options">
-                {(buckets.data ?? []).map((entry) => (
-                  <option key={entry.name} value={entry.name}>
-                    {entry.name}
-                  </option>
-                ))}
-              </datalist>
-              <Button type="submit" disabled={!bucketInput.trim()}>
-                Open Bucket
-              </Button>
-            </form>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" disabled={!prefix} onClick={goUp}>
+              <Button type="button" variant="outline" aria-label="Up" disabled={!prefix} onClick={goUp}>
                 <ArrowUp data-icon="inline-start" />
-                Up
-              </Button>
-              <Button type="button" variant="outline" disabled={!selectedBucket || objects.isLoading} onClick={() => void objects.refetch()}>
-                <RefreshCw data-icon="inline-start" />
-                Refresh
               </Button>
             </div>
             {buckets.isLoading || objects.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 objects...</p> : null}
@@ -280,6 +304,20 @@ function displayObjectName(key: string, prefix: string, kind: "folder" | "file")
 function parentPrefix(prefix: string) {
   const parent = prefix.split("/").filter(Boolean).slice(0, -1).join("/");
   return parent ? `${parent}/` : "";
+}
+
+function formatS3Path(bucket: string | undefined, prefix: string) {
+  return bucket ? `s3://${bucket}/${prefix}` : "s3://";
+}
+
+function parseS3Path(value: string) {
+  const match = /^s3:\/\/([^/\s]+)\/?(.*)$/.exec(value.trim());
+  if (!match) return undefined;
+  const prefix = match[2] ?? "";
+  return {
+    bucket: match[1],
+    prefix: prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
+  };
 }
 
 function errorMessage(error: unknown, fallback: string) {
