@@ -26,6 +26,7 @@ vi.mock("@/hooks/useS3", () => ({
 describe("S3BrowserPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     useSessionStore.setState({
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
@@ -66,23 +67,42 @@ describe("S3BrowserPage", () => {
 
     await user.click(screen.getByRole("button", { name: "s3://logs-bucket/" }));
 
-    const pathInput = screen.getByDisplayValue("s3://logs-bucket/");
+    expect(screen.getByText("s3://")).toBeInTheDocument();
+    const pathInput = screen.getByDisplayValue("logs-bucket/");
     expect(pathInput).toHaveAttribute("list", "s3-path-options");
-    expect(document.querySelector('option[value="s3://data-bucket/"]')).toBeInTheDocument();
+    expect(document.querySelector('option[value="data-bucket/"]')).toBeInTheDocument();
 
     await user.clear(pathInput);
-    await user.type(pathInput, "s3://data-bucket/{Enter}");
+    await user.type(pathInput, "data-bucket/{Enter}");
 
     expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
     expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "s3://data-bucket/" }));
-    const invalidPathInput = screen.getByDisplayValue("s3://data-bucket/");
+    const invalidPathInput = screen.getByDisplayValue("data-bucket/");
     await user.clear(invalidPathInput);
-    await user.type(invalidPathInput, "not-an-s3-path{Enter}");
+    await user.type(invalidPathInput, "{Enter}");
 
     expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
     expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
+  });
+
+  it("remembers the last valid S3 path when the page is opened again", () => {
+    localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "logs/" }));
+
+    render(<S3BrowserPage />);
+
+    expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
+    expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
+  });
+
+  it("compacts long displayed paths to the nearest parent levels", () => {
+    localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "year/month/day/run/" }));
+
+    render(<S3BrowserPage />);
+
+    expect(screen.getByRole("button", { name: "s3://logs-bucket/.../day/run/" })).toBeInTheDocument();
+    expect(screen.queryByText("s3://logs-bucket/year/month/day/run/")).not.toBeInTheDocument();
   });
 
   it("shows only current directory entries, drills into folders, refreshes, and goes up", async () => {
@@ -118,6 +138,10 @@ describe("S3BrowserPage", () => {
 });
 
 function objectsFor(bucket?: string, prefix?: string) {
+  if (bucket === "logs-bucket" && prefix === "year/month/day/run/") {
+    return [{ bucket, key: "year/month/day/run/stdout.log", kind: "file", size: 42 }];
+  }
+
   if (bucket === "data-bucket") {
     return [{ bucket, key: "dataset.csv", kind: "file", size: 120 }];
   }
