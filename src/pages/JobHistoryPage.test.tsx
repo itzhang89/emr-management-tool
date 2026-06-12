@@ -1,13 +1,22 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JobHistoryPage } from "./JobHistoryPage";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { JobRunSummary } from "@/types/domain";
 
 const mutate = vi.fn();
 const startMutate = vi.fn();
 const describeJob = vi.fn();
+const describeJobRun = vi.fn();
 let describedJob: JobRunSummary | undefined;
+
+vi.mock("@/services/emrService", () => ({
+  emrService: {
+    describeJobRun: (...args: unknown[]) => describeJobRun(...args)
+  }
+}));
 
 vi.mock("@/hooks/useEmr", () => ({
   useJobRuns: () => ({
@@ -35,19 +44,38 @@ vi.mock("@/hooks/useEmr", () => ({
 
 let jobs: JobRunSummary[];
 
+function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
+  return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <JobHistoryPage {...props} />
+    </QueryClientProvider>
+  );
+}
+
 describe("JobHistoryPage", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     mutate.mockClear();
     startMutate.mockClear();
     describeJob.mockClear();
+    describeJobRun.mockClear();
     describedJob = undefined;
     jobs = makeJobs();
+    describeJobRun.mockResolvedValue(jobs[0]);
+    useSessionStore.setState({
+      selectedVirtualClusterId: "vc-1",
+      selectedJobId: undefined,
+      selectedJobLogGroupName: undefined,
+      selectedJobLogStreamNamePrefix: undefined,
+      selectedS3Bucket: undefined,
+      selectedS3Prefix: undefined
+    });
   });
 
   it("shows production actions, hides virtual cluster column, filters, and paginates", async () => {
     const user = userEvent.setup();
 
-    render(<JobHistoryPage />);
+    renderJobHistoryPage();
 
     expect(screen.queryByRole("columnheader", { name: /Virtual Cluster/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Clone/i })).not.toBeInTheDocument();
@@ -80,7 +108,7 @@ describe("JobHistoryPage", () => {
       value: { writeText }
     });
 
-    render(<JobHistoryPage />);
+    renderJobHistoryPage();
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
     expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
@@ -110,7 +138,7 @@ describe("JobHistoryPage", () => {
       }
     };
 
-    render(<JobHistoryPage />);
+    renderJobHistoryPage();
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
 
@@ -126,7 +154,7 @@ describe("JobHistoryPage", () => {
   it("derives duration from timestamps and closes detail on outside click", async () => {
     const user = userEvent.setup();
 
-    render(<JobHistoryPage />);
+    renderJobHistoryPage();
 
     expect(screen.getByRole("row", { name: /completed-duration COMPLETED/i })).toHaveTextContent("1m 30s");
 
@@ -135,6 +163,92 @@ describe("JobHistoryPage", () => {
 
     await user.click(screen.getByPlaceholderText(/search jobs/i));
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+  });
+
+  it("routes cloudwatch-only jobs to the logs page using describe monitoring configuration", async () => {
+    const user = userEvent.setup();
+    const onOpenLogs = vi.fn();
+    describeJobRun.mockResolvedValue({
+      ...jobs[0],
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            cloudWatchMonitoringConfiguration: {
+              logGroupName: "/aws/emr-containers/jobs/custom",
+              logStreamNamePrefix: "custom-prefix"
+            }
+          }
+        }
+      }
+    });
+
+    renderJobHistoryPage({ onOpenLogs });
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
+
+    expect(describeJobRun).toHaveBeenCalledWith("job-running", "vc-1");
+    expect(useSessionStore.getState().selectedJobId).toBe("job-running");
+    expect(useSessionStore.getState().selectedJobLogGroupName).toBe("/aws/emr-containers/jobs/custom");
+    expect(useSessionStore.getState().selectedJobLogStreamNamePrefix).toBe("custom-prefix");
+    expect(onOpenLogs).toHaveBeenCalled();
+    expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
+  });
+
+  it("routes s3-only jobs to the s3 browser using describe monitoring configuration", async () => {
+    const user = userEvent.setup();
+    const onOpenS3 = vi.fn();
+    describeJobRun.mockResolvedValue({
+      ...jobs[0],
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            s3MonitoringConfiguration: {
+              logUri: "s3://logs-bucket/emr/"
+            }
+          }
+        }
+      }
+    });
+
+    renderJobHistoryPage({ onOpenS3 });
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
+
+    expect(useSessionStore.getState().selectedS3Bucket).toBe("logs-bucket");
+    expect(useSessionStore.getState().selectedS3Prefix).toBe("emr/vc-1/jobs/job-running/");
+    expect(onOpenS3).toHaveBeenCalled();
+    expect(useSessionStore.getState().selectedJobLogGroupName).toBeUndefined();
+  });
+
+  it("offers both cloudwatch and s3 destinations when monitoring configures both", async () => {
+    const user = userEvent.setup();
+    const onOpenLogs = vi.fn();
+    const onOpenS3 = vi.fn();
+    describeJobRun.mockResolvedValue({
+      ...jobs[0],
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            cloudWatchMonitoringConfiguration: {
+              logGroupName: "/aws/emr-containers/jobs/custom"
+            },
+            s3MonitoringConfiguration: {
+              logUri: "s3://logs-bucket/emr/"
+            }
+          }
+        }
+      }
+    });
+
+    renderJobHistoryPage({ onOpenLogs, onOpenS3 });
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
+    expect(screen.getByText(/Choose a log destination/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /S3 Archive/i }));
+    expect(useSessionStore.getState().selectedS3Bucket).toBe("logs-bucket");
+    expect(useSessionStore.getState().selectedS3Prefix).toBe("emr/vc-1/jobs/job-running/");
+    expect(onOpenS3).toHaveBeenCalled();
   });
 });
 

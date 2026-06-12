@@ -14,12 +14,16 @@ import {
   useUploadS3Object
 } from "@/hooks/useS3";
 import { getS3ObjectEditability } from "@/services/s3Rules";
+import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError } from "@/types/domain";
 
 export function S3BrowserPage() {
+  const selectedS3Bucket = useSessionStore((state) => state.selectedS3Bucket);
+  const selectedS3Prefix = useSessionStore((state) => state.selectedS3Prefix);
   const buckets = useS3Buckets();
-  const selectedBucket = buckets.data?.[0]?.name;
-  const [prefix, setPrefix] = useState("");
+  const [bucket, setBucket] = useState<string>();
+  const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
+  const [prefix, setPrefix] = useState(selectedS3Prefix ?? "");
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
   const selectedObject = useMemo(
@@ -35,6 +39,17 @@ export function S3BrowserPage() {
   const editability = selectedObject
     ? getS3ObjectEditability({ key: selectedObject.key, size: selectedObject.size })
     : undefined;
+
+  useEffect(() => {
+    if (selectedS3Bucket) {
+      setBucket(selectedS3Bucket);
+    }
+  }, [selectedS3Bucket]);
+
+  useEffect(() => {
+    setPrefix(selectedS3Prefix ?? "");
+    setSelectedKey(undefined);
+  }, [selectedS3Bucket, selectedS3Prefix]);
 
   useEffect(() => {
     if (!selectedKey && objects.data?.[0]) {
@@ -125,10 +140,33 @@ export function S3BrowserPage() {
       <div className="grid grid-cols-[340px_1fr] gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>s3://{selectedBucket ?? "loading"}/{prefix}</CardTitle>
-            <CardDescription>Supported text files can be edited in place.</CardDescription>
+            <CardTitle>
+              s3://{selectedBucket ?? "loading"}/{prefix}
+            </CardTitle>
+            <CardDescription>
+              {selectedS3Prefix ? "Opened from job monitoring configuration." : "Supported text files can be edited in place."}
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
+            {buckets.data && buckets.data.length > 1 ? (
+              <div className="flex flex-wrap gap-2">
+                {buckets.data.map((entry) => (
+                  <Button
+                    key={entry.name}
+                    type="button"
+                    size="sm"
+                    variant={entry.name === selectedBucket ? "default" : "outline"}
+                    onClick={() => {
+                      setBucket(entry.name);
+                      setPrefix("");
+                      setSelectedKey(undefined);
+                    }}
+                  >
+                    {entry.name}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
             {prefix ? (
               <Button
                 type="button"
