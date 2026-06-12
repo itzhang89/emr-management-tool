@@ -16,6 +16,14 @@ export function useJobRuns(virtualClusterId?: string) {
   });
 }
 
+export function useDescribeJobRun(id?: string, virtualClusterId?: string) {
+  return useQuery({
+    queryKey: ["job-run", id, virtualClusterId],
+    queryFn: () => emrService.describeJobRun(id!, virtualClusterId!),
+    enabled: Boolean(id && virtualClusterId)
+  });
+}
+
 export function useStartJobRun() {
   const queryClient = useQueryClient();
 

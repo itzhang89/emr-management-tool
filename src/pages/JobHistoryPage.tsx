@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useCancelJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
+import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { AppError, JobRunSummary } from "@/types/domain";
+import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
 const pageSize = 10;
 
@@ -183,6 +183,9 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
 
 function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  const describedJob = useDescribeJobRun(job.id, job.virtualClusterId);
+  const detail = describedJob.data ?? job;
+  const describeDetails = detail.describeDetails;
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -205,7 +208,7 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
       ref={ref}
       role="dialog"
       aria-label="Job Detail"
-      className="absolute right-0 top-10 z-20 w-[360px] rounded-lg border bg-background p-4 text-left shadow-lg"
+      className="absolute right-0 top-10 z-20 max-h-[70vh] w-[420px] overflow-y-auto rounded-lg border bg-background p-4 text-left shadow-lg"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
@@ -217,12 +220,38 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
           Copy Job ID
         </Button>
       </div>
+      {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
+      {describedJob.error ? (
+        <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+          {errorMessage(describedJob.error)}
+        </p>
+      ) : null}
       <div className="grid gap-3 text-sm">
-        <Detail label="Name" value={job.name} />
-        <Detail label="State" value={job.state} />
-        <Detail label="Created" value={new Date(job.createdAt).toLocaleString()} />
-        <Detail label="Started" value={job.startedAt ? new Date(job.startedAt).toLocaleString() : "-"} />
-        <Detail label="Finished" value={job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "-"} />
+        <Detail label="Name" value={detail.name} />
+        <Detail label="State" value={detail.state} />
+        <Detail label="Virtual Cluster" value={detail.virtualClusterId} />
+        <Detail label="Created" value={formatTimestamp(detail.createdAt)} />
+        <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
+        <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
+        <Detail label="Duration" value={formatDuration(detail)} />
+        <Detail label="ARN" value={describeDetails?.arn} />
+        <Detail label="Release Label" value={describeDetails?.releaseLabel} />
+        <Detail label="Execution Role" value={describeDetails?.executionRoleArn} />
+        <Detail label="Created By" value={describeDetails?.createdBy} />
+        <Detail label="Client Token" value={describeDetails?.clientToken} />
+        <Detail label="State Details" value={describeDetails?.stateDetails} />
+        <Detail label="Failure Reason" value={describeDetails?.failureReason} />
+        <Detail
+          label="Retry Attempts"
+          value={
+            describeDetails?.retryMaxAttempts !== undefined || describeDetails?.retryCurrentAttemptCount !== undefined
+              ? `${describeDetails?.retryCurrentAttemptCount ?? "-"} / ${describeDetails?.retryMaxAttempts ?? "-"}`
+              : undefined
+          }
+        />
+        <Detail label="Job Driver" value={formatJobDriver(describeDetails)} multiline />
+        <Detail label="Tags" value={formatJson(describeDetails?.tags)} multiline />
+        <Detail label="Configuration Overrides" value={formatJson(describeDetails?.configurationOverrides)} multiline />
       </div>
     </div>
   );
@@ -253,13 +282,46 @@ function defaultLogStreamPrefix(job: JobRunSummary) {
   return job.id;
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function Detail({ label, value, multiline = false }: { label: string; value?: string; multiline?: boolean }) {
+  if (!value) return null;
+
   return (
     <div>
       <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="font-medium">{value}</p>
+      <p className={multiline ? "whitespace-pre-wrap break-all font-medium" : "break-all font-medium"}>{value}</p>
     </div>
   );
+}
+
+function formatTimestamp(value?: string) {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
+}
+
+function formatJobDriver(details?: JobRunDescribeDetails) {
+  const driver = details?.jobDriver;
+  if (!driver) return undefined;
+
+  if (driver.type === "sparkSubmit") {
+    const lines = [
+      driver.entryPoint ? `Entry Point: ${driver.entryPoint}` : undefined,
+      driver.entryPointArguments?.length ? `Arguments: ${driver.entryPointArguments.join(" ")}` : undefined,
+      driver.sparkSubmitParameters ? `Spark Submit: ${driver.sparkSubmitParameters}` : undefined
+    ].filter(Boolean);
+    return lines.length > 0 ? lines.join("\n") : undefined;
+  }
+
+  const lines = [
+    driver.entryPoint ? `Entry Point: ${driver.entryPoint}` : undefined,
+    driver.sparkSqlParameters ? `Spark SQL: ${driver.sparkSqlParameters}` : undefined
+  ].filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+function formatJson(value?: Record<string, unknown> | Record<string, string>) {
+  if (!value || Object.keys(value).length === 0) return undefined;
+  return JSON.stringify(value, null, 2);
 }
 
 function errorMessage(error: unknown) {
