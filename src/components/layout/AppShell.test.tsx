@@ -23,8 +23,21 @@ vi.mock("@/hooks/useEmr", () => ({
     isLoading: false,
     error: null
   }),
+  useDescribeJobRun: () => ({ data: undefined, isLoading: false, error: null }),
   useCancelJobRun: () => ({ mutate: vi.fn(), isPending: false }),
   useStartJobRun: () => ({ mutate: vi.fn(), isPending: false })
+}));
+
+vi.mock("@/services/emrService", () => ({
+  emrService: {
+    describeJobRun: vi.fn(async () => ({
+      id: "job-running",
+      name: "running-etl",
+      state: "RUNNING",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:00:00Z"
+    }))
+  }
 }));
 
 vi.mock("@/hooks/useLogs", () => ({
