@@ -1,8 +1,9 @@
-import { Copy, Download, Folder, Save, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowUp, Copy, Download, FileText, Folder, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useDeleteS3Object,
@@ -23,6 +24,7 @@ export function S3BrowserPage() {
   const buckets = useS3Buckets();
   const [bucket, setBucket] = useState<string>();
   const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
+  const [bucketInput, setBucketInput] = useState(selectedBucket ?? "");
   const [prefix, setPrefix] = useState(selectedS3Prefix ?? "");
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
@@ -43,8 +45,15 @@ export function S3BrowserPage() {
   useEffect(() => {
     if (selectedS3Bucket) {
       setBucket(selectedS3Bucket);
+      setBucketInput(selectedS3Bucket);
     }
   }, [selectedS3Bucket]);
+
+  useEffect(() => {
+    if (!bucket && !selectedS3Bucket && buckets.data?.[0]?.name) {
+      setBucketInput(buckets.data[0].name);
+    }
+  }, [bucket, buckets.data, selectedS3Bucket]);
 
   useEffect(() => {
     setPrefix(selectedS3Prefix ?? "");
@@ -107,6 +116,23 @@ export function S3BrowserPage() {
     }
   };
 
+  const openBucket = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextBucket = bucketInput.trim();
+    if (!nextBucket) return;
+    setBucket(nextBucket);
+    setPrefix("");
+    setSelectedKey(undefined);
+    setContent("");
+  };
+
+  const goUp = () => {
+    const parent = parentPrefix(prefix);
+    setPrefix(parent);
+    setSelectedKey(undefined);
+    setContent("");
+  };
+
   const remove = async () => {
     if (!selectedBucket || !selectedKey || !window.confirm(`Delete s3://${selectedBucket}/${selectedKey}?`)) return;
     try {
@@ -148,64 +174,62 @@ export function S3BrowserPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
-            {buckets.data && buckets.data.length > 1 ? (
-              <div className="flex flex-wrap gap-2">
-                {buckets.data.map((entry) => (
-                  <Button
-                    key={entry.name}
-                    type="button"
-                    size="sm"
-                    variant={entry.name === selectedBucket ? "default" : "outline"}
-                    onClick={() => {
-                      setBucket(entry.name);
-                      setPrefix("");
-                      setSelectedKey(undefined);
-                    }}
-                  >
+            <form className="flex gap-2" onSubmit={openBucket}>
+              <Input
+                list="s3-bucket-options"
+                placeholder="Bucket name"
+                value={bucketInput}
+                onChange={(event) => setBucketInput(event.target.value)}
+              />
+              <datalist id="s3-bucket-options">
+                {(buckets.data ?? []).map((entry) => (
+                  <option key={entry.name} value={entry.name}>
                     {entry.name}
-                  </Button>
+                  </option>
                 ))}
-              </div>
-            ) : null}
-            {prefix ? (
-              <Button
-                type="button"
-                variant="ghost"
-                className="justify-start"
-                onClick={() => {
-                  const parent = prefix.split("/").filter(Boolean).slice(0, -1).join("/");
-                  setPrefix(parent ? `${parent}/` : "");
-                  setSelectedKey(undefined);
-                }}
-              >
-                ../
+              </datalist>
+              <Button type="submit" disabled={!bucketInput.trim()}>
+                Open Bucket
               </Button>
-            ) : null}
+            </form>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" disabled={!prefix} onClick={goUp}>
+                <ArrowUp data-icon="inline-start" />
+                Up
+              </Button>
+              <Button type="button" variant="outline" disabled={!selectedBucket || objects.isLoading} onClick={() => void objects.refetch()}>
+                <RefreshCw data-icon="inline-start" />
+                Refresh
+              </Button>
+            </div>
             {buckets.isLoading || objects.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 objects...</p> : null}
             {buckets.error || objects.error ? (
               <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
                 {errorMessage(buckets.error ?? objects.error, "Failed to load S3 data.")}
               </p>
             ) : null}
-            {(objects.data ?? []).map((object) => (
-              <button
-                key={object.key}
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
-                type="button"
-                data-active={object.key === selectedKey}
-                onClick={() => {
-                  if (object.kind === "folder") {
-                    setPrefix(object.key);
-                    setSelectedKey(undefined);
-                    return;
-                  }
-                  setSelectedKey(object.key);
-                }}
-              >
-                <Folder className="size-4 text-muted-foreground" />
-                {object.key}
-              </button>
-            ))}
+            <nav aria-label="S3 objects" className="flex flex-col gap-1">
+              {(objects.data ?? []).map((object) => (
+                <button
+                  key={object.key}
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                  type="button"
+                  data-active={object.key === selectedKey}
+                  onClick={() => {
+                    if (object.kind === "folder") {
+                      setPrefix(object.key);
+                      setSelectedKey(undefined);
+                      setContent("");
+                      return;
+                    }
+                    setSelectedKey(object.key);
+                  }}
+                >
+                  {object.kind === "folder" ? <Folder className="size-4 text-muted-foreground" /> : <FileText className="size-4 text-muted-foreground" />}
+                  {displayObjectName(object.key, prefix, object.kind)}
+                </button>
+              ))}
+            </nav>
             {objects.data?.length === 0 ? <p className="text-sm text-muted-foreground">No objects under this prefix.</p> : null}
           </CardContent>
         </Card>
@@ -242,6 +266,20 @@ export function S3BrowserPage() {
       </div>
     </div>
   );
+}
+
+function displayObjectName(key: string, prefix: string, kind: "folder" | "file") {
+  const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
+  if (kind === "folder") {
+    const folderName = relative.split("/").filter(Boolean)[0] ?? relative;
+    return `${folderName}/`;
+  }
+  return relative.split("/").filter(Boolean).at(-1) ?? relative;
+}
+
+function parentPrefix(prefix: string) {
+  const parent = prefix.split("/").filter(Boolean).slice(0, -1).join("/");
+  return parent ? `${parent}/` : "";
 }
 
 function errorMessage(error: unknown, fallback: string) {
