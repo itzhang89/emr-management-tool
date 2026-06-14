@@ -10,6 +10,7 @@ const mutate = vi.fn();
 const startMutate = vi.fn();
 const describeJob = vi.fn();
 const describeJobRun = vi.fn();
+const useJobRuns = vi.fn();
 let describedJob: JobRunSummary | undefined;
 
 vi.mock("@/services/emrService", () => ({
@@ -19,11 +20,7 @@ vi.mock("@/services/emrService", () => ({
 }));
 
 vi.mock("@/hooks/useEmr", () => ({
-  useJobRuns: () => ({
-    data: jobs,
-    isLoading: false,
-    error: null
-  }),
+  useJobRuns: (...args: unknown[]) => useJobRuns(...args),
   useDescribeJobRun: (id?: string, virtualClusterId?: string) => {
     describeJob(id, virtualClusterId);
     return {
@@ -62,6 +59,12 @@ describe("JobHistoryPage", () => {
     describedJob = undefined;
     jobs = makeJobs();
     describeJobRun.mockResolvedValue(jobs[0]);
+    useJobRuns.mockClear();
+    useJobRuns.mockReturnValue({
+      data: jobs,
+      isLoading: false,
+      error: null
+    });
     useSessionStore.setState({
       selectedVirtualClusterId: "vc-1",
       selectedJobId: undefined,
@@ -162,6 +165,19 @@ describe("JobHistoryPage", () => {
 
     await user.click(screen.getByPlaceholderText(/search jobs/i));
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+  });
+
+  it("enables 5 second auto refresh when toggled on", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false);
+
+    await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
+
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true);
+    expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("true");
   });
 
   it("opens logs with only the job context and lets Logs resolve destinations", async () => {

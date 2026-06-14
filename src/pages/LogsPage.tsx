@@ -17,6 +17,7 @@ import {
   type CloudWatchLogDestination,
   type S3LogDestination
 } from "@/services/jobLogDestinations";
+import { saveTextFile } from "@/services/fileDownload";
 import { s3Service } from "@/services/s3Service";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
@@ -129,8 +130,11 @@ export function LogsPage() {
 
     try {
       const chunks = await Promise.all(target.items.map((item) => getDownloadChunk(item, selectedJobId, cloudWatchDestination, s3Destination)));
-      downloadText(`${selectedJobId}-${target.label}.log`, chunks.join("\n\n"));
+      const savedPath = await saveTextFile(`${selectedJobId}-${target.label}.log`, chunks.join("\n\n"));
       setDownloadMenu(undefined);
+      if (savedPath) {
+        toast.success(`Saved to ${savedPath}`);
+      }
     } catch (error) {
       toast.error(errorMessage(error));
     }
@@ -417,21 +421,6 @@ async function getCloudWatchDownloadLines(item: JobLogStream, jobId: string, clo
   } while (nextForwardToken);
 
   return lines;
-}
-
-function downloadText(fileName: string, content: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = sanitizeFileName(fileName);
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function sanitizeFileName(value: string) {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "job.log";
 }
 
 function errorMessage(error: unknown) {

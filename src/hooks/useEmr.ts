@@ -9,10 +9,11 @@ export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
   });
 }
 
-export function useJobRuns(virtualClusterId?: string) {
+export function useJobRuns(virtualClusterId?: string, autoRefresh = false) {
   return useQuery({
     queryKey: ["job-runs", virtualClusterId],
-    queryFn: () => emrService.listJobRuns(virtualClusterId)
+    queryFn: () => emrService.listJobRuns(virtualClusterId),
+    refetchInterval: autoRefresh ? 5_000 : false
   });
 }
 
