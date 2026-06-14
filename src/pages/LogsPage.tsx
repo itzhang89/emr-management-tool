@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDescribeJobRun } from "@/hooks/useEmr";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
 import { cn } from "@/lib/utils";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
@@ -36,6 +37,8 @@ export function LogsPage() {
   const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
   const [jobIdInput, setJobIdInput] = useState(selectedJobId ?? "");
   const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? selectedVirtualClusterId);
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
   const destinations = useMemo(() => {
     if (!describedJob.data) return {};
     const resolved = resolveJobLogDestinations(describedJob.data);
@@ -129,7 +132,11 @@ export function LogsPage() {
     if (!selectedJobId) return;
 
     try {
-      const chunks = await Promise.all(target.items.map((item) => getDownloadChunk(item, selectedJobId, cloudWatchDestination, s3Destination)));
+      const chunks = await Promise.all(
+        target.items.map((item) =>
+          getDownloadChunk(item, selectedJobId, accountId, cloudWatchDestination, s3Destination)
+        )
+      );
       const savedPath = await saveTextFile(`${selectedJobId}-${target.label}.log`, chunks.join("\n\n"));
       setDownloadMenu(undefined);
       if (savedPath) {
@@ -384,6 +391,7 @@ function openItemDownloadMenu(
 async function getDownloadChunk(
   item: JobLogStream | JobLogObject,
   jobId: string,
+  accountId: string | undefined,
   cloudWatchDestination?: CloudWatchLogDestination,
   s3Destination?: S3LogDestination
 ) {
@@ -398,7 +406,7 @@ async function getDownloadChunk(
   if (!s3Destination) {
     throw new Error("S3 log configuration is unavailable.");
   }
-  const response = await s3Service.getJobLogObject(s3Destination.bucket, item.s3Key);
+  const response = await s3Service.getJobLogObject(accountId!, s3Destination.bucket, item.s3Key);
   return [`s3://${s3Destination.bucket}/${item.s3Key}`, response.content].join("\n");
 }
 

@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 
 vi.mock("@/hooks/useAwsSettings", () => ({
-  useAwsAccounts: () => ({ data: [] })
+  useAwsAccounts: () => ({ data: [] }),
+  useActiveAwsAccount: () => ({
+    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+  })
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
