@@ -223,6 +223,7 @@ pub struct StartJobRunRequest {
 pub struct TemplateVariableDefinition {
     pub name: String,
     pub label: Option<String>,
+    pub description: Option<String>,
     pub r#type: String,
     pub default_value: Option<serde_json::Value>,
     pub options: Option<Vec<String>>,

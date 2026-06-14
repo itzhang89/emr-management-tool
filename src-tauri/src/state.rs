@@ -98,12 +98,13 @@ pub fn default_job_config_templates() -> Vec<JobConfigTemplate> {
 
     vec![JobConfigTemplate {
         id: "daily-etl".to_string(),
-        name: "Daily ETL Jar".to_string(),
-        description: Some("Starter Jar application template with monitoring overrides.".to_string()),
+        name: "example".to_string(),
+        description: Some("Reference template showing how to configure an EMR submit payload.".to_string()),
         payload_template: payload_template.to_string(),
         custom_variables: vec![TemplateVariableDefinition {
             name: "ENV".to_string(),
             label: Some("Environment".to_string()),
+            description: Some("Runtime environment used by the example Spark job.".to_string()),
             r#type: "enum".to_string(),
             default_value: Some(serde_json::json!("prod")),
             options: Some(vec!["dev".to_string(), "staging".to_string(), "prod".to_string()]),

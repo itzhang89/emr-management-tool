@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 
 vi.mock("@/hooks/useEmr", () => ({
@@ -54,7 +56,7 @@ vi.mock("@/hooks/useJobConfigTemplates", () => ({
             }
           }
         }`,
-        customVariables: [],
+        customVariables: [{ name: "ENV", type: "text", description: "Runtime environment name" }],
         defaultResourceTemplateId: "tiny",
         createdAt: "",
         updatedAt: ""
@@ -78,7 +80,9 @@ describe("SubmitJobPage", () => {
     const queryClient = new QueryClient();
     render(
       <QueryClientProvider client={queryClient}>
-        <SubmitJobPage />
+        <TooltipProvider>
+          <SubmitJobPage />
+        </TooltipProvider>
       </QueryClientProvider>
     );
 
@@ -87,5 +91,21 @@ describe("SubmitJobPage", () => {
     expect(screen.getByText("Runtime Selection")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Preview JSON/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save Template/i })).not.toBeInTheDocument();
+  });
+
+  it("shows custom variable descriptions as label tooltips", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <SubmitJobPage />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    await user.hover(screen.getByText("ENV"));
+
+    expect((await screen.findAllByText("Runtime environment name")).length).toBeGreaterThan(0);
   });
 });

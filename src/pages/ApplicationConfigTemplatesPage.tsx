@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Copy, Download, Edit2, FileJson, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Download, Edit2, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle
@@ -38,6 +39,11 @@ import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableTyp
 type Editing = { template?: JobConfigTemplate } | undefined;
 
 type EditableVariable = TemplateVariableDefinition & { editorId: string };
+
+type TemplateEditorSnapshot = Pick<
+  JobConfigTemplate,
+  "name" | "description" | "payloadTemplate" | "customVariables" | "defaultResourceTemplateId"
+>;
 
 export function ApplicationConfigTemplatesPage() {
   const templates = useJobConfigTemplates();
@@ -105,12 +111,13 @@ export function ApplicationConfigTemplatesPage() {
                   : ""}
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" size="icon" onClick={() => setEditing({ template })}>
+                <Button variant="ghost" size="icon" aria-label={`Edit ${template.name}`} onClick={() => setEditing({ template })}>
                   <Edit2 />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={`Export ${template.name}`}
                   onClick={async () => {
                     const saved = await saveTextFile(
                       `${template.name.replace(/\s+/g, "-").toLowerCase()}.json`,
@@ -127,13 +134,23 @@ export function ApplicationConfigTemplatesPage() {
                 >
                   <Download />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => duplicateTemplate.mutate(template.id)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Duplicate ${template.name}`}
+                  onClick={() => duplicateTemplate.mutate(template.id)}
+                >
                   <Copy />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={`Delete ${template.name}`}
                   onClick={async () => {
+                    if (template.builtIn) {
+                      toast.error("Built-in example templates are for reference and cannot be deleted.");
+                      return;
+                    }
                     try {
                       await deleteTemplate.mutateAsync(template.id);
                       toast.success("Application config template deleted.");
@@ -188,14 +205,23 @@ function JobConfigTemplateDialog({
   const [payloadTemplate, setPayloadTemplate] = useState(defaultExamplePayload());
   const [customVariables, setCustomVariables] = useState<TemplateVariableDefinition[]>([]);
   const [defaultResourceTemplateId, setDefaultResourceTemplateId] = useState<string>();
+  const [resetSnapshot, setResetSnapshot] = useState<TemplateEditorSnapshot>(() => createEditorSnapshot());
+  const [variableEditorKey, setVariableEditorKey] = useState(0);
 
   useEffect(() => {
-    setName(template?.name ?? "");
-    setDescription(template?.description ?? "");
-    setPayloadTemplate(template?.payloadTemplate ?? defaultExamplePayload());
-    setCustomVariables(template?.customVariables ?? []);
-    setDefaultResourceTemplateId(template?.defaultResourceTemplateId);
+    const snapshot = createEditorSnapshot(template);
+    applyEditorSnapshot(snapshot);
+    setResetSnapshot(snapshot);
+    setVariableEditorKey((key) => key + 1);
   }, [template]);
+
+  const applyEditorSnapshot = (snapshot: TemplateEditorSnapshot) => {
+    setName(snapshot.name);
+    setDescription(snapshot.description ?? "");
+    setPayloadTemplate(snapshot.payloadTemplate);
+    setCustomVariables(snapshot.customVariables);
+    setDefaultResourceTemplateId(snapshot.defaultResourceTemplateId);
+  };
 
   if (!editing) return null;
 
@@ -204,6 +230,7 @@ function JobConfigTemplateDialog({
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{template ? "Edit" : "Create"} application config template</DialogTitle>
+          <DialogDescription>Reset restores the editor to the state from when it was opened or first imported.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -231,9 +258,21 @@ function JobConfigTemplateDialog({
           <div className="flex items-center justify-between">
             <Label>Payload JSON</Label>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => setPayloadTemplate(defaultExamplePayload())}>
-                <FileJson data-icon="inline-start" />
-                Load Example
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const confirmed = window.confirm(
+                    "Reset will overwrite all current settings with the initial template state. Continue?"
+                  );
+                  if (!confirmed) return;
+                  applyEditorSnapshot(resetSnapshot);
+                  setVariableEditorKey((key) => key + 1);
+                }}
+              >
+                <RotateCcw data-icon="inline-start" />
+                Reset
               </Button>
               <Button
                 type="button"
@@ -244,11 +283,10 @@ function JobConfigTemplateDialog({
                   if (!content) return;
                   try {
                     const imported = parseImportedJobConfigTemplate(content);
-                    setName(imported.name);
-                    setDescription(imported.description ?? "");
-                    setPayloadTemplate(imported.payloadTemplate);
-                    setCustomVariables(imported.customVariables);
-                    setDefaultResourceTemplateId(imported.defaultResourceTemplateId);
+                    const snapshot = createEditorSnapshot(imported);
+                    applyEditorSnapshot(snapshot);
+                    setResetSnapshot(snapshot);
+                    setVariableEditorKey((key) => key + 1);
                     toast.success("Template JSON imported into editor.");
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Failed to import JSON.");
@@ -266,7 +304,7 @@ function JobConfigTemplateDialog({
             onChange={(event) => setPayloadTemplate(event.target.value)}
           />
           <VariableEditor
-            key={template?.id ?? "new-template"}
+            key={`${template?.id ?? "new-template"}-${variableEditorKey}`}
             variables={customVariables}
             onChange={setCustomVariables}
           />
@@ -462,6 +500,12 @@ function VariableRow({
         </div>
       </div>
 
+      <Input
+        placeholder="Description (optional)"
+        value={variable.description ?? ""}
+        onChange={(event) => onChange({ description: event.target.value || undefined })}
+      />
+
       {(variable.type === "enum" || variable.type === "multiEnum") && (
         <Input
           placeholder="Options, comma-separated"
@@ -582,6 +626,16 @@ function toEditableRows(variables: TemplateVariableDefinition[]): EditableVariab
 function stripEditorId(variable: EditableVariable): TemplateVariableDefinition {
   const { editorId: _editorId, ...definition } = variable;
   return definition;
+}
+
+function createEditorSnapshot(template?: Partial<TemplateEditorSnapshot>): TemplateEditorSnapshot {
+  return {
+    name: template?.name ?? "",
+    description: template?.description ?? "",
+    payloadTemplate: template?.payloadTemplate ?? defaultExamplePayload(),
+    customVariables: template?.customVariables ?? [],
+    defaultResourceTemplateId: template?.defaultResourceTemplateId
+  };
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
