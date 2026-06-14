@@ -1,9 +1,10 @@
-import { Copy, Edit2, FileJson, Plus, Trash2 } from "lucide-react";
+import { Copy, Download, Edit2, FileJson, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useCreateJobConfigTemplate,
@@ -24,9 +26,17 @@ import {
 } from "@/hooks/useJobConfigTemplates";
 import { useTemplates } from "@/hooks/useTemplates";
 import { defaultExamplePayload } from "@/services/jobConfigExamples";
+import {
+  buildImportedJobConfigTemplate,
+  parseImportedJobConfigTemplate,
+  serializeJobConfigTemplate
+} from "@/services/jobConfigImportExport";
+import { openTextFile, saveTextFile } from "@/services/fileDownload";
 import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableType } from "@/types/domain";
 
 type Editing = { template?: JobConfigTemplate } | undefined;
+
+type EditableVariable = TemplateVariableDefinition & { editorId: string };
 
 export function ApplicationConfigTemplatesPage() {
   const templates = useJobConfigTemplates();
@@ -37,6 +47,16 @@ export function ApplicationConfigTemplatesPage() {
   const duplicateTemplate = useDuplicateJobConfigTemplate();
   const items = templates.data ?? [];
 
+  const importTemplate = async (raw: string) => {
+    try {
+      const payload = parseImportedJobConfigTemplate(raw);
+      await createTemplate.mutateAsync(buildImportedJobConfigTemplate(payload));
+      toast.success("Application config template imported.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to import template.");
+    }
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
@@ -46,10 +66,23 @@ export function ApplicationConfigTemplatesPage() {
             Manage full EMR submit JSON templates with variable substitution.
           </p>
         </div>
-        <Button onClick={() => setEditing({})}>
-          <Plus data-icon="inline-start" />
-          Template
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const content = await openTextFile();
+              if (!content) return;
+              await importTemplate(content);
+            }}
+          >
+            <Upload data-icon="inline-start" />
+            Import
+          </Button>
+          <Button onClick={() => setEditing({})}>
+            <Plus data-icon="inline-start" />
+            Template
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -64,7 +97,8 @@ export function ApplicationConfigTemplatesPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="text-sm text-muted-foreground">
-                {template.customVariables.length} variable{template.customVariables.length === 1 ? "" : "s"}
+                {(template.customVariables ?? []).length} variable
+                {(template.customVariables ?? []).length === 1 ? "" : "s"}
                 {template.defaultResourceTemplateId
                   ? ` · default resource ${template.defaultResourceTemplateId}`
                   : ""}
@@ -72,6 +106,25 @@ export function ApplicationConfigTemplatesPage() {
               <div className="flex gap-2">
                 <Button variant="ghost" size="icon" onClick={() => setEditing({ template })}>
                   <Edit2 />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={async () => {
+                    const saved = await saveTextFile(
+                      `${template.name.replace(/\s+/g, "-").toLowerCase()}.json`,
+                      serializeJobConfigTemplate({
+                        name: template.name,
+                        description: template.description,
+                        payloadTemplate: template.payloadTemplate,
+                        customVariables: template.customVariables ?? [],
+                        defaultResourceTemplateId: template.defaultResourceTemplateId
+                      })
+                    );
+                    if (saved) toast.success("Template exported.");
+                  }}
+                >
+                  <Download />
                 </Button>
                 <Button variant="ghost" size="icon" onClick={() => duplicateTemplate.mutate(template.id)}>
                   <Copy />
@@ -176,17 +229,46 @@ function JobConfigTemplateDialog({
           </Field>
           <div className="flex items-center justify-between">
             <Label>Payload JSON</Label>
-            <Button type="button" variant="outline" size="sm" onClick={() => setPayloadTemplate(defaultExamplePayload())}>
-              <FileJson data-icon="inline-start" />
-              Load Example
-            </Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setPayloadTemplate(defaultExamplePayload())}>
+                <FileJson data-icon="inline-start" />
+                Load Example
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const content = await openTextFile();
+                  if (!content) return;
+                  try {
+                    const imported = parseImportedJobConfigTemplate(content);
+                    setName(imported.name);
+                    setDescription(imported.description ?? "");
+                    setPayloadTemplate(imported.payloadTemplate);
+                    setCustomVariables(imported.customVariables);
+                    setDefaultResourceTemplateId(imported.defaultResourceTemplateId);
+                    toast.success("Template JSON imported into editor.");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Failed to import JSON.");
+                  }
+                }}
+              >
+                <Upload data-icon="inline-start" />
+                Import JSON
+              </Button>
+            </div>
           </div>
           <Textarea
             className="min-h-[280px] font-mono text-xs"
             value={payloadTemplate}
             onChange={(event) => setPayloadTemplate(event.target.value)}
           />
-          <VariableEditor variables={customVariables} onChange={setCustomVariables} />
+          <VariableEditor
+            key={template?.id ?? "new-template"}
+            variables={customVariables}
+            onChange={setCustomVariables}
+          />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -198,6 +280,10 @@ function JobConfigTemplateDialog({
                 JSON.parse(payloadTemplate);
               } catch {
                 toast.error("Payload JSON is invalid.");
+                return;
+              }
+              if (customVariables.some((variable) => !variable.name.trim())) {
+                toast.error("Each variable needs a name.");
                 return;
               }
               void onSave({
@@ -228,6 +314,13 @@ function VariableEditor({
   variables: TemplateVariableDefinition[];
   onChange: (variables: TemplateVariableDefinition[]) => void;
 }) {
+  const [rows, setRows] = useState<EditableVariable[]>(() => toEditableRows(variables));
+
+  const commitRows = (nextRows: EditableVariable[]) => {
+    setRows(nextRows);
+    onChange(nextRows.map(stripEditorId));
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -237,9 +330,14 @@ function VariableEditor({
           variant="outline"
           size="sm"
           onClick={() =>
-            onChange([
-              ...variables,
-              { name: `VAR_${variables.length + 1}`, type: "text", required: false }
+            commitRows([
+              ...rows,
+              {
+                editorId: crypto.randomUUID(),
+                name: `VAR_${rows.length + 1}`,
+                type: "text",
+                required: false
+              }
             ])
           }
         >
@@ -247,69 +345,193 @@ function VariableEditor({
           Add Variable
         </Button>
       </div>
-      {variables.map((variable, index) => (
-        <div key={`${variable.name}-${index}`} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 rounded-lg border p-3">
-          <Input
-            placeholder="Name"
-            value={variable.name}
-            onChange={(event) => updateVariable(variables, index, { name: event.target.value }, onChange)}
-          />
-          <Input
-            placeholder="Label"
-            value={variable.label ?? ""}
-            onChange={(event) => updateVariable(variables, index, { label: event.target.value }, onChange)}
-          />
-          <Select
-            value={variable.type}
-            onValueChange={(value: TemplateVariableType) => updateVariable(variables, index, { type: value }, onChange)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(["text", "number", "boolean", "enum", "multiEnum", "date", "dateTime"] as const).map((type) => (
-                <SelectItem key={type} value={type}>
-                  {type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => onChange(variables.filter((_, itemIndex) => itemIndex !== index))}
-          >
-            <Trash2 />
-          </Button>
-          {(variable.type === "enum" || variable.type === "multiEnum") && (
-            <Input
-              className="col-span-4"
-              placeholder="Options comma-separated"
-              value={(variable.options ?? []).join(",")}
-              onChange={(event) =>
-                updateVariable(
-                  variables,
-                  index,
-                  { options: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) },
-                  onChange
-                )
-              }
-            />
-          )}
-        </div>
+      {rows.map((variable, index) => (
+        <VariableRow
+          key={variable.editorId}
+          variable={variable}
+          onChange={(patch) =>
+            commitRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
+          }
+          onRemove={() => commitRows(rows.filter((_, rowIndex) => rowIndex !== index))}
+        />
       ))}
     </div>
   );
 }
 
-function updateVariable(
-  variables: TemplateVariableDefinition[],
-  index: number,
-  patch: Partial<TemplateVariableDefinition>,
-  onChange: (variables: TemplateVariableDefinition[]) => void
-) {
-  onChange(variables.map((variable, itemIndex) => (itemIndex === index ? { ...variable, ...patch } : variable)));
+function VariableRow({
+  variable,
+  onChange,
+  onRemove
+}: {
+  variable: EditableVariable;
+  onChange: (patch: Partial<EditableVariable>) => void;
+  onRemove: () => void;
+}) {
+  const [optionsDraft, setOptionsDraft] = useState((variable.options ?? []).join(", "));
+
+  useEffect(() => {
+    setOptionsDraft((variable.options ?? []).join(", "));
+  }, [variable.editorId, variable.options]);
+
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <div className="grid grid-cols-[1fr_180px_auto] gap-2">
+        <Input
+          placeholder="Variable name"
+          value={variable.name}
+          onChange={(event) => onChange({ name: event.target.value })}
+        />
+        <Select
+          value={variable.type}
+          onValueChange={(value: TemplateVariableType) => onChange({ type: value, defaultValue: undefined, options: undefined })}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(["text", "number", "boolean", "enum", "multiEnum", "date", "dateTime"] as const).map((type) => (
+              <SelectItem key={type} value={type}>
+                {type}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button type="button" variant="ghost" size="icon" onClick={onRemove}>
+          <Trash2 />
+        </Button>
+      </div>
+
+      <DefaultValueField variable={variable} onChange={onChange} />
+
+      {(variable.type === "enum" || variable.type === "multiEnum") && (
+        <Input
+          placeholder="Options, comma-separated"
+          value={optionsDraft}
+          onChange={(event) => setOptionsDraft(event.target.value)}
+          onBlur={() =>
+            onChange({
+              options: optionsDraft
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean)
+            })
+          }
+        />
+      )}
+
+      {(variable.type === "date" || variable.type === "dateTime") && (
+        <Input
+          placeholder="Format, e.g. YYYY-MM-DD"
+          value={variable.format ?? ""}
+          onChange={(event) => onChange({ format: event.target.value })}
+        />
+      )}
+
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={Boolean(variable.required)} onCheckedChange={(checked) => onChange({ required: Boolean(checked) })} />
+        Required
+      </label>
+    </div>
+  );
+}
+
+function DefaultValueField({
+  variable,
+  onChange
+}: {
+  variable: EditableVariable;
+  onChange: (patch: Partial<EditableVariable>) => void;
+}) {
+  if (variable.type === "boolean") {
+    return (
+      <label className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+        <span>Default value</span>
+        <Switch
+          checked={Boolean(variable.defaultValue)}
+          onCheckedChange={(checked) => onChange({ defaultValue: checked })}
+        />
+      </label>
+    );
+  }
+
+  if (variable.type === "number") {
+    return (
+      <Field label="Default value">
+        <Input
+          type="number"
+          value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+          onChange={(event) =>
+            onChange({ defaultValue: event.target.value === "" ? undefined : Number(event.target.value) })
+          }
+        />
+      </Field>
+    );
+  }
+
+  if (variable.type === "enum") {
+    const options = variable.options ?? [];
+    return (
+      <Field label="Default value">
+        <Select
+          value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+          onValueChange={(value) => onChange({ defaultValue: value })}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Optional default" />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    );
+  }
+
+  if (variable.type === "multiEnum") {
+    return (
+      <Field label="Default value">
+        <Input
+          placeholder="Comma-separated default selections"
+          value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
+          onChange={(event) =>
+            onChange({
+              defaultValue: event.target.value
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean)
+            })
+          }
+        />
+      </Field>
+    );
+  }
+
+  return (
+    <Field label="Default value">
+      <Input
+        placeholder="Optional default"
+        value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+        onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
+      />
+    </Field>
+  );
+}
+
+function toEditableRows(variables: TemplateVariableDefinition[]): EditableVariable[] {
+  return variables.map((variable) => ({
+    ...variable,
+    editorId: crypto.randomUUID()
+  }));
+}
+
+function stripEditorId(variable: EditableVariable): TemplateVariableDefinition {
+  const { editorId: _editorId, ...definition } = variable;
+  return definition;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

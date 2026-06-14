@@ -1,5 +1,26 @@
 import { tauriClient } from "./tauriClient";
 
+export async function openTextFile(): Promise<string | undefined> {
+  if (isTauriRuntime()) {
+    return tauriClient.openTextFile();
+  }
+
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json,text/plain";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(undefined);
+        return;
+      }
+      resolve(await file.text());
+    };
+    input.click();
+  });
+}
+
 export async function saveTextFile(suggestedName: string, content: string): Promise<string | undefined> {
   if (isTauriRuntime()) {
     return tauriClient.saveTextFile({ suggestedName, content });

@@ -10,9 +10,10 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components/emr/VirtualClusterSelect";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
+import { useStartJobRun } from "@/hooks/useEmr";
 import {
   useJobConfigTemplates,
   useSubmitUser
@@ -32,14 +33,13 @@ export function SubmitJobPage() {
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
-  const clusters = useVirtualClusters();
+  const virtualClusterId = useEffectiveVirtualClusterId();
   const startJobRun = useStartJobRun();
   const jobConfigTemplates = useJobConfigTemplates();
   const resourceTemplates = useTemplates();
   const submitUserQuery = useSubmitUser();
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
-  const [virtualClusterId, setVirtualClusterId] = useState("");
   const [resourceTemplateId, setResourceTemplateId] = useState("tiny");
   const [customVariables, setCustomVariables] = useState<Record<string, string | number | boolean | string[]>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -73,7 +73,6 @@ export function SubmitJobPage() {
       ...clonedJobRequest,
       name: `${clonedJobRequest.name}-copy`
     });
-    setVirtualClusterId(clonedJobRequest.virtualClusterId);
     setSelectedVirtualClusterId(clonedJobRequest.virtualClusterId);
     setClonedJobRequest(undefined);
     toast.success("Cloned job configuration loaded.");
@@ -212,7 +211,7 @@ export function SubmitJobPage() {
               </Field>
               {selectedTemplate ? (
                 <TemplateVariableFields
-                  variables={selectedTemplate.customVariables}
+                  variables={selectedTemplate.customVariables ?? []}
                   values={customVariables}
                   onChange={setCustomVariables}
                 />
@@ -228,26 +227,7 @@ export function SubmitJobPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Field label="Virtual Cluster">
-              <Select
-                value={virtualClusterId}
-                onValueChange={(value) => {
-                  setVirtualClusterId(value);
-                  setSelectedVirtualClusterId(value);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select cluster" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {(clusters.data?.clusters ?? []).map((cluster) => (
-                      <SelectItem key={cluster.id} value={cluster.id}>
-                        {cluster.name} / {cluster.namespace}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <VirtualClusterSelect className="w-full" />
             </Field>
             <Field label="Resource Template">
               <Select value={resourceTemplateId} onValueChange={setResourceTemplateId} disabled={Boolean(cloneRequest)}>

@@ -39,6 +39,25 @@ fn sanitize_file_name(value: &str) -> String {
     sanitized.trim_matches('-').to_string()
 }
 
+#[tauri::command]
+pub async fn open_text_file() -> AppResult<Option<String>> {
+    let file = rfd::AsyncFileDialog::new()
+        .add_filter("JSON", &["json"])
+        .add_filter("Text", &["txt"])
+        .pick_file()
+        .await;
+
+    let Some(file) = file else {
+        return Ok(None);
+    };
+
+    let content = tokio::fs::read_to_string(file.path())
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+
+    Ok(Some(content))
+}
+
 #[cfg(test)]
 mod tests {
     use super::sanitize_file_name;
