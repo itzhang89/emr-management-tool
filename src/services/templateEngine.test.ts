@@ -70,6 +70,24 @@ describe("templateEngine", () => {
     expect(output).toBe("2026/06/14");
   });
 
+  it("uses year-month-day hour-minute-second as the default datetime format", () => {
+    const output = replaceTemplateVariables(
+      "${datetime}",
+      buildVariableMap(
+        template,
+        {
+          templateName: "Daily ETL",
+          virtualClusterId: "vc-123",
+          submitUser: "tester",
+          customVariables: {}
+        },
+        new Date(2026, 5, 14, 10, 15, 30)
+      ),
+      new Date(2026, 5, 14, 10, 15, 30)
+    );
+    expect(output).toBe("2026-06-14 10:15:30");
+  });
+
   it("validates required custom variables and payload shape", () => {
     const resolved = resolveTemplatePayload(template, {
       templateName: "Daily ETL",

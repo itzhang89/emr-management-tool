@@ -15,4 +15,17 @@ describe("jobConfigImportExport", () => {
     expect(parsed.name).toBe("Daily ETL");
     expect(parsed.customVariables[0]?.defaultValue).toBe("dev");
   });
+
+  it("defaults imported variables to required when omitted", () => {
+    const parsed = parseImportedJobConfigTemplate(
+      JSON.stringify({
+        name: "Daily ETL",
+        payloadTemplate: "{\"name\":\"daily-etl\"}",
+        customVariables: [{ name: "RUN_AT", type: "dateTime" }]
+      })
+    );
+
+    expect(parsed.customVariables[0]?.required).toBe(true);
+    expect(parsed.customVariables[0]?.format).toBe("YYYY-MM-DD HH:mm:ss");
+  });
 });

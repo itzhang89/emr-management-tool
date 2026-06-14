@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { TemplateVariableDefinition } from "@/types/domain";
+import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
 
 export function TemplateVariableFields({
   variables,
@@ -140,6 +141,7 @@ function VariableField({
       <DateTimeField
         label={label}
         includeTime={definition.type === "dateTime"}
+        displayFormat={definition.format ?? defaultFormatForVariableType(definition.type)}
         value={typeof value === "string" ? value : ""}
         onChange={onChange}
       />
@@ -205,11 +207,13 @@ function EnumCombobox({
 function DateTimeField({
   label,
   includeTime,
+  displayFormat,
   value,
   onChange
 }: {
   label: string;
   includeTime: boolean;
+  displayFormat: string;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -218,8 +222,8 @@ function DateTimeField({
 
   const display = useMemo(() => {
     if (!selected) return `Pick ${label.toLowerCase()}`;
-    return includeTime ? format(selected, "PPP p") : format(selected, "PPP");
-  }, [includeTime, label, selected]);
+    return formatWithPattern(selected, displayFormat);
+  }, [displayFormat, label, selected]);
 
   return (
     <Field label={label}>

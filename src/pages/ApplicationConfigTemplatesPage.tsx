@@ -32,6 +32,7 @@ import {
   serializeJobConfigTemplate
 } from "@/services/jobConfigImportExport";
 import { openTextFile, saveTextFile } from "@/services/fileDownload";
+import { defaultFormatForVariableType } from "@/services/dateFormat";
 import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableType } from "@/types/domain";
 
 type Editing = { template?: JobConfigTemplate } | undefined;
@@ -336,7 +337,7 @@ function VariableEditor({
                 editorId: crypto.randomUUID(),
                 name: `VAR_${rows.length + 1}`,
                 type: "text",
-                required: false
+                required: true
               }
             ])
           }
@@ -384,7 +385,14 @@ function VariableRow({
         />
         <Select
           value={variable.type}
-          onValueChange={(value: TemplateVariableType) => onChange({ type: value, defaultValue: undefined, options: undefined })}
+          onValueChange={(value: TemplateVariableType) =>
+            onChange({
+              type: value,
+              defaultValue: undefined,
+              options: undefined,
+              format: value === "date" || value === "dateTime" ? defaultFormatForVariableType(value) : undefined
+            })
+          }
         >
           <SelectTrigger>
             <SelectValue />
@@ -423,7 +431,7 @@ function VariableRow({
       {(variable.type === "date" || variable.type === "dateTime") && (
         <Input
           placeholder="Format, e.g. YYYY-MM-DD"
-          value={variable.format ?? ""}
+          value={variable.format ?? defaultFormatForVariableType(variable.type)}
           onChange={(event) => onChange({ format: event.target.value })}
         />
       )}
@@ -525,6 +533,10 @@ function DefaultValueField({
 function toEditableRows(variables: TemplateVariableDefinition[]): EditableVariable[] {
   return variables.map((variable) => ({
     ...variable,
+    required: variable.required ?? true,
+    format:
+      variable.format ??
+      (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined),
     editorId: crypto.randomUUID()
   }));
 }
