@@ -215,6 +215,45 @@ pub struct StartJobRunRequest {
     pub resources: SparkResourceConfig,
     pub spark_config: HashMap<String, String>,
     pub job_driver: JobDriverRequest,
+    pub configuration_overrides: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateVariableDefinition {
+    pub name: String,
+    pub label: Option<String>,
+    pub r#type: String,
+    pub default_value: Option<serde_json::Value>,
+    pub options: Option<Vec<String>>,
+    pub format: Option<String>,
+    pub required: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobConfigTemplate {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub payload_template: String,
+    pub custom_variables: Vec<TemplateVariableDefinition>,
+    pub default_resource_template_id: Option<String>,
+    pub built_in: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobConfigTemplatesResponse {
+    pub job_config_templates: Vec<JobConfigTemplate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobConfigTemplateMutationRequest {
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,10 @@ use crate::models::{
     AwsCommandContext, JobRunDescribeDetails, JobRunRequest, JobRunSummary,
     ListVirtualClustersRequest, ListVirtualClustersResponse, StartJobRunRequest, VirtualCluster,
 };
-use aws_sdk_emrcontainers::types::{ContainerInfo, JobDriver, SparkSubmitJobDriver};
+use aws_sdk_emrcontainers::types::{
+    CloudWatchMonitoringConfiguration, Configuration, ConfigurationOverrides, ContainerInfo,
+    JobDriver, MonitoringConfiguration, S3MonitoringConfiguration, SparkSubmitJobDriver,
+};
 use chrono::Utc;
 use tauri::AppHandle;
 
@@ -161,14 +164,18 @@ pub async fn start_job_run(
     let job_driver = build_job_driver(&request)?;
     let client_token = uuid::Uuid::new_v4().to_string();
     let virtual_cluster_id = request.virtual_cluster_id.clone();
-    let response = client
+    let mut operation = client
         .start_job_run()
         .name(request.name.clone())
         .virtual_cluster_id(request.virtual_cluster_id.clone())
         .client_token(client_token)
         .execution_role_arn(request.execution_role_arn.clone())
         .release_label(request.release_label.clone())
-        .job_driver(job_driver)
+        .job_driver(job_driver);
+    if let Some(overrides) = build_configuration_overrides(request.configuration_overrides.as_ref())? {
+        operation = operation.configuration_overrides(overrides);
+    }
+    let response = operation
         .send()
         .await
         .map_err(|error| {
@@ -288,16 +295,126 @@ fn build_job_driver(request: &StartJobRunRequest) -> AppResult<JobDriver> {
 }
 
 fn validate_start_job_request(request: &StartJobRunRequest) -> AppResult<()> {
+    let entry_point = request
+        .job_driver
+        .spark_submit_job_driver
+        .entry_point
+        .trim()
+        .to_string();
+    let jar_path = if entry_point.is_empty() {
+        request.application.jar_path.clone()
+    } else {
+        entry_point
+    };
     if request.application.r#type != "jar" {
         return Err(AppError::validation("Only Jar applications are supported."));
     }
-    if !request.application.jar_path.starts_with("s3://") {
+    if !jar_path.starts_with("s3://") {
         return Err(AppError::validation("Jar Path must be an S3 URI."));
     }
     if request.execution_role_arn.trim().is_empty() {
         return Err(AppError::validation("Execution role ARN is required."));
     }
     Ok(())
+}
+
+fn build_configuration_overrides(
+    value: Option<&serde_json::Value>,
+) -> AppResult<Option<ConfigurationOverrides>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let application_configuration = value
+        .get("applicationConfiguration")
+        .and_then(|items| items.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(build_configuration)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let monitoring_configuration = value
+        .get("monitoringConfiguration")
+        .and_then(build_monitoring_configuration);
+
+    if application_configuration.is_empty() && monitoring_configuration.is_none() {
+        return Ok(None);
+    }
+
+    let mut builder = ConfigurationOverrides::builder();
+    if !application_configuration.is_empty() {
+        builder = builder.set_application_configuration(Some(application_configuration));
+    }
+    if let Some(monitoring) = monitoring_configuration {
+        builder = builder.monitoring_configuration(monitoring);
+    }
+
+    Ok(Some(builder.build()))
+}
+
+fn build_configuration(value: &serde_json::Value) -> Option<Configuration> {
+    let classification = value.get("classification")?.as_str()?.to_string();
+    let mut builder = Configuration::builder().classification(classification);
+    if let Some(properties) = value.get("properties").and_then(|props| props.as_object()) {
+        for (key, property_value) in properties {
+            if let Some(property) = property_value.as_str() {
+                builder = builder.properties(key, property);
+            }
+        }
+    }
+    if let Some(configurations) = value.get("configurations").and_then(|items| items.as_array()) {
+        let nested = configurations
+            .iter()
+            .filter_map(build_configuration)
+            .collect::<Vec<_>>();
+        if !nested.is_empty() {
+            builder = builder.set_configurations(Some(nested));
+        }
+    }
+    builder.build().ok()
+}
+
+fn build_monitoring_configuration(
+    value: &serde_json::Value,
+) -> Option<MonitoringConfiguration> {
+    let mut builder = MonitoringConfiguration::builder();
+    let mut has_config = false;
+    if let Some(cloud_watch) = value
+        .get("cloudWatchMonitoringConfiguration")
+        .and_then(|config| {
+            let log_group = config.get("logGroupName")?.as_str()?;
+            let mut cloud_watch_builder =
+                CloudWatchMonitoringConfiguration::builder().log_group_name(log_group);
+            if let Some(prefix) = config
+                .get("logStreamNamePrefix")
+                .and_then(|prefix| prefix.as_str())
+            {
+                cloud_watch_builder = cloud_watch_builder.log_stream_name_prefix(prefix);
+            }
+            cloud_watch_builder.build().ok()
+        })
+    {
+        builder = builder.cloud_watch_monitoring_configuration(cloud_watch);
+        has_config = true;
+    }
+    if let Some(s3) = value
+        .get("s3MonitoringConfiguration")
+        .and_then(|config| {
+            let log_uri = config.get("logUri")?.as_str()?;
+            S3MonitoringConfiguration::builder()
+                .log_uri(log_uri)
+                .build()
+                .ok()
+        })
+    {
+        builder = builder.s3_monitoring_configuration(s3);
+        has_config = true;
+    }
+    if !has_config {
+        return None;
+    }
+    Some(builder.build())
 }
 
 fn map_virtual_cluster(cluster: &aws_sdk_emrcontainers::types::VirtualCluster) -> VirtualCluster {
@@ -597,6 +714,41 @@ mod tests {
         assert_eq!(
             s3.get("logUri").and_then(|value| value.as_str()),
             Some("s3://logs-bucket/emr/")
+        );
+    }
+
+    #[test]
+    fn builds_configuration_overrides_for_submit() {
+        let overrides = serde_json::json!({
+            "applicationConfiguration": [{
+                "classification": "spark-defaults",
+                "properties": {
+                    "spark.driver.cores": "2",
+                    "spark.executor.instances": "3"
+                }
+            }],
+            "monitoringConfiguration": {
+                "cloudWatchMonitoringConfiguration": {
+                    "logGroupName": "/aws/emr-containers/jobs",
+                    "logStreamNamePrefix": "tester"
+                }
+            }
+        });
+
+        let built = super::build_configuration_overrides(Some(&overrides)).expect("overrides build");
+        let mapped = super::map_configuration_overrides(&built.expect("built overrides")).expect("overrides map back");
+        let app_config = mapped
+            .get("applicationConfiguration")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first())
+            .expect("application configuration exists");
+
+        assert_eq!(
+            app_config
+                .get("properties")
+                .and_then(|props| props.get("spark.driver.cores"))
+                .and_then(|value| value.as_str()),
+            Some("2")
         );
     }
 }

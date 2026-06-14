@@ -1,6 +1,6 @@
 use crate::db::app_data_dir;
 use crate::error::{AppError, AppResult};
-use crate::models::{ApplicationTemplate, AwsAccount, JobRunSummary, ResourceTemplate};
+use crate::models::{ApplicationTemplate, AwsAccount, JobConfigTemplate, JobRunSummary, ResourceTemplate};
 use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
@@ -89,17 +89,71 @@ pub async fn upsert_resource_template(
     Ok(())
 }
 
+pub async fn list_job_config_templates(pool: &SqlitePool) -> AppResult<Vec<JobConfigTemplate>> {
+    let rows = sqlx::query("select payload from job_config_templates order by name")
+        .fetch_all(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    rows.into_iter()
+        .map(|row| from_payload(row.get::<String, _>("payload")))
+        .collect()
+}
+
+pub async fn upsert_job_config_template(
+    pool: &SqlitePool,
+    template: &JobConfigTemplate,
+) -> AppResult<()> {
+    let payload =
+        serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query(
+        "insert into job_config_templates (id, name, payload) values (?1, ?2, ?3)
+         on conflict(id) do update set name = excluded.name, payload = excluded.payload",
+    )
+    .bind(&template.id)
+    .bind(&template.name)
+    .bind(payload)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
 pub async fn delete_template(pool: &SqlitePool, table: &str, id: &str) -> AppResult<()> {
+    if table == "resource" {
+        let templates = list_resource_templates(pool).await?;
+        if templates
+            .iter()
+            .any(|template| template.id == id && template.built_in)
+        {
+            return Err(AppError::validation(
+                "Built-in resource templates cannot be deleted.",
+            ));
+        }
+    }
+
     let query = match table {
         "application" => "delete from application_templates where id = ?1",
-        "resource" => "delete from resource_templates where id = ?1 and json_extract(payload, '$.builtIn') = 0",
-        _ => return Err(AppError::validation("Template type must be application or resource.")),
+        "resource" => "delete from resource_templates where id = ?1",
+        "jobConfig" => "delete from job_config_templates where id = ?1 and json_extract(payload, '$.builtIn') = 0",
+        _ => return Err(AppError::validation("Unsupported template type.")),
     };
-    sqlx::query(query)
+    let result = sqlx::query(query)
         .bind(id)
         .execute(pool)
         .await
         .map_err(|error| AppError::storage(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        if table == "jobConfig" {
+            let templates = list_job_config_templates(pool).await?;
+            if templates.iter().any(|template| template.id == id && template.built_in) {
+                return Err(AppError::validation(
+                    "Built-in job config templates cannot be deleted.",
+                ));
+            }
+        }
+        return Err(AppError::validation("Template was not found."));
+    }
     Ok(())
 }
 
@@ -242,6 +296,7 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         "create table if not exists resource_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists job_history (id text primary key, created_at text not null, payload text not null)",
         "create table if not exists aws_accounts (id text primary key, name text not null, region text not null, is_active integer not null default 0, payload text not null)",
+        "create table if not exists job_config_templates (id text primary key, name text not null, payload text not null)",
         "alter table job_history add column account_id text",
         "alter table job_history add column region text",
         "alter table job_history add column virtual_cluster_id text",

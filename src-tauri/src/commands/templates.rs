@@ -21,6 +21,16 @@ pub async fn list_templates() -> AppResult<TemplatesResponse> {
             repository::upsert_resource_template(&pool, &template).await?;
             resources.push(template);
         }
+    } else {
+        let existing_ids: std::collections::HashSet<String> =
+            resources.iter().map(|template| template.id.clone()).collect();
+        for template in default_resource_templates() {
+            if !existing_ids.contains(&template.id) {
+                repository::upsert_resource_template(&pool, &template).await?;
+                resources.push(template);
+            }
+        }
+        resources.sort_by(|left, right| left.name.cmp(&right.name));
     }
 
     Ok(TemplatesResponse {
