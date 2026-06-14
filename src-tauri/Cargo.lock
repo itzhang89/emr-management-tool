@@ -2209,6 +2209,7 @@ dependencies = [
  "tauri-plugin-store",
  "thiserror 2.0.18",
  "tokio",
+ "urlencoding",
  "uuid",
 ]
 

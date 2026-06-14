@@ -414,3 +414,12 @@ pub struct S3UploadFromDiskRequest {
     pub bucket: String,
     pub prefix: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3RenameObjectRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub source_key: String,
+    pub destination_key: String,
+}

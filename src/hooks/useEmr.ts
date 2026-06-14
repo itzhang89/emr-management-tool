@@ -13,7 +13,9 @@ export function useJobRuns(virtualClusterId?: string, autoRefresh = false) {
   return useQuery({
     queryKey: ["job-runs", virtualClusterId],
     queryFn: () => emrService.listJobRuns(virtualClusterId),
-    refetchInterval: autoRefresh ? 5_000 : false
+    staleTime: autoRefresh ? 0 : undefined,
+    refetchInterval: autoRefresh ? 5_000 : false,
+    refetchIntervalInBackground: true
   });
 }
 

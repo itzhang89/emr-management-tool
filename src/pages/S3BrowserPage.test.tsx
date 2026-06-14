@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { S3BrowserPage } from "./S3BrowserPage";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -10,8 +11,11 @@ const useS3Objects = vi.fn();
 const useS3TextObject = vi.fn();
 const useSaveS3TextObject = vi.fn();
 const useDeleteS3Object = vi.fn();
+const useRenameS3Object = vi.fn();
 const uploadS3ObjectFromDisk = vi.fn();
 const downloadS3ObjectToDisk = vi.fn();
+const deleteMutateAsync = vi.fn();
+const renameMutateAsync = vi.fn();
 
 vi.mock("@/services/fileDownload", () => ({
   uploadS3ObjectFromDisk: (...args: unknown[]) => uploadS3ObjectFromDisk(...args),
@@ -23,8 +27,17 @@ vi.mock("@/hooks/useS3", () => ({
   useS3Objects: (...args: unknown[]) => useS3Objects(...args),
   useS3TextObject: (...args: unknown[]) => useS3TextObject(...args),
   useSaveS3TextObject: (...args: unknown[]) => useSaveS3TextObject(...args),
-  useDeleteS3Object: (...args: unknown[]) => useDeleteS3Object(...args)
+  useDeleteS3Object: (...args: unknown[]) => useDeleteS3Object(...args),
+  useRenameS3Object: (...args: unknown[]) => useRenameS3Object(...args)
 }));
+
+function renderS3BrowserPage() {
+  return render(
+    <TooltipProvider>
+      <S3BrowserPage />
+    </TooltipProvider>
+  );
+}
 
 describe("S3BrowserPage", () => {
   beforeEach(() => {
@@ -54,7 +67,15 @@ describe("S3BrowserPage", () => {
       error: null
     });
     useSaveS3TextObject.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-    useDeleteS3Object.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+    useDeleteS3Object.mockReturnValue({ mutateAsync: deleteMutateAsync, isPending: false });
+    useRenameS3Object.mockReturnValue({ mutateAsync: renameMutateAsync, isPending: false });
+    deleteMutateAsync.mockResolvedValue(undefined);
+    renameMutateAsync.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "notes.txt",
+      kind: "file",
+      size: 10
+    });
     uploadS3ObjectFromDisk.mockResolvedValue(undefined);
     downloadS3ObjectToDisk.mockResolvedValue(undefined);
   });
@@ -62,7 +83,7 @@ describe("S3BrowserPage", () => {
   it("edits the displayed S3 path directly and reverts invalid input", async () => {
     const user = userEvent.setup();
 
-    render(<S3BrowserPage />);
+    renderS3BrowserPage();
 
     expect(screen.queryByPlaceholderText(/Bucket name/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Open Bucket/i })).not.toBeInTheDocument();
@@ -93,7 +114,7 @@ describe("S3BrowserPage", () => {
   it("remembers the last valid S3 path when the page is opened again", () => {
     localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "logs/" }));
 
-    render(<S3BrowserPage />);
+    renderS3BrowserPage();
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
     expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
@@ -102,7 +123,7 @@ describe("S3BrowserPage", () => {
   it("compacts long displayed paths to the nearest parent levels", () => {
     localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "year/month/day/run/" }));
 
-    render(<S3BrowserPage />);
+    renderS3BrowserPage();
 
     expect(screen.getByRole("button", { name: "s3://logs-bucket/.../day/run/" })).toBeInTheDocument();
     expect(screen.queryByText("s3://logs-bucket/year/month/day/run/")).not.toBeInTheDocument();
@@ -111,7 +132,7 @@ describe("S3BrowserPage", () => {
   it("shows only current directory entries, drills into folders, refreshes, and goes up", async () => {
     const user = userEvent.setup();
 
-    render(<S3BrowserPage />);
+    renderS3BrowserPage();
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     expect(within(browser).getByRole("button", { name: /logs\//i })).toBeInTheDocument();
@@ -149,7 +170,7 @@ describe("S3BrowserPage", () => {
     });
     downloadS3ObjectToDisk.mockResolvedValue("/tmp/readme.txt");
 
-    render(<S3BrowserPage />);
+    renderS3BrowserPage();
 
     await user.click(screen.getByRole("button", { name: /^Upload$/i }));
     expect(uploadS3ObjectFromDisk).toHaveBeenCalledWith("logs-bucket", "");
@@ -159,6 +180,56 @@ describe("S3BrowserPage", () => {
     await user.click(screen.getByRole("button", { name: /^Download$/i }));
 
     expect(downloadS3ObjectToDisk).toHaveBeenCalledWith("logs-bucket", "readme.txt");
+  });
+
+  it("copies the current S3 path from the path bar icon", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Copy S3 path$/i }));
+    expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/");
+    expect(screen.queryByText("Copy S3 Path")).not.toBeInTheDocument();
+  });
+
+  it("confirms delete in a dialog before removing the object", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+    await user.click(screen.getByRole("button", { name: /^Delete$/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /Delete S3 object/i });
+    await user.click(within(dialog).getByRole("button", { name: /^Delete$/i }));
+
+    expect(deleteMutateAsync).toHaveBeenCalledWith({ bucket: "logs-bucket", key: "readme.txt" });
+    expect(refetchObjects).toHaveBeenCalled();
+  });
+
+  it("renames a file after double clicking its name", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.dblClick(within(browser).getByRole("button", { name: /readme\.txt/i }));
+    const renameInput = screen.getByDisplayValue("readme.txt");
+    await user.clear(renameInput);
+    await user.type(renameInput, "notes.txt");
+    await user.tab();
+
+    expect(renameMutateAsync).toHaveBeenCalledWith({
+      bucket: "logs-bucket",
+      sourceKey: "readme.txt",
+      destinationKey: "notes.txt"
+    });
   });
 });
 

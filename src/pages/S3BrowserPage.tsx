@@ -1,12 +1,22 @@
 import { ArrowUp, Copy, Download, FileText, Folder, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useDeleteS3Object,
+  useRenameS3Object,
   useS3Buckets,
   useS3Objects,
   useS3TextObject,
@@ -15,7 +25,7 @@ import {
 import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { AppError } from "@/types/domain";
+import type { AppError, S3ObjectEntry } from "@/types/domain";
 
 const lastS3PathStorageKey = "emr-eks:last-s3-path";
 
@@ -32,6 +42,9 @@ export function S3BrowserPage() {
   const [pathInput, setPathInput] = useState(formatPathInput(selectedBucket, prefix));
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
+  const [deleteTarget, setDeleteTarget] = useState<{ bucket: string; key: string }>();
+  const [renamingKey, setRenamingKey] = useState<string>();
+  const [renameValue, setRenameValue] = useState("");
   const selectedObject = useMemo(
     () => objects.data?.find((object) => object.key === selectedKey),
     [objects.data, selectedKey]
@@ -39,6 +52,7 @@ export function S3BrowserPage() {
   const textObject = useS3TextObject(selectedBucket, selectedObject?.kind === "file" ? selectedKey : undefined);
   const saveObject = useSaveS3TextObject();
   const deleteObject = useDeleteS3Object();
+  const renameObject = useRenameS3Object();
   const [content, setContent] = useState("");
   const [transferPending, setTransferPending] = useState(false);
   const editability = selectedObject
@@ -92,10 +106,14 @@ export function S3BrowserPage() {
     }
   };
 
-  const copyPath = async () => {
-    if (!selectedBucket || !selectedKey) return;
-    await navigator.clipboard?.writeText(`s3://${selectedBucket}/${selectedKey}`);
-    toast.success("S3 path copied.");
+  const copyCurrentPath = async () => {
+    if (!selectedBucket) return;
+    try {
+      await navigator.clipboard?.writeText(currentS3Path);
+      toast.success("S3 path copied.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to copy S3 path."));
+    }
   };
 
   const upload = async () => {
@@ -150,15 +168,79 @@ export function S3BrowserPage() {
     setContent("");
   };
 
-  const remove = async () => {
-    if (!selectedBucket || !selectedKey || !window.confirm(`Delete s3://${selectedBucket}/${selectedKey}?`)) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await deleteObject.mutateAsync({ bucket: selectedBucket, key: selectedKey });
-      setSelectedKey(undefined);
-      setContent("");
-      toast.success("Object deleted.");
+      await deleteObject.mutateAsync(deleteTarget);
+      if (selectedKey === deleteTarget.key) {
+        setSelectedKey(undefined);
+        setContent("");
+      }
+      await objects.refetch();
+      toast.success(`Deleted ${deleteTarget.key}`);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to delete object."));
+    } finally {
+      setDeleteTarget(undefined);
+    }
+  };
+
+  const startRename = (object: S3ObjectEntry) => {
+    if (object.kind !== "file") return;
+    setRenamingKey(object.key);
+    setRenameValue(displayObjectName(object.key, prefix, object.kind));
+  };
+
+  const cancelRename = () => {
+    setRenamingKey(undefined);
+    setRenameValue("");
+  };
+
+  const submitRename = async (sourceKey: string) => {
+    if (!selectedBucket) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      cancelRename();
+      return;
+    }
+    if (trimmed.includes("/")) {
+      toast.error("File name cannot contain '/'.");
+      return;
+    }
+
+    const parent = sourceKey.includes("/") ? sourceKey.slice(0, sourceKey.lastIndexOf("/") + 1) : "";
+    const destinationKey = `${parent}${trimmed}`;
+    if (destinationKey === sourceKey) {
+      cancelRename();
+      return;
+    }
+
+    try {
+      const renamed = await renameObject.mutateAsync({
+        bucket: selectedBucket,
+        sourceKey,
+        destinationKey
+      });
+      await objects.refetch();
+      if (selectedKey === sourceKey) {
+        setSelectedKey(renamed.key);
+      }
+      toast.success(`Renamed to ${trimmed}`);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to rename object."));
+    } finally {
+      cancelRename();
+    }
+  };
+
+  const handleRenameKeyDown = (event: KeyboardEvent<HTMLInputElement>, sourceKey: string) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submitRename(sourceKey);
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelRename();
     }
   };
 
@@ -183,7 +265,7 @@ export function S3BrowserPage() {
       <div className="grid grid-cols-[340px_1fr] gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+            <CardTitle className="flex min-w-0 items-center gap-1">
               {editingPath ? (
                 <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={openPath}>
                   <span className="text-muted-foreground">s3://</span>
@@ -209,7 +291,7 @@ export function S3BrowserPage() {
                 <button
                   type="button"
                   title={currentS3Path}
-                  className="min-w-0 break-all rounded-sm text-left hover:underline"
+                  className="min-w-0 flex-1 break-all rounded-sm text-left hover:underline"
                   onClick={() => {
                     setPathInput(formatPathInput(selectedBucket, prefix));
                     setEditingPath(true);
@@ -218,6 +300,21 @@ export function S3BrowserPage() {
                   {displayedS3Path}
                 </button>
               )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Copy S3 path"
+                    disabled={!selectedBucket}
+                    onClick={() => void copyCurrentPath()}
+                  >
+                    <Copy className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Copy S3 path</TooltipContent>
+              </Tooltip>
               <Button
                 type="button"
                 variant="ghost"
@@ -246,26 +343,46 @@ export function S3BrowserPage() {
               </p>
             ) : null}
             <nav aria-label="S3 objects" className="flex flex-col gap-1">
-              {(objects.data ?? []).map((object) => (
-                <button
-                  key={object.key}
-                  className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
-                  type="button"
-                  data-active={object.key === selectedKey}
-                  onClick={() => {
-                    if (object.kind === "folder") {
-                      setPrefix(object.key);
-                      setSelectedKey(undefined);
-                      setContent("");
-                      return;
-                    }
-                    setSelectedKey(object.key);
-                  }}
-                >
-                  {object.kind === "folder" ? <Folder className="size-4 text-muted-foreground" /> : <FileText className="size-4 text-muted-foreground" />}
-                  {displayObjectName(object.key, prefix, object.kind)}
-                </button>
-              ))}
+              {(objects.data ?? []).map((object) => {
+                const objectName = displayObjectName(object.key, prefix, object.kind);
+                const isRenaming = renamingKey === object.key;
+
+                if (isRenaming) {
+                  return (
+                    <Input
+                      key={object.key}
+                      autoFocus
+                      className="h-9 font-mono text-sm"
+                      value={renameValue}
+                      onChange={(event) => setRenameValue(event.target.value)}
+                      onBlur={() => void submitRename(object.key)}
+                      onKeyDown={(event) => handleRenameKeyDown(event, object.key)}
+                    />
+                  );
+                }
+
+                return (
+                  <button
+                    key={object.key}
+                    className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                    type="button"
+                    data-active={object.key === selectedKey}
+                    onClick={() => {
+                      if (object.kind === "folder") {
+                        setPrefix(object.key);
+                        setSelectedKey(undefined);
+                        setContent("");
+                        return;
+                      }
+                      setSelectedKey(object.key);
+                    }}
+                    onDoubleClick={() => startRename(object)}
+                  >
+                    {object.kind === "folder" ? <Folder className="size-4 text-muted-foreground" /> : <FileText className="size-4 text-muted-foreground" />}
+                    {objectName}
+                  </button>
+                );
+              })}
             </nav>
             {objects.data?.length === 0 ? <p className="text-sm text-muted-foreground">No objects under this prefix.</p> : null}
           </CardContent>
@@ -285,11 +402,11 @@ export function S3BrowserPage() {
               onChange={(event) => setContent(event.target.value)}
             />
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={copyPath}>
-                <Copy data-icon="inline-start" />
-                Copy S3 Path
-              </Button>
-              <Button variant="outline" disabled={!selectedKey || deleteObject.isPending} onClick={remove}>
+              <Button
+                variant="outline"
+                disabled={!selectedBucket || !selectedKey || deleteObject.isPending}
+                onClick={() => selectedBucket && selectedKey && setDeleteTarget({ bucket: selectedBucket, key: selectedKey })}
+              >
                 <Trash2 data-icon="inline-start" />
                 Delete
               </Button>
@@ -301,6 +418,24 @@ export function S3BrowserPage() {
           </CardContent>
         </Card>
       </div>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete S3 object?</DialogTitle>
+            <DialogDescription>
+              {deleteTarget ? `This will permanently delete s3://${deleteTarget.bucket}/${deleteTarget.key}.` : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(undefined)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={deleteObject.isPending} onClick={() => void confirmDelete()}>
+              {deleteObject.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

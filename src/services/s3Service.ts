@@ -10,5 +10,7 @@ export const s3Service = {
   putTextObject: (object: S3TextObject) => tauriClient.putS3TextObject(object),
   uploadObject: (bucket: string, key: string, content: string) => tauriClient.uploadS3Object({ bucket, key, content }),
   downloadObject: (bucket: string, key: string) => tauriClient.downloadS3Object({ bucket, key }),
-  deleteObject: (bucket: string, key: string) => tauriClient.deleteS3Object({ bucket, key })
+  deleteObject: (bucket: string, key: string) => tauriClient.deleteS3Object({ bucket, key }),
+  renameObject: (bucket: string, sourceKey: string, destinationKey: string) =>
+    tauriClient.renameS3Object({ bucket, sourceKey, destinationKey })
 };

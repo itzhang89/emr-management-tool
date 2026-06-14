@@ -63,7 +63,9 @@ describe("JobHistoryPage", () => {
     useJobRuns.mockReturnValue({
       data: jobs,
       isLoading: false,
-      error: null
+      isFetching: false,
+      error: null,
+      dataUpdatedAt: Date.now()
     });
     useSessionStore.setState({
       selectedVirtualClusterId: "vc-1",
@@ -167,17 +169,19 @@ describe("JobHistoryPage", () => {
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
   });
 
-  it("enables 5 second auto refresh when toggled on", async () => {
+  it("enables 5 second auto refresh by default and allows turning it off", async () => {
     const user = userEvent.setup();
+    localStorage.removeItem("emr-eks:job-history-auto-refresh");
 
     renderJobHistoryPage();
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false);
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true);
+    expect(screen.getByText("(5s)")).toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true);
-    expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("true");
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false);
+    expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("false");
   });
 
   it("opens logs with only the job context and lets Logs resolve destinations", async () => {
