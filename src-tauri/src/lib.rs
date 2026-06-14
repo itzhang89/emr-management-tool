@@ -53,7 +53,8 @@ pub fn run() {
             commands::s3::download_s3_object_to_disk,
             commands::s3::rename_s3_object,
             commands::s3::delete_s3_object,
-            commands::files::save_text_file
+            commands::files::save_text_file,
+            commands::files::open_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running EMR Management Tool");
