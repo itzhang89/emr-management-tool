@@ -36,6 +36,7 @@ function normalizeVariableDefinition(variable: TemplateVariableDefinition): Temp
 
   return {
     name: variable.name.trim(),
+    description: variable.description?.trim() || undefined,
     type: variable.type,
     required: variable.required ?? true,
     defaultValue: variable.defaultValue,
