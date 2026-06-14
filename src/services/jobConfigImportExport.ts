@@ -1,4 +1,5 @@
 import type { JobConfigTemplate, TemplateVariableDefinition } from "@/types/domain";
+import { defaultFormatForVariableType } from "@/services/dateFormat";
 
 export type JobConfigTemplateExport = Pick<
   JobConfigTemplate,
@@ -29,13 +30,17 @@ export function parseImportedJobConfigTemplate(raw: string): JobConfigTemplateEx
 }
 
 function normalizeVariableDefinition(variable: TemplateVariableDefinition): TemplateVariableDefinition {
+  const format =
+    variable.format?.trim() ||
+    (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined);
+
   return {
     name: variable.name.trim(),
     type: variable.type,
-    required: variable.required ?? false,
+    required: variable.required ?? true,
     defaultValue: variable.defaultValue,
     options: variable.options?.map((option) => option.trim()).filter(Boolean),
-    format: variable.format?.trim() || undefined
+    format
   };
 }
 
