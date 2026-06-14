@@ -70,7 +70,7 @@ pub async fn update_template(request: serde_json::Value) -> AppResult<TemplatesR
 #[tauri::command]
 pub async fn delete_template(request: TemplateMutationRequest) -> AppResult<TemplatesResponse> {
     let pool = repository::pool().await?;
-    repository::delete_template(&pool, &request.r#type, &request.id).await?;
+    repository::delete_template(&pool, &request.r#type, None, &request.id).await?;
 
     list_templates().await
 }

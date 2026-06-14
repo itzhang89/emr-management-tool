@@ -33,6 +33,12 @@ vi.mock("@/services/fileDownload", () => ({
   downloadS3ObjectToDisk: (...args: unknown[]) => downloadS3ObjectToDisk(...args)
 }));
 
+vi.mock("@/hooks/useAwsSettings", () => ({
+  useActiveAwsAccount: () => ({
+    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+  })
+}));
+
 vi.mock("@/hooks/useS3", () => ({
   useS3Buckets: (...args: unknown[]) => useS3Buckets(...args),
   useS3Objects: (...args: unknown[]) => useS3Objects(...args),
@@ -123,7 +129,10 @@ describe("S3BrowserPage", () => {
   });
 
   it("remembers the last valid S3 path when the page is opened again", () => {
-    localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "logs/" }));
+    localStorage.setItem(
+      "emr-eks:last-s3-path:acct-test",
+      JSON.stringify({ bucket: "logs-bucket", prefix: "logs/" })
+    );
 
     renderS3BrowserPage();
 
@@ -132,7 +141,10 @@ describe("S3BrowserPage", () => {
   });
 
   it("compacts long displayed paths to the nearest parent levels", () => {
-    localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "logs-bucket", prefix: "year/month/day/run/" }));
+    localStorage.setItem(
+      "emr-eks:last-s3-path:acct-test",
+      JSON.stringify({ bucket: "logs-bucket", prefix: "year/month/day/run/" })
+    );
 
     renderS3BrowserPage();
 

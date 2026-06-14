@@ -15,6 +15,7 @@ interface SessionState {
   setSelectedJobForLogs: (jobId: string, virtualClusterId?: string) => void;
   setSelectedS3Location: (bucket: string, prefix?: string) => void;
   setClonedJobRequest: (request?: StartJobRunRequest) => void;
+  resetAccountScopedSession: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -36,5 +37,14 @@ export const useSessionStore = create<SessionState>((set) => ({
       selectedS3Prefix: undefined
     }),
   setSelectedS3Location: (selectedS3Bucket, selectedS3Prefix) => set({ selectedS3Bucket, selectedS3Prefix }),
-  setClonedJobRequest: (clonedJobRequest) => set({ clonedJobRequest })
+  setClonedJobRequest: (clonedJobRequest) => set({ clonedJobRequest }),
+  resetAccountScopedSession: () =>
+    set({
+      selectedVirtualClusterId: undefined,
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedS3Bucket: undefined,
+      selectedS3Prefix: undefined,
+      clonedJobRequest: undefined
+    })
 }));

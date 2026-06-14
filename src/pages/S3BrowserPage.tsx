@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
   useDeleteS3Object,
   useRenameS3Object,
@@ -23,18 +24,19 @@ import {
   useSaveS3TextObject
 } from "@/hooks/useS3";
 import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
+import { readLastS3Path, writeLastS3Path } from "@/services/s3PathStorage";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, S3ObjectEntry } from "@/types/domain";
 
-const lastS3PathStorageKey = "emr-eks:last-s3-path";
-
 export function S3BrowserPage() {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
   const selectedS3Bucket = useSessionStore((state) => state.selectedS3Bucket);
   const selectedS3Prefix = useSessionStore((state) => state.selectedS3Prefix);
   const buckets = useS3Buckets();
-  const [bucket, setBucket] = useState<string | undefined>(() => readLastS3Path()?.bucket);
-  const [prefix, setPrefix] = useState(() => readLastS3Path()?.prefix ?? "");
+  const [bucket, setBucket] = useState<string | undefined>();
+  const [prefix, setPrefix] = useState("");
   const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
   const currentS3Path = formatS3Path(selectedBucket, prefix);
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
@@ -60,6 +62,14 @@ export function S3BrowserPage() {
     : undefined;
 
   useEffect(() => {
+    if (!accountId) return;
+    const lastPath = readLastS3Path(accountId);
+    setBucket(lastPath?.bucket);
+    setPrefix(lastPath?.prefix ?? "");
+    setSelectedKey(undefined);
+  }, [accountId]);
+
+  useEffect(() => {
     if (selectedS3Bucket) {
       setBucket(selectedS3Bucket);
     }
@@ -79,10 +89,10 @@ export function S3BrowserPage() {
   }, [selectedS3Bucket, selectedS3Prefix]);
 
   useEffect(() => {
-    if (selectedBucket) {
-      writeLastS3Path(selectedBucket, prefix);
+    if (accountId && selectedBucket) {
+      writeLastS3Path(accountId, selectedBucket, prefix);
     }
-  }, [prefix, selectedBucket]);
+  }, [accountId, prefix, selectedBucket]);
 
   useEffect(() => {
     if (!selectedKey && objects.data?.[0]) {
@@ -504,30 +514,6 @@ function parseS3PathInput(value: string) {
   };
 }
 
-function readLastS3Path() {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.localStorage.getItem(lastS3PathStorageKey);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as { bucket?: unknown; prefix?: unknown };
-    if (typeof parsed.bucket !== "string" || !parsed.bucket.trim()) return undefined;
-    return {
-      bucket: parsed.bucket,
-      prefix: typeof parsed.prefix === "string" ? parsed.prefix : ""
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function writeLastS3Path(bucket: string, prefix: string) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(lastS3PathStorageKey, JSON.stringify({ bucket, prefix }));
-  } catch {
-    // Local storage can be unavailable in hardened browser contexts.
-  }
-}
 
 function errorMessage(error: unknown, fallback: string) {
   const appError = error as Partial<AppError>;

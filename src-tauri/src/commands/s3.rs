@@ -13,8 +13,17 @@ use std::io::Read;
 use tauri::AppHandle;
 
 #[tauri::command]
-pub async fn list_s3_buckets(app: AppHandle) -> AppResult<Vec<S3Bucket>> {
-    let runtime = runtime_for_context(&app, AwsCommandContext { account_id: None }).await?;
+pub async fn list_s3_buckets(
+    app: AppHandle,
+    request: AwsCommandContext,
+) -> AppResult<Vec<S3Bucket>> {
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id,
+        },
+    )
+    .await?;
     let client = aws_sdk_s3::Client::new(&runtime.config);
     let response = client
         .list_buckets()
