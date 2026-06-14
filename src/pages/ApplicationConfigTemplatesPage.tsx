@@ -1,4 +1,4 @@
-import { Copy, Download, Edit2, FileJson, Plus, Trash2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Download, Edit2, FileJson, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -349,10 +349,24 @@ function VariableEditor({
       {rows.map((variable, index) => (
         <VariableRow
           key={variable.editorId}
+          index={index}
+          total={rows.length}
           variable={variable}
           onChange={(patch) =>
             commitRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
           }
+          onMoveUp={() => {
+            if (index === 0) return;
+            const nextRows = [...rows];
+            [nextRows[index - 1], nextRows[index]] = [nextRows[index], nextRows[index - 1]];
+            commitRows(nextRows);
+          }}
+          onMoveDown={() => {
+            if (index === rows.length - 1) return;
+            const nextRows = [...rows];
+            [nextRows[index], nextRows[index + 1]] = [nextRows[index + 1], nextRows[index]];
+            commitRows(nextRows);
+          }}
           onRemove={() => commitRows(rows.filter((_, rowIndex) => rowIndex !== index))}
         />
       ))}
@@ -361,12 +375,20 @@ function VariableEditor({
 }
 
 function VariableRow({
+  index,
+  total,
   variable,
   onChange,
+  onMoveUp,
+  onMoveDown,
   onRemove
 }: {
+  index: number;
+  total: number;
   variable: EditableVariable;
   onChange: (patch: Partial<EditableVariable>) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onRemove: () => void;
 }) {
   const [optionsDraft, setOptionsDraft] = useState((variable.options ?? []).join(", "));
@@ -377,7 +399,10 @@ function VariableRow({
 
   return (
     <div className="space-y-3 rounded-lg border p-3">
-      <div className="grid grid-cols-[1fr_180px_auto] gap-2">
+      <div className="grid grid-cols-[44px_minmax(160px,1fr)_150px_minmax(180px,1fr)_110px_auto] items-center gap-2">
+        <div className="rounded-md bg-muted px-2 py-2 text-center text-sm font-medium text-muted-foreground">
+          #{index + 1}
+        </div>
         <Input
           placeholder="Variable name"
           value={variable.name}
@@ -405,12 +430,37 @@ function VariableRow({
             ))}
           </SelectContent>
         </Select>
-        <Button type="button" variant="ghost" size="icon" onClick={onRemove}>
-          <Trash2 />
-        </Button>
+        <DefaultValueField variable={variable} onChange={onChange} />
+        <label className="flex items-center justify-center gap-2 text-sm">
+          <Checkbox checked={Boolean(variable.required)} onCheckedChange={(checked) => onChange({ required: Boolean(checked) })} />
+          Required
+        </label>
+        <div className="flex justify-end gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={`Move ${variable.name} up`}
+            disabled={index === 0}
+            onClick={onMoveUp}
+          >
+            <ArrowUp />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={`Move ${variable.name} down`}
+            disabled={index === total - 1}
+            onClick={onMoveDown}
+          >
+            <ArrowDown />
+          </Button>
+          <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${variable.name}`} onClick={onRemove}>
+            <Trash2 />
+          </Button>
+        </div>
       </div>
-
-      <DefaultValueField variable={variable} onChange={onChange} />
 
       {(variable.type === "enum" || variable.type === "multiEnum") && (
         <Input
@@ -435,11 +485,6 @@ function VariableRow({
           onChange={(event) => onChange({ format: event.target.value })}
         />
       )}
-
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox checked={Boolean(variable.required)} onCheckedChange={(checked) => onChange({ required: Boolean(checked) })} />
-        Required
-      </label>
     </div>
   );
 }
@@ -453,8 +498,8 @@ function DefaultValueField({
 }) {
   if (variable.type === "boolean") {
     return (
-      <label className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-        <span>Default value</span>
+      <label className="flex h-10 items-center justify-between rounded-md border px-3 text-sm">
+        <span className="text-muted-foreground">Default</span>
         <Switch
           checked={Boolean(variable.defaultValue)}
           onCheckedChange={(checked) => onChange({ defaultValue: checked })}
@@ -465,68 +510,61 @@ function DefaultValueField({
 
   if (variable.type === "number") {
     return (
-      <Field label="Default value">
-        <Input
-          type="number"
-          value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
-          onChange={(event) =>
-            onChange({ defaultValue: event.target.value === "" ? undefined : Number(event.target.value) })
-          }
-        />
-      </Field>
+      <Input
+        type="number"
+        placeholder="Default"
+        value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+        onChange={(event) =>
+          onChange({ defaultValue: event.target.value === "" ? undefined : Number(event.target.value) })
+        }
+      />
     );
   }
 
   if (variable.type === "enum") {
     const options = variable.options ?? [];
     return (
-      <Field label="Default value">
-        <Select
-          value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
-          onValueChange={(value) => onChange({ defaultValue: value })}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Optional default" />
-          </SelectTrigger>
-          <SelectContent>
-            {options.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
+      <Select
+        value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+        onValueChange={(value) => onChange({ defaultValue: value })}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder="Default" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     );
   }
 
   if (variable.type === "multiEnum") {
     return (
-      <Field label="Default value">
-        <Input
-          placeholder="Comma-separated default selections"
-          value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
-          onChange={(event) =>
-            onChange({
-              defaultValue: event.target.value
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean)
-            })
-          }
-        />
-      </Field>
+      <Input
+        placeholder="Default values"
+        value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
+        onChange={(event) =>
+          onChange({
+            defaultValue: event.target.value
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean)
+          })
+        }
+      />
     );
   }
 
   return (
-    <Field label="Default value">
-      <Input
-        placeholder="Optional default"
-        value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
-        onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
-      />
-    </Field>
+    <Input
+      placeholder="Default"
+      value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
+      onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
+    />
   );
 }
 
