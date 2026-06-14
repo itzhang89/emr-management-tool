@@ -1,4 +1,3 @@
-import { format as formatDate } from "date-fns";
 import type {
   JobConfigTemplate,
   ResolvedJobPayload,
@@ -8,6 +7,7 @@ import type {
   TemplateVariableDefinition
 } from "@/types/domain";
 import { applyResourceOverride } from "@/services/resourceOverride";
+import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
 
 const VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
 
@@ -30,8 +30,8 @@ export function buildVariableMap(
     template_name: context.templateName,
     virtualClusterId: context.virtualClusterId,
     submitUser: context.submitUser,
-    date: formatWithPattern(now, "YYYY-MM-DD"),
-    datetime: formatWithPattern(now, "YYYY-MM-DDTHH:mm:ss")
+    date: formatWithPattern(now, defaultFormatForVariableType("date")),
+    datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
   };
 
   for (const definition of template.customVariables) {
@@ -55,7 +55,7 @@ export function replaceTemplateVariables(
 ): string {
   return input.replace(VARIABLE_PATTERN, (_match, key: string, pattern?: string) => {
     if (key === "date" || key === "datetime") {
-      return formatWithPattern(now, pattern ?? (key === "date" ? "YYYY-MM-DD" : "YYYY-MM-DDTHH:mm:ss"));
+      return formatWithPattern(now, pattern ?? defaultFormatForVariableType(key === "date" ? "date" : "dateTime"));
     }
     if (pattern && variables[key]) {
       const parsed = new Date(variables[key]);
@@ -162,29 +162,13 @@ function stringifyVariableValue(
   if ((definition.type === "date" || definition.type === "dateTime") && typeof value === "string") {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) {
-      return formatWithPattern(parsed, definition.format ?? (definition.type === "date" ? "YYYY-MM-DD" : "YYYY-MM-DDTHH:mm:ss"));
+      return formatWithPattern(parsed, definition.format ?? defaultFormatForVariableType(definition.type));
     }
   }
   if (definition.type === "date" || definition.type === "dateTime") {
-    return formatWithPattern(
-      now,
-      definition.format ?? (definition.type === "date" ? "YYYY-MM-DD" : "YYYY-MM-DDTHH:mm:ss")
-    );
+    return formatWithPattern(now, definition.format ?? defaultFormatForVariableType(definition.type));
   }
   return String(value);
-}
-
-function formatWithPattern(date: Date, pattern: string) {
-  const tokenMap: Record<string, string> = {
-    YYYY: formatDate(date, "yyyy"),
-    MM: formatDate(date, "MM"),
-    DD: formatDate(date, "dd"),
-    HH: formatDate(date, "HH"),
-    mm: formatDate(date, "mm"),
-    ss: formatDate(date, "ss")
-  };
-
-  return pattern.replace(/YYYY|MM|DD|HH|mm|ss/g, (token) => tokenMap[token] ?? token);
 }
 
 export function getDefaultCustomVariableValues(template: JobConfigTemplate) {
