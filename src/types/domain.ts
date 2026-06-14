@@ -181,6 +181,61 @@ export interface StartJobRunRequest extends SubmitJobFormValues {
       sparkSubmitParameters: string;
     };
   };
+  configurationOverrides?: JobRunConfigurationOverrides;
+}
+
+export type TemplateVariableType =
+  | "text"
+  | "number"
+  | "boolean"
+  | "enum"
+  | "multiEnum"
+  | "date"
+  | "dateTime";
+
+export interface TemplateVariableDefinition {
+  name: string;
+  label?: string;
+  type: TemplateVariableType;
+  defaultValue?: string | number | boolean | string[];
+  options?: string[];
+  format?: string;
+  required?: boolean;
+}
+
+export interface JobConfigTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  payloadTemplate: string;
+  customVariables: TemplateVariableDefinition[];
+  defaultResourceTemplateId?: string;
+  builtIn?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResolvedJobPayload {
+  name: string;
+  virtualClusterId: string;
+  executionRoleArn: string;
+  releaseLabel: string;
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: string;
+      entryPointArguments?: string[];
+      sparkSubmitParameters?: string;
+    };
+  };
+  configurationOverrides?: JobRunConfigurationOverrides;
+}
+
+export interface TemplateResolveContext {
+  templateName: string;
+  virtualClusterId: string;
+  submitUser: string;
+  customVariables: Record<string, string | number | boolean | string[]>;
+  now?: Date;
 }
 
 export interface ApplicationTemplate {

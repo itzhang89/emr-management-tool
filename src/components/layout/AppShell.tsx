@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { useAwsAccounts } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { JobHistoryPage } from "@/pages/JobHistoryPage";
 import { LogsPage } from "@/pages/LogsPage";
@@ -26,6 +27,7 @@ export function AppShell() {
     history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} onOpenS3={() => setActivePage("logs")} />,
     logs: <LogsPage />,
     templates: <TemplatesPage />,
+    appConfig: <ApplicationConfigTemplatesPage />,
     clusters: <VirtualClustersPage />,
     s3: <S3BrowserPage />,
     settings: <SettingsPage />
