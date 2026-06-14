@@ -16,6 +16,17 @@ const uploadS3ObjectFromDisk = vi.fn();
 const downloadS3ObjectToDisk = vi.fn();
 const deleteMutateAsync = vi.fn();
 const renameMutateAsync = vi.fn();
+const toastInfo = vi.fn();
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+
+vi.mock("sonner", () => ({
+  toast: {
+    info: (...args: unknown[]) => toastInfo(...args),
+    success: (...args: unknown[]) => toastSuccess(...args),
+    error: (...args: unknown[]) => toastError(...args)
+  }
+}));
 
 vi.mock("@/services/fileDownload", () => ({
   uploadS3ObjectFromDisk: (...args: unknown[]) => uploadS3ObjectFromDisk(...args),
@@ -174,12 +185,24 @@ describe("S3BrowserPage", () => {
 
     await user.click(screen.getByRole("button", { name: /^Upload$/i }));
     expect(uploadS3ObjectFromDisk).toHaveBeenCalledWith("logs-bucket", "");
+    expect(toastSuccess).toHaveBeenCalledWith("Uploaded logs/upload.txt");
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
     await user.click(screen.getByRole("button", { name: /^Download$/i }));
 
     expect(downloadS3ObjectToDisk).toHaveBeenCalledWith("logs-bucket", "readme.txt");
+  });
+
+  it("shows a toast when upload is canceled", async () => {
+    const user = userEvent.setup();
+    uploadS3ObjectFromDisk.mockResolvedValue(undefined);
+
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+
+    expect(toastInfo).toHaveBeenCalledWith("Upload canceled.");
   });
 
   it("copies the current S3 path from the path bar icon", async () => {
@@ -195,6 +218,23 @@ describe("S3BrowserPage", () => {
     await user.click(screen.getByRole("button", { name: /^Copy S3 path$/i }));
     expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/");
     expect(screen.queryByText("Copy S3 Path")).not.toBeInTheDocument();
+  });
+
+  it("copies the selected object path from the preview header", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+    await user.click(screen.getByRole("button", { name: /^Copy object S3 path$/i }));
+
+    expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/readme.txt");
   });
 
   it("confirms delete in a dialog before removing the object", async () => {
