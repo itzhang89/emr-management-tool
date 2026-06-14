@@ -11,6 +11,7 @@ const startMutate = vi.fn();
 const describeJob = vi.fn();
 const describeJobRun = vi.fn();
 const useJobRuns = vi.fn();
+const useVirtualClusters = vi.fn();
 let describedJob: JobRunSummary | undefined;
 
 vi.mock("@/services/emrService", () => ({
@@ -21,6 +22,7 @@ vi.mock("@/services/emrService", () => ({
 
 vi.mock("@/hooks/useEmr", () => ({
   useJobRuns: (...args: unknown[]) => useJobRuns(...args),
+  useVirtualClusters: (...args: unknown[]) => useVirtualClusters(...args),
   useDescribeJobRun: (id?: string, virtualClusterId?: string) => {
     describeJob(id, virtualClusterId);
     return {
@@ -51,7 +53,6 @@ function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () =
 
 describe("JobHistoryPage", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
     mutate.mockClear();
     startMutate.mockClear();
     describeJob.mockClear();
@@ -65,7 +66,15 @@ describe("JobHistoryPage", () => {
       isLoading: false,
       isFetching: false,
       error: null,
-      dataUpdatedAt: Date.now()
+      dataUpdatedAt: Date.now(),
+      refetch: vi.fn()
+    });
+    useVirtualClusters.mockReturnValue({
+      data: {
+        clusters: [{ id: "vc-1", name: "analytics", state: "RUNNING", namespace: "emr", eksClusterName: "eks", createdAt: "2026-06-10T00:00:00Z" }]
+      },
+      isLoading: false,
+      error: null
     });
     useSessionStore.setState({
       selectedVirtualClusterId: "vc-1",
@@ -176,7 +185,8 @@ describe("JobHistoryPage", () => {
     renderJobHistoryPage();
 
     expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true);
-    expect(screen.getByText("(5s)")).toBeInTheDocument();
+    expect(screen.getByText("5s")).toBeInTheDocument();
+    expect(screen.queryByText("Auto refresh (5s)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
 

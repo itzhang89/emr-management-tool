@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
@@ -19,11 +20,17 @@ const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
+  const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
+  const clusters = useVirtualClusters();
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
   const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
-  const jobs = useJobRuns(selectedVirtualClusterId, autoRefresh);
+  const effectiveVirtualClusterId =
+    selectedVirtualClusterId ??
+    clusters?.data?.clusters.find((cluster) => cluster.state === "RUNNING")?.id ??
+    clusters?.data?.clusters[0]?.id;
+  const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
   const [search, setSearch] = useState("");
@@ -42,6 +49,12 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   useEffect(() => {
     writeAutoRefreshPreference(autoRefresh);
   }, [autoRefresh]);
+
+  useEffect(() => {
+    const availableClusters = clusters?.data?.clusters;
+    if (selectedVirtualClusterId || !availableClusters?.length) return;
+    setSelectedVirtualClusterId(availableClusters[0].id);
+  }, [clusters?.data?.clusters, selectedVirtualClusterId, setSelectedVirtualClusterId]);
 
   useEffect(() => {
     if (!autoRefresh) {
@@ -97,10 +110,27 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               />
               <label htmlFor="job-history-auto-refresh" className="flex items-center gap-1 text-sm text-muted-foreground">
                 <RefreshCw className={cn("size-4", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
-                Auto refresh (5s)
-                {autoRefresh ? <span className="tabular-nums text-xs">({refreshCountdown}s)</span> : null}
+                Auto refresh
+                {autoRefresh ? <span className="tabular-nums text-xs">{refreshCountdown}s</span> : null}
               </label>
             </div>
+            {(clusters?.data?.clusters.length ?? 0) > 0 ? (
+              <Select
+                value={effectiveVirtualClusterId}
+                onValueChange={(value) => setSelectedVirtualClusterId(value)}
+              >
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder="Select virtual cluster" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clusters.data?.clusters.map((cluster) => (
+                    <SelectItem key={cluster.id} value={cluster.id}>
+                      {cluster.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
             <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
           </div>
           {jobs.isLoading ? <p className="text-sm text-muted-foreground">Loading job history...</p> : null}

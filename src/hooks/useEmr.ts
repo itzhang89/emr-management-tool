@@ -1,6 +1,9 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { emrService } from "@/services/emrService";
+
+const jobHistoryRefreshIntervalMs = 5_000;
 
 export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
   return useQuery({
@@ -10,13 +13,25 @@ export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
 }
 
 export function useJobRuns(virtualClusterId?: string, autoRefresh = false) {
-  return useQuery({
+  const query = useQuery({
     queryKey: ["job-runs", virtualClusterId],
     queryFn: () => emrService.listJobRuns(virtualClusterId),
     staleTime: autoRefresh ? 0 : undefined,
-    refetchInterval: autoRefresh ? 5_000 : false,
-    refetchIntervalInBackground: true
+    structuralSharing: !autoRefresh
   });
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    void query.refetch({ cancelRefetch: false });
+    const timer = window.setInterval(() => {
+      void query.refetch({ cancelRefetch: false });
+    }, jobHistoryRefreshIntervalMs);
+
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, query.refetch, virtualClusterId]);
+
+  return query;
 }
 
 export function useDescribeJobRun(id?: string, virtualClusterId?: string) {
