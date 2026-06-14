@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Copy, Download, Edit2, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, CircleHelp, Copy, Download, Edit2, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -15,9 +15,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useCreateJobConfigTemplate,
   useDeleteJobConfigTemplate,
@@ -474,6 +476,11 @@ function VariableRow({
           Required
         </label>
         <div className="flex justify-end gap-1">
+          <VariableDescriptionControl
+            variableName={variable.name}
+            description={variable.description}
+            onChange={(description) => onChange({ description })}
+          />
           <Button
             type="button"
             variant="ghost"
@@ -500,12 +507,6 @@ function VariableRow({
         </div>
       </div>
 
-      <Input
-        placeholder="Description (optional)"
-        value={variable.description ?? ""}
-        onChange={(event) => onChange({ description: event.target.value || undefined })}
-      />
-
       {(variable.type === "enum" || variable.type === "multiEnum") && (
         <Input
           placeholder="Options, comma-separated"
@@ -530,6 +531,74 @@ function VariableRow({
         />
       )}
     </div>
+  );
+}
+
+function VariableDescriptionControl({
+  variableName,
+  description,
+  onChange
+}: {
+  variableName: string;
+  description?: string;
+  onChange: (description: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(description ?? "");
+  const tooltip = description?.trim() || "Add variable description";
+
+  const updateOpen = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setDraft(description ?? "");
+    }
+  };
+
+  return (
+    <Tooltip>
+      <Popover open={open} onOpenChange={updateOpen}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Edit ${variableName} description`}
+              className={description ? "text-primary" : undefined}
+            >
+              <CircleHelp />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <PopoverContent align="end" className="w-80 space-y-3">
+          <div className="space-y-1">
+            <Label>Description for {variableName}</Label>
+            <Textarea
+              className="min-h-24"
+              placeholder="Optional description shown on hover in Submit Job."
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => updateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                onChange(draft.trim() || undefined);
+                setOpen(false);
+              }}
+            >
+              Confirm
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
