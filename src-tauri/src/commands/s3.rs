@@ -3,7 +3,8 @@ use crate::aws::s3_rules::s3_object_editability;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, S3Bucket, S3JobLogObject, S3JobLogObjectsRequest, S3JobLogObjectsResponse,
-    S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3TextObject, S3UploadFromDiskRequest,
+    S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3RenameObjectRequest, S3TextObject,
+    S3UploadFromDiskRequest,
 };
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::Utc;
@@ -401,6 +402,60 @@ pub async fn upload_s3_object_from_disk(
 }
 
 #[tauri::command]
+pub async fn rename_s3_object(
+    app: AppHandle,
+    request: S3RenameObjectRequest,
+) -> AppResult<S3ObjectEntry> {
+    if request.bucket.trim().is_empty()
+        || request.source_key.trim().is_empty()
+        || request.destination_key.trim().is_empty()
+    {
+        return Err(AppError::validation("Bucket, source key, and destination key are required."));
+    }
+    if request.source_key == request.destination_key {
+        return Err(AppError::validation("Source and destination keys must differ."));
+    }
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let copy_source = format!(
+        "{}/{}",
+        request.bucket,
+        percent_encode_path(&request.source_key)
+    );
+    let copied = client
+        .copy_object()
+        .bucket(&request.bucket)
+        .key(&request.destination_key)
+        .copy_source(copy_source)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id.clone(), error))?;
+    client
+        .delete_object()
+        .bucket(&request.bucket)
+        .key(&request.source_key)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+
+    Ok(object(
+        &request.bucket,
+        request.destination_key,
+        0,
+        "file",
+        Some(Utc::now().to_rfc3339()),
+        copied.copy_object_result().and_then(|result| result.e_tag()).map(ToString::to_string),
+    ))
+}
+
+#[tauri::command]
 pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppResult<()> {
     if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
         return Err(AppError::validation("Bucket and key are required."));
@@ -422,6 +477,14 @@ pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppRe
         .await
         .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
     Ok(())
+}
+
+fn percent_encode_path(key: &str) -> String {
+    key.split('/')
+        .map(urlencoding::encode)
+        .map(|segment| segment.into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn object(

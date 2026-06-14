@@ -70,6 +70,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<string | undefined>("download_s3_object_to_disk", request),
     uploadS3ObjectFromDisk: (request: { bucket: string; prefix?: string }) =>
       call<S3ObjectEntry | undefined>("upload_s3_object_from_disk", request),
+    renameS3Object: (request: { bucket: string; sourceKey: string; destinationKey: string }) =>
+      call<S3ObjectEntry>("rename_s3_object", request),
     saveTextFile: (request: { suggestedName: string; content: string }) =>
       call<string | undefined>("save_text_file", request),
     deleteS3Object: (request: { bucket: string; key: string }) => call("delete_s3_object", request)
