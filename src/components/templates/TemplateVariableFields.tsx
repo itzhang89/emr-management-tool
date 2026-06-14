@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
@@ -63,7 +64,9 @@ function VariableField({
   if (definition.type === "boolean") {
     return (
       <div className="flex items-center justify-between rounded-lg border p-3">
-        <Label htmlFor={definition.name}>{label}</Label>
+        <Label htmlFor={definition.name}>
+          <VariableLabel label={label} description={definition.description} />
+        </Label>
         <Switch id={definition.name} checked={Boolean(value)} onCheckedChange={onChange} />
       </div>
     );
@@ -71,7 +74,7 @@ function VariableField({
 
   if (definition.type === "number") {
     return (
-      <Field label={label}>
+      <Field label={label} description={definition.description}>
         <Input type="number" value={Number(value ?? 0)} onChange={(event) => onChange(Number(event.target.value))} />
       </Field>
     );
@@ -81,7 +84,7 @@ function VariableField({
     const options = definition.options ?? [];
     if (options.length <= 4) {
       return (
-        <Field label={label}>
+        <Field label={label} description={definition.description}>
           <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="gap-2">
             {options.map((option) => (
               <div key={option} className="flex items-center gap-2">
@@ -95,7 +98,7 @@ function VariableField({
     }
     if (options.length <= 10) {
       return (
-        <Field label={label}>
+        <Field label={label} description={definition.description}>
           <Select value={String(value ?? "")} onValueChange={onChange}>
             <SelectTrigger>
               <SelectValue placeholder={`Select ${label}`} />
@@ -111,14 +114,22 @@ function VariableField({
         </Field>
       );
     }
-    return <EnumCombobox label={label} options={options} value={String(value ?? "")} onChange={onChange} />;
+    return (
+      <EnumCombobox
+        label={label}
+        description={definition.description}
+        options={options}
+        value={String(value ?? "")}
+        onChange={onChange}
+      />
+    );
   }
 
   if (definition.type === "multiEnum") {
     const options = definition.options ?? [];
     const selected = Array.isArray(value) ? value : [];
     return (
-      <Field label={label} className="col-span-2">
+      <Field label={label} description={definition.description} className="col-span-2">
         <div className="grid grid-cols-2 gap-2">
           {options.map((option) => (
             <label key={option} className="flex items-center gap-2 text-sm">
@@ -140,6 +151,7 @@ function VariableField({
     return (
       <DateTimeField
         label={label}
+        description={definition.description}
         includeTime={definition.type === "dateTime"}
         displayFormat={definition.format ?? defaultFormatForVariableType(definition.type)}
         value={typeof value === "string" ? value : ""}
@@ -149,7 +161,7 @@ function VariableField({
   }
 
   return (
-    <Field label={label}>
+    <Field label={label} description={definition.description}>
       <Input value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
     </Field>
   );
@@ -157,18 +169,20 @@ function VariableField({
 
 function EnumCombobox({
   label,
+  description,
   options,
   value,
   onChange
 }: {
   label: string;
+  description?: string;
   options: string[];
   value: string;
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Field label={label}>
+    <Field label={label} description={description}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button variant="outline" role="combobox" className="w-full justify-between">
@@ -206,12 +220,14 @@ function EnumCombobox({
 
 function DateTimeField({
   label,
+  description,
   includeTime,
   displayFormat,
   value,
   onChange
 }: {
   label: string;
+  description?: string;
   includeTime: boolean;
   displayFormat: string;
   value: string;
@@ -226,7 +242,7 @@ function DateTimeField({
   }, [displayFormat, label, selected]);
 
   return (
-    <Field label={label}>
+    <Field label={label} description={description}>
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="outline" className="w-full justify-start text-left font-normal">
@@ -271,17 +287,36 @@ function DateTimeField({
 
 function Field({
   label,
+  description,
   children,
   className
 }: {
   label: string;
+  description?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("space-y-2", className)}>
-      <Label>{label}</Label>
+      <Label>
+        <VariableLabel label={label} description={description} />
+      </Label>
       {children}
     </div>
+  );
+}
+
+function VariableLabel({ label, description }: { label: string; description?: string }) {
+  if (!description) {
+    return <>{label}</>;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help underline decoration-dotted underline-offset-4">{label}</span>
+      </TooltipTrigger>
+      <TooltipContent>{description}</TooltipContent>
+    </Tooltip>
   );
 }

@@ -196,6 +196,7 @@ export type TemplateVariableType =
 export interface TemplateVariableDefinition {
   name: string;
   label?: string;
+  description?: string;
   type: TemplateVariableType;
   defaultValue?: string | number | boolean | string[];
   options?: string[];

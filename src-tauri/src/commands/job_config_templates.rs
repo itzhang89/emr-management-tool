@@ -7,10 +7,23 @@ use crate::state::default_job_config_templates;
 pub async fn list_job_config_templates() -> AppResult<JobConfigTemplatesResponse> {
     let pool = repository::pool().await?;
     let mut templates = repository::list_job_config_templates(&pool).await?;
-    if templates.is_empty() {
-        for template in default_job_config_templates() {
-            repository::upsert_job_config_template(&pool, &template).await?;
-            templates.push(template);
+    let defaults = default_job_config_templates();
+    for default_template in defaults {
+        match templates
+            .iter()
+            .position(|template| template.id == default_template.id && template.built_in)
+        {
+            Some(index) => {
+                if templates[index].name != default_template.name {
+                    repository::upsert_job_config_template(&pool, &default_template).await?;
+                    templates[index] = default_template;
+                }
+            }
+            None if templates.is_empty() => {
+                repository::upsert_job_config_template(&pool, &default_template).await?;
+                templates.push(default_template);
+            }
+            None => {}
         }
     }
 
