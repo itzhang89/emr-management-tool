@@ -106,10 +106,9 @@ export function S3BrowserPage() {
     }
   };
 
-  const copyCurrentPath = async () => {
-    if (!selectedBucket) return;
+  const copyS3Path = async (path: string) => {
     try {
-      await navigator.clipboard?.writeText(currentS3Path);
+      await navigator.clipboard?.writeText(path);
       toast.success("S3 path copied.");
     } catch (error) {
       toast.error(errorMessage(error, "Failed to copy S3 path."));
@@ -121,7 +120,10 @@ export function S3BrowserPage() {
     setTransferPending(true);
     try {
       const uploaded = await uploadS3ObjectFromDisk(selectedBucket, prefix);
-      if (!uploaded) return;
+      if (!uploaded) {
+        toast.info("Upload canceled.");
+        return;
+      }
       await objects.refetch();
       setSelectedKey(uploaded.key);
       toast.success(`Uploaded ${uploaded.key}`);
@@ -244,6 +246,9 @@ export function S3BrowserPage() {
     }
   };
 
+  const selectedObjectPath =
+    selectedBucket && selectedKey && selectedObject?.kind === "file" ? `s3://${selectedBucket}/${selectedKey}` : undefined;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
@@ -308,7 +313,7 @@ export function S3BrowserPage() {
                     size="sm"
                     aria-label="Copy S3 path"
                     disabled={!selectedBucket}
-                    onClick={() => void copyCurrentPath()}
+                    onClick={() => void copyS3Path(currentS3Path)}
                   >
                     <Copy className="size-4" />
                   </Button>
@@ -389,7 +394,25 @@ export function S3BrowserPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>{selectedKey ?? "Select an object"}</CardTitle>
+            <CardTitle className="flex min-w-0 items-center gap-1">
+              <span className="min-w-0 flex-1 break-all font-mono text-base">{selectedKey ?? "Select an object"}</span>
+              {selectedObjectPath ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Copy object S3 path"
+                      onClick={() => void copyS3Path(selectedObjectPath)}
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Copy S3 path</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </CardTitle>
             <CardDescription>
               {editability?.reason ?? "ETag-safe save will prevent overwriting remote changes."}
             </CardDescription>
