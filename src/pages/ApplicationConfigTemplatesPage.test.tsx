@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 
 const { deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
@@ -57,13 +58,19 @@ describe("ApplicationConfigTemplatesPage", () => {
     vi.clearAllMocks();
   });
 
-  it("lists application config templates", () => {
+  function renderPage() {
     const queryClient = new QueryClient();
     render(
       <QueryClientProvider client={queryClient}>
-        <ApplicationConfigTemplatesPage />
+        <TooltipProvider>
+          <ApplicationConfigTemplatesPage />
+        </TooltipProvider>
       </QueryClientProvider>
     );
+  }
+
+  it("lists application config templates", () => {
+    renderPage();
 
     expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
     expect(screen.getByText("example")).toBeInTheDocument();
@@ -72,12 +79,7 @@ describe("ApplicationConfigTemplatesPage", () => {
 
   it("numbers custom variables and lets users reorder them", async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ApplicationConfigTemplatesPage />
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await user.click(screen.getByRole("button", { name: /Template/i }));
     await user.click(screen.getByRole("button", { name: /Add Variable/i }));
@@ -105,12 +107,7 @@ describe("ApplicationConfigTemplatesPage", () => {
       })
     );
     const user = userEvent.setup();
-    const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ApplicationConfigTemplatesPage />
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await user.click(screen.getByRole("button", { name: /Template/i }));
     await user.click(screen.getByRole("button", { name: /Import JSON/i }));
@@ -121,17 +118,30 @@ describe("ApplicationConfigTemplatesPage", () => {
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("overwrite all current settings"));
     expect(screen.getByDisplayValue("Imported Template")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Edit DATE description/i }));
     expect(screen.getByDisplayValue("Business date")).toBeInTheDocument();
+  });
+
+  it("edits variable descriptions from the help icon and shows them on hover", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+    await user.click(screen.getByRole("button", { name: /Add Variable/i }));
+    await user.click(screen.getByRole("button", { name: /Edit VAR_1 description/i }));
+    await user.type(screen.getByPlaceholderText("Optional description shown on hover in Submit Job."), "Used in job arguments");
+    await user.click(screen.getByRole("button", { name: /Confirm/i }));
+
+    expect(screen.queryByPlaceholderText("Optional description shown on hover in Submit Job.")).not.toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: /Edit VAR_1 description/i }));
+
+    expect((await screen.findAllByText("Used in job arguments")).length).toBeGreaterThan(0);
   });
 
   it("shows a helpful message instead of deleting built-in example templates", async () => {
     const user = userEvent.setup();
-    const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ApplicationConfigTemplatesPage />
-      </QueryClientProvider>
-    );
+    renderPage();
 
     await user.click(screen.getByRole("button", { name: /Delete example/i }));
 
