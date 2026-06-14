@@ -1,13 +1,16 @@
 import { RefreshCw, ZoomIn } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useVirtualClusters } from "@/hooks/useEmr";
-import type { AppError } from "@/types/domain";
+import type { AppError, VirtualCluster } from "@/types/domain";
 
 export function VirtualClustersPage() {
   const clusters = useVirtualClusters();
+  const [selectedCluster, setSelectedCluster] = useState<VirtualCluster>();
 
   return (
     <div className="flex flex-col gap-6">
@@ -60,7 +63,7 @@ export function VirtualClustersPage() {
                   <TableCell>{cluster.eksClusterName}</TableCell>
                   <TableCell>{new Date(cluster.createdAt).toLocaleString()}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm">
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedCluster(cluster)}>
                       <ZoomIn data-icon="inline-start" />
                       View Details
                     </Button>
@@ -71,7 +74,49 @@ export function VirtualClustersPage() {
           </Table>
         </CardContent>
       </Card>
+      <VirtualClusterDetailsDialog
+        cluster={selectedCluster}
+        onOpenChange={(open) => !open && setSelectedCluster(undefined)}
+      />
     </div>
+  );
+}
+
+function VirtualClusterDetailsDialog({
+  cluster,
+  onOpenChange
+}: {
+  cluster?: VirtualCluster;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={Boolean(cluster)} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Virtual Cluster Details</DialogTitle>
+          <DialogDescription>Read-only metadata for the selected EMR Virtual Cluster.</DialogDescription>
+        </DialogHeader>
+        {cluster ? (
+          <div className="grid grid-cols-[140px_1fr] gap-3 text-sm">
+            <Detail label="ID" value={cluster.id} />
+            <Detail label="Name" value={cluster.name} />
+            <Detail label="State" value={cluster.state} />
+            <Detail label="Namespace" value={cluster.namespace} />
+            <Detail label="EKS Cluster" value={cluster.eksClusterName} />
+            <Detail label="Created Time" value={new Date(cluster.createdAt).toLocaleString()} />
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Detail({ label, value }: { label: string; value?: string }) {
+  return (
+    <>
+      <div className="font-medium text-muted-foreground">{label}</div>
+      <div className="break-all">{value ?? "-"}</div>
+    </>
   );
 }
 
