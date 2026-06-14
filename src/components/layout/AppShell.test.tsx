@@ -8,6 +8,55 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useAwsAccounts: () => ({ data: [] })
 }));
 
+vi.mock("@/hooks/useTemplates", () => ({
+  useTemplates: () => ({
+    data: {
+      resourceTemplates: [
+        {
+          id: "tiny",
+          name: "Tiny",
+          resources: {
+            driverCores: 1,
+            driverMemory: "1G",
+            executorCores: 1,
+            executorMemory: "1G",
+            executorInstances: 1
+          },
+          builtIn: true,
+          createdAt: "2026-06-10T00:00:00Z",
+          updatedAt: "2026-06-10T00:00:00Z"
+        }
+      ]
+    }
+  }),
+  useCreateTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDuplicateTemplate: () => ({ mutate: vi.fn(), isPending: false })
+}));
+
+vi.mock("@/hooks/useJobConfigTemplates", () => ({
+  useJobConfigTemplates: () => ({
+    data: [
+      {
+        id: "daily-etl",
+        name: "Daily ETL Jar",
+        payloadTemplate: "{}",
+        customVariables: [],
+        defaultResourceTemplateId: "tiny",
+        builtIn: true,
+        createdAt: "2026-06-10T00:00:00Z",
+        updatedAt: "2026-06-10T00:00:00Z"
+      }
+    ]
+  }),
+  useSubmitUser: () => ({ data: "tester" }),
+  useCreateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDuplicateJobConfigTemplate: () => ({ mutate: vi.fn(), isPending: false })
+}));
+
 vi.mock("@/hooks/useEmr", () => ({
   useVirtualClusters: () => ({ data: { clusters: [] } }),
   useJobRuns: () => ({
