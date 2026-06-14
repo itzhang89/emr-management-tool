@@ -9,17 +9,20 @@ const useS3Buckets = vi.fn();
 const useS3Objects = vi.fn();
 const useS3TextObject = vi.fn();
 const useSaveS3TextObject = vi.fn();
-const useUploadS3Object = vi.fn();
-const useDownloadS3Object = vi.fn();
 const useDeleteS3Object = vi.fn();
+const uploadS3ObjectFromDisk = vi.fn();
+const downloadS3ObjectToDisk = vi.fn();
+
+vi.mock("@/services/fileDownload", () => ({
+  uploadS3ObjectFromDisk: (...args: unknown[]) => uploadS3ObjectFromDisk(...args),
+  downloadS3ObjectToDisk: (...args: unknown[]) => downloadS3ObjectToDisk(...args)
+}));
 
 vi.mock("@/hooks/useS3", () => ({
   useS3Buckets: (...args: unknown[]) => useS3Buckets(...args),
   useS3Objects: (...args: unknown[]) => useS3Objects(...args),
   useS3TextObject: (...args: unknown[]) => useS3TextObject(...args),
   useSaveS3TextObject: (...args: unknown[]) => useSaveS3TextObject(...args),
-  useUploadS3Object: (...args: unknown[]) => useUploadS3Object(...args),
-  useDownloadS3Object: (...args: unknown[]) => useDownloadS3Object(...args),
   useDeleteS3Object: (...args: unknown[]) => useDeleteS3Object(...args)
 }));
 
@@ -51,9 +54,9 @@ describe("S3BrowserPage", () => {
       error: null
     });
     useSaveS3TextObject.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-    useUploadS3Object.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-    useDownloadS3Object.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
     useDeleteS3Object.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+    uploadS3ObjectFromDisk.mockResolvedValue(undefined);
+    downloadS3ObjectToDisk.mockResolvedValue(undefined);
   });
 
   it("edits the displayed S3 path directly and reverts invalid input", async () => {
@@ -134,6 +137,28 @@ describe("S3BrowserPage", () => {
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "");
     expect(screen.getByText("s3://logs-bucket/")).toBeInTheDocument();
+  });
+
+  it("uploads and downloads objects through native file dialogs", async () => {
+    const user = userEvent.setup();
+    uploadS3ObjectFromDisk.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "logs/upload.txt",
+      kind: "file",
+      size: 12
+    });
+    downloadS3ObjectToDisk.mockResolvedValue("/tmp/readme.txt");
+
+    render(<S3BrowserPage />);
+
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+    expect(uploadS3ObjectFromDisk).toHaveBeenCalledWith("logs-bucket", "");
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+    await user.click(screen.getByRole("button", { name: /^Download$/i }));
+
+    expect(downloadS3ObjectToDisk).toHaveBeenCalledWith("logs-bucket", "readme.txt");
   });
 });
 

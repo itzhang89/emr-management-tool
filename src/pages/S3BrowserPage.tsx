@@ -7,13 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useDeleteS3Object,
-  useDownloadS3Object,
   useS3Buckets,
   useS3Objects,
   useS3TextObject,
-  useSaveS3TextObject,
-  useUploadS3Object
+  useSaveS3TextObject
 } from "@/hooks/useS3";
+import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError } from "@/types/domain";
@@ -39,10 +38,9 @@ export function S3BrowserPage() {
   );
   const textObject = useS3TextObject(selectedBucket, selectedObject?.kind === "file" ? selectedKey : undefined);
   const saveObject = useSaveS3TextObject();
-  const uploadObject = useUploadS3Object();
-  const downloadObject = useDownloadS3Object();
   const deleteObject = useDeleteS3Object();
   const [content, setContent] = useState("");
+  const [transferPending, setTransferPending] = useState(false);
   const editability = selectedObject
     ? getS3ObjectEditability({ key: selectedObject.key, size: selectedObject.size })
     : undefined;
@@ -102,29 +100,31 @@ export function S3BrowserPage() {
 
   const upload = async () => {
     if (!selectedBucket) return;
-    const key = window.prompt("S3 key to upload");
-    if (!key) return;
-    const body = window.prompt("Text content to upload") ?? "";
+    setTransferPending(true);
     try {
-      await uploadObject.mutateAsync({ bucket: selectedBucket, key, content: body });
-      toast.success(`Uploaded ${key}`);
+      const uploaded = await uploadS3ObjectFromDisk(selectedBucket, prefix);
+      if (!uploaded) return;
+      await objects.refetch();
+      setSelectedKey(uploaded.key);
+      toast.success(`Uploaded ${uploaded.key}`);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to upload object."));
+    } finally {
+      setTransferPending(false);
     }
   };
 
   const download = async () => {
     if (!selectedBucket || !selectedKey) return;
+    setTransferPending(true);
     try {
-      const object = await downloadObject.mutateAsync({ bucket: selectedBucket, key: selectedKey });
-      const url = URL.createObjectURL(new Blob([object.content], { type: object.contentType ?? "text/plain" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = selectedKey.split("/").at(-1) ?? "s3-object.txt";
-      link.click();
-      URL.revokeObjectURL(url);
+      const savedPath = await downloadS3ObjectToDisk(selectedBucket, selectedKey);
+      if (!savedPath) return;
+      toast.success(`Saved to ${savedPath}`);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to download object."));
+    } finally {
+      setTransferPending(false);
     }
   };
 
@@ -170,11 +170,11 @@ export function S3BrowserPage() {
           <p className="text-sm text-muted-foreground">Browse S3 buckets and edit supported text files.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" disabled={!selectedBucket || uploadObject.isPending} onClick={upload}>
+          <Button variant="outline" disabled={!selectedBucket || transferPending} onClick={upload}>
             <Upload data-icon="inline-start" />
             Upload
           </Button>
-          <Button variant="outline" disabled={!selectedBucket || !selectedKey || downloadObject.isPending} onClick={download}>
+          <Button variant="outline" disabled={!selectedBucket || !selectedKey || transferPending} onClick={download}>
             <Download data-icon="inline-start" />
             Download
           </Button>

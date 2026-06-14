@@ -92,6 +92,7 @@ pub async fn list_job_runs(
     for job in &jobs {
         repository::upsert_job_history(&pool, job).await?;
     }
+    repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
 
     Ok(jobs)
 }

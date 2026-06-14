@@ -399,3 +399,18 @@ pub struct S3JobLogObjectsResponse {
     pub objects: Vec<S3JobLogObject>,
     pub next_token: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveTextFileRequest {
+    pub suggested_name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3UploadFromDiskRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub prefix: Option<String>,
+}
