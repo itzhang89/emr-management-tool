@@ -66,3 +66,22 @@ export function useDeleteS3Object() {
     }
   });
 }
+
+export function useRenameS3Object() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      bucket,
+      sourceKey,
+      destinationKey
+    }: {
+      bucket: string;
+      sourceKey: string;
+      destinationKey: string;
+    }) => s3Service.renameObject(bucket, sourceKey, destinationKey),
+    onSuccess: (object) => {
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects", object.bucket] });
+    }
+  });
+}

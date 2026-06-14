@@ -45,6 +45,7 @@ pub fn run() {
             commands::s3::upload_s3_object_from_disk,
             commands::s3::download_s3_object,
             commands::s3::download_s3_object_to_disk,
+            commands::s3::rename_s3_object,
             commands::s3::delete_s3_object,
             commands::files::save_text_file
         ])

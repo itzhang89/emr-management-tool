@@ -8,17 +8,21 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
+import { cn } from "@/lib/utils";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
 const pageSize = 10;
 const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
+const jobHistoryRefreshIntervalMs = 5_000;
+const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
+  const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
   const jobs = useJobRuns(selectedVirtualClusterId, autoRefresh);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
@@ -38,6 +42,26 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   useEffect(() => {
     writeAutoRefreshPreference(autoRefresh);
   }, [autoRefresh]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
+      return;
+    }
+
+    setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
+    const timer = window.setInterval(() => {
+      setRefreshCountdown((current) => (current <= 1 ? jobHistoryRefreshIntervalSeconds : current - 1));
+    }, 1_000);
+
+    return () => window.clearInterval(timer);
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    if (autoRefresh) {
+      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
+    }
+  }, [autoRefresh, jobs.dataUpdatedAt]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,8 +96,9 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 aria-label="Auto refresh job history"
               />
               <label htmlFor="job-history-auto-refresh" className="flex items-center gap-1 text-sm text-muted-foreground">
-                <RefreshCw className="size-4" />
+                <RefreshCw className={cn("size-4", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
                 Auto refresh (5s)
+                {autoRefresh ? <span className="tabular-nums text-xs">({refreshCountdown}s)</span> : null}
               </label>
             </div>
             <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
@@ -351,11 +376,13 @@ function errorMessage(error: unknown) {
 }
 
 function readAutoRefreshPreference() {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") return true;
   try {
-    return window.localStorage.getItem(autoRefreshStorageKey) === "true";
+    const stored = window.localStorage.getItem(autoRefreshStorageKey);
+    if (stored === null) return true;
+    return stored === "true";
   } catch {
-    return false;
+    return true;
   }
 }
 
