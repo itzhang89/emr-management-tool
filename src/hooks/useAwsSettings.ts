@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AwsAccountCredentialsInput, AwsCredentialsInput, ImportAwsCliProfileRequest } from "@/types/domain";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
+import { useSessionStore } from "@/stores/sessionStore";
 
 export function useAwsSettings() {
   return useQuery({
@@ -14,6 +15,14 @@ export function useAwsAccounts() {
     queryKey: ["aws-accounts"],
     queryFn: awsCredentialsService.listAccounts
   });
+}
+
+export function useActiveAwsAccount() {
+  const accounts = useAwsAccounts();
+  return {
+    ...accounts,
+    data: accounts.data?.find((account) => account.isActive)
+  };
 }
 
 export function useAwsCliProfiles() {
@@ -49,12 +58,20 @@ export function useImportAwsCliProfile() {
 
 export function useSetActiveAwsAccount() {
   const queryClient = useQueryClient();
+  const resetAccountScopedSession = useSessionStore((state) => state.resetAccountScopedSession);
 
   return useMutation({
     mutationFn: (accountId: string) => awsCredentialsService.setActiveAccount(accountId),
     onSuccess: () => {
+      resetAccountScopedSession();
       void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
       void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["job-run"] });
+      void queryClient.invalidateQueries({ queryKey: ["s3-buckets"] });
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects"] });
+      void queryClient.invalidateQueries({ queryKey: ["s3-text-object"] });
+      void queryClient.invalidateQueries({ queryKey: ["jobConfigTemplates"] });
     }
   });
 }

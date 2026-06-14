@@ -3,8 +3,11 @@ import { tauriClient } from "./tauriClient";
 
 export const emrService = {
   listVirtualClusters: (request: ListVirtualClustersRequest = {}) => tauriClient.listVirtualClusters(request),
-  listJobRuns: (virtualClusterId?: string) => tauriClient.listJobRuns({ virtualClusterId }),
-  describeJobRun: (id: string, virtualClusterId: string) => tauriClient.describeJobRun({ id, virtualClusterId }),
+  listJobRuns: (virtualClusterId?: string, accountId?: string) =>
+    tauriClient.listJobRuns({ virtualClusterId, accountId }),
+  describeJobRun: (id: string, virtualClusterId: string, accountId?: string) =>
+    tauriClient.describeJobRun({ id, virtualClusterId, accountId }),
   startJobRun: (request: StartJobRunRequest) => tauriClient.startJobRun(request),
-  cancelJobRun: (id: string, virtualClusterId: string) => tauriClient.cancelJobRun({ id, virtualClusterId })
+  cancelJobRun: (id: string, virtualClusterId: string, accountId?: string) =>
+    tauriClient.cancelJobRun({ id, virtualClusterId, accountId })
 };

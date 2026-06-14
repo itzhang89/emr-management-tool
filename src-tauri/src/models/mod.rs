@@ -235,6 +235,7 @@ pub struct TemplateVariableDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct JobConfigTemplate {
     pub id: String,
+    pub account_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub payload_template: String,

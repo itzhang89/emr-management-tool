@@ -22,6 +22,12 @@ vi.mock("@/hooks/useEmr", () => ({
   useDescribeJobRun: (...args: unknown[]) => useDescribeJobRun(...args)
 }));
 
+vi.mock("@/hooks/useAwsSettings", () => ({
+  useActiveAwsAccount: () => ({
+    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+  })
+}));
+
 vi.mock("@/hooks/useLogs", () => ({
   useJobLogStreams: (...args: unknown[]) => useJobLogStreams(...args),
   useJobLogs: (...args: unknown[]) => useJobLogs(...args),
@@ -43,7 +49,6 @@ vi.mock("@/services/s3Service", () => ({
 
 describe("LogsPage", () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
     vi.clearAllMocks();
     vi.stubGlobal(
       "ResizeObserver",
@@ -157,7 +162,7 @@ describe("LogsPage", () => {
         }
       ]
     }));
-    getJobLogObject.mockImplementation(async (_bucket, key) => ({
+    getJobLogObject.mockImplementation(async (_accountId, _bucket, key) => ({
       bucket: "logs-bucket",
       key,
       content: `downloaded ${key}`
@@ -367,7 +372,11 @@ describe("LogsPage", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
     await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
 
-    expect(getJobLogObject).toHaveBeenCalledWith("logs-bucket", "logs/vc-1/jobs/job-running/containers/spark-app/driver/stdout.gz");
+    expect(getJobLogObject).toHaveBeenCalledWith(
+      "acct-test",
+      "logs-bucket",
+      "logs/vc-1/jobs/job-running/containers/spark-app/driver/stdout.gz"
+    );
     expect(saveTextFile).toHaveBeenCalledWith(
       "job-running-driver stdout.log",
       expect.stringContaining("downloaded logs/vc-1/jobs/job-running")

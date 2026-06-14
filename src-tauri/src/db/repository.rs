@@ -89,27 +89,51 @@ pub async fn upsert_resource_template(
     Ok(())
 }
 
-pub async fn list_job_config_templates(pool: &SqlitePool) -> AppResult<Vec<JobConfigTemplate>> {
-    let rows = sqlx::query("select payload from job_config_templates order by name")
-        .fetch_all(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+pub async fn list_job_config_templates(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> AppResult<Vec<JobConfigTemplate>> {
+    let rows = sqlx::query(
+        "select payload from job_config_templates where account_id = ?1 order by name",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.into_iter()
         .map(|row| from_payload(row.get::<String, _>("payload")))
         .collect()
 }
 
+pub async fn migrate_job_config_templates_to_account(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "update job_config_templates set account_id = ?1 where account_id is null or account_id = 'legacy'",
+    )
+        .bind(account_id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
 pub async fn upsert_job_config_template(
     pool: &SqlitePool,
+    account_id: &str,
     template: &JobConfigTemplate,
 ) -> AppResult<()> {
+    let mut stored = template.clone();
+    stored.account_id = Some(account_id.to_string());
     let payload =
-        serde_json::to_string(template).map_err(|error| AppError::storage(error.to_string()))?;
+        serde_json::to_string(&stored).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
-        "insert into job_config_templates (id, name, payload) values (?1, ?2, ?3)
-         on conflict(id) do update set name = excluded.name, payload = excluded.payload",
+        "insert into job_config_templates (account_id, id, name, payload) values (?1, ?2, ?3, ?4)
+         on conflict(account_id, id) do update set name = excluded.name, payload = excluded.payload",
     )
+    .bind(account_id)
     .bind(&template.id)
     .bind(&template.name)
     .bind(payload)
@@ -119,7 +143,12 @@ pub async fn upsert_job_config_template(
     Ok(())
 }
 
-pub async fn delete_template(pool: &SqlitePool, table: &str, id: &str) -> AppResult<()> {
+pub async fn delete_template(
+    pool: &SqlitePool,
+    table: &str,
+    account_id: Option<&str>,
+    id: &str,
+) -> AppResult<()> {
     if table == "resource" {
         let templates = list_resource_templates(pool).await?;
         if templates
@@ -135,17 +164,44 @@ pub async fn delete_template(pool: &SqlitePool, table: &str, id: &str) -> AppRes
     let query = match table {
         "application" => "delete from application_templates where id = ?1",
         "resource" => "delete from resource_templates where id = ?1",
-        "jobConfig" => "delete from job_config_templates where id = ?1 and json_extract(payload, '$.builtIn') = 0",
+        "jobConfig" => {
+            if let Some(_account_id) = account_id {
+                "delete from job_config_templates where account_id = ?1 and id = ?2 and json_extract(payload, '$.builtIn') = 0"
+            } else {
+                "delete from job_config_templates where id = ?1 and json_extract(payload, '$.builtIn') = 0"
+            }
+        }
         _ => return Err(AppError::validation("Unsupported template type.")),
     };
-    let result = sqlx::query(query)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    let result = if table == "jobConfig" {
+        if let Some(account_id) = account_id {
+            sqlx::query(query)
+                .bind(account_id)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?
+        } else {
+            sqlx::query(query)
+                .bind(id)
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?
+        }
+    } else {
+        sqlx::query(query)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+    };
     if result.rows_affected() == 0 {
         if table == "jobConfig" {
-            let templates = list_job_config_templates(pool).await?;
+            let templates = if let Some(account_id) = account_id {
+                list_job_config_templates(pool, account_id).await?
+            } else {
+                Vec::new()
+            };
             if templates.iter().any(|template| template.id == id && template.built_in) {
                 return Err(AppError::validation(
                     "Built-in job config templates cannot be deleted.",
@@ -296,7 +352,6 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         "create table if not exists resource_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists job_history (id text primary key, created_at text not null, payload text not null)",
         "create table if not exists aws_accounts (id text primary key, name text not null, region text not null, is_active integer not null default 0, payload text not null)",
-        "create table if not exists job_config_templates (id text primary key, name text not null, payload text not null)",
         "alter table job_history add column account_id text",
         "alter table job_history add column region text",
         "alter table job_history add column virtual_cluster_id text",
@@ -307,6 +362,118 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             }
         }
     }
+
+    migrate_job_config_templates_table(pool).await?;
+
+    Ok(())
+}
+
+async fn table_create_sql_for(pool: &SqlitePool, table_name: &str) -> AppResult<Option<String>> {
+    let row = sqlx::query("select sql from sqlite_master where type = 'table' and name = ?1")
+        .bind(table_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(row.and_then(|row| row.get::<Option<String>, _>("sql")))
+}
+
+fn has_composite_account_id_primary_key(sql: &str) -> bool {
+    sql.contains("primary key (account_id, id)")
+}
+
+async fn create_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> {
+    sqlx::query(
+        "create table if not exists job_config_templates (
+            account_id text not null default 'legacy',
+            id text not null,
+            name text not null,
+            payload text not null,
+            primary key (account_id, id)
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
+async fn migrate_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> {
+    let main_sql = table_create_sql_for(pool, "job_config_templates").await?;
+    if main_sql
+        .as_deref()
+        .is_some_and(has_composite_account_id_primary_key)
+    {
+        let _ = sqlx::query("drop table if exists job_config_templates_v2")
+            .execute(pool)
+            .await;
+        return Ok(());
+    }
+
+    let v2_sql = table_create_sql_for(pool, "job_config_templates_v2").await?;
+    if v2_sql
+        .as_deref()
+        .is_some_and(has_composite_account_id_primary_key)
+    {
+        if main_sql.is_some()
+            && !main_sql
+                .as_deref()
+                .is_some_and(has_composite_account_id_primary_key)
+        {
+            sqlx::query(
+                "insert or ignore into job_config_templates_v2 (account_id, id, name, payload)
+                 select coalesce(account_id, 'legacy'), id, name, payload from job_config_templates",
+            )
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+        }
+
+        sqlx::query("drop table if exists job_config_templates")
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+        sqlx::query("alter table job_config_templates_v2 rename to job_config_templates")
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+        return Ok(());
+    }
+
+    if main_sql.is_none() {
+        return create_job_config_templates_table(pool).await;
+    }
+
+    sqlx::query(
+        "create table job_config_templates_v2 (
+            account_id text not null default 'legacy',
+            id text not null,
+            name text not null,
+            payload text not null,
+            primary key (account_id, id)
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    sqlx::query(
+        "insert into job_config_templates_v2 (account_id, id, name, payload)
+         select coalesce(account_id, 'legacy'), id, name, payload from job_config_templates",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    sqlx::query("drop table job_config_templates")
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    sqlx::query("alter table job_config_templates_v2 rename to job_config_templates")
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
 
     Ok(())
 }

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
 import { s3Service } from "@/services/s3Service";
 import type { JobLogsRequest, JobLogStreamsRequest, S3JobLogObjectsRequest } from "@/types/domain";
@@ -30,9 +31,12 @@ export function useS3JobLogObjects(request: S3JobLogObjectsRequest | undefined) 
 }
 
 export function useS3JobLogObject(bucket?: string, key?: string) {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+
   return useQuery({
-    queryKey: ["s3-job-log-object", bucket, key],
-    queryFn: () => s3Service.getJobLogObject(bucket!, key!),
-    enabled: Boolean(bucket && key)
+    queryKey: ["s3-job-log-object", accountId, bucket, key],
+    queryFn: () => s3Service.getJobLogObject(accountId!, bucket!, key!),
+    enabled: Boolean(accountId && bucket && key)
   });
 }

@@ -206,6 +206,7 @@ export interface TemplateVariableDefinition {
 
 export interface JobConfigTemplate {
   id: string;
+  accountId?: string;
   name: string;
   description?: string;
   payloadTemplate: string;

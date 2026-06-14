@@ -98,6 +98,7 @@ pub fn default_job_config_templates() -> Vec<JobConfigTemplate> {
 
     vec![JobConfigTemplate {
         id: "daily-etl".to_string(),
+        account_id: None,
         name: "example".to_string(),
         description: Some("Reference template showing how to configure an EMR submit payload.".to_string()),
         payload_template: payload_template.to_string(),
