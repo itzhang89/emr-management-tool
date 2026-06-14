@@ -3,7 +3,7 @@ use crate::aws::s3_rules::s3_object_editability;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, S3Bucket, S3JobLogObject, S3JobLogObjectsRequest, S3JobLogObjectsResponse,
-    S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3TextObject,
+    S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3TextObject, S3UploadFromDiskRequest,
 };
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::Utc;
@@ -289,6 +289,115 @@ pub async fn download_s3_object(
     request: S3ObjectRequest,
 ) -> AppResult<S3TextObject> {
     get_s3_text_object(app, request).await
+}
+
+#[tauri::command]
+pub async fn download_s3_object_to_disk(
+    app: AppHandle,
+    request: S3ObjectRequest,
+) -> AppResult<Option<String>> {
+    if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
+        return Err(AppError::validation("Bucket and key are required."));
+    }
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let response = client
+        .get_object()
+        .bucket(&request.bucket)
+        .key(&request.key)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+    let bytes = response
+        .body
+        .collect()
+        .await
+        .map_err(|error| AppError::aws("s3", error))?
+        .into_bytes();
+    let suggested_name = request
+        .key
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("s3-object")
+        .to_string();
+    let path = rfd::AsyncFileDialog::new()
+        .set_file_name(&suggested_name)
+        .save_file()
+        .await;
+
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    tokio::fs::write(path.path(), bytes)
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to save S3 object: {error}")))?;
+
+    Ok(Some(
+        path.path()
+            .to_string_lossy()
+            .into_owned(),
+    ))
+}
+
+#[tauri::command]
+pub async fn upload_s3_object_from_disk(
+    app: AppHandle,
+    request: S3UploadFromDiskRequest,
+) -> AppResult<Option<S3ObjectEntry>> {
+    if request.bucket.trim().is_empty() {
+        return Err(AppError::validation("Bucket is required."));
+    }
+
+    let file = rfd::AsyncFileDialog::new().pick_file().await;
+    let Some(file) = file else {
+        return Ok(None);
+    };
+
+    let path = file.path();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::validation("Selected file has no name."))?;
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+    let prefix = request.prefix.clone().unwrap_or_default();
+    let key = format!("{prefix}{file_name}");
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let response = client
+        .put_object()
+        .bucket(&request.bucket)
+        .key(&key)
+        .body(ByteStream::from(bytes.clone()))
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+
+    Ok(Some(object(
+        &request.bucket,
+        key,
+        bytes.len() as i64,
+        "file",
+        Some(Utc::now().to_rfc3339()),
+        response.e_tag().map(ToString::to_string),
+    )))
 }
 
 #[tauri::command]

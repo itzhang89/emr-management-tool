@@ -1,22 +1,25 @@
-import { Copy, FileText, Play, Search, Skull, ZoomIn } from "lucide-react";
+import { Copy, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
 const pageSize = 10;
+const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
-  const jobs = useJobRuns(selectedVirtualClusterId);
+  const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
+  const jobs = useJobRuns(selectedVirtualClusterId, autoRefresh);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
   const [search, setSearch] = useState("");
@@ -31,6 +34,10 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
   const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
   const selectedJob = filteredJobs.find((job) => job.id === selectedJobId);
+
+  useEffect(() => {
+    writeAutoRefreshPreference(autoRefresh);
+  }, [autoRefresh]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -56,6 +63,18 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                   setPage(1);
                 }}
               />
+            </div>
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+              <Switch
+                id="job-history-auto-refresh"
+                checked={autoRefresh}
+                onCheckedChange={setAutoRefresh}
+                aria-label="Auto refresh job history"
+              />
+              <label htmlFor="job-history-auto-refresh" className="flex items-center gap-1 text-sm text-muted-foreground">
+                <RefreshCw className="size-4" />
+                Auto refresh (5s)
+              </label>
             </div>
             <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
           </div>
@@ -329,4 +348,22 @@ function errorMessage(error: unknown) {
     return "Job history requires the Tauri desktop runtime. Start with npm run tauri -- dev.";
   }
   return appError.message ?? "Job operation failed.";
+}
+
+function readAutoRefreshPreference() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(autoRefreshStorageKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeAutoRefreshPreference(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(autoRefreshStorageKey, String(enabled));
+  } catch {
+    // Local storage can be unavailable in hardened browser contexts.
+  }
 }

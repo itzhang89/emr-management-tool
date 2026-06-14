@@ -1,9 +1,16 @@
 use crate::db::app_data_dir;
 use crate::error::{AppError, AppResult};
 use crate::models::{ApplicationTemplate, AwsAccount, JobRunSummary, ResourceTemplate};
+use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::fs;
+
+pub const JOB_HISTORY_RETENTION_DAYS: i64 = 7;
+
+fn job_history_cutoff() -> String {
+    (Utc::now() - Duration::days(JOB_HISTORY_RETENTION_DAYS)).to_rfc3339()
+}
 
 pub async fn pool() -> AppResult<SqlitePool> {
     let dir = app_data_dir()?;
@@ -101,14 +108,17 @@ pub async fn list_job_history(
     account_id: Option<&str>,
     virtual_cluster_id: Option<&str>,
 ) -> AppResult<Vec<JobRunSummary>> {
+    let cutoff = job_history_cutoff();
     let rows = sqlx::query(
         "select payload from job_history
          where (?1 is null or account_id = ?1)
            and (?2 is null or virtual_cluster_id = ?2)
+           and created_at >= ?3
          order by created_at desc",
     )
     .bind(account_id)
     .bind(virtual_cluster_id)
+    .bind(cutoff)
     .fetch_all(pool)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
@@ -116,6 +126,21 @@ pub async fn list_job_history(
     rows.into_iter()
         .map(|row| from_payload(row.get::<String, _>("payload")))
         .collect()
+}
+
+pub async fn prune_job_history(pool: &SqlitePool, account_id: Option<&str>) -> AppResult<()> {
+    let cutoff = job_history_cutoff();
+    sqlx::query(
+        "delete from job_history
+         where (?1 is null or account_id = ?1)
+           and created_at < ?2",
+    )
+    .bind(account_id)
+    .bind(cutoff)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
 }
 
 pub async fn upsert_job_history(pool: &SqlitePool, job: &JobRunSummary) -> AppResult<()> {
