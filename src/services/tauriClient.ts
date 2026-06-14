@@ -59,10 +59,14 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     duplicateTemplate: (request: { id: string; type: "application" | "resource" }) => call("duplicate_template", request),
     listJobConfigTemplates: () =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("list_job_config_templates"),
-    createJobConfigTemplate: (request: JobConfigTemplate) => call("create_job_config_template", request),
-    updateJobConfigTemplate: (request: JobConfigTemplate) => call("update_job_config_template", request),
-    deleteJobConfigTemplate: (request: { id: string }) => call("delete_job_config_template", request),
-    duplicateJobConfigTemplate: (request: { id: string }) => call("duplicate_job_config_template", request),
+    createJobConfigTemplate: (request: JobConfigTemplate) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("create_job_config_template", request),
+    updateJobConfigTemplate: (request: JobConfigTemplate) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("update_job_config_template", request),
+    deleteJobConfigTemplate: (request: { id: string }) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("delete_job_config_template", request),
+    duplicateJobConfigTemplate: (request: { id: string }) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("duplicate_job_config_template", request),
     getSubmitUser: () => call<string>("get_submit_user"),
     listJobLogStreams: (request: JobLogStreamsRequest) => call<JobLogStreamsResponse>("list_job_log_streams", request),
     getJobLogs: (request: JobLogsRequest) => call<JobLogsResponse>("get_job_logs", request),
@@ -82,6 +86,7 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<S3ObjectEntry>("rename_s3_object", request),
     saveTextFile: (request: { suggestedName: string; content: string }) =>
       call<string | undefined>("save_text_file", request),
+    openTextFile: () => call<string | undefined>("open_text_file"),
     deleteS3Object: (request: { bucket: string; key: string }) => call("delete_s3_object", request)
   };
 }
