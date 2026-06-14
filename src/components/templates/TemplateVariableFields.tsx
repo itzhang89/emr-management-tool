@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { TemplateVariableDefinition } from "@/types/domain";
-import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
+import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
 
 export function TemplateVariableFields({
   variables,
@@ -217,7 +217,7 @@ function DateTimeField({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const selected = value ? new Date(value) : undefined;
+  const selected = value ? parseDateValue(value) : undefined;
   const [time, setTime] = useState(selected ? format(selected, "HH:mm") : "00:00");
 
   const display = useMemo(() => {
