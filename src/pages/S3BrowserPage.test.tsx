@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { writeLastS3Path } from "@/services/s3PathStorage";
 import { S3BrowserPage } from "./S3BrowserPage";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -19,6 +20,7 @@ const renameMutateAsync = vi.fn();
 const toastInfo = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+let activeAccountId = "acct-test";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -35,7 +37,13 @@ vi.mock("@/services/fileDownload", () => ({
 
 vi.mock("@/hooks/useAwsSettings", () => ({
   useActiveAwsAccount: () => ({
-    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+    data: {
+      id: activeAccountId,
+      name: "Test",
+      region: "us-east-1",
+      accessKeyIdMasked: "AKIA****",
+      isActive: true
+    }
   })
 }));
 
@@ -60,6 +68,7 @@ describe("S3BrowserPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    activeAccountId = "acct-test";
     useSessionStore.setState({
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
@@ -70,6 +79,7 @@ describe("S3BrowserPage", () => {
         { name: "data-bucket", createdAt: "2026-06-10T00:00:00Z" }
       ],
       isLoading: false,
+      isSuccess: true,
       error: null
     });
     useS3Objects.mockImplementation((bucket?: string, prefix?: string) => ({
@@ -126,6 +136,30 @@ describe("S3BrowserPage", () => {
 
     expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
     expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
+  });
+
+  it("restores the cached S3 path when switching AWS accounts", () => {
+    writeLastS3Path("acct-a", "logs-bucket", "logs/");
+    writeLastS3Path("acct-b", "data-bucket", "archive/");
+
+    activeAccountId = "acct-a";
+    const view = renderS3BrowserPage();
+    expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
+    expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
+
+    activeAccountId = "acct-b";
+    view.rerender(
+      <TooltipProvider>
+        <S3BrowserPage />
+      </TooltipProvider>
+    );
+
+    expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "archive/");
+    expect(screen.getByText("s3://data-bucket/archive/")).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("emr-eks:last-s3-path:acct-b")!)).toEqual({
+      bucket: "data-bucket",
+      prefix: "archive/"
+    });
   });
 
   it("remembers the last valid S3 path when the page is opened again", () => {

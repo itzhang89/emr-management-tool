@@ -1,5 +1,5 @@
 import { ArrowUp, Copy, Download, FileText, Folder, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +37,8 @@ export function S3BrowserPage() {
   const buckets = useS3Buckets();
   const [bucket, setBucket] = useState<string | undefined>();
   const [prefix, setPrefix] = useState("");
-  const selectedBucket = bucket ?? selectedS3Bucket ?? buckets.data?.[0]?.name;
+  const skipPathPersistRef = useRef(false);
+  const selectedBucket = bucket ?? selectedS3Bucket ?? (buckets.isSuccess ? buckets.data?.[0]?.name : undefined);
   const currentS3Path = formatS3Path(selectedBucket, prefix);
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
   const [editingPath, setEditingPath] = useState(false);
@@ -63,10 +64,12 @@ export function S3BrowserPage() {
 
   useEffect(() => {
     if (!accountId) return;
+    skipPathPersistRef.current = true;
     const lastPath = readLastS3Path(accountId);
     setBucket(lastPath?.bucket);
     setPrefix(lastPath?.prefix ?? "");
     setSelectedKey(undefined);
+    setEditingPath(false);
   }, [accountId]);
 
   useEffect(() => {
@@ -89,9 +92,12 @@ export function S3BrowserPage() {
   }, [selectedS3Bucket, selectedS3Prefix]);
 
   useEffect(() => {
-    if (accountId && selectedBucket) {
-      writeLastS3Path(accountId, selectedBucket, prefix);
+    if (!accountId || !selectedBucket) return;
+    if (skipPathPersistRef.current) {
+      skipPathPersistRef.current = false;
+      return;
     }
+    writeLastS3Path(accountId, selectedBucket, prefix);
   }, [accountId, prefix, selectedBucket]);
 
   useEffect(() => {

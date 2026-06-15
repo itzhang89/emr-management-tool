@@ -17,4 +17,12 @@ describe("s3PathStorage", () => {
     expect(readLastS3Path("acct-a")).toEqual({ bucket: "bucket-a", prefix: "logs/" });
     expect(readLastS3Path("acct-b")).toEqual({ bucket: "bucket-b", prefix: "data/" });
   });
+
+  it("migrates the legacy global S3 path key to the active account", () => {
+    localStorage.setItem("emr-eks:last-s3-path", JSON.stringify({ bucket: "legacy-bucket", prefix: "legacy/" }));
+
+    expect(readLastS3Path("acct-a")).toEqual({ bucket: "legacy-bucket", prefix: "legacy/" });
+    expect(localStorage.getItem("emr-eks:last-s3-path")).toBeNull();
+    expect(localStorage.getItem("emr-eks:last-s3-path:acct-a")).toContain("legacy-bucket");
+  });
 });
