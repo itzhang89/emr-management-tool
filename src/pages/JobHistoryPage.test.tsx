@@ -12,7 +12,20 @@ const describeJob = vi.fn();
 const describeJobRun = vi.fn();
 const useJobRuns = vi.fn();
 const useVirtualClusters = vi.fn();
+const saveTextFile = vi.fn();
+const toastError = vi.fn();
 let describedJob: JobRunSummary | undefined;
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: (...args: unknown[]) => toastError(...args)
+  }
+}));
+
+vi.mock("@/services/fileDownload", () => ({
+  saveTextFile: (...args: unknown[]) => saveTextFile(...args)
+}));
 
 vi.mock("@/services/emrService", () => ({
   emrService: {
@@ -57,9 +70,12 @@ describe("JobHistoryPage", () => {
     startMutate.mockClear();
     describeJob.mockClear();
     describeJobRun.mockClear();
+    saveTextFile.mockClear();
+    toastError.mockClear();
     describedJob = undefined;
     jobs = makeJobs();
     describeJobRun.mockResolvedValue(jobs[0]);
+    saveTextFile.mockResolvedValue("job-running-description.json");
     useJobRuns.mockClear();
     useJobRuns.mockReturnValue({
       data: jobs,
@@ -130,6 +146,27 @@ describe("JobHistoryPage", () => {
     await user.click(screen.getByRole("button", { name: /Copy Job ID/i }));
     expect(writeText).toHaveBeenCalledWith("job-running");
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+  });
+
+  it("downloads the described job detail as JSON", async () => {
+    const user = userEvent.setup();
+    describedJob = {
+      ...jobs[0],
+      describeDetails: {
+        arn: "arn:aws:emr-containers:us-east-1:123456789012:/virtualclusters/vc-1/jobruns/job-running",
+        releaseLabel: "emr-7.2.0-latest"
+      }
+    };
+
+    renderJobHistoryPage();
+
+    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
+    await user.click(screen.getByRole("button", { name: /Download JSON/i }));
+
+    expect(saveTextFile).toHaveBeenCalledWith(
+      "job-running-description.json",
+      expect.stringContaining('"releaseLabel": "emr-7.2.0-latest"')
+    );
   });
 
   it("shows describe_job_run details in the detail popover", async () => {
@@ -231,6 +268,27 @@ describe("JobHistoryPage", () => {
     expect(describeJobRun).toHaveBeenCalledWith("job-remote-only", "vc-1");
     expect(screen.getByRole("row", { name: /remote-only-etl RUNNING/i })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+  });
+
+  it("shows a friendly message when AWS cannot find the searched job id", async () => {
+    const user = userEvent.setup();
+    describeJobRun.mockRejectedValue({
+      kind: "aws",
+      code: "AwsSdkError",
+      message: "service error",
+      service: "emr-containers"
+    });
+
+    renderJobHistoryPage();
+
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-missing");
+    const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
+    await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      "Job job-missing was not found in AWS EMR for virtual cluster vc-1. Check the Job ID and selected Virtual Cluster."
+    );
+    expect(screen.getByText(/Job job-missing was not found in AWS EMR/i)).toBeInTheDocument();
   });
 });
 
