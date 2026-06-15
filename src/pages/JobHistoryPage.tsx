@@ -1,4 +1,4 @@
-import { Copy, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
+import { Copy, Download, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
+import { saveTextFile } from "@/services/fileDownload";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
@@ -32,6 +33,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const [page, setPage] = useState(1);
   const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
   const [remoteLookupPending, setRemoteLookupPending] = useState(false);
+  const [remoteLookupError, setRemoteLookupError] = useState<string>();
   const allJobs = useMemo(() => {
     const localJobs = jobs.data ?? [];
     if (!remoteJob || remoteJob.virtualClusterId !== effectiveVirtualClusterId) return localJobs;
@@ -63,6 +65,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
     }
 
     setRemoteLookupPending(true);
+    setRemoteLookupError(undefined);
     try {
       const job = await emrService.describeJobRun(searchedJobId, effectiveVirtualClusterId);
       setRemoteJob(job);
@@ -72,7 +75,9 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
       void jobs.refetch?.();
       toast.success(`Found ${job.name}`);
     } catch (error) {
-      toast.error(errorMessage(error));
+      const message = remoteLookupErrorMessage(error, searchedJobId, effectiveVirtualClusterId);
+      setRemoteLookupError(message);
+      toast.error(message);
     } finally {
       setRemoteLookupPending(false);
     }
@@ -123,6 +128,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
+                  setRemoteLookupError(undefined);
                   setPage(1);
                 }}
                 onKeyDown={(event) => {
@@ -243,6 +249,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                           {remoteLookupPending ? "Finding..." : "Find in AWS"}
                         </Button>
                       ) : null}
+                      {remoteLookupError ? <span className="max-w-md text-sm text-destructive">{remoteLookupError}</span> : null}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -313,6 +320,17 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
     onClose();
   };
 
+  const downloadDescription = async () => {
+    try {
+      const savedPath = await saveTextFile(`${detail.id}-description.json`, JSON.stringify(detail, null, 2));
+      if (savedPath) {
+        toast.success(`Saved to ${savedPath}`);
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
+
   return (
     <div
       ref={ref}
@@ -325,10 +343,16 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
           <p className="font-semibold">Job Detail</p>
           <p className="break-all text-xs text-muted-foreground">{job.id}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={copyJobId}>
-          <Copy data-icon="inline-start" />
-          Copy Job ID
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" onClick={() => void downloadDescription()}>
+            <Download data-icon="inline-start" />
+            Download JSON
+          </Button>
+          <Button variant="outline" size="sm" onClick={copyJobId}>
+            <Copy data-icon="inline-start" />
+            Copy Job ID
+          </Button>
+        </div>
       </div>
       {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
       {describedJob.error ? (
@@ -432,6 +456,18 @@ function errorMessage(error: unknown) {
     return "Job history requires the Tauri desktop runtime. Start with npm run tauri -- dev.";
   }
   return appError.message ?? "Job operation failed.";
+}
+
+function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterId: string) {
+  const appError = error as Partial<AppError>;
+  const rawMessage = appError.message ?? "";
+  if (
+    appError.kind === "aws" &&
+    (/service error/i.test(rawMessage) || /not.?found/i.test(rawMessage) || /resource.*not.*found/i.test(rawMessage))
+  ) {
+    return `Job ${jobId} was not found in AWS EMR for virtual cluster ${virtualClusterId}. Check the Job ID and selected Virtual Cluster.`;
+  }
+  return errorMessage(error);
 }
 
 function readAutoRefreshPreference() {
