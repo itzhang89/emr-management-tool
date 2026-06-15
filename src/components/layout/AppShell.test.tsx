@@ -181,7 +181,7 @@ describe("AppShell", () => {
     expect(within(navigation).getByRole("button", { name: "Submit Job" })).toBeInTheDocument();
   });
 
-  it("opens Resource Templates as a Templates child page", async () => {
+  it("opens Templates as a standalone page with Application Config as the default tab", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
     render(
@@ -191,12 +191,14 @@ describe("AppShell", () => {
     );
 
     expect(screen.getByRole("button", { name: "Templates" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Resource Templates" }));
+    await user.click(screen.getByRole("button", { name: "Templates" }));
 
-    expect(screen.getByRole("heading", { name: "Resource Templates" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Templates" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Application Config" })).toHaveAttribute("data-state", "active");
+    expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
   });
 
-  it("opens Application Config as a Templates child page", async () => {
+  it("switches Resource Templates inside the Templates page", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
     render(
@@ -205,9 +207,11 @@ describe("AppShell", () => {
       </QueryClientProvider>
     );
 
-    await user.click(screen.getByRole("button", { name: "Application Config" }));
+    await user.click(screen.getByRole("button", { name: "Templates" }));
+    await user.click(screen.getByRole("tab", { name: "Resource Templates" }));
 
-    expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Resource Templates" })).toHaveAttribute("data-state", "active");
+    expect(screen.getByRole("heading", { name: "Resource Templates" })).toBeInTheDocument();
   });
 
   it("opens the account dialog from the account summary and switches accounts", async () => {
