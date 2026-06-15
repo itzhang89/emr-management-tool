@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Test version, for example 0.2.0-test.1"
+        required: true
+      channel:
+        description: "Manual release channel"
+        type: choice
+        options:
+          - test
+          - mac-debug
+        default: test
+      draft:
+        description: "Create draft release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    name: Windows release package
+    if: ${{ github.event_name == 'push' || inputs.channel == 'test' }}
+    runs-on: windows-latest
+    env:
+      RELEASE_CHANNEL: ${{ github.event_name == 'push' && 'stable' || 'test' }}
+      RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+      VITE_APP_CHANNEL: ${{ github.event_name == 'push' && 'stable' || 'test' }}
+      VITE_APP_PLATFORM: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: npm run tauri
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('test-v{0}', inputs.version) }}
+          releaseName: "EMR Management Tool ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}"
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          includeUpdaterJson: ${{ github.event_name != 'workflow_dispatch' }}
+
+  macos-test:
+    name: macOS manual test package
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'test' }}
+    needs: windows-release
+    runs-on: macos-latest
+    env:
+      RELEASE_CHANNEL: test
+      RELEASE_VERSION: ${{ inputs.version }}
+      REQUIRE_UPDATER_PUBLIC_KEY: "false"
+      VITE_APP_CHANNEL: test
+      VITE_APP_PLATFORM: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npm run tauri
+          tagName: ${{ format('test-v{0}', inputs.version) }}
+          releaseName: "EMR Management Tool ${{ inputs.version }}"
+          prerelease: true
+          releaseDraft: ${{ inputs.draft }}
+          includeUpdaterJson: false
+          args: "--target universal-apple-darwin --config src-tauri/tauri.macos-test.conf.json"
+
+  macos-debug:
+    name: macOS debug package
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.channel == 'mac-debug' }}
+    runs-on: macos-latest
+    env:
+      RELEASE_CHANNEL: mac-debug
+      RELEASE_VERSION: ${{ inputs.version }}
+      REQUIRE_UPDATER_PUBLIC_KEY: "false"
+      VITE_APP_CHANNEL: mac-debug
+      VITE_APP_PLATFORM: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - name: Prepare fixed macOS debug release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view mac-debug-latest >/dev/null 2>&1 || gh release create mac-debug-latest --title "macOS Debug Latest" --prerelease --notes "Latest macOS debug build."
+          gh release view mac-debug-latest --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            gh release delete-asset mac-debug-latest "$asset" -y
+          done
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npm run tauri
+          tagName: mac-debug-latest
+          releaseName: "macOS Debug Latest"
+          releaseBody: "Latest macOS debug build for internal testing. Unsigned and not notarized."
+          prerelease: true
+          releaseDraft: false
+          includeUpdaterJson: false
+          args: "--target universal-apple-darwin --config src-tauri/tauri.debug.conf.json"
