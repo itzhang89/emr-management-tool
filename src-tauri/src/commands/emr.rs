@@ -12,6 +12,8 @@ use aws_sdk_emrcontainers::types::{
 use chrono::Utc;
 use tauri::AppHandle;
 
+const MAX_CONFIGURATION_DEPTH: usize = 32;
+
 #[tauri::command]
 pub async fn list_virtual_clusters(
     app: AppHandle,
@@ -172,15 +174,14 @@ pub async fn start_job_run(
         .execution_role_arn(request.execution_role_arn.clone())
         .release_label(request.release_label.clone())
         .job_driver(job_driver);
-    if let Some(overrides) = build_configuration_overrides(request.configuration_overrides.as_ref())? {
+    if let Some(overrides) =
+        build_configuration_overrides(request.configuration_overrides.as_ref())?
+    {
         operation = operation.configuration_overrides(overrides);
     }
-    let response = operation
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
-        })?;
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+    })?;
     let now = Utc::now();
     let job = JobRunSummary {
         id: response
@@ -330,7 +331,7 @@ fn build_configuration_overrides(
         .map(|items| {
             items
                 .iter()
-                .filter_map(build_configuration)
+                .filter_map(|value| build_configuration(value, 1))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -353,7 +354,7 @@ fn build_configuration_overrides(
     Ok(Some(builder.build()))
 }
 
-fn build_configuration(value: &serde_json::Value) -> Option<Configuration> {
+fn build_configuration(value: &serde_json::Value, depth: usize) -> Option<Configuration> {
     let classification = value.get("classification")?.as_str()?.to_string();
     let mut builder = Configuration::builder().classification(classification);
     if let Some(properties) = value.get("properties").and_then(|props| props.as_object()) {
@@ -363,21 +364,24 @@ fn build_configuration(value: &serde_json::Value) -> Option<Configuration> {
             }
         }
     }
-    if let Some(configurations) = value.get("configurations").and_then(|items| items.as_array()) {
-        let nested = configurations
-            .iter()
-            .filter_map(build_configuration)
-            .collect::<Vec<_>>();
-        if !nested.is_empty() {
-            builder = builder.set_configurations(Some(nested));
+    if depth < MAX_CONFIGURATION_DEPTH {
+        if let Some(configurations) = value
+            .get("configurations")
+            .and_then(|items| items.as_array())
+        {
+            let nested = configurations
+                .iter()
+                .filter_map(|value| build_configuration(value, depth + 1))
+                .collect::<Vec<_>>();
+            if !nested.is_empty() {
+                builder = builder.set_configurations(Some(nested));
+            }
         }
     }
     builder.build().ok()
 }
 
-fn build_monitoring_configuration(
-    value: &serde_json::Value,
-) -> Option<MonitoringConfiguration> {
+fn build_monitoring_configuration(value: &serde_json::Value) -> Option<MonitoringConfiguration> {
     let mut builder = MonitoringConfiguration::builder();
     let mut has_config = false;
     if let Some(cloud_watch) = value
@@ -398,16 +402,13 @@ fn build_monitoring_configuration(
         builder = builder.cloud_watch_monitoring_configuration(cloud_watch);
         has_config = true;
     }
-    if let Some(s3) = value
-        .get("s3MonitoringConfiguration")
-        .and_then(|config| {
-            let log_uri = config.get("logUri")?.as_str()?;
-            S3MonitoringConfiguration::builder()
-                .log_uri(log_uri)
-                .build()
-                .ok()
-        })
-    {
+    if let Some(s3) = value.get("s3MonitoringConfiguration").and_then(|config| {
+        let log_uri = config.get("logUri")?.as_str()?;
+        S3MonitoringConfiguration::builder()
+            .log_uri(log_uri)
+            .build()
+            .ok()
+    }) {
         builder = builder.s3_monitoring_configuration(s3);
         has_config = true;
     }
@@ -548,10 +549,27 @@ fn map_monitoring_configuration(
 }
 
 fn map_configuration(config: &aws_sdk_emrcontainers::types::Configuration) -> serde_json::Value {
+    map_configuration_with_depth(config, 1)
+}
+
+fn map_configuration_with_depth(
+    config: &aws_sdk_emrcontainers::types::Configuration,
+    depth: usize,
+) -> serde_json::Value {
+    let configurations = if depth < MAX_CONFIGURATION_DEPTH {
+        config
+            .configurations()
+            .iter()
+            .map(|config| map_configuration_with_depth(config, depth + 1))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
     serde_json::json!({
         "classification": config.classification(),
         "properties": config.properties(),
-        "configurations": config.configurations().iter().map(map_configuration).collect::<Vec<_>>(),
+        "configurations": configurations,
     })
 }
 
@@ -735,8 +753,10 @@ mod tests {
             }
         });
 
-        let built = super::build_configuration_overrides(Some(&overrides)).expect("overrides build");
-        let mapped = super::map_configuration_overrides(&built.expect("built overrides")).expect("overrides map back");
+        let built =
+            super::build_configuration_overrides(Some(&overrides)).expect("overrides build");
+        let mapped = super::map_configuration_overrides(&built.expect("built overrides"))
+            .expect("overrides map back");
         let app_config = mapped
             .get("applicationConfiguration")
             .and_then(|value| value.as_array())
@@ -750,5 +770,47 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("2")
         );
+    }
+
+    #[test]
+    fn limits_deep_configuration_override_nesting() {
+        let input = nested_configuration_json(80);
+        let overrides = serde_json::json!({
+            "applicationConfiguration": [input]
+        });
+
+        let built =
+            super::build_configuration_overrides(Some(&overrides)).expect("overrides build");
+        let mapped = super::map_configuration_overrides(&built.expect("built overrides"))
+            .expect("overrides map back");
+        let first_config = mapped
+            .get("applicationConfiguration")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first())
+            .expect("first configuration exists");
+
+        assert_eq!(configuration_depth(first_config), 32);
+    }
+
+    fn nested_configuration_json(depth: usize) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "classification": format!("level-{depth}")
+        });
+        for level in (0..depth).rev() {
+            value = serde_json::json!({
+                "classification": format!("level-{level}"),
+                "configurations": [value]
+            });
+        }
+        value
+    }
+
+    fn configuration_depth(value: &serde_json::Value) -> usize {
+        let nested = value
+            .get("configurations")
+            .and_then(|value| value.as_array())
+            .and_then(|items| items.first());
+
+        1 + nested.map(configuration_depth).unwrap_or(0)
     }
 }

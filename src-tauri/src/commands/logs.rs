@@ -8,6 +8,8 @@ use chrono::{TimeZone, Utc};
 use serde_json::Value;
 use tauri::AppHandle;
 
+const MAX_JSON_NORMALIZATION_DEPTH: usize = 16;
+
 #[tauri::command]
 pub async fn list_job_log_streams(
     app: AppHandle,
@@ -163,13 +165,17 @@ fn normalize_event_message(message: &str) -> NormalizedLogMessage {
 
     serde_json::from_str::<Value>(trimmed)
         .ok()
-        .and_then(|value| normalize_json_message(&value))
+        .and_then(|value| normalize_json_message(&value, 1))
         .unwrap_or_else(|| normalized_plain_message(trimmed))
 }
 
-fn normalize_json_message(value: &Value) -> Option<NormalizedLogMessage> {
+fn normalize_json_message(value: &Value, depth: usize) -> Option<NormalizedLogMessage> {
+    if depth > MAX_JSON_NORMALIZATION_DEPTH {
+        return normalized_json_fallback(value, None);
+    }
+
     match value {
-        Value::String(message) => Some(normalized_message_from_string(message, None)),
+        Value::String(message) => Some(normalized_message_from_string(message, None, depth + 1)),
         Value::Object(object) => {
             let explicit_level = first_string(value, &["level", "severity", "logLevel"]);
             let message_value = ["message", "msg", "log", "@message"]
@@ -180,9 +186,11 @@ fn normalize_json_message(value: &Value) -> Option<NormalizedLogMessage> {
             };
 
             match message_value {
-                Value::String(message) => {
-                    Some(normalized_message_from_string(message, explicit_level))
-                }
+                Value::String(message) => Some(normalized_message_from_string(
+                    message,
+                    explicit_level,
+                    depth + 1,
+                )),
                 nested => normalized_json_fallback(nested, explicit_level),
             }
         }
@@ -190,7 +198,10 @@ fn normalize_json_message(value: &Value) -> Option<NormalizedLogMessage> {
     }
 }
 
-fn normalized_json_fallback(value: &Value, explicit_level: Option<&str>) -> Option<NormalizedLogMessage> {
+fn normalized_json_fallback(
+    value: &Value,
+    explicit_level: Option<&str>,
+) -> Option<NormalizedLogMessage> {
     let message = serde_json::to_string(value).ok()?;
     let level = normalize_level(explicit_level, &message)
         .unwrap_or_else(|| infer_level(&message).to_string());
@@ -200,14 +211,17 @@ fn normalized_json_fallback(value: &Value, explicit_level: Option<&str>) -> Opti
 fn normalized_message_from_string(
     message: &str,
     explicit_level: Option<&str>,
+    depth: usize,
 ) -> NormalizedLogMessage {
     let trimmed = message.trim();
-    if let Ok(nested) = serde_json::from_str::<Value>(trimmed) {
-        if let Some(mut normalized) = normalize_json_message(&nested) {
-            if let Some(level) = normalize_level(explicit_level, &normalized.message) {
-                normalized.level = level;
+    if depth <= MAX_JSON_NORMALIZATION_DEPTH {
+        if let Ok(nested) = serde_json::from_str::<Value>(trimmed) {
+            if let Some(mut normalized) = normalize_json_message(&nested, depth + 1) {
+                if let Some(level) = normalize_level(explicit_level, &normalized.message) {
+                    normalized.level = level;
+                }
+                return normalized;
             }
-            return normalized;
         }
     }
 
@@ -396,6 +410,20 @@ mod tests {
             normalized.message,
             r#"{"time":"2026-06-12T16:33:32+00:00"}"#
         );
+        assert_eq!(normalized.level, "info");
+    }
+
+    #[test]
+    fn stops_unwrapping_deeply_nested_json_strings() {
+        let mut value = serde_json::json!("payload");
+        for _ in 0..20 {
+            value = serde_json::Value::String(value.to_string());
+        }
+
+        let normalized = normalize_event_message(&value.to_string());
+
+        assert_ne!(normalized.message, "payload");
+        assert!(normalized.message.contains("payload"));
         assert_eq!(normalized.level, "info");
     }
 
