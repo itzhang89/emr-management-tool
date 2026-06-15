@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
+import { emrService } from "@/services/emrService";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
@@ -29,16 +30,53 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const startJob = useStartJobRun();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
+  const [remoteLookupPending, setRemoteLookupPending] = useState(false);
+  const allJobs = useMemo(() => {
+    const localJobs = jobs.data ?? [];
+    if (!remoteJob || remoteJob.virtualClusterId !== effectiveVirtualClusterId) return localJobs;
+    if (localJobs.some((job) => job.id === remoteJob.id)) return localJobs;
+    return [remoteJob, ...localJobs];
+  }, [effectiveVirtualClusterId, jobs.data, remoteJob]);
   const filteredJobs = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    if (!keyword) return jobs.data ?? [];
-    return (jobs.data ?? []).filter((job) =>
+    if (!keyword) return allJobs;
+    return allJobs.filter((job) =>
       [job.name, job.id, job.state].some((value) => value.toLowerCase().includes(keyword))
     );
-  }, [jobs.data, search]);
+  }, [allJobs, search]);
   const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
   const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
   const selectedJob = filteredJobs.find((job) => job.id === selectedJobId);
+  const searchedJobId = search.trim();
+  const exactLocalMatch = searchedJobId ? allJobs.find((job) => job.id === searchedJobId) : undefined;
+
+  const findJobInAws = async () => {
+    if (!searchedJobId) return;
+    if (exactLocalMatch) {
+      setSelectedJobId(exactLocalMatch.id);
+      return;
+    }
+    if (!effectiveVirtualClusterId) {
+      toast.error("Select a virtual cluster before looking up a job in AWS.");
+      return;
+    }
+
+    setRemoteLookupPending(true);
+    try {
+      const job = await emrService.describeJobRun(searchedJobId, effectiveVirtualClusterId);
+      setRemoteJob(job);
+      setSearch(job.id);
+      setSelectedJobId(job.id);
+      setPage(1);
+      void jobs.refetch?.();
+      toast.success(`Found ${job.name}`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setRemoteLookupPending(false);
+    }
+  };
 
   useEffect(() => {
     writeAutoRefreshPreference(autoRefresh);
@@ -86,6 +124,12 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 onChange={(event) => {
                   setSearch(event.target.value);
                   setPage(1);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void findJobInAws();
+                  }
                 }}
               />
             </div>
@@ -186,7 +230,20 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               {filteredJobs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
-                    No jobs match the current filters.
+                    <div className="flex flex-col items-center gap-3">
+                      <span>No jobs match the current filters.</span>
+                      {searchedJobId ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={remoteLookupPending}
+                          onClick={() => void findJobInAws()}
+                        >
+                          <Search data-icon="inline-start" />
+                          {remoteLookupPending ? "Finding..." : "Find in AWS"}
+                        </Button>
+                      ) : null}
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : null}

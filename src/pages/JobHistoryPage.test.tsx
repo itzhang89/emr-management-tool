@@ -208,6 +208,30 @@ describe("JobHistoryPage", () => {
     expect(onOpenLogs).toHaveBeenCalled();
     expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
   });
+
+  it("looks up a missing local job id from AWS using the selected virtual cluster", async () => {
+    const user = userEvent.setup();
+    describeJobRun.mockResolvedValue({
+      id: "job-remote-only",
+      name: "remote-only-etl",
+      state: "RUNNING",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:20:00Z"
+    });
+
+    renderJobHistoryPage();
+
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-remote-only");
+    expect(screen.getByText("No jobs match the current filters.")).toBeInTheDocument();
+    const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
+    expect(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i })).toBeInTheDocument();
+
+    await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
+
+    expect(describeJobRun).toHaveBeenCalledWith("job-remote-only", "vc-1");
+    expect(screen.getByRole("row", { name: /remote-only-etl RUNNING/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+  });
 });
 
 function makeJobs(): JobRunSummary[] {
