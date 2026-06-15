@@ -47,7 +47,7 @@ type TemplateEditorSnapshot = Pick<
   "name" | "description" | "payloadTemplate" | "customVariables" | "defaultResourceTemplateId"
 >;
 
-export function ApplicationConfigTemplatesPage() {
+export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?: boolean }) {
   const templates = useJobConfigTemplates();
   const [editing, setEditing] = useState<Editing>();
   const createTemplate = useCreateJobConfigTemplate();
@@ -70,7 +70,11 @@ export function ApplicationConfigTemplatesPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Application Config</h1>
+          {embedded ? (
+            <h2 className="text-2xl font-semibold tracking-tight">Application Config</h2>
+          ) : (
+            <h1 className="text-2xl font-semibold tracking-tight">Application Config</h1>
+          )}
           <p className="text-sm text-muted-foreground">
             Manage full EMR submit JSON templates with variable substitution.
           </p>

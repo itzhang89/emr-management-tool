@@ -1,5 +1,5 @@
 import { type ReactElement, useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, Cloud, Layers3, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { CheckCircle2, Cloud, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,10 @@ import {
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { JobHistoryPage } from "@/pages/JobHistoryPage";
 import { LogsPage } from "@/pages/LogsPage";
-import { navigationItems, templateNavigationItems, type PageId } from "@/pages/pageMeta";
+import { navigationItems, type PageId } from "@/pages/pageMeta";
 import { S3BrowserPage } from "@/pages/S3BrowserPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
@@ -27,12 +26,8 @@ import { VirtualClustersPage } from "@/pages/VirtualClustersPage";
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [templatesOpen, setTemplatesOpen] = useState(true);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
-  const activeMeta = useMemo(
-    () => [...navigationItems, ...templateNavigationItems].find((item) => item.id === activePage),
-    [activePage]
-  );
+  const activeMeta = useMemo(() => navigationItems.find((item) => item.id === activePage), [activePage]);
   const accounts = useAwsAccounts();
   const activeAccount = accounts.data?.find((account) => account.isActive);
   const setActiveAccount = useSetActiveAwsAccount();
@@ -42,7 +37,6 @@ export function AppShell() {
     history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} onOpenS3={() => setActivePage("logs")} />,
     logs: <LogsPage />,
     templates: <TemplatesPage />,
-    appConfig: <ApplicationConfigTemplatesPage />,
     clusters: <VirtualClustersPage />,
     s3: <S3BrowserPage />,
     settings: <SettingsPage />
@@ -98,44 +92,7 @@ export function AppShell() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label="Primary">
-          {navigationItems.slice(0, 3).map((item) =>
-            renderNavButton({ item, activePage, setActivePage, sidebarCollapsed })
-          )}
-          <div>
-            <button
-              type="button"
-              onClick={() => setTemplatesOpen((open) => !open)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
-                sidebarCollapsed ? "justify-center" : undefined,
-                templateNavigationItems.some((item) => item.id === activePage) ? "bg-accent text-accent-foreground" : undefined
-              )}
-              aria-expanded={sidebarCollapsed ? true : templatesOpen}
-              aria-label="Templates"
-              title="Templates"
-            >
-              <Layers3 className="size-4 shrink-0" />
-              {!sidebarCollapsed ? (
-                <>
-                  <span className="flex flex-1 flex-col">
-                    <span className="font-medium">Templates</span>
-                    <span className="text-xs text-muted-foreground">Config and resources</span>
-                  </span>
-                  <ChevronDown className={cn("size-4 transition-transform", templatesOpen ? "rotate-180" : undefined)} />
-                </>
-              ) : null}
-            </button>
-            {(templatesOpen || sidebarCollapsed) ? (
-              <div className={cn("mt-1 flex flex-col gap-1", sidebarCollapsed ? undefined : "pl-5")}>
-                {templateNavigationItems.map((item) =>
-                  renderNavButton({ item, activePage, setActivePage, sidebarCollapsed, compact: true })
-                )}
-              </div>
-            ) : null}
-          </div>
-          {navigationItems.slice(3).map((item) =>
-            renderNavButton({ item, activePage, setActivePage, sidebarCollapsed })
-          )}
+          {navigationItems.map((item) => renderNavButton({ item, activePage, setActivePage, sidebarCollapsed }))}
         </nav>
       </aside>
 
@@ -206,7 +163,7 @@ export function AppShell() {
   );
 }
 
-type NavItem = (typeof navigationItems)[number] | (typeof templateNavigationItems)[number];
+type NavItem = (typeof navigationItems)[number];
 
 function renderNavButton({
   item,

@@ -13,12 +13,40 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCreateTemplate, useDeleteTemplate, useDuplicateTemplate, useTemplates, useUpdateTemplate } from "@/hooks/useTemplates";
+import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 import type { ResourceTemplate, SparkResourceConfig } from "@/types/domain";
 
 type Editing = { template?: ResourceTemplate } | undefined;
 
 export function TemplatesPage() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Templates</h1>
+        <p className="text-sm text-muted-foreground">
+          Manage application submit payloads and Spark resource presets in one place.
+        </p>
+      </div>
+
+      <Tabs defaultValue="appConfig" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="appConfig">Application Config</TabsTrigger>
+          <TabsTrigger value="resources">Resource Templates</TabsTrigger>
+        </TabsList>
+        <TabsContent value="appConfig">
+          <ApplicationConfigTemplatesPage embedded />
+        </TabsContent>
+        <TabsContent value="resources">
+          <ResourceTemplatesPanel />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function ResourceTemplatesPanel() {
   const templates = useTemplates();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
@@ -31,7 +59,7 @@ export function TemplatesPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Resource Templates</h1>
+          <h2 className="text-2xl font-semibold tracking-tight">Resource Templates</h2>
           <p className="text-sm text-muted-foreground">Manage reusable Spark driver and executor sizing presets.</p>
         </div>
         <Button onClick={() => setEditing({})}>
