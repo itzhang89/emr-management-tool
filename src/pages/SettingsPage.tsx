@@ -1,4 +1,5 @@
-import { CheckCircle2, Download, KeyRound, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Download, KeyRound, RefreshCw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -18,11 +19,17 @@ import {
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
 import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
+import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
+import { getReleaseInfo } from "@/services/releaseInfo";
 import type { AppError } from "@/types/domain";
 
 const regions = ["us-east-1", "us-west-2", "ap-southeast-1", "ap-northeast-1", "eu-west-1"];
 
 export function SettingsPage() {
+  const releaseInfo = getReleaseInfo();
+  const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const accounts = useAwsAccounts();
   const cliProfiles = useAwsCliProfiles();
   const createAccount = useCreateAwsAccount();
@@ -60,14 +67,87 @@ export function SettingsPage() {
     }
   });
 
+  const checkForUpdates = async () => {
+    setCheckingUpdate(true);
+    setAvailableUpdate(null);
+    try {
+      const result = await appUpdater.checkForUpdate();
+      if (result.status === "unavailable") {
+        toast.info(result.reason);
+      } else if (result.status === "no-update") {
+        toast.success("You are already using the latest version.");
+      } else {
+        setAvailableUpdate(result);
+        toast.success(`Version ${result.version} is available.`);
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to check for updates."));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    if (!availableUpdate) return;
+
+    setInstallingUpdate(true);
+    try {
+      await availableUpdate.install();
+      toast.success("Update installed. Restart the app to use the new version.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to install update."));
+    } finally {
+      setInstallingUpdate(false);
+    }
+  };
+
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+          {releaseInfo.isMacDebug ? <Badge variant="secondary">Debug</Badge> : null}
+        </div>
         <p className="text-sm text-muted-foreground">
           Manage named AWS accounts. Debug builds store secrets in a local development store; production builds use the OS keychain.
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Application Updates</CardTitle>
+          <CardDescription>
+            Stable automatic updates are currently enabled for Windows release builds. macOS builds are manual until signing and
+            notarization are available.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
+            <div className="min-w-0">
+              <p className="font-medium">Release channel</p>
+              <p className="text-sm text-muted-foreground">
+                {releaseInfo.channelLabel} · {releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}
+              </p>
+            </div>
+            <Button type="button" variant="outline" disabled={checkingUpdate} onClick={checkForUpdates}>
+              <RefreshCw data-icon="inline-start" />
+              {checkingUpdate ? "Checking..." : "Check for Updates"}
+            </Button>
+          </div>
+          {availableUpdate ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
+              <div className="min-w-0">
+                <p className="font-medium">Version {availableUpdate.version} is available.</p>
+                {availableUpdate.notes ? <p className="text-sm text-muted-foreground">{availableUpdate.notes}</p> : null}
+              </div>
+              <Button type="button" disabled={installingUpdate} onClick={installUpdate}>
+                <Download data-icon="inline-start" />
+                {installingUpdate ? "Installing..." : `Install ${availableUpdate.version}`}
+              </Button>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
