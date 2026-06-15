@@ -1,14 +1,35 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 
+const setActiveAccountMutate = vi.fn();
+
 vi.mock("@/hooks/useAwsSettings", () => ({
-  useAwsAccounts: () => ({ data: [] }),
+  useAwsAccounts: () => ({
+    data: [
+      {
+        id: "acct-test",
+        name: "Test",
+        region: "us-east-1",
+        accessKeyIdMasked: "AKIA****",
+        isActive: true
+      },
+      {
+        id: "acct-prod",
+        name: "Production",
+        region: "us-west-2",
+        accessKeyIdMasked: "AKIB****",
+        isActive: false
+      }
+    ],
+    isLoading: false
+  }),
   useActiveAwsAccount: () => ({
     data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
-  })
+  }),
+  useSetActiveAwsAccount: () => ({ mutate: setActiveAccountMutate, isPending: false })
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
@@ -120,6 +141,13 @@ vi.mock("@/hooks/useLogs", () => ({
 }));
 
 describe("AppShell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setActiveAccountMutate.mockImplementation((_accountId: string, options?: { onSuccess?: () => void }) => {
+      options?.onSuccess?.();
+    });
+  });
+
   it("prioritizes Submit Job and switches pages from the sidebar", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
@@ -134,6 +162,71 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
     expect(screen.getByRole("heading", { name: "Job History" })).toBeInTheDocument();
+  });
+
+  it("collapses the sidebar to icon-only navigation", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppShell />
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: /Collapse navigation/i }));
+
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(navigation).queryByText("Template-driven submission")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Expand navigation/i })).toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "Submit Job" })).toBeInTheDocument();
+  });
+
+  it("opens Resource Templates as a Templates child page", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppShell />
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByRole("button", { name: "Templates" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resource Templates" }));
+
+    expect(screen.getByRole("heading", { name: "Resource Templates" })).toBeInTheDocument();
+  });
+
+  it("opens Application Config as a Templates child page", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppShell />
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "Application Config" }));
+
+    expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
+  });
+
+  it("opens the account dialog from the account summary and switches accounts", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppShell />
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: /Switch AWS account/i }));
+    const dialog = screen.getByRole("dialog", { name: /Switch AWS Account/i });
+    expect(within(dialog).getByText("Production")).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: /Use/i }));
+
+    expect(setActiveAccountMutate).toHaveBeenCalledWith("acct-prod", expect.any(Object));
+    expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
   });
 
   it("opens Logs from a Job History row", async () => {
