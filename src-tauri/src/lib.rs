@@ -1,6 +1,7 @@
 pub mod aws;
 pub mod commands;
 pub mod db;
+pub mod diagnostics;
 pub mod error;
 pub mod models;
 pub mod state;
@@ -8,6 +9,8 @@ pub mod state;
 use state::AppState;
 
 pub fn run() {
+    diagnostics::install_panic_hook();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AppState::default())
