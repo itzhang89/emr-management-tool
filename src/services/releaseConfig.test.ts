@@ -129,6 +129,9 @@ describe("release configuration", () => {
     expect(stablePackage).toContain("stable-macos-amd64");
     expect(stablePackage).toContain("stable-macos-arm64");
     expect(stablePackage).toContain("stable-windows-amd64");
+    expect(stablePackage).toMatch(
+      /Prepare release config[\s\S]*APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}[\s\S]*APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}/
+    );
   });
 
   it("detects Apple signing configuration and forces local credentials when certificates are missing", () => {
@@ -193,6 +196,27 @@ describe("release configuration", () => {
         bundle: { createUpdaterArtifacts?: boolean };
       };
       expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(false);
+    });
+  });
+
+  it("ad-hoc signs macOS CI packages when Apple certificates are not configured", () => {
+    withReleaseScriptWorkspace((workspace) => {
+      execFileSync(process.execPath, ["scripts/prepare-release-config.mjs"], {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          CI: "true",
+          RELEASE_CHANNEL: "stable",
+          VITE_APP_PLATFORM: "darwin",
+          APPLE_CERTIFICATE: "",
+          TAURI_UPDATER_PUBLIC_KEY: ""
+        }
+      });
+
+      const tauriConfig = JSON.parse(readFileSync(join(workspace, "src-tauri/tauri.conf.json"), "utf8")) as {
+        bundle: { macOS?: { signingIdentity?: string } };
+      };
+      expect(tauriConfig.bundle.macOS?.signingIdentity).toBe("-");
     });
   });
 });

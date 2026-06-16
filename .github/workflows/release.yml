@@ -253,6 +253,9 @@ jobs:
             -s -k actions build.keychain
 
       - name: Prepare release config
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: node scripts/prepare-release-config.mjs
 
       - name: Build package
