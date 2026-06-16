@@ -90,7 +90,7 @@ describe("templateEngine", () => {
 
   it("validates required custom variables and payload shape", () => {
     const resolved = resolveTemplatePayload(template, {
-      templateName: "Daily ETL",
+      templateName: "Daily-ETL",
       virtualClusterId: "vc-123",
       submitUser: "tester",
       customVariables: { ENV: "prod" },
@@ -101,6 +101,23 @@ describe("templateEngine", () => {
 
     const valid = validateSubmitPayload(resolved, template.customVariables, { ENV: "prod" });
     expect(valid.ok).toBe(true);
+  });
+
+  it("rejects EMR job names with characters that StartJobRun does not allow", () => {
+    const resolved = resolveTemplatePayload(template, {
+      templateName: "Daily ETL",
+      virtualClusterId: "vc-123",
+      submitUser: "tester",
+      customVariables: { ENV: "prod" },
+      now: new Date("2026-06-14T10:15:00Z")
+    });
+
+    const invalid = validateSubmitPayload(resolved, template.customVariables, { ENV: "prod" });
+
+    expect(invalid.ok).toBe(false);
+    expect(invalid.errors).toContain(
+      "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores."
+    );
   });
 
   it("builds a start job request from resolved payload", () => {

@@ -1,9 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
+
+const mocks = vi.hoisted(() => ({
+  startJobRun: vi.fn(),
+  toastError: vi.fn()
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    error: mocks.toastError,
+    success: vi.fn()
+  }
+}));
 
 vi.mock("@/hooks/useEmr", () => ({
   useVirtualClusters: () => ({
@@ -11,7 +23,7 @@ vi.mock("@/hooks/useEmr", () => ({
       clusters: [{ id: "vc-1", name: "analytics", namespace: "emr", state: "RUNNING", eksClusterName: "eks", createdAt: "" }]
     }
   }),
-  useStartJobRun: () => ({ mutateAsync: vi.fn(), isPending: false })
+  useStartJobRun: () => ({ mutateAsync: mocks.startJobRun, isPending: false })
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
@@ -76,6 +88,10 @@ vi.mock("@/stores/sessionStore", () => ({
 }));
 
 describe("SubmitJobPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders template-driven submit controls without legacy save template action", () => {
     const queryClient = new QueryClient();
     render(
@@ -107,5 +123,26 @@ describe("SubmitJobPage", () => {
     await user.hover(screen.getByText("ENV"));
 
     expect((await screen.findAllByText("Runtime environment name")).length).toBeGreaterThan(0);
+  });
+
+  it("shows structured Tauri submit errors instead of a generic fallback", async () => {
+    const user = userEvent.setup();
+    mocks.startJobRun.mockRejectedValue({
+      message: "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #."
+    });
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <SubmitJobPage />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Submit$/i }));
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #."
+    );
   });
 });
