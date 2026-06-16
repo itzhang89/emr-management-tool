@@ -58,6 +58,14 @@ describe("release configuration", () => {
     expect(workflow).toContain("WINDOWS_SIGN_COMMAND");
     expect(workflow).toContain("TAURI_UPDATER_PUBLIC_KEY");
   });
+
+  it("injects the release channel into Rust builds for credential backend selection", () => {
+    const buildScript = readText("src-tauri/build.rs");
+
+    expect(buildScript).toContain("cargo:rerun-if-env-changed=VITE_APP_CHANNEL");
+    expect(buildScript).toContain("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+    expect(buildScript).toContain("cargo:rustc-env=EMR_APP_CHANNEL=");
+  });
 });
 
 function readJson<T>(path: string): T {
