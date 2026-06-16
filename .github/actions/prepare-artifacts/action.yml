@@ -1,0 +1,66 @@
+name: Prepare artifacts
+description: Inspect Tauri bundle output and stage installable artifacts for upload.
+
+inputs:
+  artifact-label:
+    description: Prefix added to each staged artifact name.
+    required: true
+  bundle-dir:
+    description: Tauri bundle directory to inspect.
+    required: true
+  artifact-patterns:
+    description: Semicolon-separated glob patterns for installable artifacts.
+    required: true
+  stage-dir:
+    description: Directory where artifacts are staged.
+    required: false
+    default: release-artifacts
+
+runs:
+  using: composite
+  steps:
+    - name: Stage artifacts
+      shell: bash
+      env:
+        ARTIFACT_LABEL: ${{ inputs.artifact-label }}
+        BUNDLE_DIR: ${{ inputs.bundle-dir }}
+        ARTIFACT_PATTERNS: ${{ inputs.artifact-patterns }}
+        STAGE_DIR: ${{ inputs.stage-dir }}
+      run: |
+        if command -v python3 >/dev/null 2>&1; then
+          PYTHON_BIN=python3
+        else
+          PYTHON_BIN=python
+        fi
+
+        "$PYTHON_BIN" <<'PY'
+        import os
+        import shutil
+        from pathlib import Path
+
+        label = os.environ["ARTIFACT_LABEL"]
+        bundle_dir = Path(os.environ["BUNDLE_DIR"])
+        stage_dir = Path(os.environ["STAGE_DIR"])
+        stage_dir.mkdir(exist_ok=True)
+
+        print(f"Inspecting {bundle_dir}")
+        if not bundle_dir.exists():
+            raise SystemExit(f"Bundle directory missing: {bundle_dir}")
+
+        for path in sorted(bundle_dir.rglob("*")):
+            print(path)
+
+        artifacts = [
+            path
+            for pattern in os.environ["ARTIFACT_PATTERNS"].split(";")
+            for path in bundle_dir.rglob(pattern)
+            if path.is_file()
+        ]
+        if not artifacts:
+            raise SystemExit(f"No installable artifacts found in {bundle_dir}")
+
+        for artifact in artifacts:
+            destination = stage_dir / f"{label}-{artifact.name}"
+            shutil.copy2(artifact, destination)
+            print(f"Staged {destination}")
+        PY
