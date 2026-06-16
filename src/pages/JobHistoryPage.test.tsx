@@ -292,8 +292,8 @@ describe("JobHistoryPage", () => {
     await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
 
     expect(describeJobRun).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith("如果想 Find in AWS，请输入 Job ID，而不是 Job Name。");
-    expect(screen.getByText("如果想 Find in AWS，请输入 Job ID，而不是 Job Name。")).toBeInTheDocument();
+    expect(toastError).toHaveBeenCalledWith("For Find in AWS，use the Job ID rather then Job Name");
+    expect(screen.getByText("For Find in AWS，use the Job ID rather then Job Name")).toBeInTheDocument();
   });
 
   it("shows a friendly message when AWS cannot find the searched job id", async () => {
