@@ -93,16 +93,19 @@ describe("release configuration", () => {
     const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
 
     expect(macosAmd64Development).toContain("RELEASE_CHANNEL: development");
+    expect(macosAmd64Development).toContain("EMR_CREDENTIAL_STORE: local");
     expect(macosAmd64Development).not.toContain("RELEASE_VERSION:");
     expect(macosAmd64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(macosAmd64Development).toContain("npm run tauri -- build --debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
 
     expect(macosArm64Development).toContain("RELEASE_CHANNEL: development");
+    expect(macosArm64Development).toContain("EMR_CREDENTIAL_STORE: local");
     expect(macosArm64Development).not.toContain("RELEASE_VERSION:");
     expect(macosArm64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(macosArm64Development).toContain("npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
 
     expect(windowsDevelopment).toContain("RELEASE_CHANNEL: development");
+    expect(windowsDevelopment).toContain("EMR_CREDENTIAL_STORE: local");
     expect(windowsDevelopment).not.toContain("RELEASE_VERSION:");
     expect(windowsDevelopment).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(windowsDevelopment).toContain("npm run tauri -- build --debug --config src-tauri/tauri.development.conf.json");
@@ -134,6 +137,16 @@ describe("release configuration", () => {
     expect(buildScript).toContain("cargo:rerun-if-env-changed=VITE_APP_CHANNEL");
     expect(buildScript).toContain("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
     expect(buildScript).toContain("cargo:rustc-env=EMR_APP_CHANNEL=");
+    expect(buildScript).toContain("cargo:rerun-if-env-changed=EMR_CREDENTIAL_STORE");
+    expect(buildScript).toContain("cargo:rustc-env=EMR_CREDENTIAL_STORE=");
+  });
+
+  it("keeps release channel and credential store backend as separate build variables", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const windowsRelease = workflowJobBlock(workflow, "windows-release");
+
+    expect(windowsRelease).toContain("RELEASE_CHANNEL: stable");
+    expect(windowsRelease).toContain("EMR_CREDENTIAL_STORE: ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}");
   });
 
   it("does not fail stable CI builds when updater keys are not configured", () => {
