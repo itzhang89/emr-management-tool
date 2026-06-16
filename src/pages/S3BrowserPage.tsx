@@ -1,4 +1,4 @@
-import { ArrowUp, Copy, Download, FileText, Folder, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { ArrowUp, Copy, Download, FileText, Folder, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -120,6 +120,11 @@ export function S3BrowserPage() {
     } catch (error) {
       toast.error(errorMessage(error, "Failed to save object."));
     }
+  };
+
+  const notifyReadOnlyEditAttempt = () => {
+    if (!selectedObject || editability?.editable) return;
+    toast.error(editability?.reason ?? "Object is read-only.");
   };
 
   const copyS3Path = async (path: string) => {
@@ -411,48 +416,66 @@ export function S3BrowserPage() {
         <Card role="region" aria-label="Selected S3 object">
           <CardHeader className="flex-row items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <CardTitle className="min-w-0 break-all font-mono text-base">{selectedKey ?? "Select an object"}</CardTitle>
-              <CardDescription className="flex min-w-0 flex-wrap items-center gap-1.5">
-                <span>{editability?.reason ?? "ETag-safe save will prevent overwriting remote changes."}</span>
+              <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
+                <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
                 {selectedObjectPath ? (
-                  <>
-                    <span className="text-muted-foreground/60">·</span>
-                    <button
-                      type="button"
-                      title={selectedObjectPath}
-                      className="max-w-full truncate rounded-sm font-mono text-xs hover:underline"
-                      onClick={() => void copyS3Path(selectedObjectPath)}
-                    >
-                      {selectedObjectPath}
-                    </button>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-1.5"
-                          aria-label="Copy object S3 path"
-                          onClick={() => void copyS3Path(selectedObjectPath)}
-                        >
-                          <Copy className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Copy S3 path</TooltipContent>
-                    </Tooltip>
-                  </>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5"
+                        aria-label="Copy object S3 path"
+                        onClick={() => void copyS3Path(selectedObjectPath)}
+                      >
+                        <Copy className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copy S3 path</TooltipContent>
+                  </Tooltip>
                 ) : null}
+              </CardTitle>
+              <CardDescription>
+                {editability?.editable
+                  ? "ETag-safe save will prevent overwriting remote changes."
+                  : "Preview the selected object content."}
               </CardDescription>
             </div>
             <ObjectProperties object={selectedObject} />
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <Textarea
-              className="min-h-[480px] font-mono"
-              value={content}
-              readOnly={!editability?.editable}
-              onChange={(event) => setContent(event.target.value)}
-            />
+            <div className="relative">
+              {!editability?.editable && selectedObject?.kind === "file" ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      aria-label="Object is read-only"
+                      className="absolute right-3 top-3 rounded-md bg-background/90 p-1 text-muted-foreground shadow-sm"
+                    >
+                      <Lock className="size-4" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{editability?.reason ?? "Object is read-only."}</TooltipContent>
+                </Tooltip>
+              ) : null}
+              <Textarea
+                className="min-h-[480px] font-mono"
+                value={content}
+                readOnly={!editability?.editable}
+                onChange={(event) => setContent(event.target.value)}
+                onKeyDown={(event) => {
+                  if (editability?.editable) return;
+                  event.preventDefault();
+                  notifyReadOnlyEditAttempt();
+                }}
+                onPaste={(event) => {
+                  if (editability?.editable) return;
+                  event.preventDefault();
+                  notifyReadOnlyEditAttempt();
+                }}
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
