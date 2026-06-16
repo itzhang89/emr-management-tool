@@ -138,10 +138,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: "${{ matrix.rust_targets }}" }
+      - uses: ./.github/actions/setup-tauri
+        with:
+          rust-targets: ${{ matrix.rust_targets }}
 
       # macOS：仅在有证书时导入 keychain
       - name: Import Apple certificates
@@ -163,7 +162,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k actions build.keychain
 
-      - run: npm ci
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
@@ -171,8 +169,11 @@ jobs:
         run: npm run tauri -- build ${{ matrix.build_args }}
 
       - name: Stage artifacts
-        shell: bash
-        run: python3 scripts/stage-artifacts.py   # 见下方说明
+        uses: ./.github/actions/prepare-artifacts
+        with:
+          artifact-label: ${{ matrix.label }}
+          bundle-dir: ${{ matrix.bundle_dir }}
+          artifact-patterns: ${{ matrix.artifact_patterns }}
 
       - name: Upload to release
         shell: bash
@@ -228,10 +229,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: "${{ matrix.rust_targets }}" }
+      - uses: ./.github/actions/setup-tauri
+        with:
+          rust-targets: ${{ matrix.rust_targets }}
 
       - name: Import Apple certificates
         if: matrix.platform == 'darwin' && needs.detect-signing.outputs.has_apple_certs == 'true'
@@ -252,7 +252,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k actions build.keychain
 
-      - run: npm ci
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
@@ -260,8 +259,11 @@ jobs:
         run: npm run tauri -- build ${{ matrix.build_args }}
 
       - name: Stage artifacts
-        shell: bash
-        run: python3 scripts/stage-artifacts.py
+        uses: ./.github/actions/prepare-artifacts
+        with:
+          artifact-label: ${{ matrix.label }}
+          bundle-dir: ${{ matrix.bundle_dir }}
+          artifact-patterns: ${{ matrix.artifact_patterns }}
 
       - name: Upload to release
         shell: bash
@@ -289,10 +291,9 @@ jobs:
       VITE_APP_PLATFORM:             windows
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
+      - uses: ./.github/actions/setup-tauri
+        with:
+          rust-targets: x86_64-pc-windows-msvc
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
       - uses: tauri-apps/tauri-action@v0
