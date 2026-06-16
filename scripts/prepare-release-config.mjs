@@ -2,6 +2,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const channel = process.env.RELEASE_CHANNEL ?? "stable";
 const rawVersion = process.env.RELEASE_VERSION;
+const appPlatform = process.env.VITE_APP_PLATFORM;
+const appleCertificate = process.env.APPLE_CERTIFICATE;
+const appleSigningIdentity = process.env.APPLE_SIGNING_IDENTITY;
 const updaterPublicKey = process.env.TAURI_UPDATER_PUBLIC_KEY;
 const updaterPrivateKey = process.env.TAURI_SIGNING_PRIVATE_KEY;
 const windowsSignCommand = process.env.WINDOWS_SIGN_COMMAND;
@@ -34,6 +37,17 @@ if (windowsSignCommand) {
   tauriConfig.bundle ??= {};
   tauriConfig.bundle.windows ??= {};
   tauriConfig.bundle.windows.signCommand = windowsSignCommand;
+}
+
+if (appPlatform === "darwin") {
+  tauriConfig.bundle ??= {};
+  tauriConfig.bundle.macOS ??= {};
+
+  if (appleCertificate?.trim() && appleSigningIdentity?.trim()) {
+    tauriConfig.bundle.macOS.signingIdentity = appleSigningIdentity.trim();
+  } else if (process.env.CI === "true") {
+    tauriConfig.bundle.macOS.signingIdentity = "-";
+  }
 }
 
 writeJson(tauriConfigPath, tauriConfig);
