@@ -15,6 +15,11 @@ on:
         type: choice
         options: [local, keychain, auto]
         default: local
+      package_target:
+        description: "Package target"
+        type: choice
+        options: [all, macos, macos-arm64, macos-amd64, windows]
+        default: all
       draft:
         description: "Create draft release"
         type: boolean
@@ -36,6 +41,8 @@ jobs:
     outputs:
       release_tag:  ${{ steps.rel.outputs.release_tag }}
       release_name: ${{ steps.rel.outputs.release_name }}
+      dev_matrix: ${{ steps.rel.outputs.dev_matrix }}
+      stable_matrix: ${{ steps.rel.outputs.stable_matrix }}
     steps:
       - name: Create or reset GitHub release
         id: rel
@@ -44,6 +51,7 @@ jobs:
           GH_REPO:         ${{ github.repository }}
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
           RELEASE_DRAFT:   ${{ inputs.draft }}
+          PACKAGE_TARGET:  ${{ inputs.package_target }}
         run: |
           set -euo pipefail
           TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
@@ -62,6 +70,85 @@ jobs:
 
           echo "release_tag=$TAG"   >> "$GITHUB_OUTPUT"
           echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
+          node <<'JS' >> "$GITHUB_OUTPUT"
+          const target = process.env.PACKAGE_TARGET || "all";
+          const matches = (item) => target === "all" || item.package_target === target || item.package_group === target;
+
+          const devPackages = [
+            {
+              label: "macos-amd64",
+              os: "macos-latest",
+              rust_targets: "x86_64-apple-darwin",
+              platform: "darwin",
+              package_target: "macos-amd64",
+              package_group: "macos",
+              build_args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json",
+              bundle_dir: "src-tauri/target/x86_64-apple-darwin/debug/bundle",
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+            },
+            {
+              label: "macos-arm64",
+              os: "macos-latest",
+              rust_targets: "aarch64-apple-darwin",
+              platform: "darwin",
+              package_target: "macos-arm64",
+              package_group: "macos",
+              build_args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json",
+              bundle_dir: "src-tauri/target/aarch64-apple-darwin/debug/bundle",
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+            },
+            {
+              label: "windows-amd64",
+              os: "windows-latest",
+              rust_targets: "x86_64-pc-windows-msvc",
+              platform: "windows",
+              package_target: "windows",
+              package_group: "windows",
+              build_args: "--debug --config src-tauri/tauri.development.conf.json",
+              bundle_dir: "src-tauri/target/debug/bundle",
+              artifact_patterns: "*.exe;*.msi;*.zip"
+            }
+          ];
+
+          const stablePackages = [
+            {
+              label: "stable-macos-amd64",
+              os: "macos-latest",
+              rust_targets: "x86_64-apple-darwin",
+              platform: "darwin",
+              package_target: "macos-amd64",
+              package_group: "macos",
+              build_args: "--target x86_64-apple-darwin --config src-tauri/tauri.conf.json",
+              bundle_dir: "src-tauri/target/x86_64-apple-darwin/release/bundle",
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+            },
+            {
+              label: "stable-macos-arm64",
+              os: "macos-latest",
+              rust_targets: "aarch64-apple-darwin",
+              platform: "darwin",
+              package_target: "macos-arm64",
+              package_group: "macos",
+              build_args: "--target aarch64-apple-darwin --config src-tauri/tauri.conf.json",
+              bundle_dir: "src-tauri/target/aarch64-apple-darwin/release/bundle",
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+            },
+            {
+              label: "stable-windows-amd64",
+              os: "windows-latest",
+              rust_targets: "x86_64-pc-windows-msvc",
+              platform: "windows",
+              package_target: "windows",
+              package_group: "windows",
+              build_args: "--config src-tauri/tauri.conf.json",
+              bundle_dir: "src-tauri/target/release/bundle",
+              artifact_patterns: "*.exe;*.msi;*.zip"
+            }
+          ];
+
+          console.log(`dev_matrix=${JSON.stringify({ include: devPackages.filter(matches) })}`);
+          console.log(`stable_matrix=${JSON.stringify({ include: stablePackages.filter(matches) })}`);
+          JS
 
   # ── 检测 Apple 开发者证书是否配置 ────────────
   # 输出 has_apple_certs=true/false，供下游 job 决定
@@ -100,31 +187,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label:             macos-amd64
-            os:               macos-latest
-            rust_targets:     x86_64-apple-darwin
-            platform:         darwin
-            build_args:       "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
-            bundle_dir:       src-tauri/target/x86_64-apple-darwin/debug/bundle
-            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-
-          - label:             macos-arm64
-            os:               macos-latest
-            rust_targets:     aarch64-apple-darwin
-            platform:         darwin
-            build_args:       "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
-            bundle_dir:       src-tauri/target/aarch64-apple-darwin/debug/bundle
-            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-
-          - label:             windows-amd64
-            os:               windows-latest
-            rust_targets:     x86_64-pc-windows-msvc
-            platform:         windows
-            build_args:       "--debug --config src-tauri/tauri.development.conf.json"
-            bundle_dir:       src-tauri/target/debug/bundle
-            artifact_patterns: "*.exe;*.msi;*.zip"
+      matrix: ${{ fromJson(needs.prepare-release.outputs.dev_matrix) }}
 
     env:
       RELEASE_CHANNEL:         development
@@ -191,31 +254,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label:             stable-macos-amd64
-            os:               macos-latest
-            rust_targets:     x86_64-apple-darwin
-            platform:         darwin
-            build_args:       "--target x86_64-apple-darwin --config src-tauri/tauri.conf.json"
-            bundle_dir:       src-tauri/target/x86_64-apple-darwin/release/bundle
-            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-
-          - label:             stable-macos-arm64
-            os:               macos-latest
-            rust_targets:     aarch64-apple-darwin
-            platform:         darwin
-            build_args:       "--target aarch64-apple-darwin --config src-tauri/tauri.conf.json"
-            bundle_dir:       src-tauri/target/aarch64-apple-darwin/release/bundle
-            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-
-          - label:             stable-windows-amd64
-            os:               windows-latest
-            rust_targets:     x86_64-pc-windows-msvc
-            platform:         windows
-            build_args:       "--config src-tauri/tauri.conf.json"
-            bundle_dir:       src-tauri/target/release/bundle
-            artifact_patterns: "*.exe;*.msi;*.zip"
+      matrix: ${{ fromJson(needs.prepare-release.outputs.stable_matrix) }}
 
     env:
       RELEASE_CHANNEL:            stable

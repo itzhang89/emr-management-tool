@@ -57,6 +57,7 @@ describe("release configuration", () => {
     expect(workflow).not.toContain("\n      version:");
     expect(workflow).toContain("release_channel:");
     expect(workflow).toContain("credential_store:");
+    expect(workflow).toContain("package_target:");
     expect(workflow).toContain("prepare-release:");
     expect(workflow).toContain("detect-signing:");
     expect(workflow).toContain("dev-packages:");
@@ -75,17 +76,21 @@ describe("release configuration", () => {
 
   it("runs macOS and Windows development package jobs in parallel", () => {
     const workflow = readText(".github/workflows/release.yml");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
     const developmentPackages = workflowJobBlock(workflow, "dev-packages");
 
+    expect(prepareRelease).toContain("dev_matrix=");
     expect(developmentPackages).toContain("needs: [prepare-release, detect-signing]");
+    expect(developmentPackages).toContain("fromJson(needs.prepare-release.outputs.dev_matrix)");
     expect(developmentPackages).toContain("fail-fast: false");
-    expect(developmentPackages).toContain("macos-amd64");
-    expect(developmentPackages).toContain("macos-arm64");
-    expect(developmentPackages).toContain("windows-amd64");
+    expect(prepareRelease).toContain("macos-amd64");
+    expect(prepareRelease).toContain("macos-arm64");
+    expect(prepareRelease).toContain("windows-amd64");
   });
 
   it("builds development packages in debug mode like local Tauri dev builds", () => {
     const workflow = readText(".github/workflows/release.yml");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
     const developmentPackages = workflowJobBlock(workflow, "dev-packages");
 
     expect(developmentPackages).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'");
@@ -94,9 +99,9 @@ describe("release configuration", () => {
     expect(developmentPackages).not.toContain("RELEASE_VERSION:");
     expect(developmentPackages).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(developmentPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
-    expect(developmentPackages).toContain("--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
-    expect(developmentPackages).toContain("--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
-    expect(developmentPackages).toContain("--debug --config src-tauri/tauri.development.conf.json");
+    expect(prepareRelease).toContain("--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
+    expect(prepareRelease).toContain("--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
+    expect(prepareRelease).toContain("--debug --config src-tauri/tauri.development.conf.json");
   });
 
   it("manually analyzes and uploads development artifacts instead of asking tauri-action for updater signatures", () => {
@@ -110,25 +115,32 @@ describe("release configuration", () => {
     expect(developmentPackages).not.toContain("tauri-apps/tauri-action@v0");
     expect(developmentPackages).toContain("uses: ./.github/actions/prepare-artifacts");
     expect(developmentPackages).toContain("gh release upload");
-    expect(developmentPackages).toContain("macos-amd64");
-    expect(developmentPackages).toContain("macos-arm64");
-    expect(developmentPackages).toContain("windows-amd64");
+    expect(prepareDevelopmentRelease).toContain("macos-amd64");
+    expect(prepareDevelopmentRelease).toContain("macos-arm64");
+    expect(prepareDevelopmentRelease).toContain("windows-amd64");
   });
 
   it("builds stable manual packages without requiring a version input", () => {
     const workflow = readText(".github/workflows/release.yml");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
     const stablePackage = workflowJobBlock(workflow, "stable-packages");
 
+    expect(prepareRelease).toContain("stable_matrix=");
+    expect(prepareRelease).toContain("PACKAGE_TARGET");
+    expect(prepareRelease).toContain("macos-arm64");
+    expect(prepareRelease).toContain("macos-amd64");
+    expect(prepareRelease).toContain("windows");
     expect(stablePackage).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable'");
+    expect(stablePackage).toContain("fromJson(needs.prepare-release.outputs.stable_matrix)");
     expect(stablePackage).toContain("RELEASE_CHANNEL:            stable");
     expect(stablePackage).toContain("EMR_CREDENTIAL_STORE:       ${{ needs.detect-signing.outputs.credential_store }}");
     expect(stablePackage).not.toContain("RELEASE_VERSION:");
-    expect(stablePackage).toContain("--target x86_64-apple-darwin --config src-tauri/tauri.conf.json");
-    expect(stablePackage).toContain("--target aarch64-apple-darwin --config src-tauri/tauri.conf.json");
-    expect(stablePackage).toContain("--config src-tauri/tauri.conf.json");
-    expect(stablePackage).toContain("stable-macos-amd64");
-    expect(stablePackage).toContain("stable-macos-arm64");
-    expect(stablePackage).toContain("stable-windows-amd64");
+    expect(prepareRelease).toContain("--target x86_64-apple-darwin --config src-tauri/tauri.conf.json");
+    expect(prepareRelease).toContain("--target aarch64-apple-darwin --config src-tauri/tauri.conf.json");
+    expect(prepareRelease).toContain("--config src-tauri/tauri.conf.json");
+    expect(prepareRelease).toContain("stable-macos-amd64");
+    expect(prepareRelease).toContain("stable-macos-arm64");
+    expect(prepareRelease).toContain("stable-windows-amd64");
     expect(stablePackage).toMatch(
       /Prepare release config[\s\S]*APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}[\s\S]*APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}/
     );
@@ -155,6 +167,8 @@ describe("release configuration", () => {
     expect(setupAction).toContain("actions/setup-node@v4");
     expect(setupAction).toContain("cache-dependency-path: package-lock.json");
     expect(setupAction).toContain("dtolnay/rust-toolchain@stable");
+    expect(setupAction).toContain("Swatinem/rust-cache@v2");
+    expect(setupAction).toContain("src-tauri -> target");
     expect(setupAction).toContain("npm ci");
     expect(artifactsAction).toContain("ARTIFACT_PATTERNS");
     expect(artifactsAction).toContain("release-artifacts");

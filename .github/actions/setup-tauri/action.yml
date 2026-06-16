@@ -24,6 +24,12 @@ runs:
       with:
         targets: ${{ inputs.rust-targets }}
 
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri -> target
+        key: ${{ runner.os }}-${{ inputs.rust-targets }}
+        cache-on-failure: true
+
     - name: Install npm dependencies
       shell: bash
       run: npm ci
