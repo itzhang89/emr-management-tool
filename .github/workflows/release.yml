@@ -8,17 +8,12 @@ on:
       release_channel:
         description: "Release channel"
         type: choice
-        options:
-          - development
-          - stable
+        options: [development, stable]
         default: development
       credential_store:
         description: "Credential store backend"
         type: choice
-        options:
-          - local
-          - keychain
-          - auto
+        options: [local, keychain, auto]
         default: local
       draft:
         description: "Create draft release"
@@ -28,273 +23,287 @@ on:
 permissions:
   contents: write
 
+# ─────────────────────────────────────────────
+# 公共步骤：安装依赖 + 归档制品
+# ─────────────────────────────────────────────
 jobs:
-  prepare-manual-release:
-    name: Prepare manual release
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+
+  # ── 手动触发：创建/清空 Release ──────────────
+  prepare-release:
+    name: Prepare release
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
-      release_tag: ${{ steps.release.outputs.release_tag }}
-      release_name: ${{ steps.release.outputs.release_name }}
+      release_tag:  ${{ steps.rel.outputs.release_tag }}
+      release_name: ${{ steps.rel.outputs.release_name }}
     steps:
-      - name: Prepare GitHub release
-        id: release
+      - name: Create or reset GitHub release
+        id: rel
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:         ${{ github.repository }}
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
-          RELEASE_DRAFT: ${{ inputs.draft }}
+          RELEASE_DRAFT:   ${{ inputs.draft }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
-          RELEASE_NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
-          create_args=(--title "$RELEASE_NAME" --notes "Manual ${RELEASE_CHANNEL} test packages. Automatic updates are disabled.")
-          if [[ "$RELEASE_CHANNEL" == "development" ]]; then
-            create_args+=(--prerelease)
+          TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
+          NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
+
+          args=(--title "$NAME" --notes "Manual ${RELEASE_CHANNEL} packages. Auto-update disabled.")
+          [[ "$RELEASE_CHANNEL" == "development" ]] && args+=(--prerelease)
+          [[ "$RELEASE_DRAFT"   == "true"        ]] && args+=(--draft)
+
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" "${args[@]}"
+
+          # 删除旧制品，保持 release 干净
+          gh release view "$TAG" --json assets --jq '.assets[].name' \
+            | xargs -r -I{} gh release delete-asset "$TAG" {} -y
+
+          echo "release_tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
+
+  # ── 检测 Apple 开发者证书是否配置 ────────────
+  # 输出 has_apple_certs=true/false，供下游 job 决定
+  # credential_store：若无证书则强制 local，否则使用用户输入值
+  detect-signing:
+    name: Detect Apple signing certs
+    if: github.event_name == 'workflow_dispatch'
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    outputs:
+      has_apple_certs:  ${{ steps.check.outputs.has_apple_certs }}
+      credential_store: ${{ steps.check.outputs.credential_store }}
+    steps:
+      - name: Check secrets
+        id: check
+        env:
+          # 将 secret 映射为环境变量；若未设置则为空字符串
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          INPUT_CRED_STORE:  ${{ inputs.credential_store }}
+        run: |
+          if [[ -n "$APPLE_CERTIFICATE" ]]; then
+            echo "has_apple_certs=true"  >> "$GITHUB_OUTPUT"
+            echo "credential_store=${INPUT_CRED_STORE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_apple_certs=false" >> "$GITHUB_OUTPUT"
+            # 无证书时强制 local，避免 keychain/auto 在无签名环境下静默失败
+            echo "credential_store=local" >> "$GITHUB_OUTPUT"
+            echo "::warning::APPLE_CERTIFICATE not set — forcing EMR_CREDENTIAL_STORE=local"
           fi
-          if [[ "$RELEASE_DRAFT" == "true" ]]; then
-            create_args+=(--draft)
-          fi
 
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" "${create_args[@]}"
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
-            gh release delete-asset "$RELEASE_TAG" "$asset" -y
-          done
-
-          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-
-  manual-development-packages:
-    name: Development package (${{ matrix.label }})
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development' }}
-    needs: prepare-manual-release
+  # ── 手动触发 · 开发包（macOS amd64/arm64 + Windows）──
+  dev-packages:
+    name: Dev package (${{ matrix.label }})
+    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'
+    needs: [prepare-release, detect-signing]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: macos-amd64
-            os: macos-latest
-            rust_targets: x86_64-apple-darwin
-            platform: darwin
-            build_args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
-            bundle_dir: src-tauri/target/x86_64-apple-darwin/debug/bundle
+          - label:             macos-amd64
+            os:               macos-latest
+            rust_targets:     x86_64-apple-darwin
+            platform:         darwin
+            build_args:       "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
+            bundle_dir:       src-tauri/target/x86_64-apple-darwin/debug/bundle
             artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-          - label: macos-arm64
-            os: macos-latest
-            rust_targets: aarch64-apple-darwin
-            platform: darwin
-            build_args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
-            bundle_dir: src-tauri/target/aarch64-apple-darwin/debug/bundle
+
+          - label:             macos-arm64
+            os:               macos-latest
+            rust_targets:     aarch64-apple-darwin
+            platform:         darwin
+            build_args:       "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
+            bundle_dir:       src-tauri/target/aarch64-apple-darwin/debug/bundle
             artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-          - label: windows-amd64
-            os: windows-latest
-            rust_targets: x86_64-pc-windows-msvc
-            platform: windows
-            build_args: "--debug --config src-tauri/tauri.development.conf.json"
-            bundle_dir: src-tauri/target/debug/bundle
+
+          - label:             windows-amd64
+            os:               windows-latest
+            rust_targets:     x86_64-pc-windows-msvc
+            platform:         windows
+            build_args:       "--debug --config src-tauri/tauri.development.conf.json"
+            bundle_dir:       src-tauri/target/debug/bundle
             artifact_patterns: "*.exe;*.msi;*.zip"
+
     env:
-      RELEASE_CHANNEL: ${{ inputs.release_channel }}
-      EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}
+      RELEASE_CHANNEL:         development
+      EMR_CREDENTIAL_STORE:    ${{ needs.detect-signing.outputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL: ${{ inputs.release_channel }}
-      VITE_APP_PLATFORM: ${{ matrix.platform }}
-      ARTIFACT_LABEL: ${{ matrix.label }}
-      BUNDLE_DIR: ${{ matrix.bundle_dir }}
-      ARTIFACT_PATTERNS: ${{ matrix.artifact_patterns }}
+      VITE_APP_CHANNEL:        development
+      VITE_APP_PLATFORM:       ${{ matrix.platform }}
+      ARTIFACT_LABEL:          ${{ matrix.label }}
+      BUNDLE_DIR:              ${{ matrix.bundle_dir }}
+      ARTIFACT_PATTERNS:       ${{ matrix.artifact_patterns }}
+
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
+        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_targets }}
+        with: { targets: "${{ matrix.rust_targets }}" }
+
+      # macOS：仅在有证书时导入 keychain
+      - name: Import Apple certificates
+        if: matrix.platform == 'darwin' && needs.detect-signing.outputs.has_apple_certs == 'true'
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k actions build.keychain
 
       - run: npm ci
-
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
       - name: Build package
         run: npm run tauri -- build ${{ matrix.build_args }}
 
-      - name: Analyze build artifacts
+      - name: Stage artifacts
         shell: bash
-        run: |
-          if command -v python3 >/dev/null 2>&1; then
-            PYTHON_BIN=python3
-          else
-            PYTHON_BIN=python
-          fi
-          "$PYTHON_BIN" <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
+        run: python3 scripts/stage-artifacts.py   # 见下方说明
 
-          label = os.environ["ARTIFACT_LABEL"]
-          bundle_dir = Path(os.environ["BUNDLE_DIR"])
-          stage_dir = Path("release-artifacts")
-          stage_dir.mkdir(exist_ok=True)
-
-          print(f"Inspecting {bundle_dir}")
-          if bundle_dir.exists():
-              for path in sorted(bundle_dir.rglob("*")):
-                  print(path)
-          else:
-              raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
-
-          artifacts = [
-              path
-              for pattern in os.environ["ARTIFACT_PATTERNS"].split(";")
-              for path in bundle_dir.rglob(pattern)
-              if path.is_file()
-          ]
-          if not artifacts:
-              raise SystemExit(f"No installable artifacts found in {bundle_dir}")
-
-          for artifact in artifacts:
-              destination = stage_dir / f"{label}-{artifact.name}"
-              shutil.copy2(artifact, destination)
-              print(f"Prepared {destination}")
-          PY
-
-      - name: Upload artifacts
+      - name: Upload to release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-manual-release.outputs.release_tag }}
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:     ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
-  manual-stable-windows-package:
-    name: Stable Windows package
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' }}
-    needs: prepare-manual-release
-    runs-on: windows-latest
+  # ── 手动触发 · 稳定包（macOS amd64/arm64 + Windows）──
+  stable-packages:
+    name: Stable package (${{ matrix.label }})
+    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable'
+    needs: [prepare-release, detect-signing]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label:             stable-macos-amd64
+            os:               macos-latest
+            rust_targets:     x86_64-apple-darwin
+            platform:         darwin
+            build_args:       "--target x86_64-apple-darwin --config src-tauri/tauri.conf.json"
+            bundle_dir:       src-tauri/target/x86_64-apple-darwin/release/bundle
+            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+
+          - label:             stable-macos-arm64
+            os:               macos-latest
+            rust_targets:     aarch64-apple-darwin
+            platform:         darwin
+            build_args:       "--target aarch64-apple-darwin --config src-tauri/tauri.conf.json"
+            bundle_dir:       src-tauri/target/aarch64-apple-darwin/release/bundle
+            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+
+          - label:             stable-windows-amd64
+            os:               windows-latest
+            rust_targets:     x86_64-pc-windows-msvc
+            platform:         windows
+            build_args:       "--config src-tauri/tauri.conf.json"
+            bundle_dir:       src-tauri/target/release/bundle
+            artifact_patterns: "*.exe;*.msi;*.zip"
+
     env:
-      RELEASE_CHANNEL: ${{ inputs.release_channel }}
-      EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}
+      RELEASE_CHANNEL:            stable
+      EMR_CREDENTIAL_STORE:       ${{ needs.detect-signing.outputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL: ${{ inputs.release_channel }}
-      VITE_APP_PLATFORM: windows
-      ARTIFACT_LABEL: stable-windows-amd64
-      BUNDLE_DIR: src-tauri/target/release/bundle
-      ARTIFACT_PATTERNS: "*.exe;*.msi;*.zip"
+      VITE_APP_CHANNEL:           stable
+      VITE_APP_PLATFORM:          ${{ matrix.platform }}
+      ARTIFACT_LABEL:             ${{ matrix.label }}
+      BUNDLE_DIR:                 ${{ matrix.bundle_dir }}
+      ARTIFACT_PATTERNS:          ${{ matrix.artifact_patterns }}
+
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
+        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
+        with: { targets: "${{ matrix.rust_targets }}" }
+
+      - name: Import Apple certificates
+        if: matrix.platform == 'darwin' && needs.detect-signing.outputs.has_apple_certs == 'true'
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k actions build.keychain
 
       - run: npm ci
-
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
       - name: Build package
-        run: npm run tauri -- build --config src-tauri/tauri.conf.json
+        run: npm run tauri -- build ${{ matrix.build_args }}
 
-      - name: Analyze build artifacts
+      - name: Stage artifacts
         shell: bash
-        run: |
-          if command -v python3 >/dev/null 2>&1; then
-            PYTHON_BIN=python3
-          else
-            PYTHON_BIN=python
-          fi
-          "$PYTHON_BIN" <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
+        run: python3 scripts/stage-artifacts.py
 
-          label = os.environ["ARTIFACT_LABEL"]
-          bundle_dir = Path(os.environ["BUNDLE_DIR"])
-          stage_dir = Path("release-artifacts")
-          stage_dir.mkdir(exist_ok=True)
-
-          print(f"Inspecting {bundle_dir}")
-          if bundle_dir.exists():
-              for path in sorted(bundle_dir.rglob("*")):
-                  print(path)
-          else:
-              raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
-
-          artifacts = [
-              path
-              for pattern in os.environ["ARTIFACT_PATTERNS"].split(";")
-              for path in bundle_dir.rglob(pattern)
-              if path.is_file()
-          ]
-          if not artifacts:
-              raise SystemExit(f"No installable artifacts found in {bundle_dir}")
-
-          for artifact in artifacts:
-              destination = stage_dir / f"{label}-{artifact.name}"
-              shutil.copy2(artifact, destination)
-              print(f"Prepared {destination}")
-          PY
-
-      - name: Upload artifacts
+      - name: Upload to release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare-manual-release.outputs.release_tag }}
+          GH_TOKEN:    ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:     ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
+  # ── tag push · Windows 正式发版（含签名 + updater JSON）──
   windows-release:
     name: Windows release package
-    if: ${{ github.event_name == 'push' }}
+    if: github.event_name == 'push'
     runs-on: windows-latest
     env:
-      RELEASE_CHANNEL: stable
-      EMR_CREDENTIAL_STORE: ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}
-      RELEASE_VERSION: ${{ github.ref_name }}
-      REQUIRE_UPDATER_PUBLIC_KEY: "true"
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RELEASE_CHANNEL:               stable
+      EMR_CREDENTIAL_STORE:          ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}
+      RELEASE_VERSION:               ${{ github.ref_name }}
+      REQUIRE_UPDATER_PUBLIC_KEY:    "true"
+      TAURI_UPDATER_PUBLIC_KEY:      ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY:     ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
-      VITE_APP_CHANNEL: stable
-      VITE_APP_PLATFORM: windows
+      WINDOWS_SIGN_COMMAND:          ${{ secrets.WINDOWS_SIGN_COMMAND }}
+      VITE_APP_CHANNEL:              stable
+      VITE_APP_PLATFORM:             windows
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
+        with: { node-version: 22, cache: npm, cache-dependency-path: package-lock.json }
       - uses: dtolnay/rust-toolchain@stable
-
       - run: npm ci
-
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
-
       - uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GITHUB_TOKEN:                        ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY:           ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tauriScript: npm run tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "EMR Management Tool ${{ github.ref_name }}"
-          prerelease: false
-          releaseDraft: false
+          tauriScript:       npm run tauri
+          tagName:           ${{ github.ref_name }}
+          releaseName:       "EMR Management Tool ${{ github.ref_name }}"
+          prerelease:        false
+          releaseDraft:      false
           includeUpdaterJson: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
