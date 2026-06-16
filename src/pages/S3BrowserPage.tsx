@@ -408,30 +408,43 @@ export function S3BrowserPage() {
             {objects.data?.length === 0 ? <p className="text-sm text-muted-foreground">No objects under this prefix.</p> : null}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex min-w-0 items-center gap-1">
-              <span className="min-w-0 flex-1 break-all font-mono text-base">{selectedKey ?? "Select an object"}</span>
-              {selectedObjectPath ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
+        <Card role="region" aria-label="Selected S3 object">
+          <CardHeader className="flex-row items-start justify-between gap-4">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <CardTitle className="min-w-0 break-all font-mono text-base">{selectedKey ?? "Select an object"}</CardTitle>
+              <CardDescription className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <span>{editability?.reason ?? "ETag-safe save will prevent overwriting remote changes."}</span>
+                {selectedObjectPath ? (
+                  <>
+                    <span className="text-muted-foreground/60">·</span>
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label="Copy object S3 path"
+                      title={selectedObjectPath}
+                      className="max-w-full truncate rounded-sm font-mono text-xs hover:underline"
                       onClick={() => void copyS3Path(selectedObjectPath)}
                     >
-                      <Copy className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Copy S3 path</TooltipContent>
-                </Tooltip>
-              ) : null}
-            </CardTitle>
-            <CardDescription>
-              {editability?.reason ?? "ETag-safe save will prevent overwriting remote changes."}
-            </CardDescription>
+                      {selectedObjectPath}
+                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-1.5"
+                          aria-label="Copy object S3 path"
+                          onClick={() => void copyS3Path(selectedObjectPath)}
+                        >
+                          <Copy className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Copy S3 path</TooltipContent>
+                    </Tooltip>
+                  </>
+                ) : null}
+              </CardDescription>
+            </div>
+            <ObjectProperties object={selectedObject} />
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Textarea
@@ -488,6 +501,31 @@ function displayObjectName(key: string, prefix: string, kind: "folder" | "file")
   return relative.split("/").filter(Boolean).at(-1) ?? relative;
 }
 
+function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
+  if (!object || object.kind !== "file") return null;
+
+  const properties = [
+    ["Size", formatBytes(object.size)],
+    ["Last modified", formatS3Timestamp(object.lastModified)],
+    ["ETag", trimEtag(object.etag)]
+  ].filter(([, value]) => Boolean(value));
+
+  if (properties.length === 0) return null;
+
+  return (
+    <dl className="grid shrink-0 grid-cols-[auto_auto] gap-x-3 gap-y-1 text-right text-xs">
+      {properties.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="max-w-[180px] truncate font-mono" title={value}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function parentPrefix(prefix: string) {
   const parent = prefix.split("/").filter(Boolean).slice(0, -1).join("/");
   return parent ? `${parent}/` : "";
@@ -495,6 +533,24 @@ function parentPrefix(prefix: string) {
 
 function formatS3Path(bucket: string | undefined, prefix: string) {
   return bucket ? `s3://${bucket}/${prefix}` : "s3://";
+}
+
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatS3Timestamp(value?: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function trimEtag(value?: string) {
+  return value?.replace(/^"|"$/g, "");
 }
 
 function formatCompactS3Path(bucket: string | undefined, prefix: string) {

@@ -283,6 +283,25 @@ describe("S3BrowserPage", () => {
     expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/readme.txt");
   });
 
+  it("shows selected file properties compactly in the right preview header", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+
+    const preview = screen.getByRole("region", { name: /Selected S3 object/i });
+    expect(within(preview).getByRole("button", { name: "s3://logs-bucket/readme.txt" })).toBeInTheDocument();
+    expect(within(preview).getByRole("button", { name: /^Copy object S3 path$/i })).toBeInTheDocument();
+    expect(within(preview).getByText("Size")).toBeInTheDocument();
+    expect(within(preview).getByText("10 B")).toBeInTheDocument();
+    expect(within(preview).getByText("Last modified")).toBeInTheDocument();
+    expect(within(preview).getByText(/2026/)).toBeInTheDocument();
+    expect(within(preview).getByText("ETag")).toBeInTheDocument();
+    expect(within(preview).getByText("abc123")).toBeInTheDocument();
+  });
+
   it("confirms delete in a dialog before removing the object", async () => {
     const user = userEvent.setup();
 
@@ -338,7 +357,14 @@ function objectsFor(bucket?: string, prefix?: string) {
   if (bucket === "logs-bucket") {
     return [
       { bucket, key: "logs/", kind: "folder", size: 0 },
-      { bucket, key: "readme.txt", kind: "file", size: 10 }
+      {
+        bucket,
+        key: "readme.txt",
+        kind: "file",
+        size: 10,
+        lastModified: "2026-06-10T03:20:35Z",
+        etag: "abc123"
+      }
     ];
   }
 
