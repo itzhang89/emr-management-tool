@@ -252,11 +252,23 @@ fn delete_keychain_secret(_key: &str) -> AppResult<()> {
 }
 
 fn use_local_credential_store() -> bool {
-    should_use_local_credential_store(cfg!(debug_assertions), option_env!("EMR_APP_CHANNEL"))
+    should_use_local_credential_store(
+        cfg!(debug_assertions),
+        option_env!("EMR_APP_CHANNEL"),
+        option_env!("EMR_CREDENTIAL_STORE"),
+    )
 }
 
-fn should_use_local_credential_store(debug_assertions: bool, channel: Option<&str>) -> bool {
-    debug_assertions || matches!(channel, Some("development"))
+fn should_use_local_credential_store(
+    debug_assertions: bool,
+    channel: Option<&str>,
+    credential_store: Option<&str>,
+) -> bool {
+    match credential_store {
+        Some("local") => true,
+        Some("keychain") => false,
+        _ => debug_assertions || matches!(channel, Some("development")),
+    }
 }
 
 #[cfg(test)]
@@ -273,8 +285,44 @@ mod tests {
 
     #[test]
     fn development_release_channels_use_local_credential_store() {
-        assert!(should_use_local_credential_store(false, Some("development")));
-        assert!(!should_use_local_credential_store(false, Some("stable")));
-        assert!(should_use_local_credential_store(true, Some("stable")));
+        assert!(should_use_local_credential_store(
+            false,
+            Some("development"),
+            None
+        ));
+        assert!(!should_use_local_credential_store(
+            false,
+            Some("stable"),
+            None
+        ));
+        assert!(should_use_local_credential_store(
+            true,
+            Some("stable"),
+            None
+        ));
+    }
+
+    #[test]
+    fn credential_store_build_variable_overrides_default_backend() {
+        assert!(should_use_local_credential_store(
+            false,
+            Some("stable"),
+            Some("local")
+        ));
+        assert!(!should_use_local_credential_store(
+            true,
+            Some("development"),
+            Some("keychain")
+        ));
+        assert!(!should_use_local_credential_store(
+            false,
+            Some("stable"),
+            Some("auto")
+        ));
+        assert!(should_use_local_credential_store(
+            true,
+            Some("stable"),
+            Some("unexpected")
+        ));
     }
 }
