@@ -48,6 +48,7 @@ jobs:
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
+      EMR_CREDENTIAL_STORE: local
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
@@ -119,6 +120,7 @@ jobs:
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
+      EMR_CREDENTIAL_STORE: local
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
@@ -190,6 +192,7 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_CHANNEL: development
+      EMR_CREDENTIAL_STORE: local
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: windows
@@ -254,6 +257,7 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_CHANNEL: stable
+      EMR_CREDENTIAL_STORE: ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}
       RELEASE_VERSION: ${{ github.ref_name }}
       REQUIRE_UPDATER_PUBLIC_KEY: "true"
       TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
