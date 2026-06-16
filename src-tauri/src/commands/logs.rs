@@ -158,15 +158,15 @@ struct NormalizedLogMessage {
 }
 
 fn normalize_event_message(message: &str) -> NormalizedLogMessage {
-    let trimmed = message.trim();
-    if trimmed.is_empty() {
+    let parse_input = message.trim();
+    if parse_input.is_empty() {
         return normalized_plain_message("");
     }
 
-    serde_json::from_str::<Value>(trimmed)
+    serde_json::from_str::<Value>(parse_input)
         .ok()
         .and_then(|value| normalize_json_message(&value, 1))
-        .unwrap_or_else(|| normalized_plain_message(trimmed))
+        .unwrap_or_else(|| normalized_plain_message(message))
 }
 
 fn normalize_json_message(value: &Value, depth: usize) -> Option<NormalizedLogMessage> {
@@ -178,6 +178,13 @@ fn normalize_json_message(value: &Value, depth: usize) -> Option<NormalizedLogMe
         Value::String(message) => Some(normalized_message_from_string(message, None, depth + 1)),
         Value::Object(object) => {
             let explicit_level = first_string(value, &["level", "severity", "logLevel"]);
+            if is_time_only_event(object) {
+                return Some(NormalizedLogMessage {
+                    message: String::new(),
+                    level: normalize_level(explicit_level, "")
+                        .unwrap_or_else(|| "info".to_string()),
+                });
+            }
             let message_value = ["message", "msg", "log", "@message"]
                 .iter()
                 .find_map(|key| object.get(*key));
@@ -213,9 +220,9 @@ fn normalized_message_from_string(
     explicit_level: Option<&str>,
     depth: usize,
 ) -> NormalizedLogMessage {
-    let trimmed = message.trim();
+    let parse_input = message.trim();
     if depth <= MAX_JSON_NORMALIZATION_DEPTH {
-        if let Ok(nested) = serde_json::from_str::<Value>(trimmed) {
+        if let Ok(nested) = serde_json::from_str::<Value>(parse_input) {
             if let Some(mut normalized) = normalize_json_message(&nested, depth + 1) {
                 if let Some(level) = normalize_level(explicit_level, &normalized.message) {
                     normalized.level = level;
@@ -225,16 +232,24 @@ fn normalized_message_from_string(
         }
     }
 
-    let message = trimmed.to_string();
+    let message = strip_trailing_line_endings(message).to_string();
     let level = normalize_level(explicit_level, &message)
         .unwrap_or_else(|| infer_level(&message).to_string());
     NormalizedLogMessage { message, level }
 }
 
 fn normalized_plain_message(message: &str) -> NormalizedLogMessage {
-    let message = message.trim().to_string();
+    let message = strip_trailing_line_endings(message).to_string();
     let level = infer_level(&message).to_string();
     NormalizedLogMessage { message, level }
+}
+
+fn strip_trailing_line_endings(message: &str) -> &str {
+    message.trim_end_matches(['\r', '\n'])
+}
+
+fn is_time_only_event(object: &serde_json::Map<String, Value>) -> bool {
+    object.len() == 1 && object.contains_key("time")
 }
 
 fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
@@ -403,13 +418,20 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_json_without_message_field_without_recursing() {
+    fn normalizes_time_only_json_event_as_blank_message() {
         let normalized = normalize_event_message(r#"{"time":"2026-06-12T16:33:32+00:00"}"#);
 
-        assert_eq!(
-            normalized.message,
-            r#"{"time":"2026-06-12T16:33:32+00:00"}"#
+        assert_eq!(normalized.message, "");
+        assert_eq!(normalized.level, "info");
+    }
+
+    #[test]
+    fn preserves_json_message_indentation() {
+        let normalized = normalize_event_message(
+            r#"{"time":"2026-06-10T00:00:00Z","level":"INFO","message":"    nested line"}"#,
         );
+
+        assert_eq!(normalized.message, "    nested line");
         assert_eq!(normalized.level, "info");
     }
 

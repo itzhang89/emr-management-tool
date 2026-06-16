@@ -1,5 +1,5 @@
 import { Archive, Cloud, Download } from "lucide-react";
-import { type FormEvent, type MouseEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,11 +23,9 @@ import { s3Service } from "@/services/s3Service";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
 
-type DownloadMenuState = {
-  x: number;
-  y: number;
-  label: string;
-  items: Array<JobLogStream | JobLogObject>;
+type SearchMatch = {
+  start: number;
+  end: number;
 };
 
 export function LogsPage() {
@@ -49,8 +47,7 @@ export function LogsPage() {
   const [activeSource, setActiveSource] = useState<"cloudwatch" | "s3" | undefined>();
   const [selectedCloudWatchStream, setSelectedCloudWatchStream] = useState<string>();
   const [selectedS3Key, setSelectedS3Key] = useState<string>();
-  const [downloadMenu, setDownloadMenu] = useState<DownloadMenuState>();
-  const resolvedActiveSource = activeSource ?? (cloudWatchDestination ? "cloudwatch" : s3Destination ? "s3" : "cloudwatch");
+  const resolvedActiveSource = activeSource ?? (s3Destination ? "s3" : cloudWatchDestination ? "cloudwatch" : "s3");
 
   useEffect(() => {
     setJobIdInput(selectedJobId ?? "");
@@ -107,7 +104,7 @@ export function LogsPage() {
   const s3LogObject = useS3JobLogObject(resolvedActiveSource === "s3" ? s3Destination?.bucket : undefined, selectedS3Key);
   const logText =
     resolvedActiveSource === "cloudwatch"
-      ? (logs.data?.entries ?? []).map((entry) => `${entry.timestamp} ${entry.level.toUpperCase()} ${entry.message}`).join("\n")
+      ? formatCloudWatchMessages(logs.data?.entries ?? [])
       : s3LogObject.data?.content ?? "";
   const selectedPath =
     resolvedActiveSource === "cloudwatch"
@@ -116,6 +113,7 @@ export function LogsPage() {
         ? `s3://${s3Destination.bucket}/${selectedS3Item.s3Key}`
         : undefined;
   const selectedLabel = resolvedActiveSource === "cloudwatch" ? selectedCloudWatchItem?.label : selectedS3Item?.label;
+  const selectedItem = resolvedActiveSource === "cloudwatch" ? selectedCloudWatchItem : selectedS3Item;
   const manualVirtualClusterId = selectedVirtualClusterId ?? selectedJobVirtualClusterId;
   const submitJobId = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -123,22 +121,12 @@ export function LogsPage() {
     if (!trimmedJobId) return;
     setSelectedJobForLogs(trimmedJobId, manualVirtualClusterId);
   };
-  const openDownloadMenu = (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => {
-    event.preventDefault();
-    if (items.length === 0) return;
-    setDownloadMenu({ x: event.clientX, y: event.clientY, items, label });
-  };
-  const downloadTargetLogs = async (target: DownloadMenuState) => {
-    if (!selectedJobId) return;
+  const downloadSelectedLog = async () => {
+    if (!selectedJobId || !selectedItem || !selectedLabel) return;
 
     try {
-      const chunks = await Promise.all(
-        target.items.map((item) =>
-          getDownloadChunk(item, selectedJobId, accountId, cloudWatchDestination, s3Destination)
-        )
-      );
-      const savedPath = await saveTextFile(`${selectedJobId}-${target.label}.log`, chunks.join("\n\n"));
-      setDownloadMenu(undefined);
+      const chunk = await getDownloadChunk(selectedItem, selectedJobId, accountId, cloudWatchDestination, s3Destination);
+      const savedPath = await saveTextFile(`${selectedJobId}-${selectedLabel}.log`, chunk);
       if (savedPath) {
         toast.success(`Saved to ${savedPath}`);
       }
@@ -198,15 +186,33 @@ export function LogsPage() {
             }}
           >
             <TabsList>
-              <TabsTrigger value="cloudwatch" disabled={!cloudWatchDestination}>
-                <Cloud data-icon="inline-start" />
-                CloudWatch Live
-              </TabsTrigger>
               <TabsTrigger value="s3" disabled={!s3Destination}>
                 <Archive data-icon="inline-start" />
                 S3 Archive
               </TabsTrigger>
+              <TabsTrigger value="cloudwatch" disabled={!cloudWatchDestination}>
+                <Cloud data-icon="inline-start" />
+                CloudWatch Live
+              </TabsTrigger>
             </TabsList>
+            <TabsContent value="s3" className="mt-4">
+              <LogDestinationSummary items={[["S3 archive prefix", s3Destination ? `s3://${s3Destination.bucket}/${s3Destination.prefix}` : undefined]]} />
+              {s3LogObjects.isLoading || s3LogObject.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 archive logs...</p> : null}
+              {s3LogObjects.error || s3LogObject.error ? (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {errorMessage(s3LogObjects.error ?? s3LogObject.error)}
+                </p>
+              ) : null}
+              <LogViewerLayout
+                tree={s3Tree}
+                selectedId={selectedS3Key}
+                onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
+                onDownloadSelected={downloadSelectedLog}
+                selectedLabel={selectedLabel}
+                path={selectedPath}
+                logText={logText}
+              />
+            </TabsContent>
             <TabsContent value="cloudwatch" className="mt-4">
               <LogDestinationSummary
                 items={[
@@ -223,51 +229,16 @@ export function LogsPage() {
               <LogViewerLayout
                 tree={cloudWatchTree}
                 selectedId={selectedCloudWatchStream}
-                onContextDownload={openDownloadMenu}
                 onSelect={(item) => {
                   setSelectedCloudWatchStream((item as JobLogStream).cloudWatchStreamName);
                 }}
-                selectedLabel={selectedLabel}
-                path={selectedPath}
-                logText={logText}
-              />
-            </TabsContent>
-            <TabsContent value="s3" className="mt-4">
-              <LogDestinationSummary items={[["S3 archive prefix", s3Destination ? `s3://${s3Destination.bucket}/${s3Destination.prefix}` : undefined]]} />
-              {s3LogObjects.isLoading || s3LogObject.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 archive logs...</p> : null}
-              {s3LogObjects.error || s3LogObject.error ? (
-                <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                  {errorMessage(s3LogObjects.error ?? s3LogObject.error)}
-                </p>
-              ) : null}
-              <LogViewerLayout
-                tree={s3Tree}
-                selectedId={selectedS3Key}
-                onContextDownload={openDownloadMenu}
-                onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
+                onDownloadSelected={downloadSelectedLog}
                 selectedLabel={selectedLabel}
                 path={selectedPath}
                 logText={logText}
               />
             </TabsContent>
           </Tabs>
-          {downloadMenu ? (
-            <div
-              role="menu"
-              className="fixed z-50 min-w-44 rounded-md border bg-background p-1 shadow-lg"
-              style={{ left: downloadMenu.x, top: downloadMenu.y }}
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-accent"
-                onClick={() => void downloadTargetLogs(downloadMenu)}
-              >
-                <Download data-icon="inline-start" />
-                Download logs
-              </button>
-            </div>
-          ) : null}
         </CardContent>
       </Card>
     </div>
@@ -291,7 +262,7 @@ function LogViewerLayout({
   tree,
   selectedId,
   onSelect,
-  onContextDownload,
+  onDownloadSelected,
   selectedLabel,
   path,
   logText
@@ -299,11 +270,62 @@ function LogViewerLayout({
   tree: JobLogTreeSection[];
   selectedId?: string;
   onSelect: (item: JobLogStream | JobLogObject) => void;
-  onContextDownload: (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => void;
+  onDownloadSelected: () => void;
   selectedLabel?: string;
   path?: string;
   logText: string;
 }) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [regexSearch, setRegexSearch] = useState(false);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchResult = useMemo(() => buildSearchResult(logText, searchQuery, regexSearch), [logText, searchQuery, regexSearch]);
+  const matches = searchResult.matches;
+  const activeMatchLabel = searchQuery && matches.length > 0 ? `${activeMatchIndex + 1} / ${matches.length}` : "0 / 0";
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (searchOpen) {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }
+  }, [searchOpen]);
+
+  useEffect(() => {
+    setActiveMatchIndex(0);
+  }, [searchQuery, regexSearch, logText]);
+
+  useEffect(() => {
+    if (matches.length === 0) return;
+    setActiveMatchIndex((current) => Math.min(current, matches.length - 1));
+  }, [matches.length]);
+
+  useEffect(() => {
+    const activeMatch = document.querySelector('[data-active-log-search-match="true"]') as HTMLElement | null;
+    activeMatch?.scrollIntoView?.({ block: "center" });
+  }, [activeMatchIndex, matches]);
+
+  const goToPreviousMatch = () => {
+    if (matches.length === 0) return;
+    setActiveMatchIndex((current) => (current === 0 ? matches.length - 1 : current - 1));
+  };
+
+  const goToNextMatch = () => {
+    if (matches.length === 0) return;
+    setActiveMatchIndex((current) => (current + 1) % matches.length);
+  };
+
   return (
     <div className="grid grid-cols-[360px_1fr] gap-4">
       <div className="rounded-md border">
@@ -315,24 +337,12 @@ function LogViewerLayout({
           {tree.length === 0 ? <p className="p-3 text-sm text-muted-foreground">No log streams found for this job.</p> : null}
           {tree.map((section) => (
             <div key={section.type} className="mb-3">
-              <div
-                className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                onContextMenu={(event) =>
-                  onContextDownload(
-                    event,
-                    section.groups.flatMap((group) => group.items),
-                    section.label
-                  )
-                }
-              >
+              <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {section.label}
               </div>
               {section.groups.map((group) => (
                 <div key={group.label} className="mb-2">
-                  <div
-                    className="break-all px-2 py-1 text-xs text-muted-foreground"
-                    onContextMenu={(event) => onContextDownload(event, group.items, group.label)}
-                  >
+                  <div className="break-all px-2 py-1 text-xs text-muted-foreground">
                     {group.label}
                   </div>
                   {group.items.map((item) => (
@@ -344,7 +354,6 @@ function LogViewerLayout({
                         item.id === selectedId ? "bg-primary text-primary-foreground hover:bg-primary" : undefined
                       )}
                       onClick={() => onSelect(item)}
-                      onContextMenu={(event) => openItemDownloadMenu(event, item, onContextDownload)}
                     >
                       <span className="font-medium">{item.stream}</span>
                       <span className={cn("text-xs", item.id === selectedId ? "text-primary-foreground/80" : "text-muted-foreground")}>
@@ -360,13 +369,55 @@ function LogViewerLayout({
       </div>
       <div className="min-w-0 rounded-md border">
         <div className="border-b p-3">
-          <div className="font-medium">{selectedLabel ?? "Select a log"}</div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 truncate font-medium">{selectedLabel ?? "Select a log"}</div>
+            {selectedLabel ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                aria-label="Download selected log"
+                onClick={() => void onDownloadSelected()}
+              >
+                <Download />
+              </Button>
+            ) : null}
+          </div>
           <div className="break-all text-xs text-muted-foreground">{path ?? "Choose a stdout or stderr entry from the log tree."}</div>
         </div>
+        {searchOpen ? (
+          <div className="flex flex-wrap items-center gap-2 border-b bg-secondary/30 p-2">
+            <Input
+              ref={searchInputRef}
+              className="h-8 min-w-48 flex-1"
+              placeholder="Find in this log"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="size-4"
+                aria-label="Regex"
+                checked={regexSearch}
+                onChange={(event) => setRegexSearch(event.target.checked)}
+              />
+              Regex
+            </label>
+            <span className={cn("min-w-16 text-xs", searchResult.error ? "text-destructive" : "text-muted-foreground")}>
+              {searchResult.error ?? activeMatchLabel}
+            </span>
+            <Button type="button" variant="outline" size="sm" aria-label="Previous match" disabled={matches.length === 0} onClick={goToPreviousMatch}>
+              Previous
+            </Button>
+            <Button type="button" variant="outline" size="sm" aria-label="Next match" disabled={matches.length === 0} onClick={goToNextMatch}>
+              Next
+            </Button>
+          </div>
+        ) : null}
         <ScrollArea className="h-[560px] bg-slate-950 p-4">
-          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100">
-            {logText || "Select a log to view its content."}
-          </pre>
+          <pre data-testid="log-content" className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100">{logText ? renderHighlightedLogText(logText, matches, activeMatchIndex) : "Select a log to view its content."}</pre>
         </ScrollArea>
       </div>
     </div>
@@ -377,15 +428,6 @@ function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function openItemDownloadMenu(
-  event: MouseEvent,
-  item: JobLogStream | JobLogObject,
-  onContextDownload: (event: MouseEvent, items: Array<JobLogStream | JobLogObject>, label: string) => void
-) {
-  event.stopPropagation();
-  onContextDownload(event, [item], item.label);
 }
 
 async function getDownloadChunk(
@@ -424,11 +466,75 @@ async function getCloudWatchDownloadLines(item: JobLogStream, jobId: string, clo
       nextForwardToken,
       limit: 10_000
     });
-    lines.push(...response.entries.map((entry) => `${entry.timestamp} ${entry.level.toUpperCase()} ${entry.message}`));
+    lines.push(...response.entries.map((entry) => entry.message ?? ""));
     nextForwardToken = response.nextForwardToken && response.nextForwardToken !== requestToken ? response.nextForwardToken : undefined;
   } while (nextForwardToken);
 
   return lines;
+}
+
+function formatCloudWatchMessages(entries: Array<{ message?: string }>) {
+  return entries.map((entry) => entry.message ?? "").join("\n");
+}
+
+function buildSearchResult(text: string, query: string, regexSearch: boolean): { matches: SearchMatch[]; error?: string } {
+  if (!query) return { matches: [] };
+  if (!regexSearch) {
+    const matches: SearchMatch[] = [];
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    let start = lowerText.indexOf(lowerQuery);
+    while (start !== -1) {
+      const end = start + query.length;
+      matches.push({ start, end });
+      start = lowerText.indexOf(lowerQuery, end);
+    }
+    return { matches };
+  }
+
+  try {
+    const matches: SearchMatch[] = [];
+    const regex = new RegExp(query, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(text)) !== null) {
+      if (match[0].length === 0) {
+        regex.lastIndex += 1;
+        continue;
+      }
+      matches.push({ start: match.index, end: match.index + match[0].length });
+    }
+    return { matches };
+  } catch {
+    return { matches: [], error: "Invalid regex" };
+  }
+}
+
+function renderHighlightedLogText(text: string, matches: SearchMatch[], activeMatchIndex: number) {
+  if (matches.length === 0) return text;
+
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  matches.forEach((match, index) => {
+    if (match.start > cursor) {
+      parts.push(text.slice(cursor, match.start));
+    }
+    const isActive = index === activeMatchIndex;
+    parts.push(
+      <mark
+        key={`${match.start}-${match.end}-${index}`}
+        data-testid="log-search-match"
+        data-active-log-search-match={isActive ? "true" : undefined}
+        className={cn(isActive ? "bg-yellow-300 text-slate-950" : "bg-yellow-500/50 text-slate-50")}
+      >
+        {text.slice(match.start, match.end)}
+      </mark>
+    );
+    cursor = match.end;
+  });
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return parts;
 }
 
 function errorMessage(error: unknown) {
