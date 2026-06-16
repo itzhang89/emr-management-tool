@@ -38,6 +38,8 @@ export function S3BrowserPage() {
   const [bucket, setBucket] = useState<string | undefined>();
   const [prefix, setPrefix] = useState("");
   const skipPathPersistRef = useRef(false);
+  const objectListRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const selectedBucket = bucket ?? selectedS3Bucket ?? (buckets.isSuccess ? buckets.data?.[0]?.name : undefined);
   const currentS3Path = formatS3Path(selectedBucket, prefix);
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
@@ -71,6 +73,10 @@ export function S3BrowserPage() {
     setSelectedKey(undefined);
     setEditingPath(false);
   }, [accountId]);
+
+  useEffect(() => {
+    objectListRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (selectedS3Bucket) {
@@ -123,7 +129,7 @@ export function S3BrowserPage() {
   };
 
   const notifyReadOnlyEditAttempt = () => {
-    if (!selectedObject || editability?.editable) return;
+    if (!selectedObject || selectedObject.kind !== "file" || editability?.editable) return;
     toast.error(editability?.reason ?? "Object is read-only.");
   };
 
@@ -267,6 +273,49 @@ export function S3BrowserPage() {
     }
   };
 
+  const handleObjectListKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const currentObjects = objects.data ?? [];
+    if (currentObjects.length === 0) return;
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const currentIndex = currentObjects.findIndex((object) => object.key === selectedKey);
+      const fallbackIndex = event.key === "ArrowDown" ? 0 : currentObjects.length - 1;
+      const nextIndex =
+        currentIndex === -1
+          ? fallbackIndex
+          : event.key === "ArrowDown"
+            ? Math.min(currentIndex + 1, currentObjects.length - 1)
+            : Math.max(currentIndex - 1, 0);
+      setSelectedKey(currentObjects[nextIndex]?.key);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      editorRef.current?.focus();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const selected = currentObjects.find((object) => object.key === selectedKey);
+      if (selected?.kind === "folder") {
+        setPrefix(selected.key);
+        setSelectedKey(undefined);
+        setContent("");
+      }
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (prefix) {
+        goUp();
+      }
+    }
+  };
+
   const selectedObjectPath =
     selectedBucket && selectedKey && selectedObject?.kind === "file" ? `s3://${selectedBucket}/${selectedKey}` : undefined;
 
@@ -368,7 +417,13 @@ export function S3BrowserPage() {
                 {errorMessage(buckets.error ?? objects.error, "Failed to load S3 data.")}
               </p>
             ) : null}
-            <nav aria-label="S3 objects" className="flex flex-col gap-1">
+            <nav
+              aria-label="S3 objects"
+              className="flex flex-col gap-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              tabIndex={0}
+              ref={objectListRef}
+              onKeyDown={handleObjectListKeyDown}
+            >
               {(objects.data ?? []).map((object) => {
                 const objectName = displayObjectName(object.key, prefix, object.kind);
                 const isRenaming = renamingKey === object.key;
@@ -460,17 +515,28 @@ export function S3BrowserPage() {
                 </Tooltip>
               ) : null}
               <Textarea
+                ref={editorRef}
                 className="min-h-[480px] font-mono"
                 value={content}
                 readOnly={!editability?.editable}
                 onChange={(event) => setContent(event.target.value)}
                 onKeyDown={(event) => {
-                  if (editability?.editable) return;
+                  if (event.key === "ArrowLeft") {
+                    event.preventDefault();
+                    objectListRef.current?.focus();
+                    return;
+                  }
+                  if (event.key === "Enter" && editability?.editable) {
+                    event.preventDefault();
+                    void save();
+                    return;
+                  }
+                  if (editability?.editable || selectedObject?.kind !== "file") return;
                   event.preventDefault();
                   notifyReadOnlyEditAttempt();
                 }}
                 onPaste={(event) => {
-                  if (editability?.editable) return;
+                  if (editability?.editable || selectedObject?.kind !== "file") return;
                   event.preventDefault();
                   notifyReadOnlyEditAttempt();
                 }}

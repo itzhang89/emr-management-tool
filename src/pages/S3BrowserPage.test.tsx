@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -17,6 +17,7 @@ const uploadS3ObjectFromDisk = vi.fn();
 const downloadS3ObjectToDisk = vi.fn();
 const deleteMutateAsync = vi.fn();
 const renameMutateAsync = vi.fn();
+const saveMutateAsync = vi.fn();
 const toastInfo = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -88,15 +89,25 @@ describe("S3BrowserPage", () => {
       error: null,
       refetch: refetchObjects
     }));
-    useS3TextObject.mockReturnValue({
-      data: undefined,
+    useS3TextObject.mockImplementation((bucket?: string, key?: string) => ({
+      data:
+        bucket && key
+          ? {
+              bucket,
+              key,
+              content: "hello",
+              etag: "abc123",
+              lastModified: "2026-06-10T03:20:35Z"
+            }
+          : undefined,
       isLoading: false,
       error: null
-    });
-    useSaveS3TextObject.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+    }));
+    useSaveS3TextObject.mockReturnValue({ mutateAsync: saveMutateAsync, isPending: false });
     useDeleteS3Object.mockReturnValue({ mutateAsync: deleteMutateAsync, isPending: false });
     useRenameS3Object.mockReturnValue({ mutateAsync: renameMutateAsync, isPending: false });
     deleteMutateAsync.mockResolvedValue(undefined);
+    saveMutateAsync.mockImplementation(async (object) => object);
     renameMutateAsync.mockResolvedValue({
       bucket: "logs-bucket",
       key: "notes.txt",
@@ -215,6 +226,75 @@ describe("S3BrowserPage", () => {
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "");
     expect(screen.getByText("s3://logs-bucket/")).toBeInTheDocument();
+  });
+
+  it("supports keyboard navigation in the object list", () => {
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    browser.focus();
+
+    fireEvent.keyDown(browser, { key: "ArrowDown" });
+    expect(screen.getByRole("region", { name: /Selected S3 object/i })).toHaveTextContent("readme.txt");
+
+    fireEvent.keyDown(browser, { key: "ArrowUp" });
+    expect(screen.getByRole("region", { name: /Selected S3 object/i })).toHaveTextContent("logs/");
+
+    fireEvent.keyDown(browser, { key: "Enter" });
+    expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
+    expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
+
+    fireEvent.keyDown(browser, { key: "Escape" });
+    expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "");
+    expect(screen.getByText("s3://logs-bucket/")).toBeInTheDocument();
+  });
+
+  it("focuses the object list by default and switches between list and editor with left/right arrows", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await waitFor(() => expect(browser).toHaveFocus());
+
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+    fireEvent.keyDown(browser, { key: "ArrowRight" });
+    expect(screen.getByRole("textbox")).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "ArrowLeft" });
+    expect(browser).toHaveFocus();
+  });
+
+  it("saves the editable selected file with Enter from the editor and shows save status", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
+
+    const editor = screen.getByRole("textbox");
+    editor.focus();
+    fireEvent.change(editor, { target: { value: "updated" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(saveMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: "readme.txt",
+          content: "updated"
+        })
+      )
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Saved readme.txt");
+  });
+
+  it("does not show a read-only prompt when a selected directory receives editor key input", () => {
+    renderS3BrowserPage();
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "a" });
+
+    expect(toastError).not.toHaveBeenCalledWith("File type is read-only.");
   });
 
   it("uploads and downloads objects through native file dialogs", async () => {
