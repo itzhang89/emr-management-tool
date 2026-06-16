@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const channel = process.env.RELEASE_CHANNEL ?? "stable";
 const rawVersion = process.env.RELEASE_VERSION;
 const updaterPublicKey = process.env.TAURI_UPDATER_PUBLIC_KEY;
+const updaterPrivateKey = process.env.TAURI_SIGNING_PRIVATE_KEY;
 const windowsSignCommand = process.env.WINDOWS_SIGN_COMMAND;
 
 if (rawVersion) {
@@ -16,12 +17,17 @@ if (rawVersion) {
 const tauriConfigPath = "src-tauri/tauri.conf.json";
 const tauriConfig = readJson(tauriConfigPath);
 
-if (updaterPublicKey) {
+if (updaterPublicKey?.trim() && updaterPrivateKey?.trim()) {
   tauriConfig.plugins ??= {};
   tauriConfig.plugins.updater ??= {};
   tauriConfig.plugins.updater.pubkey = updaterPublicKey.trim();
-} else if (process.env.CI === "true" && channel === "stable" && process.env.REQUIRE_UPDATER_PUBLIC_KEY !== "false") {
-  throw new Error("TAURI_UPDATER_PUBLIC_KEY is required for CI release builds.");
+} else {
+  tauriConfig.bundle ??= {};
+  tauriConfig.bundle.createUpdaterArtifacts = false;
+
+  if (process.env.CI === "true" && channel === "stable" && process.env.REQUIRE_UPDATER_PUBLIC_KEY === "true") {
+    console.warn("Updater signing keys are not configured; building without automatic update artifacts.");
+  }
 }
 
 if (windowsSignCommand) {

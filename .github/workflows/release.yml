@@ -17,54 +17,9 @@ permissions:
   contents: write
 
 jobs:
-  windows-release:
-    name: Windows release package
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-    runs-on: windows-latest
-    env:
-      RELEASE_CHANNEL: ${{ github.event_name == 'push' && 'stable' || 'development' }}
-      RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-      REQUIRE_UPDATER_PUBLIC_KEY: ${{ github.event_name == 'push' && 'true' || 'false' }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
-      VITE_APP_CHANNEL: ${{ github.event_name == 'push' && 'stable' || 'development' }}
-      VITE_APP_PLATFORM: windows
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - run: npm ci
-
-      - name: Prepare release config
-        run: node scripts/prepare-release-config.mjs
-
-      - uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tauriScript: npm run tauri
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('dev-v{0}', inputs.version) }}
-          releaseName: ${{ github.ref_type == 'tag' && format('EMR Management Tool {0}', github.ref_name) || format('EMR Management Tool Dev {0}', inputs.version) }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-          includeUpdaterJson: ${{ github.event_name == 'push' }}
-          args: ${{ github.event_name == 'workflow_dispatch' && '--config src-tauri/tauri.development.conf.json' || '' }}
-
   macos-development:
     name: macOS development package
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: windows-release
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
@@ -101,3 +56,85 @@ jobs:
           releaseDraft: ${{ inputs.draft }}
           includeUpdaterJson: false
           args: "--target universal-apple-darwin --config src-tauri/tauri.development.conf.json"
+
+  windows-development:
+    name: Windows development package
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: macos-development
+    runs-on: windows-latest
+    env:
+      RELEASE_CHANNEL: development
+      RELEASE_VERSION: ${{ inputs.version }}
+      REQUIRE_UPDATER_PUBLIC_KEY: "false"
+      VITE_APP_CHANNEL: development
+      VITE_APP_PLATFORM: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npm run tauri
+          tagName: ${{ format('dev-v{0}', inputs.version) }}
+          releaseName: "EMR Management Tool Dev ${{ inputs.version }}"
+          prerelease: true
+          releaseDraft: ${{ inputs.draft }}
+          includeUpdaterJson: false
+          args: "--config src-tauri/tauri.development.conf.json"
+
+  windows-release:
+    name: Windows release package
+    if: ${{ github.event_name == 'push' }}
+    runs-on: windows-latest
+    env:
+      RELEASE_CHANNEL: stable
+      RELEASE_VERSION: ${{ github.ref_name }}
+      REQUIRE_UPDATER_PUBLIC_KEY: "true"
+      TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+      VITE_APP_CHANNEL: stable
+      VITE_APP_PLATFORM: windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: npm run tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: "EMR Management Tool ${{ github.ref_name }}"
+          prerelease: false
+          releaseDraft: false
+          includeUpdaterJson: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}

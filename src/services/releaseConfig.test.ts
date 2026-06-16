@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -53,6 +55,9 @@ describe("release configuration", () => {
 
     expect(workflow).toContain('tags: ["v*.*.*"]');
     expect(workflow).toContain("development");
+    expect(workflow).toContain("windows-development:");
+    expect(workflow).toContain("needs: macos-development");
+    expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(workflow).toContain("dev-v{0}");
     expect(workflow).toContain("cache-dependency-path: package-lock.json");
     expect(workflow).toContain("tauri.development.conf.json");
@@ -65,12 +70,43 @@ describe("release configuration", () => {
     expect(workflow).not.toContain("tauri.macos-test.conf.json");
   });
 
+  it("builds macOS development packages before Windows development packages", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const macosDevelopmentIndex = workflow.indexOf("macos-development:");
+    const windowsDevelopmentIndex = workflow.indexOf("windows-development:");
+
+    expect(macosDevelopmentIndex).toBeGreaterThan(-1);
+    expect(windowsDevelopmentIndex).toBeGreaterThan(-1);
+    expect(macosDevelopmentIndex).toBeLessThan(windowsDevelopmentIndex);
+  });
+
   it("injects the release channel into Rust builds for credential backend selection", () => {
     const buildScript = readText("src-tauri/build.rs");
 
     expect(buildScript).toContain("cargo:rerun-if-env-changed=VITE_APP_CHANNEL");
     expect(buildScript).toContain("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
     expect(buildScript).toContain("cargo:rustc-env=EMR_APP_CHANNEL=");
+  });
+
+  it("does not fail stable CI builds when updater keys are not configured", () => {
+    withReleaseScriptWorkspace((workspace) => {
+      execFileSync(process.execPath, ["scripts/prepare-release-config.mjs"], {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          CI: "true",
+          RELEASE_CHANNEL: "stable",
+          RELEASE_VERSION: "0.2.0",
+          REQUIRE_UPDATER_PUBLIC_KEY: "true",
+          TAURI_UPDATER_PUBLIC_KEY: ""
+        }
+      });
+
+      const tauriConfig = JSON.parse(readFileSync(join(workspace, "src-tauri/tauri.conf.json"), "utf8")) as {
+        bundle: { createUpdaterArtifacts?: boolean };
+      };
+      expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(false);
+    });
   });
 });
 
@@ -80,4 +116,22 @@ function readJson<T>(path: string): T {
 
 function readText(path: string) {
   return readFileSync(join(root, path), "utf8");
+}
+
+function withReleaseScriptWorkspace(callback: (workspace: string) => void) {
+  const workspace = mkdtempSync(join(tmpdir(), "emr-release-config-"));
+
+  try {
+    mkdirSync(join(workspace, "scripts"), { recursive: true });
+    mkdirSync(join(workspace, "src-tauri"), { recursive: true });
+    cpSync(join(root, "scripts/prepare-release-config.mjs"), join(workspace, "scripts/prepare-release-config.mjs"));
+    cpSync(join(root, "package.json"), join(workspace, "package.json"));
+    cpSync(join(root, "package-lock.json"), join(workspace, "package-lock.json"));
+    cpSync(join(root, "src-tauri/tauri.conf.json"), join(workspace, "src-tauri/tauri.conf.json"));
+    cpSync(join(root, "src-tauri/Cargo.toml"), join(workspace, "src-tauri/Cargo.toml"));
+
+    callback(workspace);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 }
