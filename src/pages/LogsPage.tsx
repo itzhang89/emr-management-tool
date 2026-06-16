@@ -188,11 +188,11 @@ export function LogsPage() {
             <TabsList>
               <TabsTrigger value="s3" disabled={!s3Destination}>
                 <Archive data-icon="inline-start" />
-                S3 Archive
+                S3
               </TabsTrigger>
               <TabsTrigger value="cloudwatch" disabled={!cloudWatchDestination}>
                 <Cloud data-icon="inline-start" />
-                CloudWatch Live
+                CloudWatch
               </TabsTrigger>
             </TabsList>
             <TabsContent value="s3" className="mt-4">

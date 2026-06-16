@@ -21,11 +21,11 @@ export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
   });
 }
 
-export function useJobRuns(virtualClusterId?: string, autoRefresh = false) {
+export function useJobRuns(virtualClusterId?: string, autoRefresh = false, keyword?: string) {
   const accountId = useActiveAccountId();
   const query = useQuery({
-    queryKey: ["job-runs", accountId, virtualClusterId],
-    queryFn: () => emrService.listJobRuns(virtualClusterId, accountId),
+    queryKey: ["job-runs", accountId, virtualClusterId, keyword],
+    queryFn: () => emrService.listJobRuns(virtualClusterId, accountId, keyword),
     enabled: Boolean(accountId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh
@@ -40,7 +40,7 @@ export function useJobRuns(virtualClusterId?: string, autoRefresh = false) {
     }, jobHistoryRefreshIntervalMs);
 
     return () => window.clearInterval(timer);
-  }, [autoRefresh, query.refetch, virtualClusterId]);
+  }, [autoRefresh, query.refetch, virtualClusterId, keyword]);
 
   return query;
 }
