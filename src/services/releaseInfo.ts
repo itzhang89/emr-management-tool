@@ -1,4 +1,4 @@
-export type AppChannel = "stable" | "test" | "mac-debug";
+export type AppChannel = "stable" | "development";
 export type AppPlatform = "windows" | "darwin" | "linux" | "unknown";
 
 export interface ReleaseInfoInput {
@@ -9,21 +9,21 @@ export interface ReleaseInfoInput {
 export interface ReleaseInfo {
   appChannel: AppChannel;
   platform: AppPlatform;
-  channelLabel: "Stable" | "Test" | "Debug";
-  isMacDebug: boolean;
+  channelLabel: "Stable" | "Development";
+  isDevelopment: boolean;
   canUseAutoUpdater: boolean;
 }
 
 export function createReleaseInfo(input: ReleaseInfoInput = {}): ReleaseInfo {
   const appChannel = normalizeChannel(input.appChannel);
   const platform = normalizePlatform(input.platform);
-  const isMacDebug = appChannel === "mac-debug" && platform === "darwin";
+  const isDevelopment = appChannel === "development";
 
   return {
     appChannel,
     platform,
-    channelLabel: appChannel === "mac-debug" ? "Debug" : appChannel === "test" ? "Test" : "Stable",
-    isMacDebug,
+    channelLabel: isDevelopment ? "Development" : "Stable",
+    isDevelopment,
     canUseAutoUpdater: appChannel === "stable" && platform === "windows"
   };
 }
@@ -36,7 +36,7 @@ export function getReleaseInfo() {
 }
 
 function normalizeChannel(channel?: string): AppChannel {
-  if (channel === "test" || channel === "mac-debug") return channel;
+  if (channel === "development") return "development";
   return "stable";
 }
 
