@@ -19,6 +19,7 @@ const pageSize = 10;
 const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
 const jobHistoryRefreshIntervalMs = 5_000;
 const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
+const jobIdRequiredForAwsLookupMessage = "For Find in AWS，use the Job ID rather then Job Name";
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
@@ -59,8 +60,14 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
       setSelectedJobId(exactLocalMatch.id);
       return;
     }
+    if (filteredJobs.length > 0) return;
     if (!effectiveVirtualClusterId) {
       toast.error("Select a virtual cluster before looking up a job in AWS.");
+      return;
+    }
+    if (!isLikelyEmrJobRunId(searchedJobId)) {
+      setRemoteLookupError(jobIdRequiredForAwsLookupMessage);
+      toast.error(jobIdRequiredForAwsLookupMessage);
       return;
     }
 
@@ -468,6 +475,11 @@ function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterI
     return `Job ${jobId} was not found in AWS EMR for virtual cluster ${virtualClusterId}. Check the Job ID and selected Virtual Cluster.`;
   }
   return errorMessage(error);
+}
+
+function isLikelyEmrJobRunId(value: string) {
+  const trimmed = value.trim();
+  return /^job-[A-Za-z0-9-]+$/.test(trimmed) || /^[a-z0-9]{16,64}$/.test(trimmed);
 }
 
 function readAutoRefreshPreference() {
