@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsPage } from "./SettingsPage";
 
 const mocks = vi.hoisted(() => ({
@@ -44,14 +45,27 @@ describe("SettingsPage updates", () => {
       reason: "Automatic updates are currently available only for Windows stable builds."
     });
 
-    render(<SettingsPage />);
+    renderSettingsPage();
     await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
 
     expect(mocks.checkForUpdate).toHaveBeenCalledOnce();
     expect(mocks.toastInfo).toHaveBeenCalledWith("Automatic updates are currently available only for Windows stable builds.");
   });
 
-  it("lets the user install an available update", async () => {
+  it("renders update guidance as a tooltip on a single update button", async () => {
+    const user = userEvent.setup();
+    mocks.checkForUpdate.mockResolvedValue({ status: "no-update" });
+
+    renderSettingsPage();
+
+    expect(screen.queryByRole("heading", { name: "Application Updates" })).not.toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: /Check for Updates/i }));
+
+    expect(await screen.findAllByText("Stable · Manual updates only")).not.toHaveLength(0);
+  });
+
+  it("lets the user install an available update from the update button", async () => {
     const user = userEvent.setup();
     const install = vi.fn().mockResolvedValue(undefined);
     mocks.checkForUpdate.mockResolvedValue({
@@ -61,12 +75,19 @@ describe("SettingsPage updates", () => {
       install
     });
 
-    render(<SettingsPage />);
+    renderSettingsPage();
     await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
     await user.click(screen.getByRole("button", { name: /Install 0.2.0/i }));
 
-    expect(screen.getByText("Version 0.2.0 is available.")).toBeInTheDocument();
     expect(install).toHaveBeenCalledOnce();
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Update installed. Restart the app to use the new version.");
   });
 });
+
+function renderSettingsPage() {
+  return render(
+    <TooltipProvider>
+      <SettingsPage />
+    </TooltipProvider>
+  );
+}
