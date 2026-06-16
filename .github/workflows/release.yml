@@ -25,6 +25,7 @@ jobs:
       - name: Prepare GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
           RELEASE_NAME: EMR Management Tool Dev ${{ inputs.version }}
           RELEASE_DRAFT: ${{ inputs.draft }}

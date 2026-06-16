@@ -110,9 +110,12 @@ describe("release configuration", () => {
 
   it("manually analyzes and uploads development artifacts instead of asking tauri-action for updater signatures", () => {
     const workflow = readText(".github/workflows/release.yml");
+    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-development-release");
     const macosAmd64Development = workflowJobBlock(workflow, "macos-development-amd64");
     const macosArm64Development = workflowJobBlock(workflow, "macos-development-arm64");
     const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
+
+    expect(prepareDevelopmentRelease).toContain("GH_REPO: ${{ github.repository }}");
 
     for (const job of [macosAmd64Development, macosArm64Development, windowsDevelopment]) {
       expect(job).not.toContain("tauri-apps/tauri-action@v0");
