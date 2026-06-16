@@ -54,13 +54,14 @@ describe("release configuration", () => {
     const workflow = readText(".github/workflows/release.yml");
 
     expect(workflow).toContain('tags: ["v*.*.*"]');
-    expect(workflow).toContain("development");
-    expect(workflow).toContain("prepare-development-release:");
-    expect(workflow).toContain("macos-development-amd64:");
-    expect(workflow).toContain("macos-development-arm64:");
-    expect(workflow).toContain("windows-development:");
+    expect(workflow).not.toContain("\n      version:");
+    expect(workflow).toContain("release_channel:");
+    expect(workflow).toContain("credential_store:");
+    expect(workflow).toContain("prepare-manual-release:");
+    expect(workflow).toContain("manual-development-packages:");
+    expect(workflow).toContain("manual-stable-windows-package:");
     expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
-    expect(workflow).toContain("dev-v{0}");
+    expect(workflow).toContain("${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}");
     expect(workflow).toContain("cache-dependency-path: package-lock.json");
     expect(workflow).toContain("tauri.development.conf.json");
     expect(workflow).toContain("includeUpdaterJson");
@@ -74,61 +75,55 @@ describe("release configuration", () => {
 
   it("runs macOS and Windows development package jobs in parallel", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const macosAmd64Development = workflowJobBlock(workflow, "macos-development-amd64");
-    const macosArm64Development = workflowJobBlock(workflow, "macos-development-arm64");
-    const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
+    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
 
-    expect(macosAmd64Development).toContain("needs: prepare-development-release");
-    expect(macosArm64Development).toContain("needs: prepare-development-release");
-    expect(windowsDevelopment).toContain("needs: prepare-development-release");
-    expect(macosAmd64Development).not.toContain("needs: macos-development");
-    expect(macosArm64Development).not.toContain("needs: macos-development");
-    expect(windowsDevelopment).not.toContain("needs: macos-development");
+    expect(developmentPackages).toContain("needs: prepare-manual-release");
+    expect(developmentPackages).toContain("fail-fast: false");
+    expect(developmentPackages).toContain("label: macos-amd64");
+    expect(developmentPackages).toContain("label: macos-arm64");
+    expect(developmentPackages).toContain("label: windows-amd64");
   });
 
   it("builds development packages in debug mode like local Tauri dev builds", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const macosAmd64Development = workflowJobBlock(workflow, "macos-development-amd64");
-    const macosArm64Development = workflowJobBlock(workflow, "macos-development-arm64");
-    const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
+    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
 
-    expect(macosAmd64Development).toContain("RELEASE_CHANNEL: development");
-    expect(macosAmd64Development).toContain("EMR_CREDENTIAL_STORE: local");
-    expect(macosAmd64Development).not.toContain("RELEASE_VERSION:");
-    expect(macosAmd64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
-    expect(macosAmd64Development).toContain("npm run tauri -- build --debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
-
-    expect(macosArm64Development).toContain("RELEASE_CHANNEL: development");
-    expect(macosArm64Development).toContain("EMR_CREDENTIAL_STORE: local");
-    expect(macosArm64Development).not.toContain("RELEASE_VERSION:");
-    expect(macosArm64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
-    expect(macosArm64Development).toContain("npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
-
-    expect(windowsDevelopment).toContain("RELEASE_CHANNEL: development");
-    expect(windowsDevelopment).toContain("EMR_CREDENTIAL_STORE: local");
-    expect(windowsDevelopment).not.toContain("RELEASE_VERSION:");
-    expect(windowsDevelopment).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
-    expect(windowsDevelopment).toContain("npm run tauri -- build --debug --config src-tauri/tauri.development.conf.json");
+    expect(developmentPackages).toContain("if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development' }}");
+    expect(developmentPackages).toContain("RELEASE_CHANNEL: ${{ inputs.release_channel }}");
+    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}");
+    expect(developmentPackages).not.toContain("RELEASE_VERSION:");
+    expect(developmentPackages).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
+    expect(developmentPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
+    expect(developmentPackages).toContain("--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
+    expect(developmentPackages).toContain("--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
+    expect(developmentPackages).toContain("--debug --config src-tauri/tauri.development.conf.json");
   });
 
   it("manually analyzes and uploads development artifacts instead of asking tauri-action for updater signatures", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-development-release");
-    const macosAmd64Development = workflowJobBlock(workflow, "macos-development-amd64");
-    const macosArm64Development = workflowJobBlock(workflow, "macos-development-arm64");
-    const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
+    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-manual-release");
+    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
 
     expect(prepareDevelopmentRelease).toContain("GH_REPO: ${{ github.repository }}");
 
-    for (const job of [macosAmd64Development, macosArm64Development, windowsDevelopment]) {
-      expect(job).not.toContain("tauri-apps/tauri-action@v0");
-      expect(job).toContain("Analyze build artifacts");
-      expect(job).toContain("gh release upload");
-    }
+    expect(developmentPackages).not.toContain("tauri-apps/tauri-action@v0");
+    expect(developmentPackages).toContain("Analyze build artifacts");
+    expect(developmentPackages).toContain("gh release upload");
+    expect(developmentPackages).toContain("macos-amd64");
+    expect(developmentPackages).toContain("macos-arm64");
+    expect(developmentPackages).toContain("windows-amd64");
+  });
 
-    expect(macosAmd64Development).toContain("macos-amd64");
-    expect(macosArm64Development).toContain("macos-arm64");
-    expect(windowsDevelopment).toContain("windows-amd64");
+  it("builds stable manual packages without requiring a version input", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const stablePackage = workflowJobBlock(workflow, "manual-stable-windows-package");
+
+    expect(stablePackage).toContain("if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' }}");
+    expect(stablePackage).toContain("RELEASE_CHANNEL: ${{ inputs.release_channel }}");
+    expect(stablePackage).toContain("EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}");
+    expect(stablePackage).not.toContain("RELEASE_VERSION:");
+    expect(stablePackage).toContain("npm run tauri -- build --config src-tauri/tauri.conf.json");
+    expect(stablePackage).toContain("stable-windows-amd64");
   });
 
   it("injects the release channel into Rust builds for credential backend selection", () => {
