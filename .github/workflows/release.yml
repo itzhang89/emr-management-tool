@@ -5,9 +5,21 @@ on:
     tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Development version, for example 0.2.0-dev.1"
-        required: true
+      release_channel:
+        description: "Release channel"
+        type: choice
+        options:
+          - development
+          - stable
+        default: development
+      credential_store:
+        description: "Credential store backend"
+        type: choice
+        options:
+          - local
+          - keychain
+          - auto
+        default: local
       draft:
         description: "Create draft release"
         type: boolean
@@ -17,21 +29,29 @@ permissions:
   contents: write
 
 jobs:
-  prepare-development-release:
-    name: Prepare development release
+  prepare-manual-release:
+    name: Prepare manual release
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_name: ${{ steps.release.outputs.release_name }}
     steps:
       - name: Prepare GitHub release
+        id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
-          RELEASE_NAME: EMR Management Tool Dev ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
           RELEASE_DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
-          create_args=(--title "$RELEASE_NAME" --prerelease --notes "Development test packages. Automatic updates are disabled.")
+          RELEASE_TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
+          RELEASE_NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
+          create_args=(--title "$RELEASE_NAME" --notes "Manual ${RELEASE_CHANNEL} test packages. Automatic updates are disabled.")
+          if [[ "$RELEASE_CHANNEL" == "development" ]]; then
+            create_args+=(--prerelease)
+          fi
           if [[ "$RELEASE_DRAFT" == "true" ]]; then
             create_args+=(--draft)
           fi
@@ -41,19 +61,48 @@ jobs:
             gh release delete-asset "$RELEASE_TAG" "$asset" -y
           done
 
-  macos-development-amd64:
-    name: macOS development package (amd64)
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: prepare-development-release
-    runs-on: macos-latest
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+
+  manual-development-packages:
+    name: Development package (${{ matrix.label }})
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development' }}
+    needs: prepare-manual-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-amd64
+            os: macos-latest
+            rust_targets: x86_64-apple-darwin
+            platform: darwin
+            build_args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
+            bundle_dir: src-tauri/target/x86_64-apple-darwin/debug/bundle
+            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+          - label: macos-arm64
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin
+            platform: darwin
+            build_args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
+            bundle_dir: src-tauri/target/aarch64-apple-darwin/debug/bundle
+            artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+          - label: windows-amd64
+            os: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            platform: windows
+            build_args: "--debug --config src-tauri/tauri.development.conf.json"
+            bundle_dir: src-tauri/target/debug/bundle
+            artifact_patterns: "*.exe;*.msi;*.zip"
     env:
-      RELEASE_CHANNEL: development
-      EMR_CREDENTIAL_STORE: local
+      RELEASE_CHANNEL: ${{ inputs.release_channel }}
+      EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL: development
-      VITE_APP_PLATFORM: darwin
-      MACOS_TARGET: x86_64-apple-darwin
-      ARTIFACT_LABEL: macos-amd64
+      VITE_APP_CHANNEL: ${{ inputs.release_channel }}
+      VITE_APP_PLATFORM: ${{ matrix.platform }}
+      ARTIFACT_LABEL: ${{ matrix.label }}
+      BUNDLE_DIR: ${{ matrix.bundle_dir }}
+      ARTIFACT_PATTERNS: ${{ matrix.artifact_patterns }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,138 +114,78 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin
+          targets: ${{ matrix.rust_targets }}
 
       - run: npm ci
 
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
-      - name: Build development package
-        run: npm run tauri -- build --debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json
+      - name: Build package
+        run: npm run tauri -- build ${{ matrix.build_args }}
 
       - name: Analyze build artifacts
+        shell: bash
         run: |
-          set -euo pipefail
-          python3 <<'PY'
+          if command -v python3 >/dev/null 2>&1; then
+            PYTHON_BIN=python3
+          else
+            PYTHON_BIN=python
+          fi
+          "$PYTHON_BIN" <<'PY'
           import os
           import shutil
           from pathlib import Path
 
           label = os.environ["ARTIFACT_LABEL"]
-          bundle_dir = Path("src-tauri/target") / os.environ["MACOS_TARGET"] / "debug" / "bundle"
+          bundle_dir = Path(os.environ["BUNDLE_DIR"])
           stage_dir = Path("release-artifacts")
           stage_dir.mkdir(exist_ok=True)
 
           print(f"Inspecting {bundle_dir}")
           if bundle_dir.exists():
-            for path in sorted(bundle_dir.rglob("*")):
-              print(path)
+              for path in sorted(bundle_dir.rglob("*")):
+                  print(path)
           else:
-            raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
+              raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
 
-          patterns = ("*.dmg", "*.pkg", "*.app.tar.gz")
-          artifacts = [path for pattern in patterns for path in bundle_dir.rglob(pattern) if path.is_file()]
+          artifacts = [
+              path
+              for pattern in os.environ["ARTIFACT_PATTERNS"].split(";")
+              for path in bundle_dir.rglob(pattern)
+              if path.is_file()
+          ]
           if not artifacts:
-            raise SystemExit(f"No installable macOS artifacts found in {bundle_dir}")
+              raise SystemExit(f"No installable artifacts found in {bundle_dir}")
 
           for artifact in artifacts:
-            destination = stage_dir / f"{label}-{artifact.name}"
-            shutil.copy2(artifact, destination)
-            print(f"Prepared {destination}")
+              destination = stage_dir / f"{label}-{artifact.name}"
+              shutil.copy2(artifact, destination)
+              print(f"Prepared {destination}")
           PY
 
-      - name: Upload development artifacts
+      - name: Upload artifacts
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-manual-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
-  macos-development-arm64:
-    name: macOS development package (arm64)
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: prepare-development-release
-    runs-on: macos-latest
-    env:
-      RELEASE_CHANNEL: development
-      EMR_CREDENTIAL_STORE: local
-      REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL: development
-      VITE_APP_PLATFORM: darwin
-      MACOS_TARGET: aarch64-apple-darwin
-      ARTIFACT_LABEL: macos-arm64
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - run: npm ci
-
-      - name: Prepare release config
-        run: node scripts/prepare-release-config.mjs
-
-      - name: Build development package
-        run: npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json
-
-      - name: Analyze build artifacts
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import os
-          import shutil
-          from pathlib import Path
-
-          label = os.environ["ARTIFACT_LABEL"]
-          bundle_dir = Path("src-tauri/target") / os.environ["MACOS_TARGET"] / "debug" / "bundle"
-          stage_dir = Path("release-artifacts")
-          stage_dir.mkdir(exist_ok=True)
-
-          print(f"Inspecting {bundle_dir}")
-          if bundle_dir.exists():
-            for path in sorted(bundle_dir.rglob("*")):
-              print(path)
-          else:
-            raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
-
-          patterns = ("*.dmg", "*.pkg", "*.app.tar.gz")
-          artifacts = [path for pattern in patterns for path in bundle_dir.rglob(pattern) if path.is_file()]
-          if not artifacts:
-            raise SystemExit(f"No installable macOS artifacts found in {bundle_dir}")
-
-          for artifact in artifacts:
-            destination = stage_dir / f"{label}-{artifact.name}"
-            shutil.copy2(artifact, destination)
-            print(f"Prepared {destination}")
-          PY
-
-      - name: Upload development artifacts
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
-        run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
-
-  windows-development:
-    name: Windows development package
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: prepare-development-release
+  manual-stable-windows-package:
+    name: Stable Windows package
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' }}
+    needs: prepare-manual-release
     runs-on: windows-latest
     env:
-      RELEASE_CHANNEL: development
-      EMR_CREDENTIAL_STORE: local
+      RELEASE_CHANNEL: ${{ inputs.release_channel }}
+      EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL: development
+      VITE_APP_CHANNEL: ${{ inputs.release_channel }}
       VITE_APP_PLATFORM: windows
-      ARTIFACT_LABEL: windows-amd64
+      ARTIFACT_LABEL: stable-windows-amd64
+      BUNDLE_DIR: src-tauri/target/release/bundle
+      ARTIFACT_PATTERNS: "*.exe;*.msi;*.zip"
     steps:
       - uses: actions/checkout@v4
 
@@ -207,49 +196,64 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - run: npm ci
 
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
-      - name: Build development package
-        run: npm run tauri -- build --debug --config src-tauri/tauri.development.conf.json
+      - name: Build package
+        run: npm run tauri -- build --config src-tauri/tauri.conf.json
 
       - name: Analyze build artifacts
-        shell: pwsh
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          $bundleDir = "src-tauri/target/debug/bundle"
-          $stageDir = "release-artifacts"
-          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+          if command -v python3 >/dev/null 2>&1; then
+            PYTHON_BIN=python3
+          else
+            PYTHON_BIN=python
+          fi
+          "$PYTHON_BIN" <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
 
-          Write-Host "Inspecting $bundleDir"
-          if (-not (Test-Path $bundleDir)) {
-            throw "Expected bundle directory does not exist: $bundleDir"
-          }
+          label = os.environ["ARTIFACT_LABEL"]
+          bundle_dir = Path(os.environ["BUNDLE_DIR"])
+          stage_dir = Path("release-artifacts")
+          stage_dir.mkdir(exist_ok=True)
 
-          Get-ChildItem -Path $bundleDir -Recurse | ForEach-Object { Write-Host $_.FullName }
-          $artifacts = Get-ChildItem -Path $bundleDir -Recurse -File | Where-Object {
-            $_.Extension -in ".exe", ".msi", ".zip"
-          }
+          print(f"Inspecting {bundle_dir}")
+          if bundle_dir.exists():
+              for path in sorted(bundle_dir.rglob("*")):
+                  print(path)
+          else:
+              raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
 
-          if (-not $artifacts) {
-            throw "No installable Windows artifacts found in $bundleDir"
-          }
+          artifacts = [
+              path
+              for pattern in os.environ["ARTIFACT_PATTERNS"].split(";")
+              for path in bundle_dir.rglob(pattern)
+              if path.is_file()
+          ]
+          if not artifacts:
+              raise SystemExit(f"No installable artifacts found in {bundle_dir}")
 
-          foreach ($artifact in $artifacts) {
-            $destination = Join-Path $stageDir "$env:ARTIFACT_LABEL-$($artifact.Name)"
-            Copy-Item -Path $artifact.FullName -Destination $destination
-            Write-Host "Prepared $destination"
-          }
+          for artifact in artifacts:
+              destination = stage_dir / f"{label}-{artifact.name}"
+              shutil.copy2(artifact, destination)
+              print(f"Prepared {destination}")
+          PY
 
-      - name: Upload development artifacts
+      - name: Upload artifacts
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
-        run: gh release upload "$env:RELEASE_TAG" release-artifacts/* --clobber
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-manual-release.outputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
   windows-release:
     name: Windows release package
