@@ -10,6 +10,9 @@ import { applyResourceOverride } from "@/services/resourceOverride";
 import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
 
 const VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
+const EMR_JOB_NAME_PATTERN = /^[.\-_/#A-Za-z0-9]+$/;
+const EMR_JOB_NAME_MESSAGE =
+  "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
 
 export function resolveTemplatePayload(
   template: JobConfigTemplate,
@@ -74,6 +77,8 @@ export function validateSubmitPayload(
 ): { ok: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!payload.name?.trim()) errors.push("Job name is required.");
+  if (payload.name && payload.name.length > 64) errors.push("Job name must be 64 characters or fewer.");
+  if (payload.name && !EMR_JOB_NAME_PATTERN.test(payload.name)) errors.push(EMR_JOB_NAME_MESSAGE);
   if (!payload.virtualClusterId?.trim()) errors.push("Virtual cluster is required.");
   if (!payload.executionRoleArn?.trim()) errors.push("Execution role ARN is required.");
   if (!payload.releaseLabel?.trim()) errors.push("Release label is required.");
