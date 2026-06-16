@@ -256,7 +256,7 @@ fn use_local_credential_store() -> bool {
 }
 
 fn should_use_local_credential_store(debug_assertions: bool, channel: Option<&str>) -> bool {
-    debug_assertions || matches!(channel, Some("test" | "mac-debug"))
+    debug_assertions || matches!(channel, Some("development"))
 }
 
 #[cfg(test)]
@@ -272,9 +272,8 @@ mod tests {
     }
 
     #[test]
-    fn test_and_mac_debug_release_channels_use_local_credential_store() {
-        assert!(should_use_local_credential_store(false, Some("test")));
-        assert!(should_use_local_credential_store(false, Some("mac-debug")));
+    fn development_release_channels_use_local_credential_store() {
+        assert!(should_use_local_credential_store(false, Some("development")));
         assert!(!should_use_local_credential_store(false, Some("stable")));
         assert!(should_use_local_credential_store(true, Some("stable")));
     }

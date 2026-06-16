@@ -116,10 +116,10 @@ export function SettingsPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-            {releaseInfo.isMacDebug ? <Badge variant="secondary">Debug</Badge> : null}
+            {releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage named AWS accounts. Debug builds store secrets in a local development store; production builds use the OS keychain.
+            Manage named AWS accounts. Development builds store secrets in a local development store; production builds use the OS keychain.
           </p>
         </div>
         <Tooltip>

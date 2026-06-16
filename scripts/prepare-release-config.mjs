@@ -20,7 +20,7 @@ if (updaterPublicKey) {
   tauriConfig.plugins ??= {};
   tauriConfig.plugins.updater ??= {};
   tauriConfig.plugins.updater.pubkey = updaterPublicKey.trim();
-} else if (process.env.CI === "true" && channel !== "mac-debug" && process.env.REQUIRE_UPDATER_PUBLIC_KEY !== "false") {
+} else if (process.env.CI === "true" && channel === "stable" && process.env.REQUIRE_UPDATER_PUBLIC_KEY !== "false") {
   throw new Error("TAURI_UPDATER_PUBLIC_KEY is required for CI release builds.");
 }
 

@@ -29,17 +29,17 @@ describe("release configuration", () => {
     expect(tauriConfig.plugins?.updater?.windows?.installMode).toBe("passive");
   });
 
-  it("defines a separate macOS debug app identity", () => {
-    const debugConfig = readJson<{
+  it("defines a development app identity without updater artifacts", () => {
+    const developmentConfig = readJson<{
       productName: string;
       identifier: string;
       bundle: { createUpdaterArtifacts?: boolean; macOS?: { signingIdentity?: string } };
-    }>("src-tauri/tauri.debug.conf.json");
+    }>("src-tauri/tauri.development.conf.json");
 
-    expect(debugConfig.productName).toBe("EMR Management Tool Debug");
-    expect(debugConfig.identifier).toBe("com.example.emr-management-tool.debug");
-    expect(debugConfig.bundle.createUpdaterArtifacts).toBe(false);
-    expect(debugConfig.bundle.macOS?.signingIdentity).toBe("-");
+    expect(developmentConfig.productName).toBe("EMR Management Tool Dev");
+    expect(developmentConfig.identifier).toBe("com.example.emr-management-tool.development");
+    expect(developmentConfig.bundle.createUpdaterArtifacts).toBe(false);
+    expect(developmentConfig.bundle.macOS?.signingIdentity).toBe("-");
   });
 
   it("keeps updater permissions scoped through the default Tauri capability", () => {
@@ -48,15 +48,21 @@ describe("release configuration", () => {
     expect(capability.permissions).toContain("updater:default");
   });
 
-  it("adds a release workflow with tag, manual test, and macOS debug triggers", () => {
+  it("adds a release workflow with tag and development triggers", () => {
     const workflow = readText(".github/workflows/release.yml");
 
     expect(workflow).toContain('tags: ["v*.*.*"]');
-    expect(workflow).toContain("mac-debug-latest");
+    expect(workflow).toContain("development");
+    expect(workflow).toContain("dev-v{0}");
+    expect(workflow).toContain("cache-dependency-path: package-lock.json");
+    expect(workflow).toContain("tauri.development.conf.json");
     expect(workflow).toContain("includeUpdaterJson");
     expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(workflow).toContain("WINDOWS_SIGN_COMMAND");
     expect(workflow).toContain("TAURI_UPDATER_PUBLIC_KEY");
+    expect(workflow).not.toContain("mac-debug");
+    expect(workflow).not.toContain("tauri.debug.conf.json");
+    expect(workflow).not.toContain("tauri.macos-test.conf.json");
   });
 
   it("injects the release channel into Rust builds for credential backend selection", () => {
