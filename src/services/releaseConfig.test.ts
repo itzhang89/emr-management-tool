@@ -57,12 +57,12 @@ describe("release configuration", () => {
     expect(workflow).not.toContain("\n      version:");
     expect(workflow).toContain("release_channel:");
     expect(workflow).toContain("credential_store:");
-    expect(workflow).toContain("prepare-manual-release:");
-    expect(workflow).toContain("manual-development-packages:");
-    expect(workflow).toContain("manual-stable-windows-package:");
+    expect(workflow).toContain("prepare-release:");
+    expect(workflow).toContain("detect-signing:");
+    expect(workflow).toContain("dev-packages:");
+    expect(workflow).toContain("stable-packages:");
     expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(workflow).toContain("${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}");
-    expect(workflow).toContain("cache-dependency-path: package-lock.json");
     expect(workflow).toContain("tauri.development.conf.json");
     expect(workflow).toContain("includeUpdaterJson");
     expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY");
@@ -75,22 +75,22 @@ describe("release configuration", () => {
 
   it("runs macOS and Windows development package jobs in parallel", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
+    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
 
-    expect(developmentPackages).toContain("needs: prepare-manual-release");
+    expect(developmentPackages).toContain("needs: [prepare-release, detect-signing]");
     expect(developmentPackages).toContain("fail-fast: false");
-    expect(developmentPackages).toContain("label: macos-amd64");
-    expect(developmentPackages).toContain("label: macos-arm64");
-    expect(developmentPackages).toContain("label: windows-amd64");
+    expect(developmentPackages).toContain("macos-amd64");
+    expect(developmentPackages).toContain("macos-arm64");
+    expect(developmentPackages).toContain("windows-amd64");
   });
 
   it("builds development packages in debug mode like local Tauri dev builds", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
+    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
 
-    expect(developmentPackages).toContain("if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development' }}");
-    expect(developmentPackages).toContain("RELEASE_CHANNEL: ${{ inputs.release_channel }}");
-    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}");
+    expect(developmentPackages).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'");
+    expect(developmentPackages).toContain("RELEASE_CHANNEL:         development");
+    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE:    ${{ needs.detect-signing.outputs.credential_store }}");
     expect(developmentPackages).not.toContain("RELEASE_VERSION:");
     expect(developmentPackages).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(developmentPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
@@ -101,13 +101,14 @@ describe("release configuration", () => {
 
   it("manually analyzes and uploads development artifacts instead of asking tauri-action for updater signatures", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-manual-release");
-    const developmentPackages = workflowJobBlock(workflow, "manual-development-packages");
+    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-release");
+    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
 
-    expect(prepareDevelopmentRelease).toContain("GH_REPO: ${{ github.repository }}");
+    expect(prepareDevelopmentRelease).toContain("GH_REPO:");
+    expect(prepareDevelopmentRelease).toContain("${{ github.repository }}");
 
     expect(developmentPackages).not.toContain("tauri-apps/tauri-action@v0");
-    expect(developmentPackages).toContain("Analyze build artifacts");
+    expect(developmentPackages).toContain("uses: ./.github/actions/prepare-artifacts");
     expect(developmentPackages).toContain("gh release upload");
     expect(developmentPackages).toContain("macos-amd64");
     expect(developmentPackages).toContain("macos-arm64");
@@ -116,14 +117,44 @@ describe("release configuration", () => {
 
   it("builds stable manual packages without requiring a version input", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const stablePackage = workflowJobBlock(workflow, "manual-stable-windows-package");
+    const stablePackage = workflowJobBlock(workflow, "stable-packages");
 
-    expect(stablePackage).toContain("if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' }}");
-    expect(stablePackage).toContain("RELEASE_CHANNEL: ${{ inputs.release_channel }}");
-    expect(stablePackage).toContain("EMR_CREDENTIAL_STORE: ${{ inputs.credential_store }}");
+    expect(stablePackage).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable'");
+    expect(stablePackage).toContain("RELEASE_CHANNEL:            stable");
+    expect(stablePackage).toContain("EMR_CREDENTIAL_STORE:       ${{ needs.detect-signing.outputs.credential_store }}");
     expect(stablePackage).not.toContain("RELEASE_VERSION:");
-    expect(stablePackage).toContain("npm run tauri -- build --config src-tauri/tauri.conf.json");
+    expect(stablePackage).toContain("--target x86_64-apple-darwin --config src-tauri/tauri.conf.json");
+    expect(stablePackage).toContain("--target aarch64-apple-darwin --config src-tauri/tauri.conf.json");
+    expect(stablePackage).toContain("--config src-tauri/tauri.conf.json");
+    expect(stablePackage).toContain("stable-macos-amd64");
+    expect(stablePackage).toContain("stable-macos-arm64");
     expect(stablePackage).toContain("stable-windows-amd64");
+  });
+
+  it("detects Apple signing configuration and forces local credentials when certificates are missing", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const detectSigning = workflowJobBlock(workflow, "detect-signing");
+
+    expect(detectSigning).toContain("APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}");
+    expect(detectSigning).toContain("has_apple_certs=true");
+    expect(detectSigning).toContain("has_apple_certs=false");
+    expect(detectSigning).toContain("credential_store=local");
+  });
+
+  it("uses local composite actions for common setup and artifact staging", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const setupAction = readText(".github/actions/setup-tauri/action.yml");
+    const artifactsAction = readText(".github/actions/prepare-artifacts/action.yml");
+
+    expect(workflow).toContain("uses: ./.github/actions/setup-tauri");
+    expect(workflow).toContain("uses: ./.github/actions/prepare-artifacts");
+    expect(workflow).not.toContain("scripts/stage-artifacts.py");
+    expect(setupAction).toContain("actions/setup-node@v4");
+    expect(setupAction).toContain("cache-dependency-path: package-lock.json");
+    expect(setupAction).toContain("dtolnay/rust-toolchain@stable");
+    expect(setupAction).toContain("npm ci");
+    expect(artifactsAction).toContain("ARTIFACT_PATTERNS");
+    expect(artifactsAction).toContain("release-artifacts");
   });
 
   it("injects the release channel into Rust builds for credential backend selection", () => {
@@ -140,8 +171,8 @@ describe("release configuration", () => {
     const workflow = readText(".github/workflows/release.yml");
     const windowsRelease = workflowJobBlock(workflow, "windows-release");
 
-    expect(windowsRelease).toContain("RELEASE_CHANNEL: stable");
-    expect(windowsRelease).toContain("EMR_CREDENTIAL_STORE: ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}");
+    expect(windowsRelease).toContain("RELEASE_CHANNEL:               stable");
+    expect(windowsRelease).toContain("EMR_CREDENTIAL_STORE:          ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}");
   });
 
   it("does not fail stable CI builds when updater keys are not configured", () => {
