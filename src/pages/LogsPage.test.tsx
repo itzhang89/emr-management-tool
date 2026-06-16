@@ -229,11 +229,11 @@ describe("LogsPage", () => {
       bucket: "logs-bucket",
       prefix: "logs/vc-1/jobs/job-running/"
     });
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["S3 Archive", "CloudWatch Live"]);
-    expect(screen.getByRole("tab", { name: /S3 Archive/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["S3", "CloudWatch"]);
+    expect(screen.getByRole("tab", { name: /^S3$/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("s3://logs-bucket/logs/vc-1/jobs/job-running/")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     expect(screen.getByText("/emr-containers/jobs")).toBeInTheDocument();
     expect(screen.getByText("20260612/vc-1/jobs/job-running/")).toBeInTheDocument();
   });
@@ -274,8 +274,8 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    expect(screen.getByRole("tab", { name: /S3 Archive/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: /CloudWatch Live/i })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: /^S3$/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^CloudWatch$/i })).toBeDisabled();
     expect(useS3JobLogObjects).toHaveBeenCalledWith({
       bucket: "logs-bucket",
       prefix: "logs/vc-1/jobs/job-running/"
@@ -297,7 +297,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    expect(screen.getByRole("tab", { name: /CloudWatch Live/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^CloudWatch$/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("/aws/emr-containers/jobs/job-running")).toBeInTheDocument();
     expect(screen.getByText("job-running")).toBeInTheDocument();
   });
@@ -307,7 +307,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
     await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
@@ -335,7 +335,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
     await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
@@ -387,7 +387,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
 
     expect(screen.getByTestId("log-content").textContent).toBe("hello cloudwatch\n  indented cloudwatch\n");

@@ -19,7 +19,6 @@ const pageSize = 10;
 const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
 const jobHistoryRefreshIntervalMs = 5_000;
 const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
-const jobIdRequiredForAwsLookupMessage = "For Find in AWS，use the Job ID rather then Job Name";
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
@@ -27,32 +26,30 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
   const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
-  const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
   const [remoteLookupPending, setRemoteLookupPending] = useState(false);
   const [remoteLookupError, setRemoteLookupError] = useState<string>();
+  const submittedKeyword = submittedSearch.trim() || undefined;
+  const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
   const allJobs = useMemo(() => {
     const localJobs = jobs.data ?? [];
     if (!remoteJob || remoteJob.virtualClusterId !== effectiveVirtualClusterId) return localJobs;
+    if (!jobMatchesKeyword(remoteJob, submittedKeyword)) return localJobs;
     if (localJobs.some((job) => job.id === remoteJob.id)) return localJobs;
     return [remoteJob, ...localJobs];
-  }, [effectiveVirtualClusterId, jobs.data, remoteJob]);
-  const filteredJobs = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    if (!keyword) return allJobs;
-    return allJobs.filter((job) =>
-      [job.name, job.id, job.state].some((value) => value.toLowerCase().includes(keyword))
-    );
-  }, [allJobs, search]);
+  }, [effectiveVirtualClusterId, jobs.data, remoteJob, submittedKeyword]);
+  const filteredJobs = allJobs;
   const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
   const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
   const selectedJob = filteredJobs.find((job) => job.id === selectedJobId);
-  const searchedJobId = search.trim();
+  const searchedJobId = submittedSearch.trim();
   const exactLocalMatch = searchedJobId ? allJobs.find((job) => job.id === searchedJobId) : undefined;
+  const canFindInAws = Boolean(searchedJobId && filteredJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId));
 
   const findJobInAws = async () => {
     if (!searchedJobId) return;
@@ -65,18 +62,14 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
       toast.error("Select a virtual cluster before looking up a job in AWS.");
       return;
     }
-    if (!isLikelyEmrJobRunId(searchedJobId)) {
-      setRemoteLookupError(jobIdRequiredForAwsLookupMessage);
-      toast.error(jobIdRequiredForAwsLookupMessage);
-      return;
-    }
 
     setRemoteLookupPending(true);
     setRemoteLookupError(undefined);
     try {
       const job = await emrService.describeJobRun(searchedJobId, effectiveVirtualClusterId);
       setRemoteJob(job);
-      setSearch(job.id);
+      setSearchInput(job.id);
+      setSubmittedSearch(job.id);
       setSelectedJobId(job.id);
       setPage(1);
       void jobs.refetch?.();
@@ -88,6 +81,17 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
     } finally {
       setRemoteLookupPending(false);
     }
+  };
+
+  const submitLocalSearch = () => {
+    const trimmedSearch = searchInput.trim();
+    setRemoteLookupError(undefined);
+    setPage(1);
+    if (trimmedSearch === submittedSearch.trim() && canFindInAws) {
+      void findJobInAws();
+      return;
+    }
+    setSubmittedSearch(trimmedSearch);
   };
 
   useEffect(() => {
@@ -132,16 +136,15 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               <Input
                 className="pl-9"
                 placeholder="Search jobs by name, id, state, or keyword"
-                value={search}
+                value={searchInput}
                 onChange={(event) => {
-                  setSearch(event.target.value);
+                  setSearchInput(event.target.value);
                   setRemoteLookupError(undefined);
-                  setPage(1);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    void findJobInAws();
+                    submitLocalSearch();
                   }
                 }}
               />
@@ -245,7 +248,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                   <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
                       <span>No jobs match the current filters.</span>
-                      {searchedJobId ? (
+                      {canFindInAws ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -480,6 +483,12 @@ function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterI
 function isLikelyEmrJobRunId(value: string) {
   const trimmed = value.trim();
   return /^job-[A-Za-z0-9-]+$/.test(trimmed) || /^[a-z0-9]{16,64}$/.test(trimmed);
+}
+
+function jobMatchesKeyword(job: JobRunSummary, keyword?: string) {
+  const normalized = keyword?.trim().toLowerCase();
+  if (!normalized) return true;
+  return [job.name, job.id, job.state, JSON.stringify(job)].some((value) => value.toLowerCase().includes(normalized));
 }
 
 function readAutoRefreshPreference() {

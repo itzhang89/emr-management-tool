@@ -217,18 +217,29 @@ pub async fn list_job_history(
     pool: &SqlitePool,
     account_id: Option<&str>,
     virtual_cluster_id: Option<&str>,
+    keyword: Option<&str>,
 ) -> AppResult<Vec<JobRunSummary>> {
     let cutoff = job_history_cutoff();
+    let keyword = keyword.map(str::trim).filter(|value| !value.is_empty());
+    let keyword_pattern = keyword.map(|value| format!("%{}%", value.to_lowercase()));
     let rows = sqlx::query(
         "select payload from job_history
          where (?1 is null or account_id = ?1)
            and (?2 is null or virtual_cluster_id = ?2)
            and created_at >= ?3
+           and (
+             ?4 is null
+             or lower(id) like ?4
+             or lower(json_extract(payload, '$.name')) like ?4
+             or lower(json_extract(payload, '$.state')) like ?4
+             or lower(payload) like ?4
+           )
          order by created_at desc",
     )
     .bind(account_id)
     .bind(virtual_cluster_id)
     .bind(cutoff)
+    .bind(keyword_pattern)
     .fetch_all(pool)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
@@ -480,4 +491,63 @@ async fn migrate_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> 
 
 fn from_payload<T: serde::de::DeserializeOwned>(payload: String) -> AppResult<T> {
     serde_json::from_str(&payload).map_err(|error| AppError::storage(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{list_job_history, migrate, upsert_job_history};
+    use crate::models::JobRunSummary;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn list_job_history_filters_by_keyword_in_cached_payload() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+        migrate(&pool).await.expect("migrate schema");
+
+        upsert_job_history(&pool, &job("job-running", "daily-etl", "RUNNING", "acct-1", "vc-1"))
+            .await
+            .expect("insert running job");
+        upsert_job_history(&pool, &job("job-failed", "batch-etl", "FAILED", "acct-1", "vc-1"))
+            .await
+            .expect("insert failed job");
+        upsert_job_history(&pool, &job("job-other", "failed-other-cluster", "FAILED", "acct-1", "vc-2"))
+            .await
+            .expect("insert other cluster job");
+
+        let by_state = list_job_history(&pool, Some("acct-1"), Some("vc-1"), Some("failed"))
+            .await
+            .expect("search failed jobs");
+        let by_name = list_job_history(&pool, Some("acct-1"), Some("vc-1"), Some("daily"))
+            .await
+            .expect("search by name");
+        let by_id = list_job_history(&pool, Some("acct-1"), Some("vc-1"), Some("job-running"))
+            .await
+            .expect("search by id");
+
+        assert_eq!(by_state.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-failed"]);
+        assert_eq!(by_name.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-running"]);
+        assert_eq!(by_id.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-running"]);
+    }
+
+    fn job(id: &str, name: &str, state: &str, account_id: &str, virtual_cluster_id: &str) -> JobRunSummary {
+        JobRunSummary {
+            id: id.to_string(),
+            name: name.to_string(),
+            state: state.to_string(),
+            account_id: Some(account_id.to_string()),
+            region: Some("us-east-1".to_string()),
+            virtual_cluster_id: virtual_cluster_id.to_string(),
+            virtual_cluster_name: None,
+            created_at: "2026-06-10T00:00:00Z".to_string(),
+            started_at: None,
+            finished_at: None,
+            duration_seconds: None,
+            source_request: None,
+            describe_details: None,
+        }
+    }
 }

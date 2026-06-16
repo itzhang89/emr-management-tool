@@ -166,6 +166,7 @@ pub struct JobRunRequest {
     pub account_id: Option<String>,
     pub id: Option<String>,
     pub virtual_cluster_id: Option<String>,
+    pub keyword: Option<String>,
     pub next_token: Option<String>,
     pub max_results: Option<i32>,
 }
