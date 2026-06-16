@@ -115,7 +115,7 @@ export function SubmitJobPage() {
       toast.success(`Submitted ${job.name}`);
       setCloneRequest(undefined);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to submit job.");
+      toast.error(errorMessage(error, "Failed to submit job."));
     }
   };
 
@@ -322,4 +322,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function defaultResources(): SparkResourceConfig {
   return { driverCores: 1, driverMemory: "1G", executorCores: 1, executorMemory: "1G", executorInstances: 1 };
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return fallback;
 }

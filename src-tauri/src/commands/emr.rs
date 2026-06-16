@@ -13,6 +13,8 @@ use chrono::Utc;
 use tauri::AppHandle;
 
 const MAX_CONFIGURATION_DEPTH: usize = 32;
+const EMR_JOB_NAME_MESSAGE: &str =
+    "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
 
 #[tauri::command]
 pub async fn list_virtual_clusters(
@@ -296,6 +298,17 @@ fn build_job_driver(request: &StartJobRunRequest) -> AppResult<JobDriver> {
 }
 
 fn validate_start_job_request(request: &StartJobRunRequest) -> AppResult<()> {
+    if request.name.trim().is_empty() {
+        return Err(AppError::validation("Job name is required."));
+    }
+    if request.name.len() > 64 {
+        return Err(AppError::validation(
+            "Job name must be 64 characters or fewer.",
+        ));
+    }
+    if !is_valid_emr_job_name(&request.name) {
+        return Err(AppError::validation(EMR_JOB_NAME_MESSAGE));
+    }
     let entry_point = request
         .job_driver
         .spark_submit_job_driver
@@ -317,6 +330,12 @@ fn validate_start_job_request(request: &StartJobRunRequest) -> AppResult<()> {
         return Err(AppError::validation("Execution role ARN is required."));
     }
     Ok(())
+}
+
+fn is_valid_emr_job_name(name: &str) -> bool {
+    name.chars().all(|value| {
+        value.is_ascii_alphanumeric() || matches!(value, '.' | '-' | '_' | '/' | '#')
+    })
 }
 
 fn build_configuration_overrides(
@@ -605,7 +624,11 @@ fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> 
 
 #[cfg(test)]
 mod tests {
-    use super::map_job_run;
+    use super::{map_job_run, validate_start_job_request};
+    use crate::models::{
+        JarApplicationConfig, JobDriverRequest, SparkResourceConfig, SparkSubmitJobDriverRequest,
+        StartJobRunRequest,
+    };
     use aws_sdk_emrcontainers::types::{
         CloudWatchMonitoringConfiguration, ConfigurationOverrides, JobRun, JobRunState,
         MonitoringConfiguration, RetryPolicyConfiguration, RetryPolicyExecution,
@@ -773,6 +796,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_job_names_that_emr_start_job_run_will_reject() {
+        let mut request = valid_start_job_request();
+        request.name = "bigdata etl-jinghui".to_string();
+
+        let error = validate_start_job_request(&request).expect_err("job name is invalid");
+
+        assert_eq!(
+            error.message,
+            "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores."
+        );
+    }
+
+    #[test]
     fn limits_deep_configuration_override_nesting() {
         let input = nested_configuration_json(80);
         let overrides = serde_json::json!({
@@ -812,5 +848,37 @@ mod tests {
             .and_then(|items| items.first());
 
         1 + nested.map(configuration_depth).unwrap_or(0)
+    }
+
+    fn valid_start_job_request() -> StartJobRunRequest {
+        StartJobRunRequest {
+            account_id: None,
+            name: "bigdata-etl-jinghui".to_string(),
+            virtual_cluster_id: "li36cjq5163l1bh8ms7d6kr04".to_string(),
+            execution_role_arn: "arn:aws:iam::123456789012:role/EMR".to_string(),
+            release_label: "emr-7.2.0-latest".to_string(),
+            application: JarApplicationConfig {
+                r#type: "jar".to_string(),
+                jar_path: "s3://bucket/app.jar".to_string(),
+                main_class: "com.example.Main".to_string(),
+            },
+            arguments: Vec::new(),
+            resources: SparkResourceConfig {
+                driver_cores: 1,
+                driver_memory: "1G".to_string(),
+                executor_cores: 1,
+                executor_memory: "1G".to_string(),
+                executor_instances: 1,
+            },
+            spark_config: Default::default(),
+            job_driver: JobDriverRequest {
+                spark_submit_job_driver: SparkSubmitJobDriverRequest {
+                    entry_point: "s3://bucket/app.jar".to_string(),
+                    entry_point_arguments: Vec::new(),
+                    spark_submit_parameters: "--class com.example.Main".to_string(),
+                },
+            },
+            configuration_overrides: None,
+        }
     }
 }
