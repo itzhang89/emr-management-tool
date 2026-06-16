@@ -47,7 +47,6 @@ jobs:
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
-      RELEASE_VERSION: ${{ inputs.version }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
@@ -119,7 +118,6 @@ jobs:
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
-      RELEASE_VERSION: ${{ inputs.version }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
@@ -191,7 +189,6 @@ jobs:
     runs-on: windows-latest
     env:
       RELEASE_CHANNEL: development
-      RELEASE_VERSION: ${{ inputs.version }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: windows
