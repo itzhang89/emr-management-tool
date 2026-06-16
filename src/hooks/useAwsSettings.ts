@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AwsAccountCredentialsInput, AwsCredentialsInput, ImportAwsCliProfileRequest } from "@/types/domain";
+import type { AwsAccountCredentialsInput, AwsAccountSummary, AwsCredentialsInput, ImportAwsCliProfileRequest } from "@/types/domain";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -62,7 +62,14 @@ export function useSetActiveAwsAccount() {
 
   return useMutation({
     mutationFn: (accountId: string) => awsCredentialsService.setActiveAccount(accountId),
-    onSuccess: () => {
+    onSuccess: (activeAccount) => {
+      queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
+        if (!accounts) return [activeAccount];
+        return accounts.map((account) => ({
+          ...account,
+          isActive: account.id === activeAccount.id
+        }));
+      });
       resetAccountScopedSession();
       void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
       void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });

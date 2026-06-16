@@ -19,7 +19,7 @@ function wrapper(client: QueryClient) {
 
 describe("useAwsSettings account scoping helpers", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     useSessionStore.getState().resetAccountScopedSession();
   });
 
@@ -71,5 +71,47 @@ describe("useAwsSettings account scoping helpers", () => {
     expect(useSessionStore.getState().selectedVirtualClusterId).toBeUndefined();
     expect(useSessionStore.getState().selectedJobId).toBeUndefined();
     expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
+  });
+
+  it("updates the cached active account immediately after activating another account", async () => {
+    vi.mocked(awsCredentialsService.listAccounts).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(awsCredentialsService.setActiveAccount).mockResolvedValue({
+      id: "acct-b",
+      name: "B",
+      region: "us-west-2",
+      accessKeyIdMasked: "AKIB****",
+      isActive: true
+    });
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["aws-accounts"], [
+      {
+        id: "acct-a",
+        name: "A",
+        region: "us-east-1",
+        accessKeyIdMasked: "AKIA****",
+        isActive: true
+      },
+      {
+        id: "acct-b",
+        name: "B",
+        region: "us-west-2",
+        accessKeyIdMasked: "AKIB****",
+        isActive: false
+      }
+    ]);
+
+    const { result } = renderHook(
+      () => ({
+        active: useActiveAwsAccount(),
+        setActive: useSetActiveAwsAccount()
+      }),
+      { wrapper: wrapper(queryClient) }
+    );
+
+    expect(result.current.active.data?.id).toBe("acct-a");
+    result.current.setActive.mutate("acct-b");
+
+    await waitFor(() => expect(result.current.setActive.isSuccess).toBe(true));
+    expect(result.current.active.data?.id).toBe("acct-b");
   });
 });
