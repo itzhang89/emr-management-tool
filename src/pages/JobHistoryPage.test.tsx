@@ -270,6 +270,32 @@ describe("JobHistoryPage", () => {
     expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
   });
 
+  it("keeps search local-first and does not look up AWS while local rows match", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "running-etl{Enter}");
+
+    expect(screen.getByRole("row", { name: /running-etl RUNNING/i })).toBeInTheDocument();
+    expect(screen.queryByText("No jobs match the current filters.")).not.toBeInTheDocument();
+    expect(describeJobRun).not.toHaveBeenCalled();
+  });
+
+  it("asks for a job id instead of calling AWS when secondary lookup input looks like a job name", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "jinghui");
+    const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
+    await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
+
+    expect(describeJobRun).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith("如果想 Find in AWS，请输入 Job ID，而不是 Job Name。");
+    expect(screen.getByText("如果想 Find in AWS，请输入 Job ID，而不是 Job Name。")).toBeInTheDocument();
+  });
+
   it("shows a friendly message when AWS cannot find the searched job id", async () => {
     const user = userEvent.setup();
     describeJobRun.mockRejectedValue({
