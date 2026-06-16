@@ -162,7 +162,13 @@ function VariableField({
 
   return (
     <Field label={label} description={definition.description}>
-      <Input value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
+      <Input
+        value={String(value ?? "")}
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </Field>
   );
 }
