@@ -121,7 +121,11 @@ describe("LogsPage", () => {
     useJobLogs.mockReturnValue({
       data: {
         jobId: "job-running",
-        entries: [{ timestamp: "2026-06-10T00:00:00Z", level: "info", message: "hello cloudwatch", streamName: "cw" }]
+        entries: [
+          { timestamp: "2026-06-10T00:00:00Z", level: "info", message: "hello cloudwatch", streamName: "cw" },
+          { timestamp: "2026-06-10T00:00:01Z", level: "warn", message: "  indented cloudwatch", streamName: "cw" },
+          { timestamp: "2026-06-10T00:00:02Z", level: "info", message: "", streamName: "cw" }
+        ]
       },
       isLoading: false,
       error: null
@@ -147,7 +151,7 @@ describe("LogsPage", () => {
       error: null
     });
     useS3JobLogObject.mockReturnValue({
-      data: { bucket: "logs-bucket", key: "stdout.gz", content: "hello s3\n" },
+      data: { bucket: "logs-bucket", key: "stdout.gz", content: "hello s3\nneedle one\nNeedle two\n" },
       isLoading: false,
       error: null
     });
@@ -207,7 +211,7 @@ describe("LogsPage", () => {
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("current-vc");
   });
 
-  it("resolves destinations from describe, defaults to CloudWatch, and keeps S3 as a tab", async () => {
+  it("resolves destinations from describe, defaults to S3, and keeps CloudWatch as a tab", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
@@ -221,12 +225,17 @@ describe("LogsPage", () => {
       },
       false
     );
+    expect(useS3JobLogObjects).toHaveBeenCalledWith({
+      bucket: "logs-bucket",
+      prefix: "logs/vc-1/jobs/job-running/"
+    });
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["S3 Archive", "CloudWatch Live"]);
+    expect(screen.getByRole("tab", { name: /S3 Archive/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("s3://logs-bucket/logs/vc-1/jobs/job-running/")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
     expect(screen.getByText("/emr-containers/jobs")).toBeInTheDocument();
     expect(screen.getByText("20260612/vc-1/jobs/job-running/")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /CloudWatch Live/i })).toHaveAttribute("aria-selected", "true");
-
-    await user.click(screen.getByRole("tab", { name: /S3 Archive/i }));
-    expect(screen.getByText("s3://logs-bucket/logs/vc-1/jobs/job-running/")).toBeInTheDocument();
   });
 
   it("removes low-value controls and manual CloudWatch inputs", () => {
@@ -293,24 +302,25 @@ describe("LogsPage", () => {
     expect(screen.getByText("job-running")).toBeInTheDocument();
   });
 
-  it("downloads the right-clicked log item", async () => {
+  it("downloads the selected CloudWatch log from the title icon", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("button", { name: /stdout/i }));
+    await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
     expect(saveTextFile).toHaveBeenCalledWith(
       "job-running-driver stdout.log",
       [
         "20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout",
-        "2026-06-10T00:00:00Z INFO downloaded 20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout"
+        "downloaded 20260612/vc-1/jobs/job-running/containers/spark-app/driver/stdout"
       ].join("\n")
     );
   });
 
-  it("downloads all CloudWatch pages for the right-clicked log item", async () => {
+  it("downloads all CloudWatch pages for the selected log item", async () => {
     const user = userEvent.setup();
     getJobLogs
       .mockResolvedValueOnce({
@@ -325,8 +335,9 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("button", { name: /stdout/i }));
+    await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
     expect(getJobLogs).toHaveBeenNthCalledWith(
       2,
@@ -344,33 +355,21 @@ describe("LogsPage", () => {
     );
   });
 
-  it("downloads all logs under the right-clicked log group", async () => {
-    const user = userEvent.setup();
-
+  it("does not open a right-click download menu for log items or groups", () => {
     renderLogsPage();
 
+    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
     fireEvent.contextMenu(screen.getByText("driver"));
-    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
 
-    expect(getJobLogs).toHaveBeenCalledTimes(2);
-    expect(saveTextFile).toHaveBeenCalledWith(
-      "job-running-driver.log",
-      expect.stringContaining("driver/stdout")
-    );
-    expect(saveTextFile).toHaveBeenCalledWith(
-      "job-running-driver.log",
-      expect.stringContaining("driver/stderr")
-    );
+    expect(screen.queryByRole("menuitem", { name: /Download logs/i })).not.toBeInTheDocument();
   });
 
-  it("downloads the right-clicked S3 log object", async () => {
+  it("downloads the selected S3 log object from the title icon", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
 
-    await user.click(screen.getByRole("tab", { name: /S3 Archive/i }));
-    fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
-    await user.click(screen.getByRole("menuitem", { name: /Download logs/i }));
+    await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
     expect(getJobLogObject).toHaveBeenCalledWith(
       "acct-test",
@@ -381,6 +380,39 @@ describe("LogsPage", () => {
       "job-running-driver stdout.log",
       expect.stringContaining("downloaded logs/vc-1/jobs/job-running")
     );
+  });
+
+  it("renders CloudWatch messages without event time or level while preserving message whitespace", async () => {
+    const user = userEvent.setup();
+
+    renderLogsPage();
+
+    await user.click(screen.getByRole("tab", { name: /CloudWatch Live/i }));
+    await user.click(screen.getByRole("button", { name: /stdout/i }));
+
+    expect(screen.getByTestId("log-content").textContent).toBe("hello cloudwatch\n  indented cloudwatch\n");
+  });
+
+  it("opens log search with command+f and supports regex highlights with next and previous navigation", async () => {
+    const user = userEvent.setup();
+
+    renderLogsPage();
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    const searchInput = screen.getByPlaceholderText(/Find in this log/i);
+    expect(searchInput).toHaveFocus();
+
+    await user.click(screen.getByRole("checkbox", { name: /Regex/i }));
+    await user.type(searchInput, "needle\\s+(one|two)");
+
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getAllByTestId("log-search-match")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: /Next match/i }));
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Previous match/i }));
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
   });
 });
 
