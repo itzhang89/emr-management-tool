@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAwsAccounts,
   useAwsCliProfiles,
@@ -100,54 +101,42 @@ export function SettingsPage() {
       setInstallingUpdate(false);
     }
   };
+  const updateButtonLabel = availableUpdate
+    ? installingUpdate
+      ? "Installing..."
+      : `Install ${availableUpdate.version}`
+    : checkingUpdate
+      ? "Checking..."
+      : "Check for Updates";
+  const updateTooltip = `${releaseInfo.channelLabel} · ${releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}`;
 
   return (
     <div className="flex max-w-5xl flex-col gap-6">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-          {releaseInfo.isMacDebug ? <Badge variant="secondary">Debug</Badge> : null}
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Manage named AWS accounts. Debug builds store secrets in a local development store; production builds use the OS keychain.
-        </p>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Application Updates</CardTitle>
-          <CardDescription>
-            Stable automatic updates are currently enabled for Windows release builds. macOS builds are manual until signing and
-            notarization are available.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
-            <div className="min-w-0">
-              <p className="font-medium">Release channel</p>
-              <p className="text-sm text-muted-foreground">
-                {releaseInfo.channelLabel} · {releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}
-              </p>
-            </div>
-            <Button type="button" variant="outline" disabled={checkingUpdate} onClick={checkForUpdates}>
-              <RefreshCw data-icon="inline-start" />
-              {checkingUpdate ? "Checking..." : "Check for Updates"}
-            </Button>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+            {releaseInfo.isMacDebug ? <Badge variant="secondary">Debug</Badge> : null}
           </div>
-          {availableUpdate ? (
-            <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
-              <div className="min-w-0">
-                <p className="font-medium">Version {availableUpdate.version} is available.</p>
-                {availableUpdate.notes ? <p className="text-sm text-muted-foreground">{availableUpdate.notes}</p> : null}
-              </div>
-              <Button type="button" disabled={installingUpdate} onClick={installUpdate}>
-                <Download data-icon="inline-start" />
-                {installingUpdate ? "Installing..." : `Install ${availableUpdate.version}`}
-              </Button>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          <p className="text-sm text-muted-foreground">
+            Manage named AWS accounts. Debug builds store secrets in a local development store; production builds use the OS keychain.
+          </p>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={checkingUpdate || installingUpdate}
+              onClick={availableUpdate ? installUpdate : checkForUpdates}
+            >
+              {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+              {updateButtonLabel}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{updateTooltip}</TooltipContent>
+        </Tooltip>
+      </div>
 
       <Card>
         <CardHeader>
