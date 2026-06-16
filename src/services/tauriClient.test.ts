@@ -73,6 +73,17 @@ describe("createTauriClient", () => {
     });
   });
 
+  it("passes job history keyword searches through the invoke boundary", async () => {
+    const invoke = vi.fn().mockResolvedValue([]);
+    const client = createTauriClient(invoke);
+
+    await client.listJobRuns({ accountId: "acct-test", virtualClusterId: "vc-1", keyword: "failed" });
+
+    expect(invoke).toHaveBeenCalledWith("list_job_runs", {
+      request: { accountId: "acct-test", virtualClusterId: "vc-1", keyword: "failed" }
+    });
+  });
+
   it("loads a read-only S3 job log object without using the editable text object command", async () => {
     const invoke = vi.fn().mockResolvedValue({ bucket: "logs-bucket", key: "stderr.gz", content: "hello log\n" });
     const client = createTauriClient(invoke);

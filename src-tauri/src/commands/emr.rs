@@ -67,9 +67,23 @@ pub async fn list_job_runs(
     )
     .await?;
     let pool = repository::pool().await?;
+    let keyword = request
+        .keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let Some(virtual_cluster_id) = request.virtual_cluster_id else {
-        return repository::list_job_history(&pool, Some(&runtime.account.id), None).await;
+        return repository::list_job_history(&pool, Some(&runtime.account.id), None, keyword).await;
     };
+    if keyword.is_some() {
+        return repository::list_job_history(
+            &pool,
+            Some(&runtime.account.id),
+            Some(&virtual_cluster_id),
+            keyword,
+        )
+        .await;
+    }
 
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
     let mut operation = client
@@ -101,7 +115,8 @@ pub async fn list_job_runs(
     }
     repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
 
-    Ok(jobs)
+    repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id), None)
+        .await
 }
 
 #[tauri::command]
@@ -114,7 +129,7 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
 
     let pool = repository::pool().await?;
     let Some(virtual_cluster_id) = request.virtual_cluster_id else {
-        return repository::list_job_history(&pool, Some(&runtime.account.id), None)
+        return repository::list_job_history(&pool, Some(&runtime.account.id), None, None)
             .await?
             .into_iter()
             .find(|job| job.id == id)
@@ -140,7 +155,7 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
     let region = runtime.account.region.clone();
     let mut job = map_job_run(job_run, Some(account_id.clone()), Some(region));
     if let Some(existing) =
-        repository::list_job_history(&pool, Some(&account_id), Some(&virtual_cluster_id))
+        repository::list_job_history(&pool, Some(&account_id), Some(&virtual_cluster_id), None)
             .await?
             .into_iter()
             .find(|existing| existing.id == id)
@@ -236,7 +251,7 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
 
     let pool = repository::pool().await?;
     let mut job =
-        repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id))
+        repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id), None)
             .await?
             .into_iter()
             .find(|job| job.id == id)

@@ -77,14 +77,14 @@ describe("JobHistoryPage", () => {
     describeJobRun.mockResolvedValue(jobs[0]);
     saveTextFile.mockResolvedValue("job-running-description.json");
     useJobRuns.mockClear();
-    useJobRuns.mockReturnValue({
-      data: jobs,
+    useJobRuns.mockImplementation((_virtualClusterId?: string, _autoRefresh?: boolean, keyword?: string) => ({
+      data: filterJobs(jobs, keyword),
       isLoading: false,
       isFetching: false,
       error: null,
       dataUpdatedAt: Date.now(),
       refetch: vi.fn()
-    });
+    }));
     useVirtualClusters.mockReturnValue({
       data: {
         clusters: [{ id: "vc-1", name: "analytics", state: "RUNNING", namespace: "emr", eksClusterName: "eks", createdAt: "2026-06-10T00:00:00Z" }]
@@ -101,7 +101,7 @@ describe("JobHistoryPage", () => {
     });
   });
 
-  it("shows production actions, hides virtual cluster column, filters, and paginates", async () => {
+  it("shows production actions, hides virtual cluster column, searches after submit, and paginates", async () => {
     const user = userEvent.setup();
 
     renderJobHistoryPage();
@@ -118,10 +118,16 @@ describe("JobHistoryPage", () => {
     expect(within(failedRow).getByRole("button", { name: /Rerun/i })).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText(/search jobs/i), "failed");
+    expect(screen.getByText("running-etl")).toBeInTheDocument();
+
+    await user.keyboard("{Enter}");
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true, "failed");
     expect(screen.queryByText("running-etl")).not.toBeInTheDocument();
     expect(screen.getByText("failed-etl")).toBeInTheDocument();
 
     await user.clear(screen.getByPlaceholderText(/search jobs/i));
+    await user.keyboard("{Enter}");
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true, undefined);
     expect(screen.getByText(/Page 1/i)).toBeInTheDocument();
     expect(screen.queryByText("paged-job-12")).not.toBeInTheDocument();
 
@@ -221,13 +227,13 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true);
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true, undefined);
     expect(screen.getByText("5s")).toBeInTheDocument();
     expect(screen.queryByText("Auto refresh (5s)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false);
+    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false, undefined);
     expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("false");
   });
 
@@ -258,7 +264,7 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-remote-only");
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-remote-only{Enter}");
     expect(screen.getByText("No jobs match the current filters.")).toBeInTheDocument();
     const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
     expect(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i })).toBeInTheDocument();
@@ -268,6 +274,26 @@ describe("JobHistoryPage", () => {
     expect(describeJobRun).toHaveBeenCalledWith("job-remote-only", "vc-1");
     expect(screen.getByRole("row", { name: /remote-only-etl RUNNING/i })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+  });
+
+  it("uses Enter to look up a submitted job id in AWS after local cache search is empty", async () => {
+    const user = userEvent.setup();
+    describeJobRun.mockResolvedValue({
+      id: "job-remote-only",
+      name: "remote-only-etl",
+      state: "RUNNING",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:20:00Z"
+    });
+
+    renderJobHistoryPage();
+
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-remote-only{Enter}");
+    expect(describeJobRun).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+
+    expect(describeJobRun).toHaveBeenCalledWith("job-remote-only", "vc-1");
+    expect(screen.getByRole("row", { name: /remote-only-etl RUNNING/i })).toBeInTheDocument();
   });
 
   it("keeps search local-first and does not look up AWS while local rows match", async () => {
@@ -282,18 +308,17 @@ describe("JobHistoryPage", () => {
     expect(describeJobRun).not.toHaveBeenCalled();
   });
 
-  it("asks for a job id instead of calling AWS when secondary lookup input looks like a job name", async () => {
+  it("only shows Find in AWS when the submitted empty search looks like a job id", async () => {
     const user = userEvent.setup();
 
     renderJobHistoryPage();
 
-    await user.type(screen.getByPlaceholderText(/search jobs/i), "jinghui");
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "jinghui{Enter}");
     const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
-    await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
 
+    expect(within(emptyResultRow).queryByRole("button", { name: /Find in AWS/i })).not.toBeInTheDocument();
     expect(describeJobRun).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith("For Find in AWS，use the Job ID rather then Job Name");
-    expect(screen.getByText("For Find in AWS，use the Job ID rather then Job Name")).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("shows a friendly message when AWS cannot find the searched job id", async () => {
@@ -307,7 +332,7 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-missing");
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "job-missing{Enter}");
     const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
     await user.click(within(emptyResultRow).getByRole("button", { name: /Find in AWS/i }));
 
@@ -378,4 +403,12 @@ function makeJobs(): JobRunSummary[] {
       createdAt: `2026-06-10T00:${String(index + 2).padStart(2, "0")}:00Z`
     }))
   ];
+}
+
+function filterJobs(sourceJobs: JobRunSummary[], keyword?: string) {
+  const normalized = keyword?.trim().toLowerCase();
+  if (!normalized) return sourceJobs;
+  return sourceJobs.filter((job) =>
+    [job.name, job.id, job.state, JSON.stringify(job)].some((value) => value.toLowerCase().includes(normalized))
+  );
 }
