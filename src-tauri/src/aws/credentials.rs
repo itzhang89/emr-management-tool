@@ -11,7 +11,6 @@ const KEYCHAIN_SERVICE_NAME: &str = "emr-management-tool";
 const KEYRING_USER: &str = "default/access_key";
 const KEYRING_SECRET: &str = "default/secret_key";
 const KEYRING_SESSION_TOKEN: &str = "default/session_token";
-#[cfg(debug_assertions)]
 const DEV_CREDENTIAL_STORE_PATH: &str = "emr-management-tool.credentials.dev.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,8 +127,14 @@ fn write_optional_secret(app: &AppHandle, key: &str, value: Option<&str>) -> App
     }
 }
 
-#[cfg(debug_assertions)]
 fn write_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
+    if !use_local_credential_store() {
+        return write_keychain_secret(key, value);
+    }
+    write_store_secret(app, key, value)
+}
+
+fn write_store_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
     use serde_json::json;
     use tauri_plugin_store::StoreExt;
 
@@ -143,7 +148,7 @@ fn write_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
 }
 
 #[cfg(not(debug_assertions))]
-fn write_secret(_app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
+fn write_keychain_secret(key: &str, value: &str) -> AppResult<()> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
     keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
@@ -152,22 +157,29 @@ fn write_secret(_app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
 }
 
 #[cfg(debug_assertions)]
+fn write_keychain_secret(_key: &str, _value: &str) -> AppResult<()> {
+    unreachable!("debug builds always use the local credential store")
+}
+
 fn read_secret(app: &AppHandle, key: &str) -> AppResult<String> {
-    read_optional_secret(app, key)?
-        .ok_or_else(|| AppError::storage(format!("Credential {key} was not found in debug store.")))
+    read_optional_secret(app, key)?.ok_or_else(|| {
+        let backend = if use_local_credential_store() {
+            "local store"
+        } else {
+            "keychain"
+        };
+        AppError::storage(format!("Credential {key} was not found in {backend}."))
+    })
 }
 
-#[cfg(not(debug_assertions))]
-fn read_secret(_app: &AppHandle, key: &str) -> AppResult<String> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
-    keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .get_password()
-        .map_err(|error| AppError::storage(error.to_string()))
-}
-
-#[cfg(debug_assertions)]
 fn read_optional_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>> {
+    if !use_local_credential_store() {
+        return read_optional_keychain_secret(key);
+    }
+    read_optional_store_secret(app, key)
+}
+
+fn read_optional_store_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>> {
     use tauri_plugin_store::StoreExt;
 
     let store = app
@@ -180,7 +192,7 @@ fn read_optional_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>>
 }
 
 #[cfg(not(debug_assertions))]
-fn read_optional_secret(_app: &AppHandle, key: &str) -> AppResult<Option<String>> {
+fn read_optional_keychain_secret(key: &str) -> AppResult<Option<String>> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
     match keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
@@ -193,7 +205,18 @@ fn read_optional_secret(_app: &AppHandle, key: &str) -> AppResult<Option<String>
 }
 
 #[cfg(debug_assertions)]
+fn read_optional_keychain_secret(_key: &str) -> AppResult<Option<String>> {
+    unreachable!("debug builds always use the local credential store")
+}
+
 fn delete_secret(app: &AppHandle, key: &str) -> AppResult<()> {
+    if !use_local_credential_store() {
+        return delete_keychain_secret(key);
+    }
+    delete_store_secret(app, key)
+}
+
+fn delete_store_secret(app: &AppHandle, key: &str) -> AppResult<()> {
     use tauri_plugin_store::StoreExt;
 
     let store = app
@@ -206,7 +229,7 @@ fn delete_secret(app: &AppHandle, key: &str) -> AppResult<()> {
 }
 
 #[cfg(not(debug_assertions))]
-fn delete_secret(_app: &AppHandle, key: &str) -> AppResult<()> {
+fn delete_keychain_secret(key: &str) -> AppResult<()> {
     keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
     let entry = keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?;
@@ -223,9 +246,22 @@ fn delete_secret(_app: &AppHandle, key: &str) -> AppResult<()> {
     }
 }
 
+#[cfg(debug_assertions)]
+fn delete_keychain_secret(_key: &str) -> AppResult<()> {
+    unreachable!("debug builds always use the local credential store")
+}
+
+fn use_local_credential_store() -> bool {
+    should_use_local_credential_store(cfg!(debug_assertions), option_env!("EMR_APP_CHANNEL"))
+}
+
+fn should_use_local_credential_store(debug_assertions: bool, channel: Option<&str>) -> bool {
+    debug_assertions || matches!(channel, Some("test" | "mac-debug"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::credential_key;
+    use super::{credential_key, should_use_local_credential_store};
 
     #[test]
     fn credential_key_is_scoped_by_account_id() {
@@ -233,5 +269,13 @@ mod tests {
             credential_key("acct-prod", "secret_key"),
             "acct-prod/secret_key"
         );
+    }
+
+    #[test]
+    fn test_and_mac_debug_release_channels_use_local_credential_store() {
+        assert!(should_use_local_credential_store(false, Some("test")));
+        assert!(should_use_local_credential_store(false, Some("mac-debug")));
+        assert!(!should_use_local_credential_store(false, Some("stable")));
+        assert!(should_use_local_credential_store(true, Some("stable")));
     }
 }
