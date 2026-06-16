@@ -93,14 +93,17 @@ describe("release configuration", () => {
     const windowsDevelopment = workflowJobBlock(workflow, "windows-development");
 
     expect(macosAmd64Development).toContain("RELEASE_CHANNEL: development");
+    expect(macosAmd64Development).not.toContain("RELEASE_VERSION:");
     expect(macosAmd64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(macosAmd64Development).toContain("npm run tauri -- build --debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
 
     expect(macosArm64Development).toContain("RELEASE_CHANNEL: development");
+    expect(macosArm64Development).not.toContain("RELEASE_VERSION:");
     expect(macosArm64Development).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(macosArm64Development).toContain("npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
 
     expect(windowsDevelopment).toContain("RELEASE_CHANNEL: development");
+    expect(windowsDevelopment).not.toContain("RELEASE_VERSION:");
     expect(windowsDevelopment).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(windowsDevelopment).toContain("npm run tauri -- build --debug --config src-tauri/tauri.development.conf.json");
   });
