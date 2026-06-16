@@ -17,9 +17,33 @@ permissions:
   contents: write
 
 jobs:
-  macos-development-x64:
-    name: macOS development package (Intel)
+  prepare-development-release:
+    name: Prepare development release
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
+          RELEASE_NAME: EMR Management Tool Dev ${{ inputs.version }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          create_args=(--title "$RELEASE_NAME" --prerelease --notes "Development test packages. Automatic updates are disabled.")
+          if [[ "$RELEASE_DRAFT" == "true" ]]; then
+            create_args+=(--draft)
+          fi
+
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" "${create_args[@]}"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+            gh release delete-asset "$RELEASE_TAG" "$asset" -y
+          done
+
+  macos-development-amd64:
+    name: macOS development package (amd64)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: prepare-development-release
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
@@ -27,6 +51,8 @@ jobs:
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
+      MACOS_TARGET: x86_64-apple-darwin
+      ARTIFACT_LABEL: macos-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -45,21 +71,51 @@ jobs:
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build development package
+        run: npm run tauri -- build --debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json
+
+      - name: Analyze build artifacts
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          label = os.environ["ARTIFACT_LABEL"]
+          bundle_dir = Path("src-tauri/target") / os.environ["MACOS_TARGET"] / "debug" / "bundle"
+          stage_dir = Path("release-artifacts")
+          stage_dir.mkdir(exist_ok=True)
+
+          print(f"Inspecting {bundle_dir}")
+          if bundle_dir.exists():
+            for path in sorted(bundle_dir.rglob("*")):
+              print(path)
+          else:
+            raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
+
+          patterns = ("*.dmg", "*.pkg", "*.app.tar.gz")
+          artifacts = [path for pattern in patterns for path in bundle_dir.rglob(pattern) if path.is_file()]
+          if not artifacts:
+            raise SystemExit(f"No installable macOS artifacts found in {bundle_dir}")
+
+          for artifact in artifacts:
+            destination = stage_dir / f"{label}-{artifact.name}"
+            shutil.copy2(artifact, destination)
+            print(f"Prepared {destination}")
+          PY
+
+      - name: Upload development artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: npm run tauri
-          tagName: ${{ format('dev-v{0}', inputs.version) }}
-          releaseName: "EMR Management Tool Dev ${{ inputs.version }} macOS Intel"
-          prerelease: true
-          releaseDraft: ${{ inputs.draft }}
-          includeUpdaterJson: false
-          args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
+        run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
   macos-development-arm64:
-    name: macOS development package (Apple Silicon)
+    name: macOS development package (arm64)
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: prepare-development-release
     runs-on: macos-latest
     env:
       RELEASE_CHANNEL: development
@@ -67,6 +123,8 @@ jobs:
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: darwin
+      MACOS_TARGET: aarch64-apple-darwin
+      ARTIFACT_LABEL: macos-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -85,21 +143,51 @@ jobs:
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build development package
+        run: npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json
+
+      - name: Analyze build artifacts
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          label = os.environ["ARTIFACT_LABEL"]
+          bundle_dir = Path("src-tauri/target") / os.environ["MACOS_TARGET"] / "debug" / "bundle"
+          stage_dir = Path("release-artifacts")
+          stage_dir.mkdir(exist_ok=True)
+
+          print(f"Inspecting {bundle_dir}")
+          if bundle_dir.exists():
+            for path in sorted(bundle_dir.rglob("*")):
+              print(path)
+          else:
+            raise SystemExit(f"Expected bundle directory does not exist: {bundle_dir}")
+
+          patterns = ("*.dmg", "*.pkg", "*.app.tar.gz")
+          artifacts = [path for pattern in patterns for path in bundle_dir.rglob(pattern) if path.is_file()]
+          if not artifacts:
+            raise SystemExit(f"No installable macOS artifacts found in {bundle_dir}")
+
+          for artifact in artifacts:
+            destination = stage_dir / f"{label}-{artifact.name}"
+            shutil.copy2(artifact, destination)
+            print(f"Prepared {destination}")
+          PY
+
+      - name: Upload development artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: npm run tauri
-          tagName: ${{ format('dev-v{0}', inputs.version) }}
-          releaseName: "EMR Management Tool Dev ${{ inputs.version }} macOS Apple Silicon"
-          prerelease: true
-          releaseDraft: ${{ inputs.draft }}
-          includeUpdaterJson: false
-          args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
+        run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
   windows-development:
     name: Windows development package
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: prepare-development-release
     runs-on: windows-latest
     env:
       RELEASE_CHANNEL: development
@@ -107,6 +195,7 @@ jobs:
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL: development
       VITE_APP_PLATFORM: windows
+      ARTIFACT_LABEL: windows-amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -123,17 +212,43 @@ jobs:
       - name: Prepare release config
         run: node scripts/prepare-release-config.mjs
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build development package
+        run: npm run tauri -- build --debug --config src-tauri/tauri.development.conf.json
+
+      - name: Analyze build artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bundleDir = "src-tauri/target/debug/bundle"
+          $stageDir = "release-artifacts"
+          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+
+          Write-Host "Inspecting $bundleDir"
+          if (-not (Test-Path $bundleDir)) {
+            throw "Expected bundle directory does not exist: $bundleDir"
+          }
+
+          Get-ChildItem -Path $bundleDir -Recurse | ForEach-Object { Write-Host $_.FullName }
+          $artifacts = Get-ChildItem -Path $bundleDir -Recurse -File | Where-Object {
+            $_.Extension -in ".exe", ".msi", ".zip"
+          }
+
+          if (-not $artifacts) {
+            throw "No installable Windows artifacts found in $bundleDir"
+          }
+
+          foreach ($artifact in $artifacts) {
+            $destination = Join-Path $stageDir "$env:ARTIFACT_LABEL-$($artifact.Name)"
+            Copy-Item -Path $artifact.FullName -Destination $destination
+            Write-Host "Prepared $destination"
+          }
+
+      - name: Upload development artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tauriScript: npm run tauri
-          tagName: ${{ format('dev-v{0}', inputs.version) }}
-          releaseName: "EMR Management Tool Dev ${{ inputs.version }}"
-          prerelease: true
-          releaseDraft: ${{ inputs.draft }}
-          includeUpdaterJson: false
-          args: "--debug --config src-tauri/tauri.development.conf.json"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ format('dev-v{0}', inputs.version) }}
+        run: gh release upload "$env:RELEASE_TAG" release-artifacts/* --clobber
 
   windows-release:
     name: Windows release package
