@@ -17,8 +17,8 @@ permissions:
   contents: write
 
 jobs:
-  macos-development:
-    name: macOS development package
+  macos-development-x64:
+    name: macOS development package (Intel)
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: macos-latest
     env:
@@ -38,7 +38,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: x86_64-apple-darwin
 
       - run: npm ci
 
@@ -51,16 +51,55 @@ jobs:
         with:
           tauriScript: npm run tauri
           tagName: ${{ format('dev-v{0}', inputs.version) }}
-          releaseName: "EMR Management Tool Dev ${{ inputs.version }}"
+          releaseName: "EMR Management Tool Dev ${{ inputs.version }} macOS Intel"
           prerelease: true
           releaseDraft: ${{ inputs.draft }}
           includeUpdaterJson: false
-          args: "--target universal-apple-darwin --config src-tauri/tauri.development.conf.json"
+          args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json"
+
+  macos-development-arm64:
+    name: macOS development package (Apple Silicon)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: macos-latest
+    env:
+      RELEASE_CHANNEL: development
+      RELEASE_VERSION: ${{ inputs.version }}
+      REQUIRE_UPDATER_PUBLIC_KEY: "false"
+      VITE_APP_CHANNEL: development
+      VITE_APP_PLATFORM: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - run: npm ci
+
+      - name: Prepare release config
+        run: node scripts/prepare-release-config.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: npm run tauri
+          tagName: ${{ format('dev-v{0}', inputs.version) }}
+          releaseName: "EMR Management Tool Dev ${{ inputs.version }} macOS Apple Silicon"
+          prerelease: true
+          releaseDraft: ${{ inputs.draft }}
+          includeUpdaterJson: false
+          args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json"
 
   windows-development:
     name: Windows development package
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: macos-development
     runs-on: windows-latest
     env:
       RELEASE_CHANNEL: development
@@ -94,7 +133,7 @@ jobs:
           prerelease: true
           releaseDraft: ${{ inputs.draft }}
           includeUpdaterJson: false
-          args: "--config src-tauri/tauri.development.conf.json"
+          args: "--debug --config src-tauri/tauri.development.conf.json"
 
   windows-release:
     name: Windows release package
