@@ -368,6 +368,7 @@ pub struct JobLogsResponse {
 pub struct S3Bucket {
     pub name: String,
     pub created_at: Option<String>,
+    pub region: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

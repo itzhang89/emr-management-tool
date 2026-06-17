@@ -38,7 +38,7 @@ pub async fn list_virtual_clusters(
     }
 
     let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
     })?;
 
     let clusters = response
@@ -97,7 +97,7 @@ pub async fn list_job_runs(
     }
 
     let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
     })?;
     let jobs: Vec<JobRunSummary> = response
         .job_runs()
@@ -146,7 +146,7 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
         .send()
         .await
         .map_err(|error| {
-            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+            AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
         })?;
     let job_run = response
         .job_run()
@@ -197,7 +197,7 @@ pub async fn start_job_run(
         operation = operation.configuration_overrides(overrides);
     }
     let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
     })?;
     let now = Utc::now();
     let job = JobRunSummary {
@@ -246,7 +246,7 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
         .send()
         .await
         .map_err(|error| {
-            AppError::aws_for_account("emr-containers", runtime.account.id.clone(), error)
+            AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
         })?;
 
     let pool = repository::pool().await?;

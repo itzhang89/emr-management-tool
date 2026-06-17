@@ -342,6 +342,7 @@ export interface JobLogsRequest extends AwsCommandContext {
 export interface S3Bucket {
   name: string;
   createdAt?: string;
+  region?: string;
 }
 
 export interface S3ObjectEntry {

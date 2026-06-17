@@ -415,6 +415,54 @@ describe("S3BrowserPage", () => {
     expect(refetchObjects).toHaveBeenCalled();
   });
 
+  it("shows actionable guidance when bucket listing fails with an AWS permission error", () => {
+    useS3Buckets.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isSuccess: false,
+      error: {
+        kind: "aws",
+        code: "AccessDenied",
+        service: "s3",
+        message: "service error"
+      }
+    });
+
+    renderS3BrowserPage();
+
+    expect(
+      screen.getByText(
+        /Access denied when listing S3 buckets\. Grant s3:ListAllMyBuckets/i
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("shows actionable guidance when object listing fails with the current bucket", () => {
+    useS3Buckets.mockReturnValue({
+      data: [{ name: "logs-bucket", createdAt: "2026-06-10T00:00:00Z" }],
+      isLoading: false,
+      isSuccess: true,
+      error: null
+    });
+    useS3Objects.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: {
+        kind: "aws",
+        code: "AccessDenied",
+        service: "s3",
+        message: "service error"
+      },
+      refetch: refetchObjects
+    });
+
+    renderS3BrowserPage();
+
+    expect(
+      screen.getByText(/Access denied when listing objects in s3:\/\/logs-bucket\//i)
+    ).toBeInTheDocument();
+  });
+
   it("renames a file after double clicking its name", async () => {
     const user = userEvent.setup();
 
