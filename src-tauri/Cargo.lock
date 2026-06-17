@@ -2214,6 +2214,7 @@ dependencies = [
  "aws-sdk-emrcontainers",
  "aws-sdk-s3",
  "aws-sdk-sts",
+ "aws-smithy-types",
  "aws-types",
  "chrono",
  "dirs",

@@ -14,6 +14,7 @@ tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 aws-config = "1.8.18"
+aws-smithy-types = "1.4.9"
 aws-credential-types = "1.2.14"
 aws-sdk-cloudwatchlogs = "1.135.0"
 aws-sdk-emrcontainers = "1.107.0"
