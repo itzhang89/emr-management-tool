@@ -1,4 +1,5 @@
 use crate::aws::runtime::runtime_for_context;
+use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
 use crate::error::{AppError, AppResult};
 use crate::models::{
@@ -24,21 +25,28 @@ pub async fn list_s3_buckets(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::default_client(&runtime);
     let response = client
         .list_buckets()
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
 
     Ok(response
         .buckets()
         .iter()
-        .map(|bucket| S3Bucket {
-            name: bucket.name().unwrap_or_default().to_string(),
-            created_at: bucket
-                .creation_date()
-                .map(|created_at| created_at.to_string()),
+        .map(|bucket| {
+            let name = bucket.name().unwrap_or_default().to_string();
+            if let Some(region) = bucket.bucket_region() {
+                s3_client::remember_bucket_region(&runtime.account.id, &name, region);
+            }
+            S3Bucket {
+                name,
+                created_at: bucket
+                    .creation_date()
+                    .map(|created_at| created_at.to_string()),
+                region: bucket.bucket_region().map(str::to_string),
+            }
         })
         .collect())
 }
@@ -59,7 +67,7 @@ pub async fn list_s3_objects(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let mut operation = client
         .list_objects_v2()
         .bucket(&request.bucket)
@@ -72,7 +80,7 @@ pub async fn list_s3_objects(
     let response = operation
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     let mut objects: Vec<S3ObjectEntry> = response
         .common_prefixes()
         .iter()
@@ -110,7 +118,7 @@ pub async fn list_s3_job_log_objects(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let mut operation = client
         .list_objects_v2()
         .bucket(&request.bucket)
@@ -122,7 +130,7 @@ pub async fn list_s3_job_log_objects(
     let response = operation
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     let job_id = job_id_from_prefix(&request.prefix).unwrap_or_default();
     let objects = response
         .contents()
@@ -157,14 +165,14 @@ pub async fn get_s3_job_log_object(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let response = client
         .get_object()
         .bucket(&request.bucket)
         .key(&request.key)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     let etag = response.e_tag().map(ToString::to_string);
     let content_type = response.content_type().map(ToString::to_string);
     let last_modified = response.last_modified().map(|date| date.to_string());
@@ -199,14 +207,14 @@ pub async fn get_s3_text_object(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let response = client
         .get_object()
         .bucket(&request.bucket)
         .key(&request.key)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     let etag = response.e_tag().map(ToString::to_string);
     let content_type = response.content_type().map(ToString::to_string);
     let last_modified = response.last_modified().map(|date| date.to_string());
@@ -256,7 +264,7 @@ pub async fn put_s3_text_object(app: AppHandle, request: S3TextObject) -> AppRes
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let mut operation = client
         .put_object()
         .bucket(&request.bucket)
@@ -271,7 +279,7 @@ pub async fn put_s3_text_object(app: AppHandle, request: S3TextObject) -> AppRes
     let response = operation
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
 
     Ok(S3TextObject {
         etag: response.e_tag().map(ToString::to_string),
@@ -317,14 +325,14 @@ pub async fn download_s3_object_to_disk(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let response = client
         .get_object()
         .bucket(&request.bucket)
         .key(&request.key)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     let bytes = response
         .body
         .collect()
@@ -390,7 +398,7 @@ pub async fn upload_s3_object_from_disk(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let response = client
         .put_object()
         .bucket(&request.bucket)
@@ -398,7 +406,7 @@ pub async fn upload_s3_object_from_disk(
         .body(ByteStream::from(bytes.clone()))
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
 
     Ok(Some(object(
         &request.bucket,
@@ -432,7 +440,7 @@ pub async fn rename_s3_object(
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let copy_source = format!(
         "{}/{}",
         request.bucket,
@@ -445,14 +453,14 @@ pub async fn rename_s3_object(
         .copy_source(copy_source)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id.clone(), error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
     client
         .delete_object()
         .bucket(&request.bucket)
         .key(&request.source_key)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
 
     Ok(object(
         &request.bucket,
@@ -477,14 +485,14 @@ pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppRe
         },
     )
     .await?;
-    let client = aws_sdk_s3::Client::new(&runtime.config);
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     client
         .delete_object()
         .bucket(&request.bucket)
         .key(&request.key)
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     Ok(())
 }
 

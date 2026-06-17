@@ -45,7 +45,7 @@ pub async fn list_job_log_streams(
     let response = operation
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("cloudwatchlogs", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error))?;
     let streams = response
         .log_streams()
         .iter()
@@ -120,7 +120,7 @@ pub async fn get_job_logs(app: AppHandle, request: JobLogsRequest) -> AppResult<
     let response = operation
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account("cloudwatchlogs", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error))?;
 
     let entries = response
         .events()

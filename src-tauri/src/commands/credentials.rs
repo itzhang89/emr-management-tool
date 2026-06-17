@@ -21,7 +21,7 @@ pub async fn test_aws_credentials(request: AwsCredentialsInput) -> AppResult<Aws
         .get_caller_identity()
         .send()
         .await
-        .map_err(|error| AppError::aws("sts", error))?;
+        .map_err(|error| AppError::aws_sdk("sts", error))?;
 
     Ok(AwsIdentity {
         account: identity.account().unwrap_or_default().to_string(),

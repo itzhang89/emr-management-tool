@@ -24,10 +24,11 @@ import {
   useSaveS3TextObject
 } from "@/hooks/useS3";
 import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
+import { formatAppError, formatS3BrowserError } from "@/services/appErrorMessage";
 import { readLastS3Path, writeLastS3Path } from "@/services/s3PathStorage";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { AppError, S3ObjectEntry } from "@/types/domain";
+import type { S3ObjectEntry } from "@/types/domain";
 
 export function S3BrowserPage() {
   const activeAccount = useActiveAwsAccount();
@@ -124,7 +125,7 @@ export function S3BrowserPage() {
       const saved = await saveObject.mutateAsync({ ...textObject.data, content });
       toast.success(`Saved ${saved.key}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to save object."));
+      toast.error(formatAppError(error, "Failed to save object."));
     }
   };
 
@@ -138,7 +139,7 @@ export function S3BrowserPage() {
       await navigator.clipboard?.writeText(path);
       toast.success("S3 path copied.");
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to copy S3 path."));
+      toast.error(formatAppError(error, "Failed to copy S3 path."));
     }
   };
 
@@ -155,7 +156,7 @@ export function S3BrowserPage() {
       setSelectedKey(uploaded.key);
       toast.success(`Uploaded ${uploaded.key}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to upload object."));
+      toast.error(formatAppError(error, "Failed to upload object."));
     } finally {
       setTransferPending(false);
     }
@@ -169,7 +170,7 @@ export function S3BrowserPage() {
       if (!savedPath) return;
       toast.success(`Saved to ${savedPath}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to download object."));
+      toast.error(formatAppError(error, "Failed to download object."));
     } finally {
       setTransferPending(false);
     }
@@ -208,7 +209,7 @@ export function S3BrowserPage() {
       await objects.refetch();
       toast.success(`Deleted ${deleteTarget.key}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to delete object."));
+      toast.error(formatAppError(error, "Failed to delete object."));
     } finally {
       setDeleteTarget(undefined);
     }
@@ -256,7 +257,7 @@ export function S3BrowserPage() {
       }
       toast.success(`Renamed to ${trimmed}`);
     } catch (error) {
-      toast.error(errorMessage(error, "Failed to rename object."));
+      toast.error(formatAppError(error, "Failed to rename object."));
     } finally {
       cancelRename();
     }
@@ -414,7 +415,9 @@ export function S3BrowserPage() {
             {buckets.isLoading || objects.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 objects...</p> : null}
             {buckets.error || objects.error ? (
               <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                {errorMessage(buckets.error ?? objects.error, "Failed to load S3 data.")}
+                {buckets.error
+                  ? formatS3BrowserError(buckets.error, "listBuckets")
+                  : formatS3BrowserError(objects.error, "listObjects", currentS3Path)}
               </p>
             ) : null}
             <nav
@@ -663,13 +666,4 @@ function parseS3PathInput(value: string) {
     bucket: match[1],
     prefix: prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
   };
-}
-
-
-function errorMessage(error: unknown, fallback: string) {
-  const appError = error as Partial<AppError>;
-  if (appError.code === "DemoModeUnavailable") {
-    return "S3 requires the Tauri desktop runtime. Start with npm run tauri -- dev.";
-  }
-  return appError.message ?? fallback;
 }
