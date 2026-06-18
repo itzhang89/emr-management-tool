@@ -19,12 +19,11 @@ import {
   useSetActiveAwsAccount,
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
+import { awsRegions } from "@/constants/awsRegions";
 import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
 import type { AppError } from "@/types/domain";
-
-const regions = ["us-east-1", "us-west-2", "ap-southeast-1", "ap-northeast-1", "eu-west-1"];
 
 export function SettingsPage() {
   const releaseInfo = getReleaseInfo();
@@ -141,7 +140,10 @@ export function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Configured Accounts</CardTitle>
-          <CardDescription>Choose the active AWS account used by EMR, CloudWatch, and S3 commands.</CardDescription>
+          <CardDescription>
+            Region is fixed when the account is created. If Virtual Clusters is empty, confirm this region matches the
+            AWS Console region for your EMR virtual cluster.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
@@ -283,7 +285,7 @@ export function SettingsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      {regions.map((region) => (
+                      {awsRegions.map((region) => (
                         <SelectItem key={region} value={region}>
                           {region}
                         </SelectItem>
@@ -294,6 +296,9 @@ export function SettingsPage() {
               )}
             />
             <FieldError>{form.formState.errors.region?.message}</FieldError>
+            <p className="text-xs text-muted-foreground">
+              EMR on EKS virtual clusters are regional. Importing an AWS CLI profile copies its region automatically.
+            </p>
           </Field>
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" disabled={testCredentials.isPending} onClick={testConnection}>
