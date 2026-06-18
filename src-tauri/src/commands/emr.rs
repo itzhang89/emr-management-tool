@@ -1,5 +1,6 @@
 use crate::aws::runtime::runtime_for_context;
 use crate::db::repository;
+use crate::diagnostics;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, JobRunDescribeDetails, JobRunRequest, JobRunSummary,
@@ -29,27 +30,48 @@ pub async fn list_virtual_clusters(
     )
     .await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut operation = client.list_virtual_clusters();
-    if let Some(next_token) = request.next_token {
-        operation = operation.next_token(next_token);
-    }
-    if let Some(max_results) = request.max_results {
-        operation = operation.max_results(max_results);
-    }
+    let mut clusters = Vec::new();
+    let mut next_token = request.next_token;
 
-    let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
-    })?;
+    loop {
+        let mut operation = client.list_virtual_clusters();
+        if let Some(token) = next_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        if let Some(max_results) = request.max_results {
+            operation = operation.max_results(max_results);
+        }
 
-    let clusters = response
-        .virtual_clusters()
-        .iter()
-        .map(map_virtual_cluster)
-        .collect();
+        let response = operation.send().await.map_err(|error| {
+            let app_error = AppError::aws_for_account_sdk(
+                "emr-containers",
+                runtime.account.id.clone(),
+                error,
+            );
+            diagnostics::log_aws_failure(
+                "emr-containers",
+                "ListVirtualClusters",
+                Some(&runtime.account.id),
+                &app_error.message,
+            );
+            app_error
+        })?;
+
+        clusters.extend(
+            response
+                .virtual_clusters()
+                .iter()
+                .map(map_virtual_cluster),
+        );
+        next_token = response.next_token().map(ToString::to_string);
+        if next_token.is_none() {
+            break;
+        }
+    }
 
     Ok(ListVirtualClustersResponse {
         clusters,
-        next_token: response.next_token().map(ToString::to_string),
+        next_token: None,
     })
 }
 
@@ -72,7 +94,7 @@ pub async fn list_job_runs(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let Some(virtual_cluster_id) = request.virtual_cluster_id else {
+    let Some(virtual_cluster_id) = normalized_virtual_cluster_id(request.virtual_cluster_id) else {
         return repository::list_job_history(&pool, Some(&runtime.account.id), None, keyword).await;
     };
     if keyword.is_some() {
@@ -86,34 +108,62 @@ pub async fn list_job_runs(
     }
 
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut operation = client
-        .list_job_runs()
-        .virtual_cluster_id(&virtual_cluster_id);
-    if let Some(next_token) = request.next_token {
-        operation = operation.next_token(next_token);
-    }
-    if let Some(max_results) = request.max_results {
-        operation = operation.max_results(max_results);
-    }
+    let mut next_token = request.next_token;
+    let mut synced_jobs = 0usize;
 
-    let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
-    })?;
-    let jobs: Vec<JobRunSummary> = response
-        .job_runs()
-        .iter()
-        .map(|job| {
-            map_job_run(
-                job,
-                Some(runtime.account.id.clone()),
-                Some(runtime.account.region.clone()),
-            )
-        })
-        .collect();
-    for job in &jobs {
-        repository::upsert_job_history(&pool, job).await?;
+    loop {
+        let mut operation = client
+            .list_job_runs()
+            .virtual_cluster_id(&virtual_cluster_id);
+        if let Some(token) = next_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        if let Some(max_results) = request.max_results {
+            operation = operation.max_results(max_results);
+        }
+
+        let response = operation.send().await.map_err(|error| {
+            let app_error = AppError::aws_for_account_sdk(
+                "emr-containers",
+                runtime.account.id.clone(),
+                error,
+            );
+            diagnostics::log_aws_failure(
+                "emr-containers",
+                "ListJobRuns",
+                Some(&runtime.account.id),
+                &app_error.message,
+            );
+            app_error
+        })?;
+        let jobs: Vec<JobRunSummary> = response
+            .job_runs()
+            .iter()
+            .map(|job| {
+                map_job_run(
+                    job,
+                    Some(runtime.account.id.clone()),
+                    Some(runtime.account.region.clone()),
+                )
+            })
+            .collect();
+        synced_jobs += jobs.len();
+        for job in &jobs {
+            repository::upsert_job_history(&pool, job).await?;
+        }
+        next_token = response.next_token().map(ToString::to_string);
+        if next_token.is_none() {
+            break;
+        }
     }
     repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
+    diagnostics::append_log_line(
+        "INFO",
+        &format!(
+            "Synced {synced_jobs} job run(s) from AWS for virtual cluster {virtual_cluster_id} in region {}.",
+            runtime.account.region
+        ),
+    );
 
     repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id), None)
         .await
@@ -128,7 +178,7 @@ pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResu
     let runtime = runtime_for_context(&app, AwsCommandContext { account_id }).await?;
 
     let pool = repository::pool().await?;
-    let Some(virtual_cluster_id) = request.virtual_cluster_id else {
+    let Some(virtual_cluster_id) = normalized_virtual_cluster_id(request.virtual_cluster_id) else {
         return repository::list_job_history(&pool, Some(&runtime.account.id), None, None)
             .await?
             .into_iter()
@@ -234,8 +284,7 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
     let id = request
         .id
         .ok_or_else(|| AppError::validation("Job id is required."))?;
-    let virtual_cluster_id = request
-        .virtual_cluster_id
+    let virtual_cluster_id = normalized_virtual_cluster_id(request.virtual_cluster_id)
         .ok_or_else(|| AppError::validation("Virtual cluster id is required."))?;
     let runtime = runtime_for_context(&app, AwsCommandContext { account_id }).await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
@@ -452,6 +501,17 @@ fn build_monitoring_configuration(value: &serde_json::Value) -> Option<Monitorin
     Some(builder.build())
 }
 
+fn normalized_virtual_cluster_id(virtual_cluster_id: Option<String>) -> Option<String> {
+    virtual_cluster_id.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
 fn map_virtual_cluster(cluster: &aws_sdk_emrcontainers::types::VirtualCluster) -> VirtualCluster {
     let provider = cluster.container_provider();
     let namespace = provider
@@ -639,7 +699,7 @@ fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> 
 
 #[cfg(test)]
 mod tests {
-    use super::{map_job_run, validate_start_job_request};
+    use super::{map_job_run, normalized_virtual_cluster_id, validate_start_job_request};
     use crate::models::{
         JarApplicationConfig, JobDriverRequest, SparkResourceConfig, SparkSubmitJobDriverRequest,
         StartJobRunRequest,
@@ -895,5 +955,16 @@ mod tests {
             },
             configuration_overrides: None,
         }
+    }
+
+    #[test]
+    fn treats_blank_virtual_cluster_ids_as_missing() {
+        assert_eq!(normalized_virtual_cluster_id(None), None);
+        assert_eq!(normalized_virtual_cluster_id(Some("".to_string())), None);
+        assert_eq!(normalized_virtual_cluster_id(Some("   ".to_string())), None);
+        assert_eq!(
+            normalized_virtual_cluster_id(Some(" vc-1 ".to_string())),
+            Some("vc-1".to_string())
+        );
     }
 }

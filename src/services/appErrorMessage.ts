@@ -3,6 +3,7 @@ import type { AppError } from "@/types/domain";
 export interface AwsErrorContext {
   operation?: string;
   resource?: string;
+  region?: string;
 }
 
 function asAppError(error: unknown): Partial<AppError> {
@@ -27,6 +28,12 @@ function formatAwsAccessDenied(service: string | undefined, context?: AwsErrorCo
           ? `Access denied when listing objects${context.resource ? ` in ${context.resource}` : ""}. Grant s3:ListBucket to this account in IAM.`
           : "Access denied for S3. Grant the required s3:* permissions to this account in IAM and verify the region in Settings.";
     case "emr-containers":
+      if (context?.operation === "listVirtualClusters") {
+        return `Access denied when listing EMR virtual clusters. Grant emr-containers:ListVirtualClusters and verify the account region in Settings${context.region ? ` (current region: ${context.region})` : ""}.`;
+      }
+      if (context?.operation === "listJobRuns") {
+        return "Access denied when listing EMR job runs. Grant emr-containers:ListJobRuns for the selected virtual cluster.";
+      }
       return "Access denied for EMR on EKS. Check IAM permissions for emr-containers actions on this account.";
     case "cloudwatchlogs":
       return "Access denied for CloudWatch Logs. Check IAM permissions for logs:FilterLogEvents and related actions.";
@@ -78,6 +85,15 @@ function formatGenericAwsFailure(service: string | undefined, message: string, c
       return `Failed to list S3 objects${context.resource ? ` in ${context.resource}` : ""}. Check IAM permissions (s3:ListBucket) and bucket region.`;
     }
     return "Failed to reach S3. Check account permissions, credentials, and region in Settings.";
+  }
+
+  if (service === "emr-containers") {
+    if (context?.operation === "listVirtualClusters") {
+      return `Failed to list EMR virtual clusters. Check IAM permissions (emr-containers:ListVirtualClusters) and the account region in Settings${context.region ? ` (current region: ${context.region})` : ""}.`;
+    }
+    if (context?.operation === "listJobRuns") {
+      return "Failed to list EMR job runs. Check IAM permissions (emr-containers:ListJobRuns) and the selected virtual cluster.";
+    }
   }
 
   if (message === "request has timed out") {
@@ -134,4 +150,23 @@ export function formatS3BrowserError(error: unknown, operation: "listBuckets" | 
   }
 
   return formatAppError(error, fallback, { operation, resource });
+}
+
+export function formatVirtualClustersError(error: unknown, region?: string) {
+  const appError = asAppError(error);
+  if (appError.code === "DemoModeUnavailable") {
+    return "Virtual clusters require the Tauri desktop runtime. Start with npm run tauri -- dev.";
+  }
+  return formatAppError(error, "Failed to load virtual clusters.", {
+    operation: "listVirtualClusters",
+    region
+  });
+}
+
+export function formatJobHistoryError(error: unknown) {
+  const appError = asAppError(error);
+  if (appError.code === "DemoModeUnavailable") {
+    return "Job history requires the Tauri desktop runtime. Start with npm run tauri -- dev.";
+  }
+  return formatAppError(error, "Failed to load job history.", { operation: "listJobRuns" });
 }

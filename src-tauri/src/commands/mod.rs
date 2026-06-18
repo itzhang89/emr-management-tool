@@ -1,4 +1,5 @@
 pub mod credentials;
+pub mod diagnostics;
 pub mod emr;
 pub mod files;
 pub mod job_config_templates;
