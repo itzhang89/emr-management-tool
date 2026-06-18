@@ -11,10 +11,12 @@ function useActiveAccountId() {
 }
 
 export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
-  const accountId = useActiveAccountId();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  const region = activeAccount.data?.region;
 
   return useQuery({
-    queryKey: ["virtual-clusters", accountId ?? request.accountId, request.nextToken],
+    queryKey: ["virtual-clusters", accountId ?? request.accountId, region, request.nextToken],
     queryFn: () => emrService.listVirtualClusters({ ...request, accountId: request.accountId ?? accountId }),
     enabled: Boolean(accountId ?? request.accountId)
   });

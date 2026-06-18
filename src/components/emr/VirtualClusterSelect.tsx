@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyHint";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useVirtualClusters } from "@/hooks/useEmr";
@@ -38,10 +39,13 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
 
   if (!availableClusters.length) {
     return (
-      <p className="max-w-md text-sm text-muted-foreground">
-        No virtual clusters in {activeAccount.data?.region ?? "the selected region"}. Check Settings region and
-        emr-containers:ListVirtualClusters.
-      </p>
+      <VirtualClustersEmptyHint
+        compact
+        className="max-w-md"
+        accountName={activeAccount.data?.name}
+        region={activeAccount.data?.region}
+        awsAccountId={activeAccount.data?.identity?.account}
+      />
     );
   }
 

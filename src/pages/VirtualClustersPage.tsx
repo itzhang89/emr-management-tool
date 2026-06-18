@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyHint";
 import { useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { formatVirtualClustersError } from "@/services/appErrorMessage";
@@ -41,11 +42,11 @@ export function VirtualClustersPage() {
             </p>
           ) : null}
           {clusters.data?.clusters.length === 0 && !clusters.isLoading && !clusters.error ? (
-            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No virtual clusters were returned for region {activeRegion ?? "unknown"}. Confirm the account region in
-              Settings matches your EMR on EKS resources, and that the IAM policy includes
-              emr-containers:ListVirtualClusters. Open 帮助 → 查看日志 for details.
-            </p>
+            <VirtualClustersEmptyHint
+              accountName={activeAccount.data?.name}
+              region={activeRegion}
+              awsAccountId={activeAccount.data?.identity?.account}
+            />
           ) : null}
           <Table>
             <TableHeader>
