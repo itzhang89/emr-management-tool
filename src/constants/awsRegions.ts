@@ -9,7 +9,7 @@ export const awsRegions = [
 
 export type AwsRegion = (typeof awsRegions)[number];
 
-const awsRegionPattern = /^[a-z]{2}(-[a-z0-9-]+)*-\d+$/;
+const awsRegionPattern = /^[a-z]{2}(?:-[a-z0-9]+)*-\d+$/;
 
 export function normalizeAwsRegion(value: string) {
   return value.trim().toLowerCase();
