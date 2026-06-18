@@ -401,10 +401,13 @@ describe("LogsPage", () => {
     fireEvent.keyDown(window, { key: "f", metaKey: true });
     const searchInput = screen.getByPlaceholderText(/Find in this log/i);
     expect(searchInput).toHaveFocus();
+    expect(screen.getByText("Press Enter")).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Regex/i }));
     await user.type(searchInput, "needle\\s+(one|two)");
+    expect(screen.queryAllByTestId("log-search-match")).toHaveLength(0);
 
+    await user.keyboard("{Enter}");
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getAllByTestId("log-search-match")).toHaveLength(2);
 
