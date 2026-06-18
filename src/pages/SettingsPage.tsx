@@ -3,12 +3,12 @@ import { CheckCircle2, Download, KeyRound, RefreshCw, Save, ShieldCheck, Trash2 
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { AwsRegionInput } from "@/components/aws/AwsRegionInput";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAwsAccounts,
@@ -19,7 +19,6 @@ import {
   useSetActiveAwsAccount,
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
-import { awsRegions } from "@/constants/awsRegions";
 import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
@@ -279,25 +278,18 @@ export function SettingsPage() {
               control={form.control}
               name="region"
               render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select region" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {awsRegions.map((region) => (
-                        <SelectItem key={region} value={region}>
-                          {region}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                <AwsRegionInput
+                  value={field.value}
+                  onChange={field.onChange}
+                  onBlur={field.onBlur}
+                  aria-invalid={Boolean(form.formState.errors.region)}
+                />
               )}
             />
             <FieldError>{form.formState.errors.region?.message}</FieldError>
             <p className="text-xs text-muted-foreground">
-              EMR on EKS virtual clusters are regional. Importing an AWS CLI profile copies its region automatically.
+              Pick a common region from the suggestions or type any AWS region code. Importing an AWS CLI profile copies
+              its region automatically.
             </p>
           </Field>
           <div className="flex justify-end gap-2 pt-2">
