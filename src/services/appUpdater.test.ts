@@ -11,7 +11,7 @@ describe("createAppUpdater", () => {
 
     await expect(updater.checkForUpdate()).resolves.toEqual({
       status: "unavailable",
-      reason: "Automatic updates are currently available only for Windows stable builds."
+      reason: "Automatic updates are available only for stable Windows and macOS builds."
     });
     expect(check).not.toHaveBeenCalled();
   });

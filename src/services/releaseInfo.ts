@@ -24,7 +24,7 @@ export function createReleaseInfo(input: ReleaseInfoInput = {}): ReleaseInfo {
     platform,
     channelLabel: isDevelopment ? "Development" : "Stable",
     isDevelopment,
-    canUseAutoUpdater: appChannel === "stable" && platform === "windows"
+    canUseAutoUpdater: appChannel === "stable" && (platform === "windows" || platform === "darwin")
   };
 }
 

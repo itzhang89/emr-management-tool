@@ -23,7 +23,7 @@ export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency
       if (!canUseAutoUpdater) {
         return {
           status: "unavailable",
-          reason: "Automatic updates are currently available only for Windows stable builds."
+          reason: "Automatic updates are available only for stable Windows and macOS builds."
         };
       }
 

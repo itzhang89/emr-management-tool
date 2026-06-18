@@ -20,7 +20,33 @@ Download the package for your operating system from GitHub Releases:
 - macOS Intel: `macos-amd64` / `x64`
 - Windows: `.exe` or `.msi`
 
-On macOS, if the package is built without an Apple Developer ID certificate, macOS may block the first launch. Confirm the package source before opening it.
+### macOS First Launch
+
+Packages built through GitHub Actions without an Apple Developer ID certificate are ad-hoc signed and not notarized. macOS may block the first launch until you explicitly allow the app.
+
+1. Install the app, then launch it once. The app may quit immediately on first launch. This is expected.
+2. Open **System Settings**.
+3. Go to **Privacy & Security**.
+4. Scroll to the bottom of the page. You should see the app name and a security warning.
+5. Click **Allow Anyway**.
+6. Launch the app again. In the permission dialog, choose **Always Allow**.
+
+Only install packages from a trusted GitHub Release source.
+
+### macOS Reinstall and Updates
+
+GitHub Actions builds are ad-hoc signed and not notarized. Without an Apple Developer ID certificate, Gatekeeper may block each **newly downloaded** package until you click **Allow Anyway** again.
+
+This applies to both release channels:
+
+| Channel | App name | Bundle ID |
+| --- | --- | --- |
+| Stable | EMR Management Tool | `com.example.emr-management-tool` |
+| Development | EMR Management Tool Dev | `com.example.emr-management-tool.development` |
+
+Stable and development are separate apps. Allow each channel once on first launch.
+
+To avoid repeat Gatekeeper prompts on later upgrades, use **Settings → Check for Updates** in stable builds. In-app updates replace the app in place and usually do not trigger Gatekeeper again. Manual re-downloads from GitHub may still require **Allow Anyway**.
 
 ## First Use
 
@@ -193,7 +219,7 @@ npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/
 ## Release Channels
 
 - `development`: debug build, local credential store, no automatic updates.
-- `stable`: release build. Windows stable releases support automatic updates when signing keys are configured.
+- `stable`: release build. Stable Windows and macOS releases support automatic updates when signing keys are configured.
 
 Credential storage is controlled at build time with `EMR_CREDENTIAL_STORE`:
 
