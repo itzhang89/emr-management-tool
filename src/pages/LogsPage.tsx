@@ -19,14 +19,15 @@ import {
   type S3LogDestination
 } from "@/services/jobLogDestinations";
 import { saveTextFile } from "@/services/fileDownload";
+import {
+  buildSearchResult,
+  formatSearchMatchLabel,
+  selectRenderableMatches,
+  type SearchMatch
+} from "@/services/logSearch";
 import { s3Service } from "@/services/s3Service";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
-
-type SearchMatch = {
-  start: number;
-  end: number;
-};
 
 export function LogsPage() {
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
@@ -276,13 +277,21 @@ function LogViewerLayout({
   logText: string;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
   const [regexSearch, setRegexSearch] = useState(false);
+  const [submittedRegexSearch, setSubmittedRegexSearch] = useState(false);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchResult = useMemo(() => buildSearchResult(logText, searchQuery, regexSearch), [logText, searchQuery, regexSearch]);
+  const searchResult = useMemo(
+    () => buildSearchResult(logText, submittedSearch, submittedRegexSearch),
+    [logText, submittedSearch, submittedRegexSearch]
+  );
   const matches = searchResult.matches;
-  const activeMatchLabel = searchQuery && matches.length > 0 ? `${activeMatchIndex + 1} / ${matches.length}` : "0 / 0";
+  const activeMatchLabel = formatSearchMatchLabel(matches.length, activeMatchIndex, {
+    truncated: searchResult.truncated,
+    error: searchResult.error
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -304,7 +313,13 @@ function LogViewerLayout({
 
   useEffect(() => {
     setActiveMatchIndex(0);
-  }, [searchQuery, regexSearch, logText]);
+  }, [submittedSearch, submittedRegexSearch, logText]);
+
+  const submitLogSearch = () => {
+    setSubmittedSearch(searchInput.trim());
+    setSubmittedRegexSearch(regexSearch);
+    setActiveMatchIndex(0);
+  };
 
   useEffect(() => {
     if (matches.length === 0) return;
@@ -391,9 +406,15 @@ function LogViewerLayout({
             <Input
               ref={searchInputRef}
               className="h-8 min-w-48 flex-1"
-              placeholder="Find in this log"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Find in this log (press Enter)"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  submitLogSearch();
+                }
+              }}
             />
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input
@@ -406,7 +427,7 @@ function LogViewerLayout({
               Regex
             </label>
             <span className={cn("min-w-16 text-xs", searchResult.error ? "text-destructive" : "text-muted-foreground")}>
-              {searchResult.error ?? activeMatchLabel}
+              {submittedSearch ? activeMatchLabel : "Press Enter"}
             </span>
             <Button type="button" variant="outline" size="sm" aria-label="Previous match" disabled={matches.length === 0} onClick={goToPreviousMatch}>
               Previous
@@ -477,48 +498,22 @@ function formatCloudWatchMessages(entries: Array<{ message?: string }>) {
   return entries.map((entry) => entry.message ?? "").join("\n");
 }
 
-function buildSearchResult(text: string, query: string, regexSearch: boolean): { matches: SearchMatch[]; error?: string } {
-  if (!query) return { matches: [] };
-  if (!regexSearch) {
-    const matches: SearchMatch[] = [];
-    const lowerText = text.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    let start = lowerText.indexOf(lowerQuery);
-    while (start !== -1) {
-      const end = start + query.length;
-      matches.push({ start, end });
-      start = lowerText.indexOf(lowerQuery, end);
-    }
-    return { matches };
-  }
-
-  try {
-    const matches: SearchMatch[] = [];
-    const regex = new RegExp(query, "gi");
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(text)) !== null) {
-      if (match[0].length === 0) {
-        regex.lastIndex += 1;
-        continue;
-      }
-      matches.push({ start: match.index, end: match.index + match[0].length });
-    }
-    return { matches };
-  } catch {
-    return { matches: [], error: "Invalid regex" };
-  }
-}
-
 function renderHighlightedLogText(text: string, matches: SearchMatch[], activeMatchIndex: number) {
   if (matches.length === 0) return text;
 
+  const { matches: visibleMatches, activeIndex } = selectRenderableMatches(matches, activeMatchIndex);
   const parts: ReactNode[] = [];
-  let cursor = 0;
-  matches.forEach((match, index) => {
+  let cursor = visibleMatches[0]?.start ?? 0;
+
+  if (cursor > 0) {
+    parts.push(text.slice(0, cursor));
+  }
+
+  visibleMatches.forEach((match, index) => {
     if (match.start > cursor) {
       parts.push(text.slice(cursor, match.start));
     }
-    const isActive = index === activeMatchIndex;
+    const isActive = index === activeIndex;
     parts.push(
       <mark
         key={`${match.start}-${match.end}-${index}`}
