@@ -39,10 +39,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
-      release_tag:  ${{ steps.rel.outputs.release_tag }}
-      release_name: ${{ steps.rel.outputs.release_name }}
-      dev_matrix: ${{ steps.rel.outputs.dev_matrix }}
-      stable_matrix: ${{ steps.rel.outputs.stable_matrix }}
+      release_tag:     ${{ steps.rel.outputs.release_tag }}
+      release_name:    ${{ steps.rel.outputs.release_name }}
+      release_version: ${{ steps.rel.outputs.release_version }}
+      dev_matrix:      ${{ steps.rel.outputs.dev_matrix }}
+      stable_matrix:   ${{ steps.rel.outputs.stable_matrix }}
     steps:
       - name: Create or reset GitHub release
         id: rel
@@ -57,7 +58,10 @@ jobs:
           TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
           NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
 
-          args=(--title "$NAME" --notes "Manual ${RELEASE_CHANNEL} packages. Auto-update disabled.")
+          args=(--title "$NAME" --notes "Manual ${RELEASE_CHANNEL} packages.")
+          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+            args=(--title "$NAME" --notes "Manual stable packages. When updater keys are configured, latest.json is published to stable-channel for in-app updates.")
+          fi
           [[ "$RELEASE_CHANNEL" == "development" ]] && args+=(--prerelease)
           [[ "$RELEASE_DRAFT"   == "true"        ]] && args+=(--draft)
 
@@ -70,6 +74,9 @@ jobs:
 
           echo "release_tag=$TAG"   >> "$GITHUB_OUTPUT"
           echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
+          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+            echo "release_version=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
           node <<'JS' >> "$GITHUB_OUTPUT"
           const target = process.env.PACKAGE_TARGET || "all";
           const matches = (item) => target === "all" || item.package_target === target || item.package_group === target;
@@ -120,7 +127,7 @@ jobs:
               package_group: "macos",
               build_args: "--target x86_64-apple-darwin --config src-tauri/tauri.conf.json",
               bundle_dir: "src-tauri/target/x86_64-apple-darwin/release/bundle",
-              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz;*.sig"
             },
             {
               label: "stable-macos-arm64",
@@ -131,7 +138,7 @@ jobs:
               package_group: "macos",
               build_args: "--target aarch64-apple-darwin --config src-tauri/tauri.conf.json",
               bundle_dir: "src-tauri/target/aarch64-apple-darwin/release/bundle",
-              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
+              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz;*.sig"
             },
             {
               label: "stable-windows-amd64",
@@ -142,7 +149,7 @@ jobs:
               package_group: "windows",
               build_args: "--config src-tauri/tauri.conf.json",
               bundle_dir: "src-tauri/target/release/bundle",
-              artifact_patterns: "*.exe;*.msi;*.zip"
+              artifact_patterns: "*.exe;*.msi;*.zip;*.sig"
             }
           ];
 
@@ -150,13 +157,32 @@ jobs:
           console.log(`stable_matrix=${JSON.stringify({ include: stablePackages.filter(matches) })}`);
           JS
 
+  # ── 检测 Tauri updater 签名密钥是否配置 ───────
+  detect-updater:
+    name: Detect updater signing keys
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      has_updater_keys: ${{ steps.check.outputs.has_updater_keys }}
+    steps:
+      - name: Check secrets
+        id: check
+        env:
+          TAURI_UPDATER_PUBLIC_KEY:  ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$TAURI_UPDATER_PUBLIC_KEY" && -n "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "has_updater_keys=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_updater_keys=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # ── 检测 Apple 开发者证书是否配置 ────────────
   # 输出 has_apple_certs=true/false，供下游 job 决定
   # credential_store：若无证书则强制 local，否则使用用户输入值
   detect-signing:
     name: Detect Apple signing certs
-    if: github.event_name == 'workflow_dispatch'
-    needs: prepare-release
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       has_apple_certs:  ${{ steps.check.outputs.has_apple_certs }}
@@ -167,7 +193,7 @@ jobs:
         env:
           # 将 secret 映射为环境变量；若未设置则为空字符串
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          INPUT_CRED_STORE:  ${{ inputs.credential_store }}
+          INPUT_CRED_STORE:  ${{ github.event_name == 'workflow_dispatch' && inputs.credential_store || 'local' }}
         run: |
           if [[ -n "$APPLE_CERTIFICATE" ]]; then
             echo "has_apple_certs=true"  >> "$GITHUB_OUTPUT"
@@ -250,21 +276,25 @@ jobs:
   stable-packages:
     name: Stable package (${{ matrix.label }})
     if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable'
-    needs: [prepare-release, detect-signing]
+    needs: [prepare-release, detect-signing, detect-updater]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare-release.outputs.stable_matrix) }}
 
     env:
-      RELEASE_CHANNEL:            stable
-      EMR_CREDENTIAL_STORE:       ${{ needs.detect-signing.outputs.credential_store }}
-      REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL:           stable
-      VITE_APP_PLATFORM:          ${{ matrix.platform }}
-      ARTIFACT_LABEL:             ${{ matrix.label }}
-      BUNDLE_DIR:                 ${{ matrix.bundle_dir }}
-      ARTIFACT_PATTERNS:          ${{ matrix.artifact_patterns }}
+      RELEASE_CHANNEL:                  stable
+      RELEASE_VERSION:                  ${{ needs.prepare-release.outputs.release_version }}
+      EMR_CREDENTIAL_STORE:             ${{ needs.detect-signing.outputs.credential_store }}
+      REQUIRE_UPDATER_PUBLIC_KEY:       ${{ needs.detect-updater.outputs.has_updater_keys == 'true' && 'true' || 'false' }}
+      TAURI_UPDATER_PUBLIC_KEY:         ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY:        ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VITE_APP_CHANNEL:                 stable
+      VITE_APP_PLATFORM:                ${{ matrix.platform }}
+      ARTIFACT_LABEL:                     ${{ matrix.label }}
+      BUNDLE_DIR:                         ${{ matrix.bundle_dir }}
+      ARTIFACT_PATTERNS:                  ${{ matrix.artifact_patterns }}
 
     steps:
       - uses: actions/checkout@v4
@@ -293,11 +323,15 @@ jobs:
 
       - name: Prepare release config
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          RELEASE_VERSION:        ${{ needs.prepare-release.outputs.release_version }}
+          APPLE_CERTIFICATE:      ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: node scripts/prepare-release-config.mjs
 
       - name: Build package
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build ${{ matrix.build_args }}
 
       - name: Stage artifacts
@@ -315,28 +349,102 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
-  # ── tag push · Windows 正式发版（含签名 + updater JSON）──
-  windows-release:
-    name: Windows release package
+  # ── 手动触发 · stable 更新清单（latest.json）──
+  publish-stable-updater:
+    name: Publish stable updater manifest
+    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' && needs.detect-updater.outputs.has_updater_keys == 'true'
+    needs: [prepare-release, stable-packages, detect-updater]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build latest.json
+        env:
+          GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:   ${{ github.repository }}
+          RELEASE_VERSION:     ${{ needs.prepare-release.outputs.release_version }}
+          RELEASE_TAG:         ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_NOTES:       Stable build ${{ github.run_number }}
+        run: node scripts/publish-updater-manifest.mjs
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ needs.prepare-release.outputs.release_tag }}" latest.json \
+            --repo "${{ github.repository }}" --clobber
+          if ! gh release view stable-channel --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create stable-channel \
+              --repo "${{ github.repository }}" \
+              --title "Stable channel" \
+              --notes "Rolling latest.json for in-app updates from CI stable builds." \
+              --prerelease
+          fi
+          gh release upload stable-channel latest.json \
+            --repo "${{ github.repository }}" --clobber
+
+  # ── tag push · 正式发版（Windows + macOS，含 updater 清单）──
+  stable-release:
+    name: Stable release (${{ matrix.label }})
     if: github.event_name == 'push'
-    runs-on: windows-latest
+    needs: [detect-updater, detect-signing]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-amd64
+            os: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            platform: windows
+            build_args: ""
+          - label: macos-arm64
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin
+            platform: darwin
+            build_args: "--target aarch64-apple-darwin"
+          - label: macos-amd64
+            os: macos-latest
+            rust_targets: x86_64-apple-darwin
+            platform: darwin
+            build_args: "--target x86_64-apple-darwin"
     env:
-      RELEASE_CHANNEL:               stable
-      EMR_CREDENTIAL_STORE:          ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}
-      RELEASE_VERSION:               ${{ github.ref_name }}
-      REQUIRE_UPDATER_PUBLIC_KEY:    "true"
-      TAURI_UPDATER_PUBLIC_KEY:      ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY:     ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RELEASE_CHANNEL:                  stable
+      EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}
+      RELEASE_VERSION:                  ${{ github.ref_name }}
+      REQUIRE_UPDATER_PUBLIC_KEY:         "true"
+      TAURI_UPDATER_PUBLIC_KEY:         ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY:        ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      WINDOWS_SIGN_COMMAND:          ${{ secrets.WINDOWS_SIGN_COMMAND }}
-      VITE_APP_CHANNEL:              stable
-      VITE_APP_PLATFORM:             windows
+      WINDOWS_SIGN_COMMAND:             ${{ secrets.WINDOWS_SIGN_COMMAND }}
+      VITE_APP_CHANNEL:                   stable
+      VITE_APP_PLATFORM:                  ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-tauri
         with:
-          rust-targets: x86_64-pc-windows-msvc
+          rust-targets: ${{ matrix.rust_targets }}
+      - name: Import Apple certificates
+        if: matrix.platform == 'darwin' && needs.detect-signing.outputs.has_apple_certs == 'true'
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k actions build.keychain
       - name: Prepare release config
+        env:
+          APPLE_CERTIFICATE:      ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: node scripts/prepare-release-config.mjs
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -344,9 +452,42 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY:           ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tauriScript:       npm run tauri
-          tagName:           ${{ github.ref_name }}
-          releaseName:       "EMR Management Tool ${{ github.ref_name }}"
-          prerelease:        false
-          releaseDraft:      false
-          includeUpdaterJson: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          tauriScript:        npm run tauri
+          tagName:            ${{ github.ref_name }}
+          releaseName:        "EMR Management Tool ${{ github.ref_name }}"
+          prerelease:         false
+          releaseDraft:       false
+          includeUpdaterJson: false
+          args:               ${{ matrix.build_args }}
+
+  publish-tag-updater-manifest:
+    name: Publish tag updater manifest
+    if: github.event_name == 'push' && needs.detect-updater.outputs.has_updater_keys == 'true'
+    needs: [detect-updater, stable-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build latest.json
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION:   ${{ github.ref_name }}
+          RELEASE_TAG:       ${{ github.ref_name }}
+          RELEASE_NOTES:     Release ${{ github.ref_name }}
+        run: node scripts/publish-updater-manifest.mjs
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ github.ref_name }}" latest.json \
+            --repo "${{ github.repository }}" --clobber
+          if ! gh release view stable-channel --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create stable-channel \
+              --repo "${{ github.repository }}" \
+              --title "Stable channel" \
+              --notes "Rolling latest.json for in-app updates from CI stable builds." \
+              --prerelease
+          fi
+          gh release upload stable-channel latest.json \
+            --repo "${{ github.repository }}" --clobber

@@ -10,18 +10,14 @@ describe("createReleaseInfo", () => {
     expect(info.canUseAutoUpdater).toBe(false);
   });
 
-  it("enables the stable updater only for Windows stable builds", () => {
-    const info = createReleaseInfo({ appChannel: "stable", platform: "windows" });
-
-    expect(info.isDevelopment).toBe(false);
-    expect(info.channelLabel).toBe("Stable");
-    expect(info.canUseAutoUpdater).toBe(true);
+  it("enables the stable updater for Windows and macOS stable builds", () => {
+    expect(createReleaseInfo({ appChannel: "stable", platform: "windows" }).canUseAutoUpdater).toBe(true);
+    expect(createReleaseInfo({ appChannel: "stable", platform: "darwin" }).canUseAutoUpdater).toBe(true);
   });
 
-  it("keeps unsigned macOS stable builds out of the automatic updater", () => {
-    const info = createReleaseInfo({ appChannel: "stable", platform: "darwin" });
-
-    expect(info.canUseAutoUpdater).toBe(false);
+  it("keeps development and non-desktop platforms out of the automatic updater", () => {
+    expect(createReleaseInfo({ appChannel: "development", platform: "darwin" }).canUseAutoUpdater).toBe(false);
+    expect(createReleaseInfo({ appChannel: "stable", platform: "linux" }).canUseAutoUpdater).toBe(false);
   });
 
   it("normalizes unknown channel names to stable", () => {

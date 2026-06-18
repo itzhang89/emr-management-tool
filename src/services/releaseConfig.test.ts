@@ -26,6 +26,7 @@ describe("release configuration", () => {
     expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(true);
     expect(tauriConfig.plugins?.updater?.pubkey).toMatch(/^[A-Za-z0-9+/=]+$/);
     expect(tauriConfig.plugins?.updater?.endpoints).toEqual([
+      "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel/latest.json",
       "https://github.com/itzhang89/emr-management-tool/releases/latest/download/latest.json"
     ]);
     expect(tauriConfig.plugins?.updater?.windows?.installMode).toBe("passive");
@@ -59,9 +60,13 @@ describe("release configuration", () => {
     expect(workflow).toContain("credential_store:");
     expect(workflow).toContain("package_target:");
     expect(workflow).toContain("prepare-release:");
+    expect(workflow).toContain("detect-updater:");
     expect(workflow).toContain("detect-signing:");
     expect(workflow).toContain("dev-packages:");
     expect(workflow).toContain("stable-packages:");
+    expect(workflow).toContain("publish-stable-updater:");
+    expect(workflow).toContain("stable-release:");
+    expect(workflow).toContain("publish-tag-updater-manifest:");
     expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(workflow).toContain("${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}");
     expect(workflow).toContain("tauri.development.conf.json");
@@ -132,18 +137,18 @@ describe("release configuration", () => {
     expect(prepareRelease).toContain("windows");
     expect(stablePackage).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable'");
     expect(stablePackage).toContain("fromJson(needs.prepare-release.outputs.stable_matrix)");
-    expect(stablePackage).toContain("RELEASE_CHANNEL:            stable");
-    expect(stablePackage).toContain("EMR_CREDENTIAL_STORE:       ${{ needs.detect-signing.outputs.credential_store }}");
-    expect(stablePackage).not.toContain("RELEASE_VERSION:");
+    expect(stablePackage).toContain("RELEASE_CHANNEL:                  stable");
+    expect(stablePackage).toContain("RELEASE_VERSION:                  ${{ needs.prepare-release.outputs.release_version }}");
+    expect(stablePackage).toContain("needs: [prepare-release, detect-signing, detect-updater]");
     expect(prepareRelease).toContain("--target x86_64-apple-darwin --config src-tauri/tauri.conf.json");
     expect(prepareRelease).toContain("--target aarch64-apple-darwin --config src-tauri/tauri.conf.json");
     expect(prepareRelease).toContain("--config src-tauri/tauri.conf.json");
     expect(prepareRelease).toContain("stable-macos-amd64");
     expect(prepareRelease).toContain("stable-macos-arm64");
     expect(prepareRelease).toContain("stable-windows-amd64");
-    expect(stablePackage).toMatch(
-      /Prepare release config[\s\S]*APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}[\s\S]*APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}/
-    );
+    expect(stablePackage).toContain("RELEASE_VERSION:        ${{ needs.prepare-release.outputs.release_version }}");
+    expect(stablePackage).toContain("APPLE_CERTIFICATE:      ${{ secrets.APPLE_CERTIFICATE }}");
+    expect(stablePackage).toContain("APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}");
   });
 
   it("detects Apple signing configuration and forces local credentials when certificates are missing", () => {
@@ -186,10 +191,11 @@ describe("release configuration", () => {
 
   it("keeps release channel and credential store backend as separate build variables", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const windowsRelease = workflowJobBlock(workflow, "windows-release");
+    const stableRelease = workflowJobBlock(workflow, "stable-release");
 
-    expect(windowsRelease).toContain("RELEASE_CHANNEL:               stable");
-    expect(windowsRelease).toContain("EMR_CREDENTIAL_STORE:          ${{ vars.EMR_CREDENTIAL_STORE || 'keychain' }}");
+    expect(stableRelease).toContain("RELEASE_CHANNEL:                  stable");
+    expect(stableRelease).toContain("EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}");
+    expect(stableRelease).toContain("includeUpdaterJson: false");
   });
 
   it("does not fail stable CI builds when updater keys are not configured", () => {
