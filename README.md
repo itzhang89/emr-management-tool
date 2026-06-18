@@ -47,15 +47,19 @@ The app calls AWS directly through the SDK. Grant only the permissions needed fo
 | Logs (CloudWatch) | CloudWatch Logs | `logs:DescribeLogStreams`, `logs:FilterLogEvents` |
 | Logs (S3) | S3 | `s3:ListBucket`, `s3:GetObject` on the log bucket |
 | S3 Browser (read) | S3 | `s3:ListAllMyBuckets`, `s3:ListBucket`, `s3:GetObject`, `s3:GetBucketLocation` |
-| S3 Browser (edit) | S3 | `s3:PutObject`, `s3:DeleteObject`, `s3:CopyObject` on target buckets |
+| S3 Browser (edit) | S3 | `s3:PutObject`, `s3:DeleteObject` on target buckets |
 
 Notes:
 
 - `sts:GetCallerIdentity` is required for every account added in Settings.
+- The account region in Settings must match the AWS region where your EMR virtual clusters live. Virtual Clusters and Job History both query EMR on EKS in that region.
+- Job History syncs from AWS only after a virtual cluster is selected. Without a cluster, the page shows jobs submitted locally by this app.
 - Job submission needs `iam:PassRole` for the execution role ARN used in the submit form. Scope it to that role and `emr-containers.amazonaws.com`.
 - CloudWatch log permissions can be scoped to EMR log groups, for example `/aws/emr-containers/*`.
 - S3 Browser resolves bucket region automatically. The account region in Settings should still match your EMR virtual cluster region.
+- S3 rename uses `GetObject`, `PutObject`, and `DeleteObject`. It does not require `s3:CopyObject`.
 - If buckets use SSE-KMS, you may also need `kms:Decrypt` and `kms:GenerateDataKey` on the relevant KMS keys.
+- Use **Help → View Logs** in the menu bar to open the local app log when troubleshooting permissions or AWS API failures.
 
 ### Example: EMR on EKS only (no S3 Browser editing)
 
@@ -140,14 +144,19 @@ Add write actions on the buckets you want to edit:
   "Effect": "Allow",
   "Action": [
     "s3:PutObject",
-    "s3:DeleteObject",
-    "s3:CopyObject"
+    "s3:DeleteObject"
   ],
   "Resource": "arn:aws:s3:::YOUR_BUCKET/*"
 }
 ```
 
-Rename uses `CopyObject` plus `DeleteObject` on the same bucket prefix.
+Rename downloads the object and writes it back under a new key, so it needs `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` on the same prefix. It does not use `s3:CopyObject`.
+
+### Troubleshooting
+
+- If Virtual Clusters is empty, first confirm the account region in Settings matches the region shown in the AWS console for your EMR virtual cluster.
+- If Job History is empty after submitting jobs elsewhere, select the correct virtual cluster in the page header so the app can call `ListJobRuns`.
+- Open **Help → View Logs** to inspect AWS API failures. The log file is stored under your local app data directory in `emr-management-tool/logs/app.log`.
 
 ## Development
 

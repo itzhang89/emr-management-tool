@@ -6,11 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useVirtualClusters } from "@/hooks/useEmr";
-import type { AppError, VirtualCluster } from "@/types/domain";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { formatVirtualClustersError } from "@/services/appErrorMessage";
+import type { VirtualCluster } from "@/types/domain";
 
 export function VirtualClustersPage() {
+  const activeAccount = useActiveAwsAccount();
   const clusters = useVirtualClusters();
   const [selectedCluster, setSelectedCluster] = useState<VirtualCluster>();
+  const activeRegion = activeAccount.data?.region;
 
   return (
     <div className="flex flex-col gap-6">
@@ -33,12 +37,14 @@ export function VirtualClustersPage() {
           {clusters.isLoading ? <p className="text-sm text-muted-foreground">Loading virtual clusters...</p> : null}
           {clusters.error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-              {errorMessage(clusters.error)}
+              {formatVirtualClustersError(clusters.error, activeRegion)}
             </p>
           ) : null}
-          {clusters.data?.clusters.length === 0 ? (
+          {clusters.data?.clusters.length === 0 && !clusters.isLoading && !clusters.error ? (
             <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No virtual clusters were returned for the active account and region.
+              No virtual clusters were returned for region {activeRegion ?? "unknown"}. Confirm the account region in
+              Settings matches your EMR on EKS resources, and that the IAM policy includes
+              emr-containers:ListVirtualClusters. Open 帮助 → 查看日志 for details.
             </p>
           ) : null}
           <Table>
@@ -118,12 +124,4 @@ function Detail({ label, value }: { label: string; value?: string }) {
       <div className="break-all">{value ?? "-"}</div>
     </>
   );
-}
-
-function errorMessage(error: unknown) {
-  const appError = error as Partial<AppError>;
-  if (appError.code === "DemoModeUnavailable") {
-    return "Virtual clusters require the Tauri desktop runtime. Start with npm run tauri -- dev.";
-  }
-  return appError.message ?? "Failed to load virtual clusters.";
 }

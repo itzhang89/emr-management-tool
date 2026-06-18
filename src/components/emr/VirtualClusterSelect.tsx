@@ -1,12 +1,15 @@
 import { useEffect } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useVirtualClusters } from "@/hooks/useEmr";
-import { useSessionStore } from "@/stores/sessionStore";
 import { cn } from "@/lib/utils";
+import { formatVirtualClustersError } from "@/services/appErrorMessage";
+import { useSessionStore } from "@/stores/sessionStore";
 
 export function VirtualClusterSelect({ className }: { className?: string }) {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
+  const activeAccount = useActiveAwsAccount();
   const clusters = useVirtualClusters();
   const availableClusters = clusters.data?.clusters ?? [];
   const effectiveVirtualClusterId =
@@ -21,8 +24,25 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
     setSelectedVirtualClusterId(defaultClusterId);
   }, [availableClusters, selectedVirtualClusterId, setSelectedVirtualClusterId]);
 
+  if (clusters.isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading virtual clusters...</p>;
+  }
+
+  if (clusters.error) {
+    return (
+      <p className="max-w-md text-sm text-destructive">
+        {formatVirtualClustersError(clusters.error, activeAccount.data?.region)}
+      </p>
+    );
+  }
+
   if (!availableClusters.length) {
-    return <p className="text-sm text-muted-foreground">No virtual clusters available.</p>;
+    return (
+      <p className="max-w-md text-sm text-muted-foreground">
+        No virtual clusters in {activeAccount.data?.region ?? "the selected region"}. Check Settings region and
+        emr-containers:ListVirtualClusters.
+      </p>
+    );
   }
 
   return (
@@ -41,14 +61,19 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
   );
 }
 
+function normalizeVirtualClusterId(virtualClusterId?: string) {
+  const trimmed = virtualClusterId?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export function useEffectiveVirtualClusterId() {
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const clusters = useVirtualClusters();
   const availableClusters = clusters.data?.clusters ?? [];
+  const normalizedSelected = normalizeVirtualClusterId(selectedVirtualClusterId);
   return (
-    selectedVirtualClusterId ??
+    normalizedSelected ??
     availableClusters.find((cluster) => cluster.state === "RUNNING")?.id ??
-    availableClusters[0]?.id ??
-    ""
+    availableClusters[0]?.id
   );
 }
