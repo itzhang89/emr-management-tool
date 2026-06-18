@@ -14,6 +14,7 @@ use chrono::Utc;
 use tauri::AppHandle;
 
 const MAX_CONFIGURATION_DEPTH: usize = 32;
+const MAX_EMR_PAGINATION_PAGES: usize = 100;
 const EMR_JOB_NAME_MESSAGE: &str =
     "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
 
@@ -32,10 +33,20 @@ pub async fn list_virtual_clusters(
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
     let mut clusters = Vec::new();
     let mut next_token = request.next_token;
+    let mut pages = 0usize;
 
     loop {
+        pages += 1;
+        if pages > MAX_EMR_PAGINATION_PAGES {
+            diagnostics::append_log_line(
+                "WARN",
+                "Stopped ListVirtualClusters pagination after reaching the page limit.",
+            );
+            break;
+        }
+        let request_token = next_token.clone();
         let mut operation = client.list_virtual_clusters();
-        if let Some(token) = next_token.as_deref() {
+        if let Some(token) = request_token.as_deref() {
             operation = operation.next_token(token);
         }
         if let Some(max_results) = request.max_results {
@@ -63,8 +74,8 @@ pub async fn list_virtual_clusters(
                 .iter()
                 .map(map_virtual_cluster),
         );
-        next_token = response.next_token().map(ToString::to_string);
-        if next_token.is_none() {
+        next_token = normalize_pagination_token(response.next_token());
+        if !should_continue_pagination(&next_token, &request_token) {
             break;
         }
     }
@@ -108,53 +119,44 @@ pub async fn list_job_runs(
     }
 
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut next_token = request.next_token;
-    let mut synced_jobs = 0usize;
+    let mut operation = client
+        .list_job_runs()
+        .virtual_cluster_id(&virtual_cluster_id);
+    if let Some(next_token) = request.next_token {
+        operation = operation.next_token(next_token);
+    }
+    if let Some(max_results) = request.max_results {
+        operation = operation.max_results(max_results);
+    }
 
-    loop {
-        let mut operation = client
-            .list_job_runs()
-            .virtual_cluster_id(&virtual_cluster_id);
-        if let Some(token) = next_token.as_deref() {
-            operation = operation.next_token(token);
-        }
-        if let Some(max_results) = request.max_results {
-            operation = operation.max_results(max_results);
-        }
-
-        let response = operation.send().await.map_err(|error| {
-            let app_error = AppError::aws_for_account_sdk(
-                "emr-containers",
-                runtime.account.id.clone(),
-                error,
-            );
-            diagnostics::log_aws_failure(
-                "emr-containers",
-                "ListJobRuns",
-                Some(&runtime.account.id),
-                &app_error.message,
-            );
-            app_error
-        })?;
-        let jobs: Vec<JobRunSummary> = response
-            .job_runs()
-            .iter()
-            .map(|job| {
-                map_job_run(
-                    job,
-                    Some(runtime.account.id.clone()),
-                    Some(runtime.account.region.clone()),
-                )
-            })
-            .collect();
-        synced_jobs += jobs.len();
-        for job in &jobs {
-            repository::upsert_job_history(&pool, job).await?;
-        }
-        next_token = response.next_token().map(ToString::to_string);
-        if next_token.is_none() {
-            break;
-        }
+    let response = operation.send().await.map_err(|error| {
+        let app_error = AppError::aws_for_account_sdk(
+            "emr-containers",
+            runtime.account.id.clone(),
+            error,
+        );
+        diagnostics::log_aws_failure(
+            "emr-containers",
+            "ListJobRuns",
+            Some(&runtime.account.id),
+            &app_error.message,
+        );
+        app_error
+    })?;
+    let jobs: Vec<JobRunSummary> = response
+        .job_runs()
+        .iter()
+        .map(|job| {
+            map_job_run(
+                job,
+                Some(runtime.account.id.clone()),
+                Some(runtime.account.region.clone()),
+            )
+        })
+        .collect();
+    let synced_jobs = jobs.len();
+    for job in &jobs {
+        repository::upsert_job_history(&pool, job).await?;
     }
     repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
     diagnostics::append_log_line(
@@ -512,6 +514,24 @@ fn normalized_virtual_cluster_id(virtual_cluster_id: Option<String>) -> Option<S
     })
 }
 
+fn normalize_pagination_token(token: Option<&str>) -> Option<String> {
+    token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn should_continue_pagination(
+    next_token: &Option<String>,
+    request_token: &Option<String>,
+) -> bool {
+    match next_token {
+        None => false,
+        Some(token) if Some(token) == request_token.as_ref() => false,
+        Some(_) => true,
+    }
+}
+
 fn map_virtual_cluster(cluster: &aws_sdk_emrcontainers::types::VirtualCluster) -> VirtualCluster {
     let provider = cluster.container_provider();
     let namespace = provider
@@ -699,7 +719,10 @@ fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> 
 
 #[cfg(test)]
 mod tests {
-    use super::{map_job_run, normalized_virtual_cluster_id, validate_start_job_request};
+    use super::{
+        map_job_run, normalize_pagination_token, normalized_virtual_cluster_id,
+        should_continue_pagination, validate_start_job_request,
+    };
     use crate::models::{
         JarApplicationConfig, JobDriverRequest, SparkResourceConfig, SparkSubmitJobDriverRequest,
         StartJobRunRequest,
@@ -966,5 +989,25 @@ mod tests {
             normalized_virtual_cluster_id(Some(" vc-1 ".to_string())),
             Some("vc-1".to_string())
         );
+    }
+
+    #[test]
+    fn stops_pagination_on_empty_or_repeated_tokens() {
+        assert_eq!(normalize_pagination_token(None), None);
+        assert_eq!(normalize_pagination_token(Some("")), None);
+        assert_eq!(normalize_pagination_token(Some("  ")), None);
+        assert_eq!(
+            normalize_pagination_token(Some("token-1")),
+            Some("token-1".to_string())
+        );
+        assert!(!should_continue_pagination(&None, &None));
+        assert!(!should_continue_pagination(
+            &Some("token-1".to_string()),
+            &Some("token-1".to_string())
+        ));
+        assert!(should_continue_pagination(
+            &Some("token-2".to_string()),
+            &Some("token-1".to_string())
+        ));
     }
 }

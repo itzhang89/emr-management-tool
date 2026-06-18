@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
-import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
+import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
 import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
@@ -36,7 +36,10 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const [remoteLookupPending, setRemoteLookupPending] = useState(false);
   const [remoteLookupError, setRemoteLookupError] = useState<string>();
   const submittedKeyword = submittedSearch.trim() || undefined;
+  const clusters = useVirtualClusters();
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
+  const isSyncingJobs =
+    jobs.isLoading || (clusters.isLoading && effectiveVirtualClusterId === undefined);
   const allJobs = useMemo(() => {
     const localJobs = jobs.data ?? [];
     if (!remoteJob || remoteJob.virtualClusterId !== effectiveVirtualClusterId) return localJobs;
@@ -166,16 +169,12 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
             <VirtualClusterSelect />
             <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
           </div>
-          {jobs.isLoading ? <p className="text-sm text-muted-foreground">Loading job history...</p> : null}
+          {jobs.isLoading && filteredJobs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Loading job history...</p>
+          ) : null}
           {jobs.error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               {formatJobHistoryError(jobs.error)}
-            </p>
-          ) : null}
-          {!effectiveVirtualClusterId && !jobs.isLoading && !jobs.error ? (
-            <p className="mb-4 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-              Select a virtual cluster to sync job runs from AWS. Jobs submitted in this app are still stored locally
-              and shown below when no cluster is selected.
             </p>
           ) : null}
           <Table>
@@ -254,7 +253,12 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 <TableRow>
                   <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
-                      <span>No jobs match the current filters.</span>
+                      <span>{emptyJobsMessage({
+                        submittedKeyword,
+                        effectiveVirtualClusterId,
+                        isSyncingJobs,
+                        autoRefresh
+                      })}</span>
                       {canFindInAws ? (
                         <Button
                           type="button"
@@ -492,6 +496,33 @@ function jobMatchesKeyword(job: JobRunSummary, keyword?: string) {
   const normalized = keyword?.trim().toLowerCase();
   if (!normalized) return true;
   return [job.name, job.id, job.state, JSON.stringify(job)].some((value) => value.toLowerCase().includes(normalized));
+}
+
+function emptyJobsMessage({
+  submittedKeyword,
+  effectiveVirtualClusterId,
+  isSyncingJobs,
+  autoRefresh
+}: {
+  submittedKeyword?: string;
+  effectiveVirtualClusterId?: string;
+  isSyncingJobs: boolean;
+  autoRefresh: boolean;
+}) {
+  if (submittedKeyword) {
+    return "No jobs match the current filters.";
+  }
+  if (isSyncingJobs) {
+    return autoRefresh
+      ? "Syncing job runs from AWS. Auto refresh is enabled."
+      : "Loading job runs from AWS...";
+  }
+  if (!effectiveVirtualClusterId) {
+    return "Select a virtual cluster to sync job runs from AWS.";
+  }
+  return autoRefresh
+    ? "No job runs found yet. Auto refresh will keep checking AWS."
+    : "No job runs found for the selected virtual cluster.";
 }
 
 function readAutoRefreshPreference() {

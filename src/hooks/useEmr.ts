@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -24,26 +23,14 @@ export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
 export function useJobRuns(virtualClusterId?: string, autoRefresh = false, keyword?: string) {
   const accountId = useActiveAccountId();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
-  const query = useQuery({
+  return useQuery({
     queryKey: ["job-runs", accountId, normalizedVirtualClusterId, keyword],
     queryFn: () => emrService.listJobRuns(normalizedVirtualClusterId, accountId, keyword),
     enabled: Boolean(accountId),
     staleTime: autoRefresh ? 0 : undefined,
-    structuralSharing: !autoRefresh
+    structuralSharing: !autoRefresh,
+    refetchInterval: autoRefresh ? jobHistoryRefreshIntervalMs : false
   });
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    void query.refetch({ cancelRefetch: false });
-    const timer = window.setInterval(() => {
-      void query.refetch({ cancelRefetch: false });
-    }, jobHistoryRefreshIntervalMs);
-
-    return () => window.clearInterval(timer);
-  }, [autoRefresh, query.refetch, normalizedVirtualClusterId, keyword]);
-
-  return query;
 }
 
 export function useDescribeJobRun(id?: string, virtualClusterId?: string) {

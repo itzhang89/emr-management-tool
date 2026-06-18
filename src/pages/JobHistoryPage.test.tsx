@@ -221,6 +221,38 @@ describe("JobHistoryPage", () => {
     expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
   });
 
+  it("does not show filter empty message while the initial AWS sync is in progress", () => {
+    useJobRuns.mockReturnValue({
+      data: [],
+      isLoading: true,
+      isFetching: true,
+      error: null,
+      dataUpdatedAt: 0,
+      refetch: vi.fn()
+    });
+
+    renderJobHistoryPage();
+
+    expect(screen.queryByText("No jobs match the current filters.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Syncing job runs from AWS/i)).toBeInTheDocument();
+  });
+
+  it("shows the empty-state refresh message during background auto refresh", () => {
+    useJobRuns.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isFetching: true,
+      error: null,
+      dataUpdatedAt: Date.now(),
+      refetch: vi.fn()
+    });
+
+    renderJobHistoryPage();
+
+    expect(screen.queryByText(/Syncing job runs from AWS/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/No job runs found yet/i)).toBeInTheDocument();
+  });
+
   it("enables 5 second auto refresh by default and allows turning it off", async () => {
     const user = userEvent.setup();
     localStorage.removeItem("emr-eks:job-history-auto-refresh");
