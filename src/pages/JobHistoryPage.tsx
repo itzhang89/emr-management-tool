@@ -11,9 +11,10 @@ import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
+import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
 import { saveTextFile } from "@/services/fileDownload";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { AppError, JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
+import type { JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
 const pageSize = 10;
 const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
@@ -168,7 +169,13 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
           {jobs.isLoading ? <p className="text-sm text-muted-foreground">Loading job history...</p> : null}
           {jobs.error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-              {errorMessage(jobs.error)}
+              {formatJobHistoryError(jobs.error)}
+            </p>
+          ) : null}
+          {!effectiveVirtualClusterId && !jobs.isLoading && !jobs.error ? (
+            <p className="mb-4 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              Select a virtual cluster to sync job runs from AWS. Jobs submitted in this app are still stored locally
+              and shown below when no cluster is selected.
             </p>
           ) : null}
           <Table>
@@ -461,15 +468,11 @@ function formatJson(value?: Record<string, unknown> | Record<string, string> | o
 }
 
 function errorMessage(error: unknown) {
-  const appError = error as Partial<AppError>;
-  if (appError.code === "DemoModeUnavailable") {
-    return "Job history requires the Tauri desktop runtime. Start with npm run tauri -- dev.";
-  }
-  return appError.message ?? "Job operation failed.";
+  return formatAppError(error, "Job operation failed.");
 }
 
 function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterId: string) {
-  const appError = error as Partial<AppError>;
+  const appError = error as { kind?: string; message?: string; code?: string; service?: string };
   const rawMessage = appError.message ?? "";
   if (
     appError.kind === "aws" &&

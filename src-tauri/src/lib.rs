@@ -8,10 +8,13 @@ pub mod state;
 
 use state::AppState;
 
+#[cfg(desktop)]
+use tauri::menu::{Menu, MenuItem, Submenu};
+
 pub fn run() {
     diagnostics::install_panic_hook();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
@@ -59,7 +62,43 @@ pub fn run() {
             commands::s3::delete_s3_object,
             commands::files::save_text_file,
             commands::files::open_text_file,
-        ])
+            commands::diagnostics::get_app_log_path,
+            commands::diagnostics::open_app_log,
+        ]);
+
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .setup(|app| {
+                diagnostics::init_file_logger()?;
+                let view_logs =
+                    MenuItem::with_id(app, "view_logs", "查看日志", true, None::<&str>)?;
+                let help = Submenu::with_items(app, "帮助", true, &[&view_logs])?;
+                let menu = Menu::with_items(app, &[&help])?;
+                app.set_menu(menu)?;
+                Ok(())
+            })
+            .on_menu_event(|_app, event| {
+                if event.id() == "view_logs" {
+                    if let Err(error) = diagnostics::open_app_log() {
+                        diagnostics::append_log_line(
+                            "ERROR",
+                            &format!("Failed to open app log from menu: {error}"),
+                        );
+                    }
+                }
+            });
+    }
+
+    #[cfg(not(desktop))]
+    {
+        builder = builder.setup(|_app| {
+            diagnostics::init_file_logger()?;
+            Ok(())
+        });
+    }
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running EMR Management Tool");
 }

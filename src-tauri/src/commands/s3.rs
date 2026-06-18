@@ -441,16 +441,29 @@ pub async fn rename_s3_object(
     )
     .await?;
     let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
-    let copy_source = format!(
-        "{}/{}",
-        request.bucket,
-        percent_encode_path(&request.source_key)
-    );
-    let copied = client
-        .copy_object()
+    let source = client
+        .get_object()
+        .bucket(&request.bucket)
+        .key(&request.source_key)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
+    let content_type = source.content_type().map(ToString::to_string);
+    let bytes = source
+        .body
+        .collect()
+        .await
+        .map_err(|error| AppError::aws("s3", error))?
+        .into_bytes();
+    let mut put_operation = client
+        .put_object()
         .bucket(&request.bucket)
         .key(&request.destination_key)
-        .copy_source(copy_source)
+        .body(ByteStream::from(bytes));
+    if let Some(content_type) = content_type {
+        put_operation = put_operation.content_type(content_type);
+    }
+    let put_response = put_operation
         .send()
         .await
         .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
@@ -468,7 +481,7 @@ pub async fn rename_s3_object(
         0,
         "file",
         Some(Utc::now().to_rfc3339()),
-        copied.copy_object_result().and_then(|result| result.e_tag()).map(ToString::to_string),
+        put_response.e_tag().map(ToString::to_string),
     ))
 }
 
@@ -494,14 +507,6 @@ pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppRe
         .await
         .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
     Ok(())
-}
-
-fn percent_encode_path(key: &str) -> String {
-    key.split('/')
-        .map(urlencoding::encode)
-        .map(|segment| segment.into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 fn object(
