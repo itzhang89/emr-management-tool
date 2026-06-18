@@ -65,6 +65,19 @@ describe("SettingsPage updates", () => {
     expect(await screen.findAllByText("Stable · Manual updates only")).not.toHaveLength(0);
   });
 
+  it("lets users type a custom AWS region instead of only picking suggestions", async () => {
+    const user = userEvent.setup();
+
+    renderSettingsPage();
+
+    const regionInput = screen.getByPlaceholderText("eu-central-1");
+    await user.clear(regionInput);
+    await user.type(regionInput, "ap-south-1");
+
+    expect(regionInput).toHaveValue("ap-south-1");
+    expect(screen.getByText(/type any AWS region code/i)).toBeInTheDocument();
+  });
+
   it("lets the user install an available update from the update button", async () => {
     const user = userEvent.setup();
     const install = vi.fn().mockResolvedValue(undefined);
