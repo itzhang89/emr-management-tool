@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assertReleaseVersion } from "./release-version.mjs";
 
 const UPDATER_TARGETS = [
   {
@@ -27,7 +28,7 @@ function gh(...args) {
   return execFileSync("gh", args, { encoding: "utf8" }).trim();
 }
 
-const version = (process.env.RELEASE_VERSION ?? "").replace(/^v/, "");
+const version = assertReleaseVersion(process.env.RELEASE_VERSION ?? "", { label: "RELEASE_VERSION" });
 const releaseTag = process.env.RELEASE_TAG;
 const repo = process.env.GITHUB_REPOSITORY;
 const notes = process.env.RELEASE_NOTES ?? "";

@@ -292,6 +292,7 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       VITE_APP_CHANNEL:                 stable
       VITE_APP_PLATFORM:                ${{ matrix.platform }}
+      VITE_APP_VERSION:                 ${{ needs.prepare-release.outputs.release_version }}
       ARTIFACT_LABEL:                     ${{ matrix.label }}
       BUNDLE_DIR:                         ${{ matrix.bundle_dir }}
       ARTIFACT_PATTERNS:                  ${{ matrix.artifact_patterns }}
@@ -382,11 +383,24 @@ jobs:
           gh release upload stable-channel latest.json \
             --repo "${{ github.repository }}" --clobber
 
+  # ── tag push · 校验 tag 版本号 ───────────────
+  resolve-tag-version:
+    name: Resolve tag version
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.validate.outputs.app_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate semver tag
+        id: validate
+        run: node scripts/validate-release-tag.mjs
+
   # ── tag push · 正式发版（Windows + macOS，含 updater 清单）──
   stable-release:
     name: Stable release (${{ matrix.label }})
     if: github.event_name == 'push'
-    needs: [detect-updater, detect-signing]
+    needs: [detect-updater, detect-signing, resolve-tag-version]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -411,6 +425,7 @@ jobs:
       RELEASE_CHANNEL:                  stable
       EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}
       RELEASE_VERSION:                  ${{ github.ref_name }}
+      VITE_APP_VERSION:                 ${{ needs.resolve-tag-version.outputs.app_version }}
       REQUIRE_UPDATER_PUBLIC_KEY:         "true"
       TAURI_UPDATER_PUBLIC_KEY:         ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY:        ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -443,6 +458,8 @@ jobs:
             -s -k actions build.keychain
       - name: Prepare release config
         env:
+          RELEASE_VERSION:        ${{ github.ref_name }}
+          VITE_APP_VERSION:       ${{ needs.resolve-tag-version.outputs.app_version }}
           APPLE_CERTIFICATE:      ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: node scripts/prepare-release-config.mjs
@@ -463,7 +480,7 @@ jobs:
   publish-tag-updater-manifest:
     name: Publish tag updater manifest
     if: github.event_name == 'push' && needs.detect-updater.outputs.has_updater_keys == 'true'
-    needs: [detect-updater, stable-release]
+    needs: [detect-updater, stable-release, resolve-tag-version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -471,7 +488,7 @@ jobs:
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          RELEASE_VERSION:   ${{ github.ref_name }}
+          RELEASE_VERSION:   ${{ needs.resolve-tag-version.outputs.app_version }}
           RELEASE_TAG:       ${{ github.ref_name }}
           RELEASE_NOTES:     Release ${{ github.ref_name }}
         run: node scripts/publish-updater-manifest.mjs

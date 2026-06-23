@@ -23,4 +23,9 @@ describe("createReleaseInfo", () => {
   it("normalizes unknown channel names to stable", () => {
     expect(createReleaseInfo({ appChannel: "test" }).appChannel).toBe("stable");
   });
+
+  it("includes the app version with a development fallback", () => {
+    expect(createReleaseInfo({ version: "0.2.0" }).version).toBe("0.2.0");
+    expect(createReleaseInfo().version).toBe("0.0.0-dev");
+  });
 });

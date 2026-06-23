@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { assertReleaseVersion, normalizeReleaseVersion } from "./release-version.mjs";
 
 const channel = process.env.RELEASE_CHANNEL ?? "stable";
 const rawVersion = process.env.RELEASE_VERSION;
@@ -10,11 +11,21 @@ const updaterPrivateKey = process.env.TAURI_SIGNING_PRIVATE_KEY;
 const windowsSignCommand = process.env.WINDOWS_SIGN_COMMAND;
 
 if (rawVersion) {
-  const version = rawVersion.replace(/^v/, "");
+  const version =
+    process.env.CI === "true" && process.env.GITHUB_EVENT_NAME === "push"
+      ? assertReleaseVersion(rawVersion, { label: "git tag" })
+      : normalizeReleaseVersion(rawVersion);
+
+  if (!version) {
+    throw new Error("RELEASE_VERSION is set but could not be normalized.");
+  }
+
   updatePackageVersion(version);
   updatePackageLockVersion(version);
   updateTauriVersion(version);
   updateCargoVersion(version);
+  exportBuildVersion(version);
+  console.log(`Prepared release version ${version} from ${rawVersion}`);
 }
 
 const tauriConfigPath = "src-tauri/tauri.conf.json";
@@ -85,4 +96,10 @@ function readJson(path) {
 
 function writeJson(path, value) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function exportBuildVersion(version) {
+  if (process.env.GITHUB_ENV) {
+    appendFileSync(process.env.GITHUB_ENV, `VITE_APP_VERSION=${version}\n`);
+  }
 }

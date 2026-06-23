@@ -67,9 +67,11 @@ describe("release configuration", () => {
     expect(workflow).toContain("publish-stable-updater:");
     expect(workflow).toContain("stable-release:");
     expect(workflow).toContain("publish-tag-updater-manifest:");
+    expect(workflow).toContain("resolve-tag-version:");
+    expect(workflow).toContain("validate-release-tag.mjs");
+    expect(workflow).toContain("VITE_APP_VERSION:");
     expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(workflow).toContain("${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}");
-    expect(workflow).toContain("tauri.development.conf.json");
     expect(workflow).toContain("includeUpdaterJson");
     expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(workflow).toContain("WINDOWS_SIGN_COMMAND");
@@ -192,10 +194,15 @@ describe("release configuration", () => {
   it("keeps release channel and credential store backend as separate build variables", () => {
     const workflow = readText(".github/workflows/release.yml");
     const stableRelease = workflowJobBlock(workflow, "stable-release");
+    const resolveTagVersion = workflowJobBlock(workflow, "resolve-tag-version");
 
     expect(stableRelease).toContain("RELEASE_CHANNEL:                  stable");
+    expect(stableRelease).toContain("RELEASE_VERSION:                  ${{ github.ref_name }}");
+    expect(stableRelease).toContain("VITE_APP_VERSION:                 ${{ needs.resolve-tag-version.outputs.app_version }}");
+    expect(stableRelease).toContain("needs: [detect-updater, detect-signing, resolve-tag-version]");
     expect(stableRelease).toContain("EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}");
     expect(stableRelease).toContain("includeUpdaterJson: false");
+    expect(resolveTagVersion).toContain("validate-release-tag.mjs");
   });
 
   it("does not fail stable CI builds when updater keys are not configured", () => {
@@ -212,10 +219,45 @@ describe("release configuration", () => {
         }
       });
 
+      const packageJson = JSON.parse(readFileSync(join(workspace, "package.json"), "utf8")) as { version: string };
       const tauriConfig = JSON.parse(readFileSync(join(workspace, "src-tauri/tauri.conf.json"), "utf8")) as {
+        version: string;
         bundle: { createUpdaterArtifacts?: boolean };
       };
+      const cargoToml = readFileSync(join(workspace, "src-tauri/Cargo.toml"), "utf8");
+      const cargoVersion = cargoToml.match(/^version = "([^"]+)"/m)?.[1];
+
+      expect(packageJson.version).toBe("0.2.0");
+      expect(tauriConfig.version).toBe("0.2.0");
+      expect(cargoVersion).toBe("0.2.0");
       expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(false);
+    });
+  });
+
+  it("syncs git tag versions into all build manifests before packaging", () => {
+    withReleaseScriptWorkspace((workspace) => {
+      execFileSync(process.execPath, ["scripts/prepare-release-config.mjs"], {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          CI: "true",
+          GITHUB_EVENT_NAME: "push",
+          RELEASE_CHANNEL: "stable",
+          RELEASE_VERSION: "v0.1.4",
+          REQUIRE_UPDATER_PUBLIC_KEY: "false"
+        }
+      });
+
+      const packageJson = JSON.parse(readFileSync(join(workspace, "package.json"), "utf8")) as { version: string };
+      const tauriConfig = JSON.parse(readFileSync(join(workspace, "src-tauri/tauri.conf.json"), "utf8")) as {
+        version: string;
+      };
+      const cargoToml = readFileSync(join(workspace, "src-tauri/Cargo.toml"), "utf8");
+      const cargoVersion = cargoToml.match(/^version = "([^"]+)"/m)?.[1];
+
+      expect(packageJson.version).toBe("0.1.4");
+      expect(tauriConfig.version).toBe("0.1.4");
+      expect(cargoVersion).toBe("0.1.4");
     });
   });
 
@@ -262,6 +304,7 @@ function withReleaseScriptWorkspace(callback: (workspace: string) => void) {
     mkdirSync(join(workspace, "scripts"), { recursive: true });
     mkdirSync(join(workspace, "src-tauri"), { recursive: true });
     cpSync(join(root, "scripts/prepare-release-config.mjs"), join(workspace, "scripts/prepare-release-config.mjs"));
+    cpSync(join(root, "scripts/release-version.mjs"), join(workspace, "scripts/release-version.mjs"));
     cpSync(join(root, "package.json"), join(workspace, "package.json"));
     cpSync(join(root, "package-lock.json"), join(workspace, "package-lock.json"));
     cpSync(join(root, "src-tauri/tauri.conf.json"), join(workspace, "src-tauri/tauri.conf.json"));

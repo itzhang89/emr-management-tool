@@ -59,6 +59,8 @@ describe("SettingsPage updates", () => {
     renderSettingsPage();
 
     expect(screen.queryByRole("heading", { name: "Application Updates" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Current version:/i)).toBeInTheDocument();
+    expect(screen.getByText("0.1.0")).toBeInTheDocument();
 
     await user.hover(screen.getByRole("button", { name: /Check for Updates/i }));
 
@@ -90,6 +92,11 @@ describe("SettingsPage updates", () => {
 
     renderSettingsPage();
     await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
+
+    expect(screen.getByText(/Current version:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Upgrade to/i)).toBeInTheDocument();
+    expect(screen.getByText("0.2.0")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: /Install 0.2.0/i }));
 
     expect(install).toHaveBeenCalledOnce();
