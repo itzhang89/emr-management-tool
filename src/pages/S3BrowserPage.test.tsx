@@ -132,7 +132,7 @@ describe("S3BrowserPage", () => {
     expect(screen.getByText("s3://")).toBeInTheDocument();
     const pathInput = screen.getByDisplayValue("logs-bucket/");
     expect(pathInput).toHaveAttribute("list", "s3-path-options");
-    expect(document.querySelector('option[value="data-bucket/"]')).toBeInTheDocument();
+    expect(document.querySelector('#s3-path-options option[value="data-bucket/"]')).toBeInTheDocument();
 
     await user.clear(pathInput);
     await user.type(pathInput, "data-bucket/{Enter}");

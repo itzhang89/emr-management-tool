@@ -1,5 +1,5 @@
 import { ArrowUp, Copy, Download, FileText, Folder, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,10 @@ import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { S3ObjectEntry } from "@/types/domain";
 
+const BROWSER_PANE_MIN_WIDTH = 220;
+const BROWSER_PANE_MAX_WIDTH = 720;
+const BROWSER_PANE_DEFAULT_WIDTH = 280;
+
 export function S3BrowserPage() {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -46,6 +50,7 @@ export function S3BrowserPage() {
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
   const [editingPath, setEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState(formatPathInput(selectedBucket, prefix));
+  const [browserPaneWidth, setBrowserPaneWidth] = useState(BROWSER_PANE_DEFAULT_WIDTH);
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
   const [deleteTarget, setDeleteTarget] = useState<{ bucket: string; key: string }>();
@@ -320,9 +325,39 @@ export function S3BrowserPage() {
   const selectedObjectPath =
     selectedBucket && selectedKey && selectedObject?.kind === "file" ? `s3://${selectedBucket}/${selectedKey}` : undefined;
 
+  const beginBrowserPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = browserPaneWidth;
+
+    const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
+      const nextWidth = Math.min(
+        BROWSER_PANE_MAX_WIDTH,
+        Math.max(BROWSER_PANE_MIN_WIDTH, startWidth + moveEvent.clientX - startX)
+      );
+      setBrowserPaneWidth(nextWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const nudgeBrowserPaneWidth = (delta: number) => {
+    setBrowserPaneWidth((current) => Math.min(BROWSER_PANE_MAX_WIDTH, Math.max(BROWSER_PANE_MIN_WIDTH, current + delta)));
+  };
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
+    <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-6">
+      <div className="flex shrink-0 items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">S3 Browser</h1>
           <p className="text-sm text-muted-foreground">Browse S3 buckets and edit supported text files.</p>
@@ -338,36 +373,31 @@ export function S3BrowserPage() {
           </Button>
         </div>
       </div>
-      <div className="grid grid-cols-[340px_1fr] gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex min-w-0 items-center gap-1">
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <Card className="flex shrink-0 flex-col overflow-hidden" style={{ width: browserPaneWidth }}>
+          <CardHeader className="shrink-0 space-y-1.5 p-4">
+            <CardTitle className="flex min-w-0 items-center gap-1 text-sm">
               {editingPath ? (
                 <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={openPath}>
-                  <span className="text-muted-foreground">s3://</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">s3://</span>
                   <Input
                     autoFocus
                     list="s3-path-options"
+                    className="min-w-0 w-full font-mono text-xs"
                     value={pathInput}
+                    title={pathInput}
                     onChange={(event) => setPathInput(event.target.value)}
                     onBlur={() => {
                       setPathInput(formatPathInput(selectedBucket, prefix));
                       setEditingPath(false);
                     }}
                   />
-                  <datalist id="s3-path-options">
-                    {(buckets.data ?? []).map((entry) => (
-                      <option key={entry.name} value={`${entry.name}/`}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </datalist>
                 </form>
               ) : (
                 <button
                   type="button"
                   title={currentS3Path}
-                  className="min-w-0 flex-1 break-all rounded-sm text-left hover:underline"
+                  className="min-w-0 flex-1 truncate rounded-sm text-left text-xs hover:underline"
                   onClick={() => {
                     setPathInput(formatPathInput(selectedBucket, prefix));
                     setEditingPath(true);
@@ -402,19 +432,21 @@ export function S3BrowserPage() {
                 <RefreshCw data-icon="inline-start" />
               </Button>
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               {selectedS3Prefix ? "Opened from job monitoring configuration." : "Supported text files can be edited in place."}
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" aria-label="Up" disabled={!prefix} onClick={goUp}>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden p-4 pt-0">
+            <div className="flex shrink-0 gap-2">
+              <Button type="button" variant="outline" size="sm" className="h-7 px-2" aria-label="Up" disabled={!prefix} onClick={goUp}>
                 <ArrowUp data-icon="inline-start" />
               </Button>
             </div>
-            {buckets.isLoading || objects.isLoading ? <p className="text-sm text-muted-foreground">Loading S3 objects...</p> : null}
+            {buckets.isLoading || objects.isLoading ? (
+              <p className="shrink-0 text-xs text-muted-foreground">Loading S3 objects...</p>
+            ) : null}
             {buckets.error || objects.error ? (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
                 {buckets.error
                   ? formatS3BrowserError(buckets.error, "listBuckets")
                   : formatS3BrowserError(objects.error, "listObjects", currentS3Path)}
@@ -422,7 +454,7 @@ export function S3BrowserPage() {
             ) : null}
             <nav
               aria-label="S3 objects"
-              className="flex flex-col gap-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               tabIndex={0}
               ref={objectListRef}
               onKeyDown={handleObjectListKeyDown}
@@ -436,7 +468,7 @@ export function S3BrowserPage() {
                     <Input
                       key={object.key}
                       autoFocus
-                      className="h-9 font-mono text-sm"
+                      className="h-7 font-mono text-xs"
                       value={renameValue}
                       onChange={(event) => setRenameValue(event.target.value)}
                       onBlur={() => void submitRename(object.key)}
@@ -448,9 +480,10 @@ export function S3BrowserPage() {
                 return (
                   <button
                     key={object.key}
-                    className="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                    className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left font-mono text-xs leading-tight hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
                     type="button"
                     data-active={object.key === selectedKey}
+                    title={objectName}
                     onClick={() => {
                       if (object.kind === "folder") {
                         setPrefix(object.key);
@@ -462,17 +495,44 @@ export function S3BrowserPage() {
                     }}
                     onDoubleClick={() => startRename(object)}
                   >
-                    {object.kind === "folder" ? <Folder className="size-4 text-muted-foreground" /> : <FileText className="size-4 text-muted-foreground" />}
-                    {objectName}
+                    {object.kind === "folder" ? (
+                      <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="min-w-0 truncate">{objectName}</span>
                   </button>
                 );
               })}
             </nav>
-            {objects.data?.length === 0 ? <p className="text-sm text-muted-foreground">No objects under this prefix.</p> : null}
+            {objects.data?.length === 0 ? <p className="shrink-0 text-xs text-muted-foreground">No objects under this prefix.</p> : null}
           </CardContent>
         </Card>
-        <Card role="region" aria-label="Selected S3 object">
-          <CardHeader className="flex-row items-start justify-between gap-4">
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize browser pane"
+          aria-valuemin={BROWSER_PANE_MIN_WIDTH}
+          aria-valuemax={BROWSER_PANE_MAX_WIDTH}
+          aria-valuenow={browserPaneWidth}
+          tabIndex={0}
+          className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+          onMouseDown={beginBrowserPaneResize}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              nudgeBrowserPaneWidth(-16);
+            }
+            if (event.key === "ArrowRight") {
+              event.preventDefault();
+              nudgeBrowserPaneWidth(16);
+            }
+          }}
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/50 group-focus-visible:bg-primary" />
+        </div>
+        <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="region" aria-label="Selected S3 object">
+          <CardHeader className="shrink-0 flex-row items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
               <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
                 <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
@@ -502,8 +562,8 @@ export function S3BrowserPage() {
             </div>
             <ObjectProperties object={selectedObject} />
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="relative">
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+            <div className="relative min-h-0 flex-1">
               {!editability?.editable && selectedObject?.kind === "file" ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -519,7 +579,7 @@ export function S3BrowserPage() {
               ) : null}
               <Textarea
                 ref={editorRef}
-                className="min-h-[480px] font-mono"
+                className="h-full min-h-[240px] resize-none font-mono"
                 value={content}
                 readOnly={!editability?.editable}
                 onChange={(event) => setContent(event.target.value)}
@@ -545,7 +605,7 @@ export function S3BrowserPage() {
                 }}
               />
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex shrink-0 justify-end gap-2">
               <Button
                 variant="outline"
                 disabled={!selectedBucket || !selectedKey || deleteObject.isPending}
@@ -562,6 +622,11 @@ export function S3BrowserPage() {
           </CardContent>
         </Card>
       </div>
+      <datalist id="s3-path-options">
+        {(buckets.data ?? []).map((entry) => (
+          <option key={entry.name} value={`${entry.name}/`} />
+        ))}
+      </datalist>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
         <DialogContent>
           <DialogHeader>
