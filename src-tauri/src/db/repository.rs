@@ -7,6 +7,7 @@ use sqlx::{Row, SqlitePool};
 use std::fs;
 
 pub const JOB_HISTORY_RETENTION_DAYS: i64 = 7;
+pub const SUBMISSION_HISTORY_LIMIT: i64 = 5;
 
 fn job_history_cutoff() -> String {
     (Utc::now() - Duration::days(JOB_HISTORY_RETENTION_DAYS)).to_rfc3339()
@@ -261,6 +262,30 @@ pub async fn prune_job_history(pool: &SqlitePool, account_id: Option<&str>) -> A
     .execute(pool)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
+    prune_submission_history(pool, account_id).await
+}
+
+pub async fn prune_submission_history(
+    pool: &SqlitePool,
+    account_id: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query(
+        "delete from job_history
+         where (?1 is null or account_id = ?1)
+           and json_extract(payload, '$.sourceRequest') is not null
+           and id not in (
+             select id from job_history
+             where (?1 is null or account_id = ?1)
+               and json_extract(payload, '$.sourceRequest') is not null
+             order by created_at desc
+             limit ?2
+           )",
+    )
+    .bind(account_id)
+    .bind(SUBMISSION_HISTORY_LIMIT)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
 }
 
@@ -495,9 +520,14 @@ fn from_payload<T: serde::de::DeserializeOwned>(payload: String) -> AppResult<T>
 
 #[cfg(test)]
 mod tests {
-    use super::{list_job_history, migrate, upsert_job_history};
-    use crate::models::JobRunSummary;
+    use super::{list_job_history, migrate, prune_submission_history, upsert_job_history};
+    use crate::models::{
+        JarApplicationConfig, JobDriverRequest, JobRunSummary, SparkResourceConfig,
+        SparkSubmitJobDriverRequest, StartJobRunRequest,
+    };
+    use chrono::{Duration, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn list_job_history_filters_by_keyword_in_cached_payload() {
@@ -508,13 +538,43 @@ mod tests {
             .expect("create sqlite memory pool");
         migrate(&pool).await.expect("migrate schema");
 
-        upsert_job_history(&pool, &job("job-running", "daily-etl", "RUNNING", "acct-1", "vc-1"))
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-running",
+                "daily-etl",
+                "RUNNING",
+                "acct-1",
+                "vc-1",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
             .await
             .expect("insert running job");
-        upsert_job_history(&pool, &job("job-failed", "batch-etl", "FAILED", "acct-1", "vc-1"))
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-failed",
+                "batch-etl",
+                "FAILED",
+                "acct-1",
+                "vc-1",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
             .await
             .expect("insert failed job");
-        upsert_job_history(&pool, &job("job-other", "failed-other-cluster", "FAILED", "acct-1", "vc-2"))
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-other",
+                "failed-other-cluster",
+                "FAILED",
+                "acct-1",
+                "vc-2",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
             .await
             .expect("insert other cluster job");
 
@@ -533,7 +593,109 @@ mod tests {
         assert_eq!(by_id.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-running"]);
     }
 
-    fn job(id: &str, name: &str, state: &str, account_id: &str, virtual_cluster_id: &str) -> JobRunSummary {
+    #[tokio::test]
+    async fn prune_submission_history_keeps_only_recent_submissions() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+        migrate(&pool).await.expect("migrate schema");
+
+        for index in 0..7 {
+            let created_at = (Utc::now() - Duration::days(6 - index as i64)).to_rfc3339();
+            upsert_job_history(
+                &pool,
+                &submitted_job(&format!("job-{index}"), &created_at, "acct-1", "vc-1"),
+            )
+            .await
+            .expect("insert submitted job");
+        }
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-synced",
+                "synced-etl",
+                "RUNNING",
+                "acct-1",
+                "vc-1",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
+            .await
+            .expect("insert synced job");
+
+        prune_submission_history(&pool, Some("acct-1"))
+            .await
+            .expect("prune submissions");
+
+        let remaining = list_job_history(&pool, Some("acct-1"), Some("vc-1"), None)
+            .await
+            .expect("list remaining jobs");
+        let submitted = remaining
+            .iter()
+            .filter(|job| job.source_request.is_some())
+            .map(|job| job.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(submitted, vec!["job-6", "job-5", "job-4", "job-3", "job-2"]);
+        assert!(remaining.iter().any(|job| job.id == "job-synced"));
+    }
+
+    fn submitted_job(id: &str, created_at: &str, account_id: &str, virtual_cluster_id: &str) -> JobRunSummary {
+        JobRunSummary {
+            id: id.to_string(),
+            name: id.to_string(),
+            state: "SUBMITTED".to_string(),
+            account_id: Some(account_id.to_string()),
+            region: Some("us-east-1".to_string()),
+            virtual_cluster_id: virtual_cluster_id.to_string(),
+            virtual_cluster_name: None,
+            created_at: created_at.to_string(),
+            started_at: None,
+            finished_at: None,
+            duration_seconds: None,
+            source_request: Some(StartJobRunRequest {
+                account_id: Some(account_id.to_string()),
+                name: id.to_string(),
+                virtual_cluster_id: virtual_cluster_id.to_string(),
+                execution_role_arn: "arn:aws:iam::123456789012:role/EMR".to_string(),
+                release_label: "emr-7.2.0-latest".to_string(),
+                application: JarApplicationConfig {
+                    r#type: "jar".to_string(),
+                    jar_path: "s3://bucket/app.jar".to_string(),
+                    main_class: "com.example.Main".to_string(),
+                },
+                arguments: vec![],
+                resources: SparkResourceConfig {
+                    driver_cores: 1,
+                    driver_memory: "1G".to_string(),
+                    executor_cores: 1,
+                    executor_memory: "1G".to_string(),
+                    executor_instances: 1,
+                },
+                spark_config: HashMap::new(),
+                job_driver: JobDriverRequest {
+                    spark_submit_job_driver: SparkSubmitJobDriverRequest {
+                        entry_point: "s3://bucket/app.jar".to_string(),
+                        entry_point_arguments: vec![],
+                        spark_submit_parameters: String::new(),
+                    },
+                },
+                configuration_overrides: None,
+            }),
+            describe_details: None,
+        }
+    }
+
+    fn job(
+        id: &str,
+        name: &str,
+        state: &str,
+        account_id: &str,
+        virtual_cluster_id: &str,
+        created_at: &str,
+    ) -> JobRunSummary {
         JobRunSummary {
             id: id.to_string(),
             name: name.to_string(),
@@ -542,7 +704,7 @@ mod tests {
             region: Some("us-east-1".to_string()),
             virtual_cluster_id: virtual_cluster_id.to_string(),
             virtual_cluster_name: None,
-            created_at: "2026-06-10T00:00:00Z".to_string(),
+            created_at: created_at.to_string(),
             started_at: None,
             finished_at: None,
             duration_seconds: None,

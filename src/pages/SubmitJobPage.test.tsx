@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
+import { writeSubmitJobFormCache, writeSubmitJobLastTemplate } from "@/services/submitJobFormStorage";
 
 const mocks = vi.hoisted(() => ({
   startJobRun: vi.fn(),
@@ -15,6 +16,10 @@ vi.mock("sonner", () => ({
     error: mocks.toastError,
     success: vi.fn()
   }
+}));
+
+vi.mock("@/hooks/useAwsSettings", () => ({
+  useActiveAwsAccount: () => ({ data: { id: "acct-test" } })
 }));
 
 vi.mock("@/hooks/useEmr", () => ({
@@ -90,6 +95,7 @@ vi.mock("@/stores/sessionStore", () => ({
 describe("SubmitJobPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   it("renders template-driven submit controls without legacy save template action", () => {
@@ -123,6 +129,27 @@ describe("SubmitJobPage", () => {
     await user.hover(screen.getByText("ENV"));
 
     expect((await screen.findAllByText("Runtime environment name")).length).toBeGreaterThan(0);
+  });
+
+  it("restores cached template form values for the active account", async () => {
+    writeSubmitJobLastTemplate("acct-test", "daily-etl");
+    writeSubmitJobFormCache("acct-test", "daily-etl", {
+      resourceTemplateId: "tiny",
+      customVariables: { ENV: "staging" }
+    });
+
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <SubmitJobPage />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("staging")).toBeInTheDocument();
+    });
   });
 
   it("shows structured Tauri submit errors instead of a generic fallback", async () => {
