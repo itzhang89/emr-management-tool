@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReleaseVersion, normalizeReleaseVersion } from "../../scripts/release-version.mjs";
+import { assertReleaseVersion, normalizeReleaseVersion } from "@/services/releaseVersion";
 
 describe("release-version", () => {
   it("normalizes tags with or without a v prefix", () => {
