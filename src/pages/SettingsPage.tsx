@@ -120,20 +120,35 @@ export function SettingsPage() {
             Manage named AWS accounts. Development builds store secrets in a local development store; production builds use the OS keychain.
           </p>
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={checkingUpdate || installingUpdate}
-              onClick={availableUpdate ? installUpdate : checkForUpdates}
-            >
-              {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-              {updateButtonLabel}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{updateTooltip}</TooltipContent>
-        </Tooltip>
+        <div className="flex flex-col items-end gap-1.5">
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            {availableUpdate ? (
+              <>
+                Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
+                {" · "}
+                Upgrade to <span className="font-medium text-foreground">{availableUpdate.version}</span>
+              </>
+            ) : (
+              <>
+                Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
+              </>
+            )}
+          </p>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={checkingUpdate || installingUpdate}
+                onClick={availableUpdate ? installUpdate : checkForUpdates}
+              >
+                {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                {updateButtonLabel}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{updateTooltip}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       <Card>
