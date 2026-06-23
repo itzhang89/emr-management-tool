@@ -13,6 +13,7 @@ import {
 import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components/emr/VirtualClusterSelect";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
 import {
   useJobConfigTemplates,
@@ -26,6 +27,12 @@ import {
   toStartJobRunRequest,
   validateSubmitPayload
 } from "@/services/templateEngine";
+import {
+  readSubmitJobFormCache,
+  readSubmitJobLastTemplate,
+  writeSubmitJobFormCache,
+  writeSubmitJobLastTemplate
+} from "@/services/submitJobFormStorage";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
 
@@ -34,6 +41,8 @@ export function SubmitJobPage() {
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
   const virtualClusterId = useEffectiveVirtualClusterId();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
   const startJobRun = useStartJobRun();
   const jobConfigTemplates = useJobConfigTemplates();
   const resourceTemplates = useTemplates();
@@ -54,18 +63,33 @@ export function SubmitJobPage() {
     defaultResources();
 
   useEffect(() => {
-    if (!selectedTemplateId && templates[0]) {
-      setSelectedTemplateId(templates[0].id);
+    if (selectedTemplateId || templates.length === 0) return;
+    const lastTemplateId = accountId ? readSubmitJobLastTemplate(accountId) : undefined;
+    if (lastTemplateId && templates.some((template) => template.id === lastTemplateId)) {
+      setSelectedTemplateId(lastTemplateId);
+      return;
     }
-  }, [selectedTemplateId, templates]);
+    setSelectedTemplateId(templates[0].id);
+  }, [accountId, selectedTemplateId, templates]);
 
   useEffect(() => {
     if (!selectedTemplate) return;
-    setCustomVariables(getDefaultCustomVariableValues(selectedTemplate));
-    if (selectedTemplate.defaultResourceTemplateId) {
-      setResourceTemplateId(selectedTemplate.defaultResourceTemplateId);
-    }
-  }, [selectedTemplate?.id]);
+    const defaults = getDefaultCustomVariableValues(selectedTemplate);
+    const cached = accountId ? readSubmitJobFormCache(accountId, selectedTemplate.id) : undefined;
+    setCustomVariables(cached?.customVariables ? { ...defaults, ...cached.customVariables } : defaults);
+    setResourceTemplateId(
+      cached?.resourceTemplateId ?? selectedTemplate.defaultResourceTemplateId ?? "tiny"
+    );
+  }, [accountId, selectedTemplate?.id]);
+
+  useEffect(() => {
+    if (!accountId || !selectedTemplateId || cloneRequest) return;
+    writeSubmitJobFormCache(accountId, selectedTemplateId, {
+      resourceTemplateId,
+      customVariables
+    });
+    writeSubmitJobLastTemplate(accountId, selectedTemplateId);
+  }, [accountId, cloneRequest, customVariables, resourceTemplateId, selectedTemplateId]);
 
   useEffect(() => {
     if (!clonedJobRequest) return;

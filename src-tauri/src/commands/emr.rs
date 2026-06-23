@@ -259,7 +259,7 @@ pub async fn start_job_run(
             .to_string(),
         name: response.name().unwrap_or(&request.name).to_string(),
         state: "SUBMITTED".to_string(),
-        account_id: Some(runtime.account.id),
+        account_id: Some(runtime.account.id.clone()),
         region: Some(runtime.account.region),
         virtual_cluster_id: response
             .virtual_cluster_id()
@@ -276,6 +276,7 @@ pub async fn start_job_run(
 
     let pool = repository::pool().await?;
     repository::upsert_job_history(&pool, &job).await?;
+    repository::prune_submission_history(&pool, job.account_id.as_deref()).await?;
 
     Ok(job)
 }
