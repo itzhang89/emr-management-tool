@@ -9,7 +9,7 @@ pub mod state;
 use state::AppState;
 
 #[cfg(desktop)]
-use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 pub fn run() {
     diagnostics::install_panic_hook();
@@ -71,10 +71,23 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
+                let undo = PredefinedMenuItem::undo(app, None)?;
+                let redo = PredefinedMenuItem::redo(app, None)?;
+                let separator = PredefinedMenuItem::separator(app)?;
+                let cut = PredefinedMenuItem::cut(app, None)?;
+                let copy = PredefinedMenuItem::copy(app, None)?;
+                let paste = PredefinedMenuItem::paste(app, None)?;
+                let select_all = PredefinedMenuItem::select_all(app, None)?;
+                let edit = Submenu::with_items(
+                    app,
+                    "Edit",
+                    true,
+                    &[&undo, &redo, &separator, &cut, &copy, &paste, &select_all],
+                )?;
                 let view_logs =
                     MenuItem::with_id(app, "view_logs", "查看日志", true, None::<&str>)?;
                 let help = Submenu::with_items(app, "帮助", true, &[&view_logs])?;
-                let menu = Menu::with_items(app, &[&help])?;
+                let menu = Menu::with_items(app, &[&edit, &help])?;
                 app.set_menu(menu)?;
                 Ok(())
             })
