@@ -139,6 +139,26 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect((await screen.findAllByText("Used in job arguments")).length).toBeGreaterThan(0);
   });
 
+  it("shows boolean output format options for boolean variables", async () => {
+    openTextFile.mockResolvedValue(
+      JSON.stringify({
+        name: "Bool Template",
+        payloadTemplate: "{\"name\":\"bool\"}",
+        customVariables: [{ name: "enabled", type: "boolean", defaultValue: false, format: "numeric" }]
+      })
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+    await user.click(screen.getByRole("button", { name: /Import JSON/i }));
+
+    expect(screen.getByText("1 / 0")).toBeInTheDocument();
+    expect(
+      screen.getByText('Default: unchecked → "0". Checked → "1"; unchecked → "0".')
+    ).toBeInTheDocument();
+  });
+
   it("shows a helpful message instead of deleting built-in example templates", async () => {
     const user = userEvent.setup();
     renderPage();
