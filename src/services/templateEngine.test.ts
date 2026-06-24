@@ -140,4 +140,55 @@ describe("templateEngine", () => {
     expect(request.jobDriver.sparkSubmitJobDriver.sparkSubmitParameters).toContain("spark.driver.cores=2");
     expect(request.application.mainClass).toBe("com.example.Main");
   });
+
+  it("formats boolean variables using format", () => {
+    const booleanTemplate: JobConfigTemplate = {
+      ...template,
+      payloadTemplate: `{
+        "name": "bool-test",
+        "virtualClusterId": "\${virtualClusterId}",
+        "executionRoleArn": "arn:aws:iam::123456789012:role/EMR",
+        "releaseLabel": "emr-7.2.0-latest",
+        "jobDriver": {
+          "sparkSubmitJobDriver": {
+            "entryPoint": "s3://bucket/app.jar",
+            "entryPointArguments": ["--flag=\${enabled}", "--count=\${enabled_numeric}"],
+            "sparkSubmitParameters": "--class com.example.Main"
+          }
+        }
+      }`,
+      customVariables: [
+        { name: "enabled", type: "boolean", defaultValue: false, format: "capitalized" },
+        { name: "enabled_numeric", type: "boolean", defaultValue: true, format: "numeric" }
+      ]
+    };
+
+    const resolved = resolveTemplatePayload(booleanTemplate, {
+      templateName: "bool-test",
+      virtualClusterId: "vc-123",
+      submitUser: "tester",
+      customVariables: { enabled: true, enabled_numeric: false },
+      now: new Date("2026-06-14T10:15:00Z")
+    });
+
+    expect(resolved.jobDriver.sparkSubmitJobDriver.entryPointArguments).toEqual(["--flag=True", "--count=0"]);
+  });
+
+  it("defaults boolean output to lowercase true/false", () => {
+    const variables = buildVariableMap(
+      {
+        ...template,
+        customVariables: [{ name: "enabled", type: "boolean", defaultValue: false }]
+      },
+      {
+        templateName: "bool-test",
+        virtualClusterId: "vc-123",
+        submitUser: "tester",
+        customVariables: { enabled: true }
+      },
+      new Date("2026-06-14T10:15:00Z")
+    );
+
+    expect(variables.enabled).toBe("true");
+  });
 });

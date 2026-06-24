@@ -7,6 +7,7 @@ import type {
   TemplateVariableDefinition
 } from "@/types/domain";
 import { applyResourceOverride } from "@/services/resourceOverride";
+import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
 
 const VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
@@ -159,7 +160,7 @@ function stringifyVariableValue(
   now: Date
 ) {
   if (definition.type === "boolean") {
-    return String(Boolean(value));
+    return formatBooleanValue(Boolean(value), parseBooleanOutputStyle(definition.format));
   }
   if (definition.type === "multiEnum" && Array.isArray(value)) {
     return value.join(",");

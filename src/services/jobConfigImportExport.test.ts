@@ -28,4 +28,19 @@ describe("jobConfigImportExport", () => {
     expect(parsed.customVariables[0]?.required).toBe(true);
     expect(parsed.customVariables[0]?.format).toBe("YYYY-MM-DD HH:mm:ss");
   });
+
+  it("defaults imported boolean variables to lowercase true/false output", () => {
+    const parsed = parseImportedJobConfigTemplate(
+      JSON.stringify({
+        name: "Daily ETL",
+        payloadTemplate: "{\"name\":\"daily-etl\"}",
+        customVariables: [{ name: "enabled", type: "boolean", defaultValue: false }]
+      })
+    );
+
+    expect(parsed.customVariables[0]?.format).toBe("lowercase");
+    expect(parsed.customVariables[0]?.description).toBe(
+      'Default: unchecked → "false". Checked → "true"; unchecked → "false".'
+    );
+  });
 });

@@ -17,7 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -36,6 +35,14 @@ import {
 } from "@/services/jobConfigImportExport";
 import { openTextFile, saveTextFile } from "@/services/fileDownload";
 import { defaultFormatForVariableType } from "@/services/dateFormat";
+import {
+  BOOLEAN_OUTPUT_OPTIONS,
+  defaultBooleanOutputStyle,
+  describeBooleanVariable,
+  formatBooleanValue,
+  parseBooleanOutputStyle,
+  resolveBooleanDefaultValue
+} from "@/services/booleanVariable";
 import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableType } from "@/types/domain";
 
 type Editing = { template?: JobConfigTemplate } | undefined;
@@ -454,14 +461,23 @@ function VariableRow({
         />
         <Select
           value={variable.type}
-          onValueChange={(value: TemplateVariableType) =>
+          onValueChange={(value: TemplateVariableType) => {
+            const format =
+              value === "date" || value === "dateTime"
+                ? defaultFormatForVariableType(value)
+                : value === "boolean"
+                  ? defaultBooleanOutputStyle()
+                  : undefined;
+            const defaultValue = value === "boolean" ? false : undefined;
+
             onChange({
               type: value,
-              defaultValue: undefined,
+              defaultValue,
               options: undefined,
-              format: value === "date" || value === "dateTime" ? defaultFormatForVariableType(value) : undefined
-            })
-          }
+              format,
+              description: value === "boolean" ? describeBooleanVariable(format, defaultValue) : undefined
+            });
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -533,6 +549,32 @@ function VariableRow({
           value={variable.format ?? defaultFormatForVariableType(variable.type)}
           onChange={(event) => onChange({ format: event.target.value })}
         />
+      )}
+
+      {variable.type === "boolean" && (
+        <div className="space-y-2">
+          <Select
+            value={variable.format ?? defaultBooleanOutputStyle()}
+            onValueChange={(value) =>
+              onChange({
+                format: value,
+                description: describeBooleanVariable(value, variable.defaultValue as boolean | undefined)
+              })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Output format" />
+            </SelectTrigger>
+            <SelectContent>
+              {BOOLEAN_OUTPUT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{variable.description}</p>
+        </div>
       )}
     </div>
   );
@@ -614,13 +656,23 @@ function DefaultValueField({
   onChange: (patch: Partial<EditableVariable>) => void;
 }) {
   if (variable.type === "boolean") {
+    const format = parseBooleanOutputStyle(variable.format);
+    const defaultValue = resolveBooleanDefaultValue(variable.defaultValue as boolean | undefined);
+    const defaultOutput = formatBooleanValue(defaultValue, format);
+
     return (
-      <label className="flex h-10 items-center justify-between rounded-md border px-3 text-sm">
-        <span className="text-muted-foreground">Default</span>
-        <Switch
-          checked={Boolean(variable.defaultValue)}
-          onCheckedChange={(checked) => onChange({ defaultValue: checked })}
+      <label className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm">
+        <Checkbox
+          checked={defaultValue}
+          onCheckedChange={(checked) =>
+            onChange({
+              defaultValue: Boolean(checked),
+              description: describeBooleanVariable(variable.format, Boolean(checked))
+            })
+          }
         />
+        <span className="text-muted-foreground">Default</span>
+        <span className="font-mono text-foreground">{defaultOutput}</span>
       </label>
     );
   }
@@ -686,18 +738,38 @@ function DefaultValueField({
 }
 
 function toEditableRows(variables: TemplateVariableDefinition[]): EditableVariable[] {
-  return variables.map((variable) => ({
-    ...variable,
-    required: variable.required ?? true,
-    format:
+  return variables.map((variable) => {
+    const format =
       variable.format ??
-      (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined),
-    editorId: crypto.randomUUID()
-  }));
+      (variable.type === "date" || variable.type === "dateTime"
+        ? defaultFormatForVariableType(variable.type)
+        : variable.type === "boolean"
+          ? defaultBooleanOutputStyle()
+          : undefined);
+
+    return {
+      ...variable,
+      required: variable.required ?? true,
+      format,
+      description:
+        variable.type === "boolean" && !variable.description?.trim()
+          ? describeBooleanVariable(format, variable.defaultValue as boolean | undefined)
+          : variable.description,
+      editorId: crypto.randomUUID()
+    };
+  });
 }
 
 function stripEditorId(variable: EditableVariable): TemplateVariableDefinition {
   const { editorId: _editorId, ...definition } = variable;
+  if (definition.type === "boolean") {
+    const format = definition.format ?? defaultBooleanOutputStyle();
+    return {
+      ...definition,
+      format,
+      description: definition.description?.trim() || describeBooleanVariable(format, definition.defaultValue as boolean | undefined)
+    };
+  }
   return definition;
 }
 

@@ -17,7 +17,6 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { TemplateVariableDefinition } from "@/types/domain";
@@ -63,12 +62,13 @@ function VariableField({
 
   if (definition.type === "boolean") {
     return (
-      <div className="flex items-center justify-between rounded-lg border p-3">
-        <Label htmlFor={definition.name}>
-          <VariableLabel label={label} description={definition.description} />
-        </Label>
-        <Switch id={definition.name} checked={Boolean(value)} onCheckedChange={onChange} />
-      </div>
+      <Field label={label} description={definition.description}>
+        <Checkbox
+          id={definition.name}
+          checked={Boolean(value)}
+          onCheckedChange={(checked) => onChange(Boolean(checked))}
+        />
+      </Field>
     );
   }
 
