@@ -1,4 +1,5 @@
 import type { JobConfigTemplate, TemplateVariableDefinition } from "@/types/domain";
+import { defaultBooleanOutputStyle, describeBooleanVariable } from "@/services/booleanVariable";
 import { defaultFormatForVariableType } from "@/services/dateFormat";
 
 export type JobConfigTemplateExport = Pick<
@@ -31,12 +32,17 @@ export function parseImportedJobConfigTemplate(raw: string): JobConfigTemplateEx
 
 function normalizeVariableDefinition(variable: TemplateVariableDefinition): TemplateVariableDefinition {
   const format =
-    variable.format?.trim() ||
-    (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined);
+    variable.type === "boolean"
+      ? variable.format?.trim() || defaultBooleanOutputStyle()
+      : variable.format?.trim() ||
+        (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined);
 
   return {
     name: variable.name.trim(),
-    description: variable.description?.trim() || undefined,
+    description:
+      variable.type === "boolean" && !variable.description?.trim()
+        ? describeBooleanVariable(format, variable.defaultValue as boolean | undefined)
+        : variable.description?.trim() || undefined,
     type: variable.type,
     required: variable.required ?? true,
     defaultValue: variable.defaultValue,
