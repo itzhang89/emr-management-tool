@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -161,7 +161,7 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
-    expect(screen.getByRole("heading", { name: "Job History" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
   });
 
   it("collapses the sidebar to icon-only navigation", async () => {
@@ -193,7 +193,7 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Templates" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Templates" }));
 
-    expect(screen.getByRole("heading", { name: "Templates" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Templates" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Application Config" })).toHaveAttribute("data-state", "active");
     expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
   });
@@ -243,9 +243,10 @@ describe("AppShell", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
+    await screen.findByRole("heading", { name: "Job History" });
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
-    expect(screen.getByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });

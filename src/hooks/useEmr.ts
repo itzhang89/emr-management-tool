@@ -41,7 +41,8 @@ export function useDescribeJobRun(id?: string, virtualClusterId?: string) {
   return useQuery({
     queryKey: ["job-run", accountId, id, virtualClusterId],
     queryFn: () => emrService.describeJobRun(id!, virtualClusterId!, accountId),
-    enabled: Boolean(accountId && id && virtualClusterId)
+    enabled: Boolean(accountId && id && virtualClusterId),
+    staleTime: 60_000
   });
 }
 

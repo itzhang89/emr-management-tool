@@ -217,14 +217,7 @@ describe("LogsPage", () => {
     renderLogsPage();
 
     expect(useDescribeJobRun).toHaveBeenCalledWith("job-running", "vc-1");
-    expect(useJobLogStreams).toHaveBeenCalledWith(
-      {
-        jobId: "job-running",
-        logGroupName: "/emr-containers/jobs",
-        streamNamePrefix: "20260612/vc-1/jobs/job-running/"
-      },
-      false
-    );
+    expect(useJobLogStreams).not.toHaveBeenCalled();
     expect(useS3JobLogObjects).toHaveBeenCalledWith({
       bucket: "logs-bucket",
       prefix: "logs/vc-1/jobs/job-running/"
@@ -234,6 +227,11 @@ describe("LogsPage", () => {
     expect(screen.getByText("s3://logs-bucket/logs/vc-1/jobs/job-running/")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
+    expect(useJobLogStreams).toHaveBeenCalledWith({
+      jobId: "job-running",
+      logGroupName: "/emr-containers/jobs",
+      streamNamePrefix: "20260612/vc-1/jobs/job-running/"
+    });
     expect(screen.getByText("/emr-containers/jobs")).toBeInTheDocument();
     expect(screen.getByText("20260612/vc-1/jobs/job-running/")).toBeInTheDocument();
   });
