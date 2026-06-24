@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState, useTransition } from "react";
 import { CheckCircle2, Cloud, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -13,34 +13,61 @@ import {
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { DashboardPage } from "@/pages/DashboardPage";
-import { JobHistoryPage } from "@/pages/JobHistoryPage";
-import { LogsPage } from "@/pages/LogsPage";
-import { navigationItems, type PageId } from "@/pages/pageMeta";
-import { S3BrowserPage } from "@/pages/S3BrowserPage";
-import { SettingsPage } from "@/pages/SettingsPage";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
-import { TemplatesPage } from "@/pages/TemplatesPage";
-import { VirtualClustersPage } from "@/pages/VirtualClustersPage";
+import { navigationItems, type PageId } from "@/pages/pageMeta";
+import { PageLoader } from "@/components/layout/PageLoader";
+
+const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const JobHistoryPage = lazy(() => import("@/pages/JobHistoryPage").then((module) => ({ default: module.JobHistoryPage })));
+const LogsPage = lazy(() => import("@/pages/LogsPage").then((module) => ({ default: module.LogsPage })));
+const TemplatesPage = lazy(() => import("@/pages/TemplatesPage").then((module) => ({ default: module.TemplatesPage })));
+const VirtualClustersPage = lazy(() =>
+  import("@/pages/VirtualClustersPage").then((module) => ({ default: module.VirtualClustersPage }))
+);
+const S3BrowserPage = lazy(() => import("@/pages/S3BrowserPage").then((module) => ({ default: module.S3BrowserPage })));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [, startPageTransition] = useTransition();
   const activeMeta = useMemo(() => navigationItems.find((item) => item.id === activePage), [activePage]);
   const accounts = useAwsAccounts();
   const activeAccount = accounts.data?.find((account) => account.isActive);
   const setActiveAccount = useSetActiveAwsAccount();
-  const pageComponents: Record<PageId, ReactElement> = {
-    dashboard: <DashboardPage />,
-    submit: <SubmitJobPage />,
-    history: <JobHistoryPage onOpenLogs={() => setActivePage("logs")} onOpenS3={() => setActivePage("logs")} />,
-    logs: <LogsPage />,
-    templates: <TemplatesPage />,
-    clusters: <VirtualClustersPage />,
-    s3: <S3BrowserPage />,
-    settings: <SettingsPage />
-  };
+  const openLogsPage = useCallback(() => {
+    startPageTransition(() => setActivePage("logs"));
+  }, []);
+  const openS3Page = useCallback(() => {
+    startPageTransition(() => setActivePage("logs"));
+  }, []);
+  const navigateToPage = useCallback((page: PageId) => {
+    startPageTransition(() => setActivePage(page));
+  }, []);
+
+  const activePageContent = useMemo(() => {
+    switch (activePage) {
+      case "dashboard":
+        return <DashboardPage />;
+      case "submit":
+        return <SubmitJobPage />;
+      case "history":
+        return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} />;
+      case "logs":
+        return <LogsPage />;
+      case "templates":
+        return <TemplatesPage />;
+      case "clusters":
+        return <VirtualClustersPage />;
+      case "s3":
+        return <S3BrowserPage />;
+      case "settings":
+        return <SettingsPage />;
+      default:
+        return <SubmitJobPage />;
+    }
+  }, [activePage, openLogsPage, openS3Page]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -92,7 +119,7 @@ export function AppShell() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label="Primary">
-          {navigationItems.map((item) => renderNavButton({ item, activePage, setActivePage, sidebarCollapsed }))}
+          {navigationItems.map((item) => renderNavButton({ item, activePage, setActivePage: navigateToPage, sidebarCollapsed }))}
         </nav>
       </aside>
 
@@ -107,7 +134,9 @@ export function AppShell() {
             {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
           </Button>
         </header>
-        <main className="min-w-0 flex-1 overflow-auto p-6">{pageComponents[activePage]}</main>
+        <main className="min-w-0 flex-1 overflow-auto p-6">
+          <Suspense fallback={<PageLoader />}>{activePageContent}</Suspense>
+        </main>
       </div>
       <Dialog open={accountDialogOpen} onOpenChange={setAccountDialogOpen}>
         <DialogContent>
