@@ -20,6 +20,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  COMPACT_FIELD_WRAPPER_CLASS,
+  COMPACT_NUMBER_INPUT_CLASS,
+  COMPACT_SELECT_TRIGGER_CLASS,
+  getRadioEnumShellStyle,
+  getBooleanControlStyle,
+  getDateControlStyle,
+  getNumberInputStyle,
+  getSelectControlStyle,
   getVariableFieldLayoutClass,
   getVariableFieldLayoutStyle,
   VARIABLE_FIELDS_CONTAINER_CLASS
@@ -78,8 +86,14 @@ function VariableField({
     const output = formatBooleanValue(checked, parseBooleanOutputStyle(definition.format));
 
     return (
-      <Field label={label} description={definition.description} className={className} style={style}>
-        <div className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-3">
+      <CompactFieldShell
+        label={label}
+        description={definition.description}
+        className={className}
+        style={style}
+        shellStyle={getBooleanControlStyle(definition.format, checked)}
+      >
+        <div className="flex h-10 w-full items-center gap-2 rounded-md border bg-background px-2">
           <span className="font-mono text-xs text-muted-foreground">{output}</span>
           <Checkbox
             id={definition.name}
@@ -87,15 +101,28 @@ function VariableField({
             onCheckedChange={(nextChecked) => onChange(Boolean(nextChecked))}
           />
         </div>
-      </Field>
+      </CompactFieldShell>
     );
   }
 
   if (definition.type === "number") {
+    const numberValue = Number(value ?? 0);
+
     return (
-      <Field label={label} description={definition.description} className={className} style={style}>
-        <Input type="number" value={Number(value ?? 0)} onChange={(event) => onChange(Number(event.target.value))} />
-      </Field>
+      <CompactFieldShell
+        label={label}
+        description={definition.description}
+        className={className}
+        style={style}
+        shellStyle={getNumberInputStyle(numberValue)}
+      >
+        <Input
+          type="number"
+          className={COMPACT_NUMBER_INPUT_CLASS}
+          value={numberValue}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </CompactFieldShell>
     );
   }
 
@@ -105,8 +132,14 @@ function VariableField({
 
     if (displayFormat === "radio") {
       return (
-        <Field label={label} description={definition.description} className={className} style={style}>
-          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex flex-nowrap gap-x-4">
+        <CompactFieldShell
+          label={label}
+          description={definition.description}
+          className={className}
+          style={style}
+          shellStyle={getRadioEnumShellStyle(options)}
+        >
+          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex w-full flex-nowrap gap-x-4">
             {options.map((option) => (
               <div key={option} className="flex items-center gap-2">
                 <RadioGroupItem value={option} id={`${definition.name}-${option}`} />
@@ -116,15 +149,23 @@ function VariableField({
               </div>
             ))}
           </RadioGroup>
-        </Field>
+        </CompactFieldShell>
       );
     }
 
     if (displayFormat === "select") {
+      const selected = typeof value === "string" && value ? value : `Select ${label}`;
+
       return (
-        <Field label={label} description={definition.description} className={className} style={style}>
+        <CompactFieldShell
+          label={label}
+          description={definition.description}
+          className={className}
+          style={style}
+          shellStyle={getSelectControlStyle(selected)}
+        >
           <Select value={String(value ?? "")} onValueChange={onChange}>
-            <SelectTrigger>
+            <SelectTrigger className={COMPACT_SELECT_TRIGGER_CLASS}>
               <SelectValue placeholder={`Select ${label}`} />
             </SelectTrigger>
             <SelectContent>
@@ -135,7 +176,7 @@ function VariableField({
               ))}
             </SelectContent>
           </Select>
-        </Field>
+        </CompactFieldShell>
       );
     }
 
@@ -179,6 +220,7 @@ function VariableField({
       <DateTimeField
         className={className}
         style={style}
+        definition={definition}
         label={label}
         description={definition.description}
         includeTime={definition.type === "dateTime"}
@@ -220,13 +262,25 @@ function EnumCombobox({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const displayText = value || `Select ${label}`;
+
   return (
-    <Field label={label} description={description} className={className} style={style}>
+    <CompactFieldShell
+      label={label}
+      description={description}
+      className={className}
+      style={style}
+      shellStyle={getSelectControlStyle(displayText)}
+    >
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="outline" role="combobox" className="w-full justify-between">
-            {value || `Select ${label}`}
-            <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
+          <Button
+            variant="outline"
+            role="combobox"
+            className={cn("w-full !justify-start gap-2 px-3", COMPACT_SELECT_TRIGGER_CLASS)}
+          >
+            <span className="min-w-0 truncate">{displayText}</span>
+            <ChevronsUpDown className="ml-auto size-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
@@ -253,13 +307,14 @@ function EnumCombobox({
           </Command>
         </PopoverContent>
       </Popover>
-    </Field>
+    </CompactFieldShell>
   );
 }
 
 function DateTimeField({
   className,
   style,
+  definition,
   label,
   description,
   includeTime,
@@ -269,6 +324,7 @@ function DateTimeField({
 }: {
   className?: string;
   style?: React.CSSProperties;
+  definition: TemplateVariableDefinition;
   label: string;
   description?: string;
   includeTime: boolean;
@@ -285,15 +341,21 @@ function DateTimeField({
   }, [displayFormat, label, selected]);
 
   return (
-    <div className={cn("flex w-fit max-w-full flex-col items-start gap-2", className)} style={style}>
-      <Label className="whitespace-nowrap">
-        <VariableLabel label={label} description={description} />
-      </Label>
+    <CompactFieldShell
+      label={label}
+      description={description}
+      className={className}
+      style={style}
+      shellStyle={getDateControlStyle(definition, value)}
+    >
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="outline" className="w-fit max-w-full justify-start text-left font-normal">
-            <CalendarIcon className="mr-2 size-4 shrink-0" />
-            {display}
+          <Button
+            variant="outline"
+            className={cn("w-full !justify-start gap-2 px-3 font-normal", COMPACT_SELECT_TRIGGER_CLASS)}
+          >
+            <CalendarIcon className="size-4 shrink-0" />
+            <span className="min-w-0 truncate">{display}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
@@ -327,6 +389,31 @@ function DateTimeField({
           ) : null}
         </PopoverContent>
       </Popover>
+    </CompactFieldShell>
+  );
+}
+
+function CompactFieldShell({
+  label,
+  description,
+  children,
+  className,
+  style,
+  shellStyle
+}: {
+  label: string;
+  description?: string;
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+  shellStyle?: React.CSSProperties;
+}) {
+  return (
+    <div className={cn(COMPACT_FIELD_WRAPPER_CLASS, className)} style={{ ...style, ...shellStyle }}>
+      <Label className="w-full min-w-0 truncate" title={label}>
+        <VariableLabel label={label} description={description} />
+      </Label>
+      {children}
     </div>
   );
 }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  COMPACT_FIELD_WRAPPER_STYLE,
+  getBooleanControlStyle,
+  getDateControlStyle,
+  getEnumControlStyle,
+  getNumberInputStyle,
+  getRadioEnumShellStyle,
+  getSelectControlStyle,
   getVariableFieldLayoutClass,
   getVariableFieldLayoutStyle,
   VARIABLE_FIELDS_CONTAINER_CLASS
@@ -14,125 +21,82 @@ describe("getVariableFieldLayoutClass", () => {
     expect(getVariableFieldLayoutClass({ name: "tags", type: "multiEnum", options: ["a", "b"] })).toBe("w-full");
   });
 
-  it("uses fit-content sizing for boolean, enum, and date variables", () => {
+  it("uses fit-content sizing for compact variables", () => {
     expect(getVariableFieldLayoutClass({ name: "enabled", type: "boolean" })).toContain("shrink-0");
     expect(getVariableFieldLayoutClass({ name: "env", type: "enum", options: ["dev", "prod"] })).toContain(
       "shrink-0"
     );
     expect(getVariableFieldLayoutClass({ name: "runAt", type: "dateTime" })).toContain("shrink-0");
+    expect(getVariableFieldLayoutClass({ name: "count", type: "number" })).toContain("shrink-0");
   });
 });
 
-describe("getVariableFieldLayoutStyle", () => {
-  it("sizes boolean fields from label and output values", () => {
+describe("compact control styles", () => {
+  it("uses a fit-content wrapper without label-based min width", () => {
     expect(
       getVariableFieldLayoutStyle({
         name: "adaptive_query_execution_enabled",
         type: "boolean",
         format: "lowercase"
       })
-    ).toEqual({
-      minWidth: "32ch",
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+    ).toEqual(COMPACT_FIELD_WRAPPER_STYLE);
   });
 
-  it("sizes boolean fields from capitalized output values", () => {
-    expect(
-      getVariableFieldLayoutStyle({
-        name: "enabled",
-        type: "boolean",
-        format: "capitalized"
-      })
-    ).toEqual({
-      minWidth: "10ch",
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+  it("sizes number inputs from digit count with a readable minimum width", () => {
+    expect(getNumberInputStyle(0)).toEqual({ width: "max(4.5rem, 7ch)", maxWidth: "100%" });
+    expect(getNumberInputStyle(2)).toEqual({ width: "max(4.5rem, 7ch)", maxWidth: "100%" });
+    expect(getNumberInputStyle(1024)).toEqual({ width: "max(4.5rem, 7ch)", maxWidth: "100%" });
+    expect(getNumberInputStyle(123456)).toEqual({ width: "max(4.5rem, 9ch)", maxWidth: "100%" });
   });
 
-  it("sizes small enum fields from label and option values", () => {
-    expect(
-      getVariableFieldLayoutStyle({
-        name: "env",
-        type: "enum",
-        options: ["dev", "staging", "production"]
-      })
-    ).toEqual({
-      minWidth: "34ch",
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+  it("sizes select-like controls from visible text", () => {
+    expect(getSelectControlStyle("dev")).toEqual({ width: "6ch", maxWidth: "100%" });
+    expect(getSelectControlStyle("2026-06-24")).toEqual({ width: "13ch", maxWidth: "100%" });
   });
 
-  it("sizes select enum fields from the longest option", () => {
-    expect(
-      getVariableFieldLayoutStyle({
-        name: "region",
-        type: "enum",
-        format: "select",
-        options: ["us-east-1", "ap-southeast-1", "eu-central-1", "sa-east-1", "ca-central-1"]
-      })
-    ).toEqual({
-      minWidth: "22ch",
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+  it("sizes boolean controls from output text", () => {
+    expect(getBooleanControlStyle("lowercase", false)).toEqual({ width: "8ch", maxWidth: "100%" });
   });
 
-  it("uses radio width when enum format is radio", () => {
+  it("sizes enum select controls from the selected value", () => {
     expect(
-      getVariableFieldLayoutStyle({
-        name: "env",
+      getEnumControlStyle(
+        {
+          name: "ENV",
+          type: "enum",
+          format: "select",
+          options: ["dev", "prod"]
+        },
+        "dev"
+      )
+    ).toEqual({ width: "6ch", maxWidth: "100%" });
+  });
+
+  it("does not force width for enum radio groups", () => {
+    expect(
+      getEnumControlStyle({
+        name: "ENV",
         type: "enum",
         format: "radio",
-        options: ["dev", "staging", "production", "qa", "uat"]
+        options: ["dev", "prod"]
       })
-    ).toEqual({
-      minWidth: "45ch",
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+    ).toBeUndefined();
   });
 
-  it("sizes date fields from label and format pattern", () => {
-    expect(
-      getVariableFieldLayoutStyle({
-        name: "biz_date",
-        type: "date"
-      })
-    ).toEqual({
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+  it("sizes enum radio shells from option labels", () => {
+    expect(getRadioEnumShellStyle(["dev", "prod"])).toEqual({ width: "17ch", maxWidth: "100%" });
   });
 
-  it("sizes datetime fields from label and format pattern", () => {
+  it("sizes date controls from the displayed value", () => {
     expect(
-      getVariableFieldLayoutStyle({
-        name: "run_at",
-        type: "dateTime"
-      })
-    ).toEqual({
-      width: "fit-content",
-      maxWidth: "100%"
-    });
-  });
-
-  it("calculates date content width from the selected value", () => {
-    expect(
-      getVariableFieldLayoutStyle(
+      getDateControlStyle(
         {
           name: "biz_date",
           type: "date"
         },
         "2026-06-24"
       )
-    ).toEqual({
-      width: "fit-content",
-      maxWidth: "100%"
-    });
+    ).toEqual({ width: "13ch", maxWidth: "100%" });
   });
 
   it("does not apply fit-content sizing to text fields", () => {
