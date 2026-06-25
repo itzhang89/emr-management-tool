@@ -43,6 +43,7 @@ import {
   parseBooleanOutputStyle,
   resolveBooleanDefaultValue
 } from "@/services/booleanVariable";
+import { ENUM_DISPLAY_OPTIONS, inferEnumDisplayFormat, parseEnumDisplayFormat } from "@/services/enumVariable";
 import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableType } from "@/types/domain";
 
 type Editing = { template?: JobConfigTemplate } | undefined;
@@ -475,7 +476,9 @@ function VariableRow({
                 ? defaultFormatForVariableType(value)
                 : value === "boolean"
                   ? defaultBooleanOutputStyle()
-                  : undefined;
+                  : value === "enum"
+                    ? inferEnumDisplayFormat(variable.options?.length ?? 0)
+                    : undefined;
             const defaultValue = value === "boolean" ? false : undefined;
 
             onChange({
@@ -550,6 +553,24 @@ function VariableRow({
             })
           }
         />
+      )}
+
+      {variable.type === "enum" && (
+        <Select
+          value={variable.format ?? inferEnumDisplayFormat(variable.options?.length ?? 0)}
+          onValueChange={(value) => onChange({ format: value })}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Display format" />
+          </SelectTrigger>
+          <SelectContent>
+            {ENUM_DISPLAY_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )}
 
       {(variable.type === "date" || variable.type === "dateTime") && (
@@ -760,7 +781,9 @@ function toEditableRows(variables: TemplateVariableDefinition[]): EditableVariab
         ? defaultFormatForVariableType(variable.type)
         : variable.type === "boolean"
           ? defaultBooleanOutputStyle()
-          : undefined);
+          : variable.type === "enum"
+            ? parseEnumDisplayFormat(undefined, variable.options ?? [])
+            : undefined);
 
     return {
       ...variable,
@@ -783,6 +806,12 @@ function stripEditorId(variable: EditableVariable): TemplateVariableDefinition {
       ...definition,
       format,
       description: definition.description?.trim() || describeBooleanVariable(format, definition.defaultValue as boolean | undefined)
+    };
+  }
+  if (definition.type === "enum") {
+    return {
+      ...definition,
+      format: parseEnumDisplayFormat(definition.format, definition.options ?? [])
     };
   }
   return definition;
