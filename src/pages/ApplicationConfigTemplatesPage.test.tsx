@@ -77,6 +77,19 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(screen.getByText(/1 variable/i)).toBeInTheDocument();
   });
 
+  it("disables browser autocapitalization for template editor text inputs", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+    await user.click(screen.getByRole("button", { name: /Add Variable/i }));
+
+    const variableNameInput = screen.getByPlaceholderText("Variable name");
+    expect(variableNameInput).toHaveAttribute("autocapitalize", "none");
+    expect(variableNameInput).toHaveAttribute("autocorrect", "off");
+    expect(variableNameInput).toHaveAttribute("spellcheck", "false");
+  });
+
   it("numbers custom variables and lets users reorder them", async () => {
     const user = userEvent.setup();
     renderPage();
