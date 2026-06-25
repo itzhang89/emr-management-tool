@@ -65,17 +65,17 @@ describe("compact control styles", () => {
     const definition = { name: "count", type: "number" as const, defaultValue: 1024 };
     const shellStyle = getNumberShellStyle(definition);
 
-    expect(shellStyle).toEqual({ width: "max(4.5rem, 7ch)", maxWidth: "100%" });
+    expect(shellStyle).toEqual({ width: "max(4.5rem, 9ch)", maxWidth: "100%" });
     expect(getNumberShellStyle({ name: "count", type: "number", defaultValue: 2 })).toEqual(shellStyle);
     expect(getNumberShellStyle({ name: "count", type: "number" })).toEqual({
-      width: "max(4.5rem, 7ch)",
+      width: "max(4.5rem, 9ch)",
       maxWidth: "100%"
     });
   });
 
   it("sizes number fields from default value digit count", () => {
     expect(getNumberShellStyle({ name: "count", type: "number", defaultValue: 123456789 })).toEqual({
-      width: "max(4.5rem, 12ch)",
+      width: "max(4.5rem, 14ch)",
       maxWidth: "100%"
     });
   });
