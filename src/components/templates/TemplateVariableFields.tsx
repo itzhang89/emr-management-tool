@@ -47,7 +47,7 @@ export function TemplateVariableFields({
         <VariableField
           key={definition.name}
           className={getVariableFieldLayoutClass(definition)}
-          style={getVariableFieldLayoutStyle(definition)}
+          style={getVariableFieldLayoutStyle(definition, values[definition.name])}
           definition={definition}
           value={values[definition.name]}
           onChange={(value) => onChange({ ...values, [definition.name]: value })}
@@ -280,11 +280,14 @@ function DateTimeField({
   }, [displayFormat, label, selected]);
 
   return (
-    <Field label={label} description={description} className={className} style={style}>
+    <div className={cn("flex w-fit max-w-full flex-col items-start gap-2", className)} style={style}>
+      <Label className="whitespace-nowrap">
+        <VariableLabel label={label} description={description} />
+      </Label>
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="outline" className="w-full justify-start text-left font-normal">
-            <CalendarIcon className="mr-2 size-4" />
+          <Button variant="outline" className="w-fit max-w-full justify-start text-left font-normal">
+            <CalendarIcon className="mr-2 size-4 shrink-0" />
             {display}
           </Button>
         </PopoverTrigger>
@@ -319,7 +322,7 @@ function DateTimeField({
           ) : null}
         </PopoverContent>
       </Popover>
-    </Field>
+    </div>
   );
 }
 
