@@ -39,7 +39,7 @@ export function AppShell() {
     startPageTransition(() => setActivePage("logs"));
   }, []);
   const openS3Page = useCallback(() => {
-    startPageTransition(() => setActivePage("logs"));
+    startPageTransition(() => setActivePage("s3"));
   }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));

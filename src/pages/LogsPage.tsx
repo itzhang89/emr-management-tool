@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDescribeJobRun } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -65,7 +64,6 @@ export function LogsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader pageId="logs" />
       <Card>
         <CardHeader>
           <CardTitle>Job Logs</CardTitle>

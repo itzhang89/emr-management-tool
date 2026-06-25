@@ -247,7 +247,7 @@ describe("AppShell", () => {
     await screen.findByRole("heading", { name: "Submitted Jobs" });
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
-    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Job Logs" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });
