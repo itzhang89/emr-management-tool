@@ -19,6 +19,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getVariableFieldLayoutClass, VARIABLE_FIELDS_GRID_CLASS } from "@/components/templates/variableFieldLayout";
+import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
 
@@ -36,10 +38,11 @@ export function TemplateVariableFields({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className={VARIABLE_FIELDS_GRID_CLASS}>
       {variables.map((definition) => (
         <VariableField
           key={definition.name}
+          className={getVariableFieldLayoutClass(definition)}
           definition={definition}
           value={values[definition.name]}
           onChange={(value) => onChange({ ...values, [definition.name]: value })}
@@ -50,10 +53,12 @@ export function TemplateVariableFields({
 }
 
 function VariableField({
+  className,
   definition,
   value,
   onChange
 }: {
+  className?: string;
   definition: TemplateVariableDefinition;
   value: string | number | boolean | string[] | undefined;
   onChange: (value: string | number | boolean | string[]) => void;
@@ -61,20 +66,26 @@ function VariableField({
   const label = definition.label ?? definition.name;
 
   if (definition.type === "boolean") {
+    const checked = Boolean(value);
+    const output = formatBooleanValue(checked, parseBooleanOutputStyle(definition.format));
+
     return (
-      <Field label={label} description={definition.description}>
-        <Checkbox
-          id={definition.name}
-          checked={Boolean(value)}
-          onCheckedChange={(checked) => onChange(Boolean(checked))}
-        />
+      <Field label={label} description={definition.description} className={className}>
+        <div className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-3">
+          <span className="truncate font-mono text-xs text-muted-foreground">{output}</span>
+          <Checkbox
+            id={definition.name}
+            checked={checked}
+            onCheckedChange={(nextChecked) => onChange(Boolean(nextChecked))}
+          />
+        </div>
       </Field>
     );
   }
 
   if (definition.type === "number") {
     return (
-      <Field label={label} description={definition.description}>
+      <Field label={label} description={definition.description} className={className}>
         <Input type="number" value={Number(value ?? 0)} onChange={(event) => onChange(Number(event.target.value))} />
       </Field>
     );
@@ -84,12 +95,14 @@ function VariableField({
     const options = definition.options ?? [];
     if (options.length <= 4) {
       return (
-        <Field label={label} description={definition.description}>
-          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="gap-2">
+        <Field label={label} description={definition.description} className={className}>
+          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex flex-wrap gap-x-4 gap-y-2">
             {options.map((option) => (
               <div key={option} className="flex items-center gap-2">
                 <RadioGroupItem value={option} id={`${definition.name}-${option}`} />
-                <Label htmlFor={`${definition.name}-${option}`}>{option}</Label>
+                <Label htmlFor={`${definition.name}-${option}`} className="font-normal">
+                  {option}
+                </Label>
               </div>
             ))}
           </RadioGroup>
@@ -98,7 +111,7 @@ function VariableField({
     }
     if (options.length <= 10) {
       return (
-        <Field label={label} description={definition.description}>
+        <Field label={label} description={definition.description} className={className}>
           <Select value={String(value ?? "")} onValueChange={onChange}>
             <SelectTrigger>
               <SelectValue placeholder={`Select ${label}`} />
@@ -116,6 +129,7 @@ function VariableField({
     }
     return (
       <EnumCombobox
+        className={className}
         label={label}
         description={definition.description}
         options={options}
@@ -129,8 +143,8 @@ function VariableField({
     const options = definition.options ?? [];
     const selected = Array.isArray(value) ? value : [];
     return (
-      <Field label={label} description={definition.description} className="col-span-2">
-        <div className="grid grid-cols-2 gap-2">
+      <Field label={label} description={definition.description} className={className}>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border p-3">
           {options.map((option) => (
             <label key={option} className="flex items-center gap-2 text-sm">
               <Checkbox
@@ -150,6 +164,7 @@ function VariableField({
   if (definition.type === "date" || definition.type === "dateTime") {
     return (
       <DateTimeField
+        className={className}
         label={label}
         description={definition.description}
         includeTime={definition.type === "dateTime"}
@@ -161,7 +176,7 @@ function VariableField({
   }
 
   return (
-    <Field label={label} description={definition.description}>
+    <Field label={label} description={definition.description} className={className}>
       <Input
         value={String(value ?? "")}
         autoCapitalize="none"
@@ -174,12 +189,14 @@ function VariableField({
 }
 
 function EnumCombobox({
+  className,
   label,
   description,
   options,
   value,
   onChange
 }: {
+  className?: string;
   label: string;
   description?: string;
   options: string[];
@@ -188,7 +205,7 @@ function EnumCombobox({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Field label={label} description={description}>
+    <Field label={label} description={description} className={className}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button variant="outline" role="combobox" className="w-full justify-between">
@@ -225,6 +242,7 @@ function EnumCombobox({
 }
 
 function DateTimeField({
+  className,
   label,
   description,
   includeTime,
@@ -232,6 +250,7 @@ function DateTimeField({
   value,
   onChange
 }: {
+  className?: string;
   label: string;
   description?: string;
   includeTime: boolean;
@@ -248,7 +267,7 @@ function DateTimeField({
   }, [displayFormat, label, selected]);
 
   return (
-    <Field label={label} description={description}>
+    <Field label={label} description={description} className={className}>
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="outline" className="w-full justify-start text-left font-normal">
@@ -303,7 +322,7 @@ function Field({
   className?: string;
 }) {
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("min-w-0 space-y-2", className)}>
       <Label>
         <VariableLabel label={label} description={description} />
       </Label>
@@ -322,7 +341,7 @@ function VariableLabel({ label, description }: { label: string; description?: st
       <TooltipTrigger asChild>
         <span className="cursor-help underline decoration-dotted underline-offset-4">{label}</span>
       </TooltipTrigger>
-      <TooltipContent>{description}</TooltipContent>
+      <TooltipContent className="max-w-xs">{description}</TooltipContent>
     </Tooltip>
   );
 }

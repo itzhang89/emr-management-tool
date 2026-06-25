@@ -552,7 +552,7 @@ function VariableRow({
       )}
 
       {variable.type === "boolean" && (
-        <div className="space-y-2">
+        <div className="grid items-start gap-2 sm:grid-cols-[220px_minmax(0,1fr)]">
           <Select
             value={variable.format ?? defaultBooleanOutputStyle()}
             onValueChange={(value) =>
@@ -573,7 +573,9 @@ function VariableRow({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">{variable.description}</p>
+          <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            {variable.description}
+          </p>
         </div>
       )}
     </div>
