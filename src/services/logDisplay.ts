@@ -13,16 +13,9 @@ export function truncateLogTextForDisplay(text: string): {
     return { text, truncated: false, totalCharacters: text.length };
   }
 
-  const suffix = `\n\n… Log truncated for display (${formatCharacterCount(text.length)} characters total). Download the log to view the full file.`;
-  const maxPrefix = Math.max(0, MAX_LOG_VIEW_CHARACTERS - suffix.length);
-
   return {
-    text: `${text.slice(0, maxPrefix)}${suffix}`,
+    text: text.slice(0, MAX_LOG_VIEW_CHARACTERS),
     truncated: true,
     totalCharacters: text.length
   };
-}
-
-function formatCharacterCount(count: number) {
-  return count.toLocaleString("en-US");
 }

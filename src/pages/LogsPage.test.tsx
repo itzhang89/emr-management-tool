@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LogsPage } from "./LogsPage";
+import { MAX_LOG_VIEW_CHARACTERS } from "@/services/logDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
 
 const useDescribeJobRun = vi.fn();
@@ -391,21 +392,20 @@ describe("LogsPage", () => {
     expect(screen.getByTestId("log-content").textContent).toBe("hello cloudwatch\n  indented cloudwatch\n");
   });
 
-  it("opens log search with command+f and supports regex highlights with next and previous navigation", async () => {
+  it("searches log content with a Search button and supports regex highlights with next and previous navigation", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
 
-    fireEvent.keyDown(window, { key: "f", metaKey: true });
-    const searchInput = screen.getByPlaceholderText(/Find in this log/i);
-    expect(searchInput).toHaveFocus();
-    expect(screen.getByText("Press Enter")).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText(/Search in this log/i);
+    expect(screen.getByRole("button", { name: /Search log/i })).toBeInTheDocument();
+    expect(screen.getByText("No results yet")).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Regex/i }));
     await user.type(searchInput, "needle\\s+(one|two)");
     expect(screen.queryAllByTestId("log-search-match")).toHaveLength(0);
 
-    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: /Search log/i }));
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getAllByTestId("log-search-match")).toHaveLength(2);
 
@@ -414,6 +414,27 @@ describe("LogsPage", () => {
 
     await user.click(screen.getByRole("button", { name: /Previous match/i }));
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
+  });
+
+  it("shows a readable truncation banner with load-full and download actions", async () => {
+    const longContent = "x".repeat(MAX_LOG_VIEW_CHARACTERS + 100);
+    useS3JobLogObject.mockReturnValue({
+      data: { bucket: "logs-bucket", key: "stdout.gz", content: longContent },
+      isLoading: false,
+      error: null
+    });
+
+    renderLogsPage();
+
+    expect(screen.getByText(/Previewing the first/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Load full log/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Download$/i }).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("log-content").textContent).toHaveLength(MAX_LOG_VIEW_CHARACTERS);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /Load full log/i }));
+
+    expect(screen.getByText(/Showing the full log/i)).toBeInTheDocument();
+    expect(screen.getByTestId("log-content").textContent).toHaveLength(longContent.length);
   });
 });
 
