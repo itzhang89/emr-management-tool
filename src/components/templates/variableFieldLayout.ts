@@ -1,23 +1,95 @@
+import type { CSSProperties } from "react";
 import type { TemplateVariableDefinition } from "@/types/domain";
+import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 
-export const VARIABLE_FIELDS_GRID_CLASS =
-  "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-4 gap-y-4";
+export const VARIABLE_FIELDS_CONTAINER_CLASS = "flex flex-wrap items-start gap-x-4 gap-y-4";
 
-export function getVariableFieldLayoutClass(definition: TemplateVariableDefinition): string {
-  if (definition.type === "multiEnum") {
-    return "col-span-full";
+const MIN_FIELD_WIDTH_CH = 8;
+const CONTROL_PADDING_CH = 5;
+const RADIO_OPTION_OVERHEAD_CH = 3;
+const SELECT_PLACEHOLDER_OVERHEAD_CH = 8;
+
+function variableLabel(definition: TemplateVariableDefinition): string {
+  return definition.label ?? definition.name;
+}
+
+function labelMinWidthCh(label: string): number {
+  return Math.max(label.length, MIN_FIELD_WIDTH_CH);
+}
+
+function booleanContentWidthCh(format?: string): number {
+  const style = parseBooleanOutputStyle(format);
+  const falseOutput = formatBooleanValue(false, style);
+  const trueOutput = formatBooleanValue(true, style);
+
+  return Math.max(falseOutput.length, trueOutput.length) + CONTROL_PADDING_CH;
+}
+
+function enumRadioContentWidthCh(options: string[]): number {
+  if (options.length === 0) {
+    return MIN_FIELD_WIDTH_CH;
+  }
+
+  return options.reduce((sum, option) => sum + option.length + RADIO_OPTION_OVERHEAD_CH, CONTROL_PADDING_CH);
+}
+
+function enumSelectContentWidthCh(options: string[], label: string): number {
+  const placeholderLength = `Select ${label}`.length;
+  const longestOption = options.reduce((max, option) => Math.max(max, option.length), 0);
+
+  return Math.max(longestOption, placeholderLength) + SELECT_PLACEHOLDER_OVERHEAD_CH;
+}
+
+function contentWidthCh(definition: TemplateVariableDefinition): number | undefined {
+  const label = variableLabel(definition);
+
+  if (definition.type === "boolean") {
+    return booleanContentWidthCh(definition.format);
   }
 
   if (definition.type === "enum") {
-    const optionCount = definition.options?.length ?? 0;
-    if (optionCount <= 4) {
-      return "col-span-full sm:col-span-2";
+    const options = definition.options ?? [];
+    if (options.length <= 4) {
+      return enumRadioContentWidthCh(options);
     }
+
+    return enumSelectContentWidthCh(options, label);
+  }
+
+  return undefined;
+}
+
+export function usesFitContentWidth(definition: TemplateVariableDefinition): boolean {
+  return definition.type === "boolean" || definition.type === "enum";
+}
+
+export function getVariableFieldLayoutStyle(definition: TemplateVariableDefinition): CSSProperties | undefined {
+  const contentCh = contentWidthCh(definition);
+  if (contentCh === undefined) {
+    return undefined;
+  }
+
+  const labelCh = labelMinWidthCh(variableLabel(definition));
+
+  return {
+    minWidth: `${Math.max(labelCh, contentCh)}ch`,
+    width: "fit-content",
+    maxWidth: "100%"
+  };
+}
+
+export function getVariableFieldLayoutClass(definition: TemplateVariableDefinition): string {
+  if (definition.type === "multiEnum") {
+    return "w-full";
+  }
+
+  if (usesFitContentWidth(definition)) {
+    return "max-w-full shrink-0";
   }
 
   if (definition.type === "date" || definition.type === "dateTime") {
-    return "col-span-full sm:col-span-2";
+    return "w-full min-w-0 sm:min-w-[16rem] sm:max-w-[32rem] sm:flex-1";
   }
 
-  return "min-w-0";
+  return "w-full min-w-0 sm:min-w-[11rem] sm:max-w-[32rem] sm:flex-1";
 }
