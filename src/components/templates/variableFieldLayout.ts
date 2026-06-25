@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
+import { parseEnumDisplayFormat } from "@/services/enumVariable";
 
 export const VARIABLE_FIELDS_CONTAINER_CLASS = "flex flex-wrap items-start gap-x-4 gap-y-4";
 
@@ -118,7 +119,9 @@ function contentWidthCh(definition: TemplateVariableDefinition, value?: Variable
 
   if (definition.type === "enum") {
     const options = definition.options ?? [];
-    if (options.length <= 4) {
+    const displayFormat = parseEnumDisplayFormat(definition.format, options);
+
+    if (displayFormat === "radio") {
       return enumRadioContentWidthCh(options);
     }
 

@@ -43,4 +43,28 @@ describe("jobConfigImportExport", () => {
       'Default: unchecked → "false". Checked → "true"; unchecked → "false".'
     );
   });
+
+  it("defaults imported enum variables to inferred display format", () => {
+    const parsed = parseImportedJobConfigTemplate(
+      JSON.stringify({
+        name: "Daily ETL",
+        payloadTemplate: "{\"name\":\"daily-etl\"}",
+        customVariables: [{ name: "ENV", type: "enum", options: ["dev", "prod"] }]
+      })
+    );
+
+    expect(parsed.customVariables[0]?.format).toBe("radio");
+  });
+
+  it("preserves explicit enum display format on import", () => {
+    const parsed = parseImportedJobConfigTemplate(
+      JSON.stringify({
+        name: "Daily ETL",
+        payloadTemplate: "{\"name\":\"daily-etl\"}",
+        customVariables: [{ name: "ENV", type: "enum", options: ["dev", "prod"], format: "combobox" }]
+      })
+    );
+
+    expect(parsed.customVariables[0]?.format).toBe("combobox");
+  });
 });

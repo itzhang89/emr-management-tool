@@ -71,10 +71,26 @@ describe("getVariableFieldLayoutStyle", () => {
       getVariableFieldLayoutStyle({
         name: "region",
         type: "enum",
+        format: "select",
         options: ["us-east-1", "ap-southeast-1", "eu-central-1", "sa-east-1", "ca-central-1"]
       })
     ).toEqual({
       minWidth: "22ch",
+      width: "fit-content",
+      maxWidth: "100%"
+    });
+  });
+
+  it("uses radio width when enum format is radio", () => {
+    expect(
+      getVariableFieldLayoutStyle({
+        name: "env",
+        type: "enum",
+        format: "radio",
+        options: ["dev", "staging", "production", "qa", "uat"]
+      })
+    ).toEqual({
+      minWidth: "45ch",
       width: "fit-content",
       maxWidth: "100%"
     });
