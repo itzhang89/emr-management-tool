@@ -16,7 +16,14 @@ export const COMPACT_FIELD_WRAPPER_STYLE: CSSProperties = {
 export const COMPACT_NUMBER_INPUT_CLASS =
   "w-full min-w-0 max-w-full px-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
 
-export const COMPACT_SELECT_TRIGGER_CLASS = "!w-full min-w-0 max-w-full !justify-start gap-2 px-3";
+export const COMPACT_SELECT_TRIGGER_CLASS =
+  "!w-full min-w-0 max-w-full justify-between px-3 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left";
+
+export const COMPACT_COMBOBOX_BUTTON_CLASS =
+  "w-full !justify-between px-3 font-normal [&>span:first-child]:min-w-0 [&>span:first-child]:flex-1 [&>span:first-child]:truncate [&>span:first-child]:text-left";
+
+export const COMPACT_BOOLEAN_CONTROL_CLASS =
+  "flex h-10 w-full items-center justify-between gap-2 rounded-md border bg-background px-2";
 
 type VariableFieldValue = string | number | boolean | string[] | undefined;
 
@@ -60,12 +67,14 @@ export function getRadioEnumShellStyle(options: string[]): CSSProperties {
   };
 }
 
+const BOOLEAN_CHECKBOX_OVERHEAD_CH = 3;
+
 export function getBooleanShellStyle(definition: TemplateVariableDefinition): CSSProperties {
   const style = parseBooleanOutputStyle(definition.format);
   const trueText = formatBooleanValue(true, style);
   const falseText = formatBooleanValue(false, style);
 
-  return shellStyleFromTextLength(maxTextLength(trueText, falseText));
+  return shellStyleFromTextLength(maxTextLength(trueText, falseText), 3 + BOOLEAN_CHECKBOX_OVERHEAD_CH);
 }
 
 export function getNumberShellStyle(definition: TemplateVariableDefinition): CSSProperties {

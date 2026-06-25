@@ -20,6 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  COMPACT_BOOLEAN_CONTROL_CLASS,
+  COMPACT_COMBOBOX_BUTTON_CLASS,
   COMPACT_FIELD_WRAPPER_CLASS,
   COMPACT_NUMBER_INPUT_CLASS,
   COMPACT_SELECT_TRIGGER_CLASS,
@@ -93,10 +95,11 @@ function VariableField({
         style={style}
         shellStyle={getBooleanShellStyle(definition)}
       >
-        <div className="flex h-10 w-full items-center gap-2 rounded-md border bg-background px-2">
-          <span className="font-mono text-xs text-muted-foreground">{output}</span>
+        <div className={COMPACT_BOOLEAN_CONTROL_CLASS}>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{output}</span>
           <Checkbox
             id={definition.name}
+            className="shrink-0"
             checked={checked}
             onCheckedChange={(nextChecked) => onChange(Boolean(nextChecked))}
           />
@@ -278,10 +281,10 @@ function EnumCombobox({
           <Button
             variant="outline"
             role="combobox"
-            className={cn("w-full !justify-start gap-2 px-3", COMPACT_SELECT_TRIGGER_CLASS)}
+            className={COMPACT_COMBOBOX_BUTTON_CLASS}
           >
-            <span className="min-w-0 truncate">{displayText}</span>
-            <ChevronsUpDown className="ml-auto size-4 shrink-0 opacity-50" />
+            <span>{displayText}</span>
+            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
