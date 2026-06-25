@@ -43,4 +43,26 @@ describe("TemplateVariableFields", () => {
     await user.click(checkbox);
     expect(onChange).toHaveBeenCalledWith({ enabled: true });
   });
+
+  it("renders enum variables using the format field", () => {
+    render(
+      <TooltipProvider>
+        <TemplateVariableFields
+          variables={[
+            {
+              name: "ENV",
+              type: "enum",
+              format: "combobox",
+              options: ["dev", "prod"]
+            }
+          ]}
+          values={{ ENV: "dev" }}
+          onChange={vi.fn()}
+        />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  });
 });

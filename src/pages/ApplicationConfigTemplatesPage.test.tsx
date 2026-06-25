@@ -172,6 +172,23 @@ describe("ApplicationConfigTemplatesPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows enum display format options for enum variables", async () => {
+    openTextFile.mockResolvedValue(
+      JSON.stringify({
+        name: "Enum Template",
+        payloadTemplate: "{\"name\":\"enum\"}",
+        customVariables: [{ name: "ENV", type: "enum", options: ["dev", "prod"], format: "combobox" }]
+      })
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+    await user.click(screen.getByRole("button", { name: /Import JSON/i }));
+
+    expect(screen.getByText("Searchable dropdown")).toBeInTheDocument();
+  });
+
   it("shows a helpful message instead of deleting built-in example templates", async () => {
     const user = userEvent.setup();
     renderPage();

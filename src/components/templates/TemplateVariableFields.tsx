@@ -27,6 +27,7 @@ import {
 import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
+import { parseEnumDisplayFormat } from "@/services/enumVariable";
 
 export function TemplateVariableFields({
   variables,
@@ -100,7 +101,9 @@ function VariableField({
 
   if (definition.type === "enum") {
     const options = definition.options ?? [];
-    if (options.length <= 4) {
+    const displayFormat = parseEnumDisplayFormat(definition.format, options);
+
+    if (displayFormat === "radio") {
       return (
         <Field label={label} description={definition.description} className={className} style={style}>
           <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex flex-nowrap gap-x-4">
@@ -116,7 +119,8 @@ function VariableField({
         </Field>
       );
     }
-    if (options.length <= 10) {
+
+    if (displayFormat === "select") {
       return (
         <Field label={label} description={definition.description} className={className} style={style}>
           <Select value={String(value ?? "")} onValueChange={onChange}>
@@ -134,6 +138,7 @@ function VariableField({
         </Field>
       );
     }
+
     return (
       <EnumCombobox
         className={className}

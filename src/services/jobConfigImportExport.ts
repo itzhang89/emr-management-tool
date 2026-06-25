@@ -1,6 +1,7 @@
 import type { JobConfigTemplate, TemplateVariableDefinition } from "@/types/domain";
 import { defaultBooleanOutputStyle, describeBooleanVariable } from "@/services/booleanVariable";
 import { defaultFormatForVariableType } from "@/services/dateFormat";
+import { parseEnumDisplayFormat } from "@/services/enumVariable";
 
 export type JobConfigTemplateExport = Pick<
   JobConfigTemplate,
@@ -31,11 +32,14 @@ export function parseImportedJobConfigTemplate(raw: string): JobConfigTemplateEx
 }
 
 function normalizeVariableDefinition(variable: TemplateVariableDefinition): TemplateVariableDefinition {
+  const options = variable.options?.map((option) => option.trim()).filter(Boolean);
   const format =
     variable.type === "boolean"
       ? variable.format?.trim() || defaultBooleanOutputStyle()
-      : variable.format?.trim() ||
-        (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined);
+      : variable.type === "enum"
+        ? parseEnumDisplayFormat(variable.format, options ?? [])
+        : variable.format?.trim() ||
+          (variable.type === "date" || variable.type === "dateTime" ? defaultFormatForVariableType(variable.type) : undefined);
 
   return {
     name: variable.name.trim(),
@@ -46,7 +50,7 @@ function normalizeVariableDefinition(variable: TemplateVariableDefinition): Temp
     type: variable.type,
     required: variable.required ?? true,
     defaultValue: variable.defaultValue,
-    options: variable.options?.map((option) => option.trim()).filter(Boolean),
+    options,
     format
   };
 }
