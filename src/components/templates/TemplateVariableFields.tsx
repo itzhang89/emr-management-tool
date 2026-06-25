@@ -19,7 +19,11 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getVariableFieldLayoutClass, VARIABLE_FIELDS_GRID_CLASS } from "@/components/templates/variableFieldLayout";
+import {
+  getVariableFieldLayoutClass,
+  getVariableFieldLayoutStyle,
+  VARIABLE_FIELDS_CONTAINER_CLASS
+} from "@/components/templates/variableFieldLayout";
 import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
@@ -38,11 +42,12 @@ export function TemplateVariableFields({
   }
 
   return (
-    <div className={VARIABLE_FIELDS_GRID_CLASS}>
+    <div className={VARIABLE_FIELDS_CONTAINER_CLASS}>
       {variables.map((definition) => (
         <VariableField
           key={definition.name}
           className={getVariableFieldLayoutClass(definition)}
+          style={getVariableFieldLayoutStyle(definition)}
           definition={definition}
           value={values[definition.name]}
           onChange={(value) => onChange({ ...values, [definition.name]: value })}
@@ -54,11 +59,13 @@ export function TemplateVariableFields({
 
 function VariableField({
   className,
+  style,
   definition,
   value,
   onChange
 }: {
   className?: string;
+  style?: React.CSSProperties;
   definition: TemplateVariableDefinition;
   value: string | number | boolean | string[] | undefined;
   onChange: (value: string | number | boolean | string[]) => void;
@@ -70,9 +77,9 @@ function VariableField({
     const output = formatBooleanValue(checked, parseBooleanOutputStyle(definition.format));
 
     return (
-      <Field label={label} description={definition.description} className={className}>
+      <Field label={label} description={definition.description} className={className} style={style}>
         <div className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-3">
-          <span className="truncate font-mono text-xs text-muted-foreground">{output}</span>
+          <span className="font-mono text-xs text-muted-foreground">{output}</span>
           <Checkbox
             id={definition.name}
             checked={checked}
@@ -85,7 +92,7 @@ function VariableField({
 
   if (definition.type === "number") {
     return (
-      <Field label={label} description={definition.description} className={className}>
+      <Field label={label} description={definition.description} className={className} style={style}>
         <Input type="number" value={Number(value ?? 0)} onChange={(event) => onChange(Number(event.target.value))} />
       </Field>
     );
@@ -95,8 +102,8 @@ function VariableField({
     const options = definition.options ?? [];
     if (options.length <= 4) {
       return (
-        <Field label={label} description={definition.description} className={className}>
-          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex flex-wrap gap-x-4 gap-y-2">
+        <Field label={label} description={definition.description} className={className} style={style}>
+          <RadioGroup value={String(value ?? "")} onValueChange={onChange} className="flex flex-nowrap gap-x-4">
             {options.map((option) => (
               <div key={option} className="flex items-center gap-2">
                 <RadioGroupItem value={option} id={`${definition.name}-${option}`} />
@@ -111,7 +118,7 @@ function VariableField({
     }
     if (options.length <= 10) {
       return (
-        <Field label={label} description={definition.description} className={className}>
+        <Field label={label} description={definition.description} className={className} style={style}>
           <Select value={String(value ?? "")} onValueChange={onChange}>
             <SelectTrigger>
               <SelectValue placeholder={`Select ${label}`} />
@@ -130,6 +137,7 @@ function VariableField({
     return (
       <EnumCombobox
         className={className}
+        style={style}
         label={label}
         description={definition.description}
         options={options}
@@ -143,7 +151,7 @@ function VariableField({
     const options = definition.options ?? [];
     const selected = Array.isArray(value) ? value : [];
     return (
-      <Field label={label} description={definition.description} className={className}>
+      <Field label={label} description={definition.description} className={className} style={style}>
         <div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border p-3">
           {options.map((option) => (
             <label key={option} className="flex items-center gap-2 text-sm">
@@ -165,6 +173,7 @@ function VariableField({
     return (
       <DateTimeField
         className={className}
+        style={style}
         label={label}
         description={definition.description}
         includeTime={definition.type === "dateTime"}
@@ -176,7 +185,7 @@ function VariableField({
   }
 
   return (
-    <Field label={label} description={definition.description} className={className}>
+    <Field label={label} description={definition.description} className={className} style={style}>
       <Input
         value={String(value ?? "")}
         autoCapitalize="none"
@@ -190,6 +199,7 @@ function VariableField({
 
 function EnumCombobox({
   className,
+  style,
   label,
   description,
   options,
@@ -197,6 +207,7 @@ function EnumCombobox({
   onChange
 }: {
   className?: string;
+  style?: React.CSSProperties;
   label: string;
   description?: string;
   options: string[];
@@ -205,7 +216,7 @@ function EnumCombobox({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <Field label={label} description={description} className={className}>
+    <Field label={label} description={description} className={className} style={style}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button variant="outline" role="combobox" className="w-full justify-between">
@@ -243,6 +254,7 @@ function EnumCombobox({
 
 function DateTimeField({
   className,
+  style,
   label,
   description,
   includeTime,
@@ -251,6 +263,7 @@ function DateTimeField({
   onChange
 }: {
   className?: string;
+  style?: React.CSSProperties;
   label: string;
   description?: string;
   includeTime: boolean;
@@ -267,7 +280,7 @@ function DateTimeField({
   }, [displayFormat, label, selected]);
 
   return (
-    <Field label={label} description={description} className={className}>
+    <Field label={label} description={description} className={className} style={style}>
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="outline" className="w-full justify-start text-left font-normal">
@@ -314,16 +327,18 @@ function Field({
   label,
   description,
   children,
-  className
+  className,
+  style
 }: {
   label: string;
   description?: string;
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   return (
-    <div className={cn("min-w-0 space-y-2", className)}>
-      <Label>
+    <div className={cn("min-w-0 space-y-2", className)} style={style}>
+      <Label className="whitespace-nowrap">
         <VariableLabel label={label} description={description} />
       </Label>
       {children}
