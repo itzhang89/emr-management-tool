@@ -1,5 +1,5 @@
 import { Copy, Download, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
@@ -49,7 +50,6 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const filteredJobs = allJobs;
   const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
   const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
-  const detailJob = filteredJobs.find((job) => job.id === detailJobId);
   const searchedJobId = submittedSearch.trim();
   const exactLocalMatch = searchedJobId ? allJobs.find((job) => job.id === searchedJobId) : undefined;
   const canFindInAws = Boolean(searchedJobId && filteredJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId));
@@ -197,12 +197,13 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                   </TableCell>
                   <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
                   <TableCell>{formatDuration(job)}</TableCell>
-                  <TableCell className="relative w-[360px] min-w-[360px]">
+                  <TableCell className="w-[360px] min-w-[360px]">
                     <div className="flex justify-start gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => setDetailJobId(job.id)}>
-                        <ZoomIn data-icon="inline-start" />
-                        Detail
-                      </Button>
+                      <JobDetailAction
+                        job={job}
+                        open={detailJobId === job.id}
+                        onOpenChange={(open) => setDetailJobId(open ? job.id : undefined)}
+                      />
                       <JobLogActions job={job} onOpenLogs={onOpenLogs} />
                       {job.state === "RUNNING" ? (
                       <Button
@@ -244,7 +245,6 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                       </Button>
                       ) : null}
                     </div>
-                    {detailJob?.id === job.id ? <JobDetailPopover job={detailJob} onClose={() => setDetailJobId(undefined)} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -318,21 +318,32 @@ function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: (
   );
 }
 
-function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
+function JobDetailAction({
+  job,
+  open,
+  onOpenChange
+}: {
+  job: JobRunSummary;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" onClick={() => onOpenChange(true)}>
+          <ZoomIn data-icon="inline-start" />
+          Detail
+        </Button>
+      </PopoverTrigger>
+      {open ? <JobDetailPopoverContent job={job} onClose={() => onOpenChange(false)} /> : null}
+    </Popover>
+  );
+}
+
+function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
   const describedJob = useDescribeJobRun(job.id, job.virtualClusterId);
   const detail = describedJob.data ?? job;
   const describeDetails = detail.describeDetails;
-
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        onClose();
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [onClose]);
 
   const copyJobId = async () => {
     await navigator.clipboard?.writeText(job.id);
@@ -352,62 +363,68 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
   };
 
   return (
-    <div
-      ref={ref}
-      role="dialog"
+    <PopoverContent
+      side="left"
+      align="center"
+      sideOffset={8}
+      collisionPadding={16}
       aria-label="Job Detail"
-      className="absolute right-full top-1/2 z-20 mr-2 max-h-[70vh] w-[420px] -translate-y-1/2 overflow-y-auto rounded-lg border bg-background p-4 text-left shadow-lg"
+      className="flex w-[420px] max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-0"
     >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <p className="font-semibold">Job Detail</p>
-          <p className="break-all text-xs text-muted-foreground">{job.id}</p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          <Button variant="outline" size="sm" onClick={() => void downloadDescription()}>
-            <Download data-icon="inline-start" />
-            Download JSON
-          </Button>
-          <Button variant="outline" size="sm" onClick={copyJobId}>
-            <Copy data-icon="inline-start" />
-            Copy Job ID
-          </Button>
+      <div className="shrink-0 border-b bg-popover p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-semibold">Job Detail</p>
+            <p className="break-all text-xs text-muted-foreground">{job.id}</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" size="sm" onClick={() => void downloadDescription()}>
+              <Download data-icon="inline-start" />
+              Download JSON
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void copyJobId()}>
+              <Copy data-icon="inline-start" />
+              Copy Job ID
+            </Button>
+          </div>
         </div>
       </div>
-      {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
-      {describedJob.error ? (
-        <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
-          {errorMessage(describedJob.error)}
-        </p>
-      ) : null}
-      <div className="grid gap-3 text-sm">
-        <Detail label="Name" value={detail.name} />
-        <Detail label="State" value={detail.state} />
-        <Detail label="Virtual Cluster" value={detail.virtualClusterId} />
-        <Detail label="Created" value={formatTimestamp(detail.createdAt)} />
-        <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
-        <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
-        <Detail label="Duration" value={formatDuration(detail)} />
-        <Detail label="ARN" value={describeDetails?.arn} />
-        <Detail label="Release Label" value={describeDetails?.releaseLabel} />
-        <Detail label="Execution Role" value={describeDetails?.executionRoleArn} />
-        <Detail label="Created By" value={describeDetails?.createdBy} />
-        <Detail label="Client Token" value={describeDetails?.clientToken} />
-        <Detail label="State Details" value={describeDetails?.stateDetails} />
-        <Detail label="Failure Reason" value={describeDetails?.failureReason} />
-        <Detail
-          label="Retry Attempts"
-          value={
-            describeDetails?.retryMaxAttempts !== undefined || describeDetails?.retryCurrentAttemptCount !== undefined
-              ? `${describeDetails?.retryCurrentAttemptCount ?? "-"} / ${describeDetails?.retryMaxAttempts ?? "-"}`
-              : undefined
-          }
-        />
-        <Detail label="Job Driver" value={formatJobDriver(describeDetails)} multiline />
-        <Detail label="Tags" value={formatJson(describeDetails?.tags)} multiline />
-        <Detail label="Configuration Overrides" value={formatJson(describeDetails?.configurationOverrides)} multiline />
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
+        {describedJob.error ? (
+          <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
+            {errorMessage(describedJob.error)}
+          </p>
+        ) : null}
+        <div className="grid gap-3 text-sm">
+          <Detail label="Name" value={detail.name} />
+          <Detail label="State" value={detail.state} />
+          <Detail label="Virtual Cluster" value={detail.virtualClusterId} />
+          <Detail label="Created" value={formatTimestamp(detail.createdAt)} />
+          <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
+          <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
+          <Detail label="Duration" value={formatDuration(detail)} />
+          <Detail label="ARN" value={describeDetails?.arn} />
+          <Detail label="Release Label" value={describeDetails?.releaseLabel} />
+          <Detail label="Execution Role" value={describeDetails?.executionRoleArn} />
+          <Detail label="Created By" value={describeDetails?.createdBy} />
+          <Detail label="Client Token" value={describeDetails?.clientToken} />
+          <Detail label="State Details" value={describeDetails?.stateDetails} />
+          <Detail label="Failure Reason" value={describeDetails?.failureReason} />
+          <Detail
+            label="Retry Attempts"
+            value={
+              describeDetails?.retryMaxAttempts !== undefined || describeDetails?.retryCurrentAttemptCount !== undefined
+                ? `${describeDetails?.retryCurrentAttemptCount ?? "-"} / ${describeDetails?.retryMaxAttempts ?? "-"}`
+                : undefined
+            }
+          />
+          <Detail label="Job Driver" value={formatJobDriver(describeDetails)} multiline />
+          <Detail label="Tags" value={formatJson(describeDetails?.tags)} multiline />
+          <Detail label="Configuration Overrides" value={formatJson(describeDetails?.configurationOverrides)} multiline />
+        </div>
       </div>
-    </div>
+    </PopoverContent>
   );
 }
 
