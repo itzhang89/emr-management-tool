@@ -32,7 +32,6 @@ export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [, startPageTransition] = useTransition();
-  const activeMeta = useMemo(() => navigationItems.find((item) => item.id === activePage), [activePage]);
   const accounts = useAwsAccounts();
   const activeAccount = accounts.data?.find((account) => account.isActive);
   const setActiveAccount = useSetActiveAwsAccount();
@@ -124,16 +123,6 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center justify-between border-b bg-card px-6">
-          <div>
-            <div className="text-sm font-medium">{activeMeta?.label}</div>
-            <div className="text-xs text-muted-foreground">{activeMeta?.description}</div>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
-            {sidebarCollapsed ? <PanelLeftOpen data-icon="inline-start" /> : <PanelLeftClose data-icon="inline-start" />}
-            {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-          </Button>
-        </header>
         <main className="min-w-0 flex-1 overflow-auto p-6">
           <Suspense fallback={<PageLoader />}>{activePageContent}</Suspense>
         </main>

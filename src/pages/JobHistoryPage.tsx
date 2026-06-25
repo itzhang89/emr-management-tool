@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
@@ -123,10 +124,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Job History</h1>
-        <p className="text-sm text-muted-foreground">Review submitted jobs, clone configurations, or cancel active runs.</p>
-      </div>
+      <PageHeader pageId="history" />
       <Card>
         <CardHeader>
           <CardTitle>Submitted Jobs</CardTitle>

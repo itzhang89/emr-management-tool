@@ -35,3 +35,11 @@ export const navigationItems = [
   description: string;
   icon: typeof Cloud;
 }>;
+
+export function getPageMeta(id: PageId) {
+  const item = navigationItems.find((entry) => entry.id === id);
+  if (!item) {
+    throw new Error(`Unknown page id: ${id}`);
+  }
+  return item;
+}
