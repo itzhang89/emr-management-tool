@@ -4,6 +4,8 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_types::region::Region;
 use serde::{Deserialize, Serialize};
+#[cfg(not(debug_assertions))]
+use std::sync::OnceLock;
 use tauri::AppHandle;
 
 #[cfg(not(debug_assertions))]
@@ -148,8 +150,39 @@ fn write_store_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> 
 }
 
 #[cfg(not(debug_assertions))]
+fn ensure_default_keyring_store() -> AppResult<()> {
+    static INIT: OnceLock<Result<(), AppError>> = OnceLock::new();
+
+    INIT.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        {
+            let store = apple_native_keyring_store::keychain::Store::new()
+                .map_err(|error| AppError::storage(error.to_string()))?;
+            keyring_core::set_default_store(store);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let store = windows_native_keyring_store::Store::new()
+                .map_err(|error| AppError::storage(error.to_string()))?;
+            keyring_core::set_default_store(store);
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            return Err(AppError::storage(
+                "Native credential store is not supported on this platform.".to_string(),
+            ));
+        }
+
+        Ok(())
+    })
+    .clone()
+}
+
+#[cfg(not(debug_assertions))]
 fn write_keychain_secret(key: &str, value: &str) -> AppResult<()> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
+    ensure_default_keyring_store()?;
     keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
         .set_password(value)
@@ -193,7 +226,7 @@ fn read_optional_store_secret(app: &AppHandle, key: &str) -> AppResult<Option<St
 
 #[cfg(not(debug_assertions))]
 fn read_optional_keychain_secret(key: &str) -> AppResult<Option<String>> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
+    ensure_default_keyring_store()?;
     match keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?
         .get_password()
@@ -230,7 +263,7 @@ fn delete_store_secret(app: &AppHandle, key: &str) -> AppResult<()> {
 
 #[cfg(not(debug_assertions))]
 fn delete_keychain_secret(key: &str) -> AppResult<()> {
-    keyring::use_native_store(false).map_err(|error| AppError::storage(error.to_string()))?;
+    ensure_default_keyring_store()?;
     let entry = keyring_core::Entry::new(KEYCHAIN_SERVICE_NAME, key)
         .map_err(|error| AppError::storage(error.to_string()))?;
     match entry.delete_credential() {
