@@ -23,11 +23,11 @@ import {
   COMPACT_FIELD_WRAPPER_CLASS,
   COMPACT_NUMBER_INPUT_CLASS,
   COMPACT_SELECT_TRIGGER_CLASS,
+  getBooleanShellStyle,
+  getDateShellStyle,
+  getEnumSelectShellStyle,
+  getNumberShellStyle,
   getRadioEnumShellStyle,
-  getBooleanControlStyle,
-  getDateControlStyle,
-  getNumberInputStyle,
-  getSelectControlStyle,
   getVariableFieldLayoutClass,
   getVariableFieldLayoutStyle,
   VARIABLE_FIELDS_CONTAINER_CLASS
@@ -91,7 +91,7 @@ function VariableField({
         description={definition.description}
         className={className}
         style={style}
-        shellStyle={getBooleanControlStyle(definition.format, checked)}
+        shellStyle={getBooleanShellStyle(definition)}
       >
         <div className="flex h-10 w-full items-center gap-2 rounded-md border bg-background px-2">
           <span className="font-mono text-xs text-muted-foreground">{output}</span>
@@ -114,7 +114,7 @@ function VariableField({
         description={definition.description}
         className={className}
         style={style}
-        shellStyle={getNumberInputStyle(numberValue)}
+        shellStyle={getNumberShellStyle(definition)}
       >
         <Input
           type="number"
@@ -154,15 +154,13 @@ function VariableField({
     }
 
     if (displayFormat === "select") {
-      const selected = typeof value === "string" && value ? value : `Select ${label}`;
-
       return (
         <CompactFieldShell
           label={label}
           description={definition.description}
           className={className}
           style={style}
-          shellStyle={getSelectControlStyle(selected)}
+          shellStyle={getEnumSelectShellStyle(definition)}
         >
           <Select value={String(value ?? "")} onValueChange={onChange}>
             <SelectTrigger className={COMPACT_SELECT_TRIGGER_CLASS}>
@@ -187,6 +185,7 @@ function VariableField({
         label={label}
         description={definition.description}
         options={options}
+        shellStyle={getEnumSelectShellStyle(definition)}
         value={String(value ?? "")}
         onChange={onChange}
       />
@@ -250,6 +249,7 @@ function EnumCombobox({
   label,
   description,
   options,
+  shellStyle,
   value,
   onChange
 }: {
@@ -258,6 +258,7 @@ function EnumCombobox({
   label: string;
   description?: string;
   options: string[];
+  shellStyle: React.CSSProperties;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -270,7 +271,7 @@ function EnumCombobox({
       description={description}
       className={className}
       style={style}
-      shellStyle={getSelectControlStyle(displayText)}
+      shellStyle={shellStyle}
     >
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
@@ -346,7 +347,7 @@ function DateTimeField({
       description={description}
       className={className}
       style={style}
-      shellStyle={getDateControlStyle(definition, value)}
+      shellStyle={getDateShellStyle(definition)}
     >
       <Popover>
         <PopoverTrigger asChild>
