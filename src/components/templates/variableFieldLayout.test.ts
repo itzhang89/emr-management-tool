@@ -87,7 +87,6 @@ describe("getVariableFieldLayoutStyle", () => {
         type: "date"
       })
     ).toEqual({
-      minWidth: "19ch",
       width: "fit-content",
       maxWidth: "100%"
     });
@@ -100,7 +99,21 @@ describe("getVariableFieldLayoutStyle", () => {
         type: "dateTime"
       })
     ).toEqual({
-      minWidth: "25ch",
+      width: "fit-content",
+      maxWidth: "100%"
+    });
+  });
+
+  it("calculates date content width from the selected value", () => {
+    expect(
+      getVariableFieldLayoutStyle(
+        {
+          name: "biz_date",
+          type: "date"
+        },
+        "2026-06-24"
+      )
+    ).toEqual({
       width: "fit-content",
       maxWidth: "100%"
     });
