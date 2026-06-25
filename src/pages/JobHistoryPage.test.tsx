@@ -278,6 +278,7 @@ describe("JobHistoryPage", () => {
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     expect(describeJobRun).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
     expect(useSessionStore.getState().selectedJobId).toBe("job-running");
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
     expect(onOpenLogs).toHaveBeenCalled();
