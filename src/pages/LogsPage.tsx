@@ -1,5 +1,5 @@
 import { Archive, Cloud, Download } from "lucide-react";
-import { memo, type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { memo, type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +19,7 @@ import {
   type S3LogDestination
 } from "@/services/jobLogDestinations";
 import { saveTextFile } from "@/services/fileDownload";
-import { formatCloudWatchMessages, truncateLogTextForDisplay } from "@/services/logDisplay";
+import { formatCloudWatchMessages, MAX_LOG_VIEW_CHARACTERS, truncateLogTextForDisplay } from "@/services/logDisplay";
 import {
   buildSearchResult,
   formatSearchMatchLabel,
@@ -351,14 +351,25 @@ const LogViewerLayout = memo(function LogViewerLayout({
   path?: string;
   logText: string;
 }) {
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [regexSearch, setRegexSearch] = useState(false);
   const [submittedRegexSearch, setSubmittedRegexSearch] = useState(false);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const logDisplay = useMemo(() => truncateLogTextForDisplay(logText), [logText]);
+  const [displayFullLog, setDisplayFullLog] = useState(false);
+  const logDisplay = useMemo(() => {
+    if (displayFullLog) {
+      return {
+        text: logText,
+        truncated: logText.length > MAX_LOG_VIEW_CHARACTERS,
+        totalCharacters: logText.length,
+        showingFullContent: true
+      };
+    }
+
+    const truncated = truncateLogTextForDisplay(logText);
+    return { ...truncated, showingFullContent: false };
+  }, [displayFullLog, logText]);
   const deferredLogText = useDeferredValue(logDisplay.text);
   const searchResult = useMemo(
     () => buildSearchResult(submittedSearch ? deferredLogText : logDisplay.text, submittedSearch, submittedRegexSearch),
@@ -374,24 +385,16 @@ const LogViewerLayout = memo(function LogViewerLayout({
     truncated: searchResult.truncated,
     error: searchResult.error
   });
+  const showTruncationBanner = logDisplay.truncated && !logDisplay.showingFullContent;
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    if (searchOpen) {
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    }
-  }, [searchOpen]);
+    setDisplayFullLog(false);
+    setSearchInput("");
+    setSubmittedSearch("");
+    setSubmittedRegexSearch(false);
+    setRegexSearch(false);
+    setActiveMatchIndex(0);
+  }, [logText]);
 
   useEffect(() => {
     setActiveMatchIndex(0);
@@ -483,48 +486,59 @@ const LogViewerLayout = memo(function LogViewerLayout({
           </div>
           <div className="break-all text-xs text-muted-foreground">{path ?? "Choose a stdout or stderr entry from the log tree."}</div>
         </div>
-        {logDisplay.truncated ? (
-          <p className="border-b bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-            Showing the first part of this log for responsiveness. Download the selected log to view the full file (
-            {logDisplay.totalCharacters.toLocaleString("en-US")} characters).
-          </p>
-        ) : null}
-        {searchOpen ? (
-          <div className="flex flex-wrap items-center gap-2 border-b bg-secondary/30 p-2">
-            <Input
-              ref={searchInputRef}
-              className="h-8 min-w-48 flex-1"
-              placeholder="Find in this log (press Enter)"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  submitLogSearch();
-                }
-              }}
-            />
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                className="size-4"
-                aria-label="Regex"
-                checked={regexSearch}
-                onChange={(event) => setRegexSearch(event.target.checked)}
-              />
-              Regex
-            </label>
-            <span className={cn("min-w-16 text-xs", searchResult.error ? "text-destructive" : "text-muted-foreground")}>
-              {submittedSearch ? activeMatchLabel : "Press Enter"}
-            </span>
-            <Button type="button" variant="outline" size="sm" aria-label="Previous match" disabled={matches.length === 0} onClick={goToPreviousMatch}>
-              Previous
-            </Button>
-            <Button type="button" variant="outline" size="sm" aria-label="Next match" disabled={matches.length === 0} onClick={goToNextMatch}>
-              Next
-            </Button>
+        {showTruncationBanner ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+            <p>
+              Previewing the first {MAX_LOG_VIEW_CHARACTERS.toLocaleString("en-US")} characters of this log (
+              {logDisplay.totalCharacters.toLocaleString("en-US")} total). Load the full log to search and browse everything
+              in the viewer, or download it to a file.
+            </p>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => setDisplayFullLog(true)}>
+                Load full log
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void onDownloadSelected()}>
+                <Download data-icon="inline-start" />
+                Download
+              </Button>
+            </div>
           </div>
         ) : null}
+        {logDisplay.showingFullContent && logDisplay.truncated ? (
+          <div className="border-b border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+            Showing the full log ({logDisplay.totalCharacters.toLocaleString("en-US")} characters) in the viewer.
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2 border-b bg-secondary/30 p-2">
+          <Input
+            className="h-8 min-w-48 flex-1"
+            placeholder="Search in this log"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4"
+              aria-label="Regex"
+              checked={regexSearch}
+              onChange={(event) => setRegexSearch(event.target.checked)}
+            />
+            Regex
+          </label>
+          <Button type="button" size="sm" aria-label="Search log" onClick={submitLogSearch}>
+            Search
+          </Button>
+          <span className={cn("min-w-16 text-xs", searchResult.error ? "text-destructive" : "text-muted-foreground")}>
+            {submittedSearch ? activeMatchLabel : "No results yet"}
+          </span>
+          <Button type="button" variant="outline" size="sm" aria-label="Previous match" disabled={matches.length === 0} onClick={goToPreviousMatch}>
+            Previous
+          </Button>
+          <Button type="button" variant="outline" size="sm" aria-label="Next match" disabled={matches.length === 0} onClick={goToNextMatch}>
+            Next
+          </Button>
+        </div>
         <ScrollArea className="h-[560px] bg-slate-950 p-4">
           <pre data-testid="log-content" className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100">
             {highlightedLogContent}

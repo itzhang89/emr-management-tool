@@ -11,14 +11,14 @@ describe("truncateLogTextForDisplay", () => {
     });
   });
 
-  it("truncates very large logs with a download hint", () => {
+  it("truncates very large logs without embedding a suffix in the preview text", () => {
     const text = "x".repeat(MAX_LOG_VIEW_CHARACTERS + 100);
     const result = truncateLogTextForDisplay(text);
 
     expect(result.truncated).toBe(true);
     expect(result.totalCharacters).toBe(text.length);
-    expect(result.text.length).toBeLessThan(text.length);
-    expect(result.text).toContain("Download the log to view the full file.");
+    expect(result.text).toHaveLength(MAX_LOG_VIEW_CHARACTERS);
+    expect(result.text).not.toContain("Download the log");
   });
 });
 
