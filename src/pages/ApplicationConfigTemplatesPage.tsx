@@ -49,6 +49,12 @@ type Editing = { template?: JobConfigTemplate } | undefined;
 
 type EditableVariable = TemplateVariableDefinition & { editorId: string };
 
+const TEMPLATE_EDITOR_TEXT_INPUT_PROPS = {
+  autoCapitalize: "none",
+  autoCorrect: "off",
+  spellCheck: false
+} as const;
+
 type TemplateEditorSnapshot = Pick<
   JobConfigTemplate,
   "name" | "description" | "payloadTemplate" | "customVariables" | "defaultResourceTemplateId"
@@ -248,7 +254,7 @@ function JobConfigTemplateDialog({
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Name">
-              <Input value={name} onChange={(event) => setName(event.target.value)} />
+              <Input value={name} onChange={(event) => setName(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
             </Field>
             <Field label="Default Resource Template">
               <Select value={defaultResourceTemplateId ?? ""} onValueChange={setDefaultResourceTemplateId}>
@@ -266,7 +272,7 @@ function JobConfigTemplateDialog({
             </Field>
           </div>
           <Field label="Description">
-            <Input value={description} onChange={(event) => setDescription(event.target.value)} />
+            <Input value={description} onChange={(event) => setDescription(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
           </Field>
           <div className="flex items-center justify-between">
             <Label>Payload JSON</Label>
@@ -315,6 +321,7 @@ function JobConfigTemplateDialog({
             className="min-h-[280px] font-mono text-xs"
             value={payloadTemplate}
             onChange={(event) => setPayloadTemplate(event.target.value)}
+            {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
           />
           <VariableEditor
             key={`${template?.id ?? "new-template"}-${variableEditorKey}`}
@@ -458,6 +465,7 @@ function VariableRow({
           placeholder="Variable name"
           value={variable.name}
           onChange={(event) => onChange({ name: event.target.value })}
+          {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
         />
         <Select
           value={variable.type}
@@ -532,6 +540,7 @@ function VariableRow({
           placeholder="Options, comma-separated"
           value={optionsDraft}
           onChange={(event) => setOptionsDraft(event.target.value)}
+          {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
           onBlur={() =>
             onChange({
               options: optionsDraft
@@ -548,6 +557,7 @@ function VariableRow({
           placeholder="Format, e.g. YYYY-MM-DD"
           value={variable.format ?? defaultFormatForVariableType(variable.type)}
           onChange={(event) => onChange({ format: event.target.value })}
+          {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
         />
       )}
 
@@ -626,6 +636,7 @@ function VariableDescriptionControl({
               placeholder="Optional description shown on hover in Submit Job."
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
             />
           </div>
           <div className="flex justify-end gap-2">
@@ -718,6 +729,7 @@ function DefaultValueField({
       <Input
         placeholder="Default values"
         value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
+        {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
         onChange={(event) =>
           onChange({
             defaultValue: event.target.value
@@ -735,6 +747,7 @@ function DefaultValueField({
       placeholder="Default"
       value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
       onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
+      {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
     />
   );
 }

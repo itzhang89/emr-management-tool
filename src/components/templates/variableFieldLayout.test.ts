@@ -14,11 +14,12 @@ describe("getVariableFieldLayoutClass", () => {
     expect(getVariableFieldLayoutClass({ name: "tags", type: "multiEnum", options: ["a", "b"] })).toBe("w-full");
   });
 
-  it("uses fit-content sizing for boolean and enum variables", () => {
+  it("uses fit-content sizing for boolean, enum, and date variables", () => {
     expect(getVariableFieldLayoutClass({ name: "enabled", type: "boolean" })).toContain("shrink-0");
     expect(getVariableFieldLayoutClass({ name: "env", type: "enum", options: ["dev", "prod"] })).toContain(
       "shrink-0"
     );
+    expect(getVariableFieldLayoutClass({ name: "runAt", type: "dateTime" })).toContain("shrink-0");
   });
 });
 
@@ -74,6 +75,32 @@ describe("getVariableFieldLayoutStyle", () => {
       })
     ).toEqual({
       minWidth: "22ch",
+      width: "fit-content",
+      maxWidth: "100%"
+    });
+  });
+
+  it("sizes date fields from label and format pattern", () => {
+    expect(
+      getVariableFieldLayoutStyle({
+        name: "biz_date",
+        type: "date"
+      })
+    ).toEqual({
+      minWidth: "19ch",
+      width: "fit-content",
+      maxWidth: "100%"
+    });
+  });
+
+  it("sizes datetime fields from label and format pattern", () => {
+    expect(
+      getVariableFieldLayoutStyle({
+        name: "run_at",
+        type: "dateTime"
+      })
+    ).toEqual({
+      minWidth: "25ch",
       width: "fit-content",
       maxWidth: "100%"
     });
