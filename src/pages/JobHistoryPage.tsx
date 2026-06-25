@@ -22,8 +22,7 @@ const jobHistoryRefreshIntervalMs = 5_000;
 const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
-  const selectedJobId = useSessionStore((state) => state.selectedJobId);
-  const setSelectedJobId = useSessionStore((state) => state.setSelectedJobId);
+  const [detailJobId, setDetailJobId] = useState<string>();
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
   const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
@@ -50,7 +49,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const filteredJobs = allJobs;
   const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
   const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
-  const selectedJob = filteredJobs.find((job) => job.id === selectedJobId);
+  const detailJob = filteredJobs.find((job) => job.id === detailJobId);
   const searchedJobId = submittedSearch.trim();
   const exactLocalMatch = searchedJobId ? allJobs.find((job) => job.id === searchedJobId) : undefined;
   const canFindInAws = Boolean(searchedJobId && filteredJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId));
@@ -58,7 +57,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const findJobInAws = async () => {
     if (!searchedJobId) return;
     if (exactLocalMatch) {
-      setSelectedJobId(exactLocalMatch.id);
+      setDetailJobId(exactLocalMatch.id);
       return;
     }
     if (filteredJobs.length > 0) return;
@@ -74,7 +73,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
       setRemoteJob(job);
       setSearchInput(job.id);
       setSubmittedSearch(job.id);
-      setSelectedJobId(job.id);
+      setDetailJobId(job.id);
       setPage(1);
       void jobs.refetch?.();
       toast.success(`Found ${job.name}`);
@@ -200,7 +199,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                   <TableCell>{formatDuration(job)}</TableCell>
                   <TableCell className="relative w-[360px] min-w-[360px]">
                     <div className="flex justify-start gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => setSelectedJobId(job.id)}>
+                      <Button variant="ghost" size="sm" onClick={() => setDetailJobId(job.id)}>
                         <ZoomIn data-icon="inline-start" />
                         Detail
                       </Button>
@@ -245,7 +244,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                       </Button>
                       ) : null}
                     </div>
-                    {selectedJob?.id === job.id ? <JobDetailPopover job={selectedJob} onClose={() => setSelectedJobId(undefined)} /> : null}
+                    {detailJob?.id === job.id ? <JobDetailPopover job={detailJob} onClose={() => setDetailJobId(undefined)} /> : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -357,7 +356,7 @@ function JobDetailPopover({ job, onClose }: { job: JobRunSummary; onClose: () =>
       ref={ref}
       role="dialog"
       aria-label="Job Detail"
-      className="absolute right-0 top-10 z-20 max-h-[70vh] w-[420px] overflow-y-auto rounded-lg border bg-background p-4 text-left shadow-lg"
+      className="absolute right-full top-1/2 z-20 mr-2 max-h-[70vh] w-[420px] -translate-y-1/2 overflow-y-auto rounded-lg border bg-background p-4 text-left shadow-lg"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
