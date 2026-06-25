@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { PageHeader } from "@/components/layout/PageHeader";
 import {
   useAwsAccounts,
   useAwsCliProfiles,
@@ -110,46 +111,41 @@ export function SettingsPage() {
 
   return (
     <div className="flex max-w-5xl flex-col gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-            {releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
+      <PageHeader
+        pageId="settings"
+        titleAddon={releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
+        actions={
+          <div className="flex flex-col items-end gap-1.5">
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              {availableUpdate ? (
+                <>
+                  Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
+                  {" · "}
+                  Upgrade to <span className="font-medium text-foreground">{availableUpdate.version}</span>
+                </>
+              ) : (
+                <>
+                  Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
+                </>
+              )}
+            </p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={checkingUpdate || installingUpdate}
+                  onClick={availableUpdate ? installUpdate : checkForUpdates}
+                >
+                  {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                  {updateButtonLabel}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{updateTooltip}</TooltipContent>
+            </Tooltip>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Manage named AWS accounts. Development builds store secrets in a local development store; production builds use the OS keychain.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          <p className="text-sm text-muted-foreground" aria-live="polite">
-            {availableUpdate ? (
-              <>
-                Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
-                {" · "}
-                Upgrade to <span className="font-medium text-foreground">{availableUpdate.version}</span>
-              </>
-            ) : (
-              <>
-                Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
-              </>
-            )}
-          </p>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={checkingUpdate || installingUpdate}
-                onClick={availableUpdate ? installUpdate : checkForUpdates}
-              >
-                {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                {updateButtonLabel}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{updateTooltip}</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
+        }
+      />
 
       <Card>
         <CardHeader>
