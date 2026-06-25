@@ -1,9 +1,9 @@
 export type EnumDisplayFormat = "radio" | "select" | "combobox";
 
 export const ENUM_DISPLAY_OPTIONS: { value: EnumDisplayFormat; label: string }[] = [
-  { value: "radio", label: "Radio buttons" },
-  { value: "select", label: "Dropdown" },
-  { value: "combobox", label: "Searchable dropdown" }
+  { value: "radio", label: "radio" },
+  { value: "select", label: "select" },
+  { value: "combobox", label: "combobox" }
 ];
 
 export function inferEnumDisplayFormat(optionCount: number): EnumDisplayFormat {

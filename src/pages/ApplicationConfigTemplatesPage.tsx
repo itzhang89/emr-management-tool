@@ -538,7 +538,42 @@ function VariableRow({
         </div>
       </div>
 
-      {(variable.type === "enum" || variable.type === "multiEnum") && (
+      {variable.type === "enum" && (
+        <div className="flex items-center gap-2">
+          <Select
+            value={variable.format ?? inferEnumDisplayFormat(variable.options?.length ?? 0)}
+            onValueChange={(value) => onChange({ format: value })}
+          >
+            <SelectTrigger className="w-[8.5rem] shrink-0">
+              <SelectValue placeholder="Format" />
+            </SelectTrigger>
+            <SelectContent>
+              {ENUM_DISPLAY_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            className="min-w-0 flex-1"
+            placeholder="Options, comma-separated"
+            value={optionsDraft}
+            onChange={(event) => setOptionsDraft(event.target.value)}
+            {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
+            onBlur={() =>
+              onChange({
+                options: optionsDraft
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              })
+            }
+          />
+        </div>
+      )}
+
+      {variable.type === "multiEnum" && (
         <Input
           placeholder="Options, comma-separated"
           value={optionsDraft}
@@ -553,24 +588,6 @@ function VariableRow({
             })
           }
         />
-      )}
-
-      {variable.type === "enum" && (
-        <Select
-          value={variable.format ?? inferEnumDisplayFormat(variable.options?.length ?? 0)}
-          onValueChange={(value) => onChange({ format: value })}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Display format" />
-          </SelectTrigger>
-          <SelectContent>
-            {ENUM_DISPLAY_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       )}
 
       {(variable.type === "date" || variable.type === "dateTime") && (

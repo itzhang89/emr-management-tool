@@ -186,7 +186,7 @@ describe("ApplicationConfigTemplatesPage", () => {
     await user.click(screen.getByRole("button", { name: /Template/i }));
     await user.click(screen.getByRole("button", { name: /Import JSON/i }));
 
-    expect(screen.getByText("Searchable dropdown")).toBeInTheDocument();
+    expect(screen.getByText("combobox")).toBeInTheDocument();
   });
 
   it("shows a helpful message instead of deleting built-in example templates", async () => {
