@@ -14,7 +14,7 @@ export const COMPACT_FIELD_WRAPPER_STYLE: CSSProperties = {
 };
 
 export const COMPACT_NUMBER_INPUT_CLASS =
-  "w-full min-w-0 max-w-full px-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+  "w-full min-w-0 max-w-full pl-2 pr-0 [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:h-full [&::-webkit-outer-spin-button]:m-0 [&::-webkit-inner-spin-button]:opacity-100 [&::-webkit-outer-spin-button]:opacity-100";
 
 export const COMPACT_SELECT_TRIGGER_CLASS =
   "!w-full min-w-0 max-w-full justify-between px-3 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left";
@@ -29,6 +29,7 @@ type VariableFieldValue = string | number | boolean | string[] | undefined;
 
 const MIN_NUMBER_DIGITS_CH = 4;
 const NUMBER_SHELL_PADDING_CH = 3;
+const NUMBER_SPINNER_OVERHEAD_CH = 2;
 const MIN_NUMBER_SHELL_WIDTH = "4.5rem";
 const RADIO_OPTION_GAP_CH = 4;
 const RADIO_OPTION_OVERHEAD_CH = 3;
@@ -83,7 +84,7 @@ export function getNumberShellStyle(definition: TemplateVariableDefinition): CSS
       ? String(Math.abs(definition.defaultValue)).length
       : 0;
   const digits = Math.max(MIN_NUMBER_DIGITS_CH, defaultDigits);
-  const contentCh = digits + NUMBER_SHELL_PADDING_CH;
+  const contentCh = digits + NUMBER_SHELL_PADDING_CH + NUMBER_SPINNER_OVERHEAD_CH;
 
   return {
     width: `max(${MIN_NUMBER_SHELL_WIDTH}, ${contentCh}ch)`,
