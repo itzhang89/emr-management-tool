@@ -6,11 +6,17 @@ import { parseEnumDisplayFormat } from "@/services/enumVariable";
 
 export const VARIABLE_FIELDS_CONTAINER_CLASS = "flex flex-wrap items-start gap-x-4 gap-y-4";
 
-const MIN_FIELD_WIDTH_CH = 8;
-const CONTROL_PADDING_CH = 5;
-const RADIO_OPTION_OVERHEAD_CH = 3;
-const SELECT_PLACEHOLDER_OVERHEAD_CH = 8;
-const DATE_CONTROL_OVERHEAD_CH = 4;
+export const COMPACT_FIELD_WRAPPER_CLASS = "flex w-fit max-w-full flex-col items-start gap-2";
+
+export const COMPACT_FIELD_WRAPPER_STYLE: CSSProperties = {
+  width: "fit-content",
+  maxWidth: "100%"
+};
+
+export const COMPACT_NUMBER_INPUT_CLASS =
+  "w-full min-w-0 max-w-full px-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none";
+
+export const COMPACT_SELECT_TRIGGER_CLASS = "!w-full min-w-0 max-w-full !justify-start gap-2 px-3";
 
 type VariableFieldValue = string | number | boolean | string[] | undefined;
 
@@ -18,76 +24,29 @@ function variableLabel(definition: TemplateVariableDefinition): string {
   return definition.label ?? definition.name;
 }
 
-function labelMinWidthCh(label: string): number {
-  return Math.max(label.length, MIN_FIELD_WIDTH_CH);
+function controlWidthCh(textLength: number, extraCh = 2): number {
+  return Math.max(textLength, 1) + extraCh;
 }
 
-function booleanContentWidthCh(format?: string): number {
-  const style = parseBooleanOutputStyle(format);
-  const falseOutput = formatBooleanValue(false, style);
-  const trueOutput = formatBooleanValue(true, style);
+const RADIO_OPTION_GAP_CH = 4;
+const RADIO_OPTION_OVERHEAD_CH = 3;
 
-  return Math.max(falseOutput.length, trueOutput.length) + CONTROL_PADDING_CH;
-}
-
-function enumRadioContentWidthCh(options: string[]): number {
+export function getRadioEnumShellStyle(options: string[]): CSSProperties {
   if (options.length === 0) {
-    return MIN_FIELD_WIDTH_CH;
+    return { width: "fit-content", maxWidth: "100%" };
   }
 
-  return options.reduce((sum, option) => sum + option.length + RADIO_OPTION_OVERHEAD_CH, CONTROL_PADDING_CH);
+  const contentCh =
+    options.reduce((sum, option) => sum + option.length + RADIO_OPTION_OVERHEAD_CH, 0) +
+    Math.max(options.length - 1, 0) * RADIO_OPTION_GAP_CH;
+
+  return {
+    width: `${contentCh}ch`,
+    maxWidth: "100%"
+  };
 }
 
-function enumSelectContentWidthCh(options: string[], label: string): number {
-  const placeholderLength = `Select ${label}`.length;
-  const longestOption = options.reduce((max, option) => Math.max(max, option.length), 0);
-
-  return Math.max(longestOption, placeholderLength) + SELECT_PLACEHOLDER_OVERHEAD_CH;
-}
-
-function dateFormatDisplayWidthCh(format: string): number {
-  let width = 0;
-
-  for (let index = 0; index < format.length; ) {
-    if (format.startsWith("YYYY", index)) {
-      width += 4;
-      index += 4;
-      continue;
-    }
-    if (format.startsWith("MM", index)) {
-      width += 2;
-      index += 2;
-      continue;
-    }
-    if (format.startsWith("DD", index)) {
-      width += 2;
-      index += 2;
-      continue;
-    }
-    if (format.startsWith("HH", index)) {
-      width += 2;
-      index += 2;
-      continue;
-    }
-    if (format.startsWith("mm", index)) {
-      width += 2;
-      index += 2;
-      continue;
-    }
-    if (format.startsWith("ss", index)) {
-      width += 2;
-      index += 2;
-      continue;
-    }
-
-    width += 1;
-    index += 1;
-  }
-
-  return width;
-}
-
-function dateContentWidthCh(definition: TemplateVariableDefinition, value?: VariableFieldValue): number {
+function dateDisplayText(definition: TemplateVariableDefinition, value?: VariableFieldValue): string {
   const label = variableLabel(definition);
   const format =
     definition.format ??
@@ -96,44 +55,69 @@ function dateContentWidthCh(definition: TemplateVariableDefinition, value?: Vari
   if (typeof value === "string" && value.trim()) {
     const parsed = parseDateValue(value);
     if (parsed) {
-      return formatWithPattern(parsed, format).length + DATE_CONTROL_OVERHEAD_CH;
+      return formatWithPattern(parsed, format);
     }
   }
 
-  const placeholderWidth = `Pick ${label.toLowerCase()}`.length;
-  const formattedWidth = dateFormatDisplayWidthCh(format);
-
-  return Math.max(placeholderWidth, formattedWidth) + DATE_CONTROL_OVERHEAD_CH;
+  return `Pick ${label.toLowerCase()}`;
 }
 
-function contentWidthCh(definition: TemplateVariableDefinition, value?: VariableFieldValue): number | undefined {
+const MIN_NUMBER_DIGITS_CH = 4;
+const NUMBER_SHELL_PADDING_CH = 3;
+const MIN_NUMBER_SHELL_WIDTH = "4.5rem";
+
+export function getNumberInputStyle(value?: VariableFieldValue): CSSProperties {
+  const digits =
+    typeof value === "number" && Number.isFinite(value) ? String(Math.abs(value)).length : MIN_NUMBER_DIGITS_CH;
+  const contentCh = Math.max(digits, MIN_NUMBER_DIGITS_CH) + NUMBER_SHELL_PADDING_CH;
+
+  return {
+    width: `max(${MIN_NUMBER_SHELL_WIDTH}, ${contentCh}ch)`,
+    maxWidth: "100%"
+  };
+}
+
+export function getSelectControlStyle(displayText: string): CSSProperties {
+  return {
+    width: `${controlWidthCh(displayText.length, 3)}ch`,
+    maxWidth: "100%"
+  };
+}
+
+export function getBooleanControlStyle(format: string | undefined, checked: boolean): CSSProperties {
+  const output = formatBooleanValue(checked, parseBooleanOutputStyle(format));
+
+  return {
+    width: `${controlWidthCh(output.length, 3)}ch`,
+    maxWidth: "100%"
+  };
+}
+
+export function getDateControlStyle(definition: TemplateVariableDefinition, value?: VariableFieldValue): CSSProperties {
+  return getSelectControlStyle(dateDisplayText(definition, value));
+}
+
+export function getEnumControlStyle(
+  definition: TemplateVariableDefinition,
+  value?: VariableFieldValue
+): CSSProperties | undefined {
+  const options = definition.options ?? [];
+  const displayFormat = parseEnumDisplayFormat(definition.format, options);
+
+  if (displayFormat === "radio") {
+    return undefined;
+  }
+
   const label = variableLabel(definition);
+  const selected = typeof value === "string" && value ? value : `Select ${label}`;
 
-  if (definition.type === "boolean") {
-    return booleanContentWidthCh(definition.format);
-  }
-
-  if (definition.type === "date" || definition.type === "dateTime") {
-    return dateContentWidthCh(definition, value);
-  }
-
-  if (definition.type === "enum") {
-    const options = definition.options ?? [];
-    const displayFormat = parseEnumDisplayFormat(definition.format, options);
-
-    if (displayFormat === "radio") {
-      return enumRadioContentWidthCh(options);
-    }
-
-    return enumSelectContentWidthCh(options, label);
-  }
-
-  return undefined;
+  return getSelectControlStyle(selected);
 }
 
 export function usesFitContentWidth(definition: TemplateVariableDefinition): boolean {
   return (
     definition.type === "boolean" ||
+    definition.type === "number" ||
     definition.type === "enum" ||
     definition.type === "date" ||
     definition.type === "dateTime"
@@ -142,27 +126,13 @@ export function usesFitContentWidth(definition: TemplateVariableDefinition): boo
 
 export function getVariableFieldLayoutStyle(
   definition: TemplateVariableDefinition,
-  value?: VariableFieldValue
+  _value?: VariableFieldValue
 ): CSSProperties | undefined {
-  const contentCh = contentWidthCh(definition, value);
-  if (contentCh === undefined) {
+  if (!usesFitContentWidth(definition)) {
     return undefined;
   }
 
-  if (definition.type === "date" || definition.type === "dateTime") {
-    return {
-      width: "fit-content",
-      maxWidth: "100%"
-    };
-  }
-
-  const labelCh = labelMinWidthCh(variableLabel(definition));
-
-  return {
-    minWidth: `${Math.max(labelCh, contentCh)}ch`,
-    width: "fit-content",
-    maxWidth: "100%"
-  };
+  return COMPACT_FIELD_WRAPPER_STYLE;
 }
 
 export function getVariableFieldLayoutClass(definition: TemplateVariableDefinition): string {
