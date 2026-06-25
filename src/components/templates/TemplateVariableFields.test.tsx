@@ -38,6 +38,7 @@ describe("TemplateVariableFields", () => {
 
     const checkbox = screen.getByRole("checkbox");
     expect(checkbox).not.toBeChecked();
+    expect(screen.getByText("Adaptive enabled")).toBeInTheDocument();
 
     await user.click(checkbox);
     expect(onChange).toHaveBeenCalledWith({ enabled: true });
