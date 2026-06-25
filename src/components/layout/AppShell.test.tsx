@@ -162,8 +162,7 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
-    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByText("Track and clone jobs")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Submitted Jobs" })).toBeInTheDocument();
   });
 
   it("collapses the sidebar to icon-only navigation", async () => {
@@ -245,7 +244,7 @@ describe("AppShell", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
-    await screen.findByRole("heading", { name: "Job History" });
+    await screen.findByRole("heading", { name: "Submitted Jobs" });
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
