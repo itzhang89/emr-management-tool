@@ -158,10 +158,12 @@ describe("AppShell", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByText("Template-driven submission")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
     expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByText("Track and clone jobs")).toBeInTheDocument();
   });
 
   it("collapses the sidebar to icon-only navigation", async () => {

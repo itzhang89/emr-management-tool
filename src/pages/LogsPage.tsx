@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDescribeJobRun } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -64,12 +65,7 @@ export function LogsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Logs</h1>
-          <p className="text-sm text-muted-foreground">Browse driver, executor, and CloudWatch log streams.</p>
-        </div>
-      </div>
+      <PageHeader pageId="logs" />
       <Card>
         <CardHeader>
           <CardTitle>Job Logs</CardTitle>

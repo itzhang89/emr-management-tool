@@ -11,6 +11,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components/emr/VirtualClusterSelect";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -169,22 +170,21 @@ export function SubmitJobPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Submit Job</h1>
-          <p className="text-sm text-muted-foreground">Submit template-driven Spark jobs to EMR Virtual Clusters.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" disabled={!previewPayload} onClick={() => setPreviewOpen(true)}>
-            <Eye data-icon="inline-start" />
-            Preview JSON
-          </Button>
-          <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
-            <Send data-icon="inline-start" />
-            {startJobRun.isPending ? "Submitting..." : "Submit"}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        pageId="submit"
+        actions={
+          <>
+            <Button type="button" variant="outline" disabled={!previewPayload} onClick={() => setPreviewOpen(true)}>
+              <Eye data-icon="inline-start" />
+              Preview JSON
+            </Button>
+            <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
+              <Send data-icon="inline-start" />
+              {startJobRun.isPending ? "Submitting..." : "Submit"}
+            </Button>
+          </>
+        }
+      />
 
       {cloneRequest ? (
         <Card>

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyHint";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { formatVirtualClustersError } from "@/services/appErrorMessage";
@@ -19,16 +20,15 @@ export function VirtualClustersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Virtual Clusters</h1>
-          <p className="text-sm text-muted-foreground">Display EMR Virtual Clusters available in the selected region.</p>
-        </div>
-        <Button variant="outline" onClick={() => clusters.refetch()}>
-          <RefreshCw data-icon="inline-start" />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        pageId="clusters"
+        actions={
+          <Button variant="outline" onClick={() => clusters.refetch()}>
+            <RefreshCw data-icon="inline-start" />
+            Refresh
+          </Button>
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle>Clusters</CardTitle>

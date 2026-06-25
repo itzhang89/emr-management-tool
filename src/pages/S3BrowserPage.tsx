@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
   useDeleteS3Object,
@@ -357,22 +358,21 @@ export function S3BrowserPage() {
 
   return (
     <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-6">
-      <div className="flex shrink-0 items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">S3 Browser</h1>
-          <p className="text-sm text-muted-foreground">Browse S3 buckets and edit supported text files.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" disabled={!selectedBucket || transferPending} onClick={upload}>
-            <Upload data-icon="inline-start" />
-            Upload
-          </Button>
-          <Button variant="outline" disabled={!selectedBucket || !selectedKey || transferPending} onClick={download}>
-            <Download data-icon="inline-start" />
-            Download
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        pageId="s3"
+        actions={
+          <>
+            <Button variant="outline" disabled={!selectedBucket || transferPending} onClick={upload}>
+              <Upload data-icon="inline-start" />
+              Upload
+            </Button>
+            <Button variant="outline" disabled={!selectedBucket || !selectedKey || transferPending} onClick={download}>
+              <Download data-icon="inline-start" />
+              Download
+            </Button>
+          </>
+        }
+      />
       <div className="flex min-h-0 min-w-0 flex-1">
         <Card className="flex shrink-0 flex-col overflow-hidden" style={{ width: browserPaneWidth }}>
           <CardHeader className="shrink-0 space-y-1.5 p-4">
