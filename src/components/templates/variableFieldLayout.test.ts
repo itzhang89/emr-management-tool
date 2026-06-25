@@ -46,17 +46,17 @@ describe("compact control styles", () => {
     const definition = { name: "enabled", type: "boolean" as const, format: "lowercase" };
     const shellStyle = getBooleanShellStyle(definition);
 
-    expect(shellStyle).toEqual({ width: "8ch", maxWidth: "100%" });
+    expect(shellStyle).toEqual({ width: "11ch", maxWidth: "100%" });
     expect(getCompactVariableShellStyle(definition)).toEqual(shellStyle);
   });
 
   it("sizes boolean fields from the longest output value", () => {
     expect(getBooleanShellStyle({ name: "enabled", type: "boolean", format: "capitalized" })).toEqual({
-      width: "8ch",
+      width: "11ch",
       maxWidth: "100%"
     });
     expect(getBooleanShellStyle({ name: "enabled", type: "boolean", format: "numeric" })).toEqual({
-      width: "4ch",
+      width: "7ch",
       maxWidth: "100%"
     });
   });
