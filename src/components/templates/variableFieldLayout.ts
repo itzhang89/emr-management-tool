@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import type { TemplateVariableDefinition } from "@/types/domain";
 import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
-import { defaultFormatForVariableType } from "@/services/dateFormat";
+import { defaultFormatForVariableType, formatWithPattern, parseDateValue } from "@/services/dateFormat";
 
 export const VARIABLE_FIELDS_CONTAINER_CLASS = "flex flex-wrap items-start gap-x-4 gap-y-4";
 
@@ -9,7 +9,9 @@ const MIN_FIELD_WIDTH_CH = 8;
 const CONTROL_PADDING_CH = 5;
 const RADIO_OPTION_OVERHEAD_CH = 3;
 const SELECT_PLACEHOLDER_OVERHEAD_CH = 8;
-const DATE_CONTROL_OVERHEAD_CH = 6;
+const DATE_CONTROL_OVERHEAD_CH = 4;
+
+type VariableFieldValue = string | number | boolean | string[] | undefined;
 
 function variableLabel(definition: TemplateVariableDefinition): string {
   return definition.label ?? definition.name;
@@ -84,18 +86,26 @@ function dateFormatDisplayWidthCh(format: string): number {
   return width;
 }
 
-function dateContentWidthCh(definition: TemplateVariableDefinition): number {
+function dateContentWidthCh(definition: TemplateVariableDefinition, value?: VariableFieldValue): number {
   const label = variableLabel(definition);
   const format =
     definition.format ??
     defaultFormatForVariableType(definition.type === "dateTime" ? "dateTime" : "date");
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = parseDateValue(value);
+    if (parsed) {
+      return formatWithPattern(parsed, format).length + DATE_CONTROL_OVERHEAD_CH;
+    }
+  }
+
   const placeholderWidth = `Pick ${label.toLowerCase()}`.length;
   const formattedWidth = dateFormatDisplayWidthCh(format);
 
   return Math.max(placeholderWidth, formattedWidth) + DATE_CONTROL_OVERHEAD_CH;
 }
 
-function contentWidthCh(definition: TemplateVariableDefinition): number | undefined {
+function contentWidthCh(definition: TemplateVariableDefinition, value?: VariableFieldValue): number | undefined {
   const label = variableLabel(definition);
 
   if (definition.type === "boolean") {
@@ -103,7 +113,7 @@ function contentWidthCh(definition: TemplateVariableDefinition): number | undefi
   }
 
   if (definition.type === "date" || definition.type === "dateTime") {
-    return dateContentWidthCh(definition);
+    return dateContentWidthCh(definition, value);
   }
 
   if (definition.type === "enum") {
@@ -127,10 +137,20 @@ export function usesFitContentWidth(definition: TemplateVariableDefinition): boo
   );
 }
 
-export function getVariableFieldLayoutStyle(definition: TemplateVariableDefinition): CSSProperties | undefined {
-  const contentCh = contentWidthCh(definition);
+export function getVariableFieldLayoutStyle(
+  definition: TemplateVariableDefinition,
+  value?: VariableFieldValue
+): CSSProperties | undefined {
+  const contentCh = contentWidthCh(definition, value);
   if (contentCh === undefined) {
     return undefined;
+  }
+
+  if (definition.type === "date" || definition.type === "dateTime") {
+    return {
+      width: "fit-content",
+      maxWidth: "100%"
+    };
   }
 
   const labelCh = labelMinWidthCh(variableLabel(definition));
