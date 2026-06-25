@@ -6,7 +6,9 @@ import type { JobLogsRequest, JobLogStreamsRequest, S3JobLogObjectsRequest } fro
 
 const logQueryOptions = {
   staleTime: 60_000,
-  gcTime: 5 * 60_000
+  gcTime: 5 * 60_000,
+  refetchOnWindowFocus: false,
+  placeholderData: <T,>(previousData: T | undefined) => previousData
 } as const;
 
 export function useJobLogStreams(request: JobLogStreamsRequest | undefined, autoRefresh = false) {
