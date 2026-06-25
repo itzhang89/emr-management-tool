@@ -9,7 +9,6 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
@@ -124,7 +123,6 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader pageId="history" />
       <Card>
         <CardHeader>
           <CardTitle>Submitted Jobs</CardTitle>
