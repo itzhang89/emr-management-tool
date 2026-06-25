@@ -1,5 +1,5 @@
 import { Archive, Cloud, Download } from "lucide-react";
-import { memo, type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type FormEvent, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +19,7 @@ import {
   type S3LogDestination
 } from "@/services/jobLogDestinations";
 import { saveTextFile } from "@/services/fileDownload";
+import { formatCloudWatchMessages, truncateLogTextForDisplay } from "@/services/logDisplay";
 import {
   buildSearchResult,
   formatSearchMatchLabel,
@@ -46,6 +47,8 @@ export function LogsPage() {
   const cloudWatchDestination = destinations.cloudWatch;
   const s3Destination = destinations.s3;
   const [activeSource, setActiveSource] = useState<"cloudwatch" | "s3" | undefined>();
+  const [visitedSources, setVisitedSources] = useState<Set<"cloudwatch" | "s3">>(() => new Set());
+  const [, startTabTransition] = useTransition();
   const resolvedActiveSource = activeSource ?? (s3Destination ? "s3" : cloudWatchDestination ? "cloudwatch" : "s3");
 
   useEffect(() => {
@@ -53,7 +56,18 @@ export function LogsPage() {
   }, [selectedJobId]);
   useEffect(() => {
     setActiveSource(undefined);
+    setVisitedSources(new Set());
   }, [selectedJobId]);
+  useEffect(() => {
+    setVisitedSources((current) => {
+      if (current.has(resolvedActiveSource)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(resolvedActiveSource);
+      return next;
+    });
+  }, [resolvedActiveSource]);
   const manualVirtualClusterId = selectedVirtualClusterId ?? selectedJobVirtualClusterId;
   const submitJobId = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -103,7 +117,9 @@ export function LogsPage() {
           <Tabs
             value={resolvedActiveSource}
             onValueChange={(value) => {
-              setActiveSource(value as "cloudwatch" | "s3");
+              startTabTransition(() => {
+                setActiveSource(value as "cloudwatch" | "s3");
+              });
             }}
           >
             <TabsList>
@@ -116,15 +132,32 @@ export function LogsPage() {
                 CloudWatch
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="s3" className="mt-4">
-              {resolvedActiveSource === "s3" && s3Destination && selectedJobId ? (
-                <S3LogsTab key={selectedJobId} destination={s3Destination} selectedJobId={selectedJobId} accountId={accountId} />
+            <TabsContent
+              value="s3"
+              forceMount
+              className={cn("mt-4", resolvedActiveSource !== "s3" && "hidden")}
+            >
+              {(visitedSources.has("s3") || resolvedActiveSource === "s3") && s3Destination && selectedJobId ? (
+                <S3LogsTab
+                  key={selectedJobId}
+                  isActive={resolvedActiveSource === "s3"}
+                  destination={s3Destination}
+                  selectedJobId={selectedJobId}
+                  accountId={accountId}
+                />
               ) : null}
             </TabsContent>
-            <TabsContent value="cloudwatch" className="mt-4">
-              {resolvedActiveSource === "cloudwatch" && cloudWatchDestination && selectedJobId ? (
+            <TabsContent
+              value="cloudwatch"
+              forceMount
+              className={cn("mt-4", resolvedActiveSource !== "cloudwatch" && "hidden")}
+            >
+              {(visitedSources.has("cloudwatch") || resolvedActiveSource === "cloudwatch") &&
+              cloudWatchDestination &&
+              selectedJobId ? (
                 <CloudWatchLogsTab
                   key={selectedJobId}
+                  isActive={resolvedActiveSource === "cloudwatch"}
                   destination={cloudWatchDestination}
                   selectedJobId={selectedJobId}
                   accountId={accountId}
@@ -139,20 +172,26 @@ export function LogsPage() {
 }
 
 function S3LogsTab({
+  isActive,
   destination,
   selectedJobId,
   accountId
 }: {
+  isActive: boolean;
   destination: S3LogDestination;
   selectedJobId: string;
   accountId?: string;
 }) {
   const [selectedS3Key, setSelectedS3Key] = useState<string>();
-  const s3LogObjects = useS3JobLogObjects({
-    bucket: destination.bucket,
-    prefix: destination.prefix
-  });
-  const s3LogObject = useS3JobLogObject(destination.bucket, selectedS3Key);
+  const s3LogObjects = useS3JobLogObjects(
+    isActive
+      ? {
+          bucket: destination.bucket,
+          prefix: destination.prefix
+        }
+      : undefined
+  );
+  const s3LogObject = useS3JobLogObject(isActive ? destination.bucket : undefined, isActive ? selectedS3Key : undefined);
   const s3Tree = useMemo(() => buildEmrLogTree(s3LogObjects.data?.objects ?? []), [s3LogObjects.data?.objects]);
   const selectedS3Item = useMemo(
     () => s3LogObjects.data?.objects.find((object) => object.s3Key === selectedS3Key),
@@ -187,36 +226,44 @@ function S3LogsTab({
           {errorMessage(s3LogObjects.error ?? s3LogObject.error)}
         </p>
       ) : null}
-      <LogViewerLayout
-        tree={s3Tree}
-        selectedId={selectedS3Key}
-        onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
-        onDownloadSelected={downloadSelectedLog}
-        selectedLabel={selectedS3Item?.label}
-        path={selectedS3Item ? `s3://${destination.bucket}/${selectedS3Item.s3Key}` : undefined}
-        logText={s3LogObject.data?.content ?? ""}
-      />
+      {isActive ? (
+        <LogViewerLayout
+          tree={s3Tree}
+          selectedId={selectedS3Key}
+          onSelect={(item) => setSelectedS3Key((item as JobLogObject).s3Key)}
+          onDownloadSelected={downloadSelectedLog}
+          selectedLabel={selectedS3Item?.label}
+          path={selectedS3Item ? `s3://${destination.bucket}/${selectedS3Item.s3Key}` : undefined}
+          logText={s3LogObject.data?.content ?? ""}
+        />
+      ) : null}
     </>
   );
 }
 
 function CloudWatchLogsTab({
+  isActive,
   destination,
   selectedJobId,
   accountId
 }: {
+  isActive: boolean;
   destination: CloudWatchLogDestination;
   selectedJobId: string;
   accountId?: string;
 }) {
   const [selectedCloudWatchStream, setSelectedCloudWatchStream] = useState<string>();
-  const logStreams = useJobLogStreams({
-    jobId: selectedJobId,
-    logGroupName: destination.logGroupName,
-    streamNamePrefix: destination.streamNamePrefix ?? ""
-  });
+  const logStreams = useJobLogStreams(
+    isActive
+      ? {
+          jobId: selectedJobId,
+          logGroupName: destination.logGroupName,
+          streamNamePrefix: destination.streamNamePrefix ?? ""
+        }
+      : undefined
+  );
   const logs = useJobLogs(
-    selectedCloudWatchStream
+    isActive && selectedCloudWatchStream
       ? {
           jobId: selectedJobId,
           logGroupName: destination.logGroupName,
@@ -225,6 +272,7 @@ function CloudWatchLogsTab({
         }
       : undefined
   );
+  const cloudWatchLogText = useMemo(() => formatCloudWatchMessages(logs.data?.entries ?? []), [logs.data?.entries]);
   const cloudWatchTree = useMemo(() => buildEmrLogTree(logStreams.data?.streams ?? []), [logStreams.data?.streams]);
   const selectedCloudWatchItem = useMemo(
     () => logStreams.data?.streams.find((stream) => stream.cloudWatchStreamName === selectedCloudWatchStream),
@@ -258,15 +306,17 @@ function CloudWatchLogsTab({
           {errorMessage(logStreams.error ?? logs.error)}
         </p>
       ) : null}
-      <LogViewerLayout
-        tree={cloudWatchTree}
-        selectedId={selectedCloudWatchStream}
-        onSelect={(item) => setSelectedCloudWatchStream((item as JobLogStream).cloudWatchStreamName)}
-        onDownloadSelected={downloadSelectedLog}
-        selectedLabel={selectedCloudWatchItem?.label}
-        path={selectedCloudWatchItem?.cloudWatchStreamName}
-        logText={formatCloudWatchMessages(logs.data?.entries ?? [])}
-      />
+      {isActive ? (
+        <LogViewerLayout
+          tree={cloudWatchTree}
+          selectedId={selectedCloudWatchStream}
+          onSelect={(item) => setSelectedCloudWatchStream((item as JobLogStream).cloudWatchStreamName)}
+          onDownloadSelected={downloadSelectedLog}
+          selectedLabel={selectedCloudWatchItem?.label}
+          path={selectedCloudWatchItem?.cloudWatchStreamName}
+          logText={cloudWatchLogText}
+        />
+      ) : null}
     </>
   );
 }
@@ -308,17 +358,18 @@ const LogViewerLayout = memo(function LogViewerLayout({
   const [submittedRegexSearch, setSubmittedRegexSearch] = useState(false);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const deferredLogText = useDeferredValue(logText);
+  const logDisplay = useMemo(() => truncateLogTextForDisplay(logText), [logText]);
+  const deferredLogText = useDeferredValue(logDisplay.text);
   const searchResult = useMemo(
-    () => buildSearchResult(submittedSearch ? deferredLogText : logText, submittedSearch, submittedRegexSearch),
-    [deferredLogText, logText, submittedRegexSearch, submittedSearch]
+    () => buildSearchResult(submittedSearch ? deferredLogText : logDisplay.text, submittedSearch, submittedRegexSearch),
+    [deferredLogText, logDisplay.text, submittedRegexSearch, submittedSearch]
   );
   const matches = searchResult.matches;
   const highlightedLogContent = useMemo(() => {
-    if (!logText) return "Select a log to view its content.";
-    if (!submittedSearch) return logText;
+    if (!logDisplay.text) return "Select a log to view its content.";
+    if (!submittedSearch) return deferredLogText;
     return renderHighlightedLogText(deferredLogText, matches, activeMatchIndex);
-  }, [activeMatchIndex, deferredLogText, logText, matches, submittedSearch]);
+  }, [activeMatchIndex, deferredLogText, logDisplay.text, matches, submittedSearch]);
   const activeMatchLabel = formatSearchMatchLabel(matches.length, activeMatchIndex, {
     truncated: searchResult.truncated,
     error: searchResult.error
@@ -344,7 +395,7 @@ const LogViewerLayout = memo(function LogViewerLayout({
 
   useEffect(() => {
     setActiveMatchIndex(0);
-  }, [submittedSearch, submittedRegexSearch, logText]);
+  }, [submittedSearch, submittedRegexSearch, logDisplay.text]);
 
   const submitLogSearch = () => {
     setSubmittedSearch(searchInput.trim());
@@ -432,6 +483,12 @@ const LogViewerLayout = memo(function LogViewerLayout({
           </div>
           <div className="break-all text-xs text-muted-foreground">{path ?? "Choose a stdout or stderr entry from the log tree."}</div>
         </div>
+        {logDisplay.truncated ? (
+          <p className="border-b bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Showing the first part of this log for responsiveness. Download the selected log to view the full file (
+            {logDisplay.totalCharacters.toLocaleString("en-US")} characters).
+          </p>
+        ) : null}
         {searchOpen ? (
           <div className="flex flex-wrap items-center gap-2 border-b bg-secondary/30 p-2">
             <Input
@@ -525,10 +582,6 @@ async function getCloudWatchDownloadLines(item: JobLogStream, jobId: string, clo
   } while (nextForwardToken);
 
   return lines;
-}
-
-function formatCloudWatchMessages(entries: Array<{ message?: string }>) {
-  return entries.map((entry) => entry.message ?? "").join("\n");
 }
 
 function renderHighlightedLogText(text: string, matches: SearchMatch[], activeMatchIndex: number) {
