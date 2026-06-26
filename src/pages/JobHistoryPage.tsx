@@ -3,12 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
 import { emrService } from "@/services/emrService";
@@ -122,18 +122,15 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   }, [autoRefresh, jobs.dataUpdatedAt]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Submitted Jobs</CardTitle>
-          <CardDescription>Local history and remote job states share the same view.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-4 flex items-center gap-2">
-            <div className="relative max-w-md flex-1">
-              <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        pageId="history"
+        actions={
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="relative w-[16rem] min-w-[16rem]">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                className="pl-9"
+                className="h-9 pl-9"
                 placeholder="Search jobs by name, id, state, or keyword"
                 value={searchInput}
                 onChange={(event) => {
@@ -148,31 +145,39 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 }}
               />
             </div>
-            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+            <div className="flex h-9 shrink-0 items-center gap-2 rounded-md border px-2">
               <Switch
                 id="job-history-auto-refresh"
                 checked={autoRefresh}
                 onCheckedChange={setAutoRefresh}
                 aria-label="Auto refresh job history"
               />
-              <label htmlFor="job-history-auto-refresh" className="flex items-center gap-1 text-sm text-muted-foreground">
-                <RefreshCw className={cn("size-4", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
+              <label
+                htmlFor="job-history-auto-refresh"
+                className="flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
+              >
+                <RefreshCw className={cn("size-3.5", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
                 Auto refresh
-                {autoRefresh ? <span className="tabular-nums text-xs">{refreshCountdown}s</span> : null}
+                {autoRefresh ? <span className="tabular-nums">{refreshCountdown}s</span> : null}
               </label>
             </div>
             <VirtualClusterSelect />
-            <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
+            <span className="shrink-0 text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
           </div>
-          {jobs.isLoading && filteredJobs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Loading job history...</p>
-          ) : null}
-          {jobs.error ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-              {formatJobHistoryError(jobs.error)}
-            </p>
-          ) : null}
-          <Table>
+        }
+      />
+
+      {jobs.isLoading && filteredJobs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Loading job history...</p>
+      ) : null}
+      {jobs.error ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {formatJobHistoryError(jobs.error)}
+        </p>
+      ) : null}
+
+      <div className="rounded-md border">
+        <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Job Name</TableHead>
@@ -272,26 +277,25 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               ) : null}
             </TableBody>
           </Table>
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              Page {page} of {pageCount}
-            </p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === pageCount}
-                onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
-              >
-                Next
-              </Button>
-            </div>
+        <div className="flex items-center justify-between border-t px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            Page {page} of {pageCount}
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === pageCount}
+              onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+            >
+              Next
+            </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
