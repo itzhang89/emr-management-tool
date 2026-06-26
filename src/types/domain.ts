@@ -385,3 +385,136 @@ export interface AppError {
   retryable?: boolean;
   accountId?: string;
 }
+
+export interface GlueListRequest extends AwsCommandContext {
+  catalogId?: string;
+  databaseName?: string;
+  nextToken?: string;
+  maxResults?: number;
+}
+
+export interface GlueDatabase {
+  name: string;
+  description?: string;
+  locationUri?: string;
+}
+
+export interface GlueListDatabasesResponse {
+  databases: GlueDatabase[];
+  nextToken?: string;
+}
+
+export interface GlueTableSummary {
+  name: string;
+  databaseName: string;
+  tableType?: string;
+  createTime?: string;
+}
+
+export interface GlueListTablesResponse {
+  tables: GlueTableSummary[];
+  nextToken?: string;
+}
+
+export interface GlueColumn {
+  name: string;
+  type: string;
+  comment?: string;
+}
+
+export interface GlueTableDetail {
+  name: string;
+  databaseName: string;
+  catalogId: string;
+  description?: string;
+  tableType?: string;
+  owner?: string;
+  createTime?: string;
+  updateTime?: string;
+  parameters: Record<string, string>;
+  columns: GlueColumn[];
+  partitionKeys: GlueColumn[];
+  location?: string;
+  inputFormat?: string;
+  outputFormat?: string;
+  serdeLibrary?: string;
+  serdeParameters: Record<string, string>;
+}
+
+export interface GlueGetTableRequest extends AwsCommandContext {
+  catalogId?: string;
+  databaseName: string;
+  tableName: string;
+}
+
+export interface GlueUpdateTableRequest extends AwsCommandContext {
+  catalogId?: string;
+  table: GlueTableDetail;
+}
+
+export interface AthenaWorkgroup {
+  name: string;
+  description?: string;
+  state?: string;
+}
+
+export interface StartAthenaQueryRequest extends AwsCommandContext {
+  sql: string;
+  database?: string;
+  workgroup: string;
+  outputLocation: string;
+  catalog?: string;
+}
+
+export interface AthenaQueryExecutionRequest extends AwsCommandContext {
+  queryExecutionId: string;
+}
+
+export type AthenaQueryState = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "UNKNOWN";
+
+export interface AthenaQueryExecution {
+  queryExecutionId: string;
+  state: AthenaQueryState;
+  stateChangeReason?: string;
+  submissionDateTime?: string;
+  completionDateTime?: string;
+  dataScannedBytes?: number;
+  engineExecutionTimeMs?: number;
+}
+
+export interface AthenaQueryResultsRequest extends AwsCommandContext {
+  queryExecutionId: string;
+  nextToken?: string;
+  maxResults?: number;
+}
+
+export interface AthenaQueryResults {
+  columnNames: string[];
+  rows: string[][];
+  nextToken?: string;
+}
+
+export interface ExportAthenaQueryCsvRequest extends AwsCommandContext {
+  queryExecutionId: string;
+  suggestedName: string;
+}
+
+export interface SqlHistoryEntry {
+  id: string;
+  sql: string;
+  submittedAt: string;
+}
+
+export interface SqlFavoriteEntry {
+  id: string;
+  name: string;
+  sql: string;
+  createdAt: string;
+}
+
+export interface AthenaAccountPreferences {
+  defaultWorkgroup?: string;
+  outputBasePath?: string;
+  appendSubmitUser?: boolean;
+  lastWorkgroup?: string;
+}

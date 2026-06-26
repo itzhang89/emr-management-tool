@@ -30,7 +30,12 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useDeleteAwsAccount: () => ({ mutate: vi.fn(), isPending: false }),
   useImportAwsCliProfile: () => ({ mutate: vi.fn(), isPending: false }),
   useSetActiveAwsAccount: () => ({ mutate: vi.fn(), isPending: false }),
-  useTestAwsCredentials: () => ({ mutateAsync: vi.fn(), isPending: false })
+  useTestAwsCredentials: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useActiveAwsAccount: () => ({ data: undefined, isLoading: false, error: null })
+}));
+
+vi.mock("@/hooks/useAthena", () => ({
+  useAthenaWorkgroups: () => ({ data: [], isLoading: false, error: null })
 }));
 
 describe("SettingsPage updates", () => {
