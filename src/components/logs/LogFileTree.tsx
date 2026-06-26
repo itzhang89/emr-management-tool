@@ -19,7 +19,7 @@ export function LogFileTree({
   const podLabelIndex = buildPodLabelIndex(tree);
 
   return (
-    <nav aria-label="Log files" className="flex w-[280px] shrink-0 flex-col border-r bg-card">
+    <nav aria-label="Log files" className="flex min-h-0 w-[280px] shrink-0 flex-col border-r bg-card">
       <div className="shrink-0 border-b px-3 py-2">
         <div className="text-sm font-medium">Log files</div>
         <div className="text-xs text-muted-foreground">Controller, driver, executor stdout/stderr</div>

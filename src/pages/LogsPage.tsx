@@ -94,7 +94,7 @@ export function LogsPage() {
   const showViewer = Boolean(selectedJobId && hasDestinations && !describedJob.isLoading && !describedJob.error);
 
   return (
-    <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-4">
+    <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
       <PageHeader
         pageId="logs"
         actions={
@@ -119,17 +119,17 @@ export function LogsPage() {
       {!selectedJobId ? <LogsEmptyState /> : null}
 
       {selectedJobId && describedJob.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading job log configuration...</p>
+        <p className="shrink-0 text-sm text-muted-foreground">Loading job log configuration...</p>
       ) : null}
 
       {describedJob.error ? (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {errorMessage(describedJob.error)}
         </p>
       ) : null}
 
       {selectedJobId && !describedJob.isLoading && !describedJob.error && !hasDestinations ? (
-        <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+        <p className="shrink-0 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
           No CloudWatch or S3 monitoring configuration was found for this job.
         </p>
       ) : null}
