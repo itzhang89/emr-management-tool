@@ -110,9 +110,9 @@ export function AppShell() {
               <Cloud className="size-5 text-muted-foreground" />
             ) : (
               <>
-                <div className="text-xs font-medium text-muted-foreground">Current Region</div>
-                <div className="mt-1 truncate text-sm font-semibold">{activeAccount?.region ?? "No active account"}</div>
-                <div className="truncate text-xs text-muted-foreground">{activeAccount?.name ?? "Configure Settings first"}</div>
+                <div className="text-xs font-medium text-muted-foreground">Current Account</div>
+                <div className="mt-1 truncate text-sm font-semibold">{activeAccount?.name ?? "No active account"}</div>
+                <div className="truncate text-xs text-muted-foreground">{activeAccount?.region ?? "Configure Settings first"}</div>
               </>
             )}
           </button>
