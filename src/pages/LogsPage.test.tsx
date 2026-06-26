@@ -19,8 +19,17 @@ vi.mock("@/services/fileDownload", () => ({
   saveTextFile: (...args: unknown[]) => saveTextFile(...args)
 }));
 
+const useVirtualClusters = vi.fn();
+const useEffectiveVirtualClusterId = vi.fn();
+
+vi.mock("@/components/emr/VirtualClusterSelect", () => ({
+  VirtualClusterSelect: () => <div data-testid="virtual-cluster-select">Virtual Cluster</div>,
+  useEffectiveVirtualClusterId: () => useEffectiveVirtualClusterId()
+}));
+
 vi.mock("@/hooks/useEmr", () => ({
-  useDescribeJobRun: (...args: unknown[]) => useDescribeJobRun(...args)
+  useDescribeJobRun: (...args: unknown[]) => useDescribeJobRun(...args),
+  useVirtualClusters: (...args: unknown[]) => useVirtualClusters(...args)
 }));
 
 vi.mock("@/hooks/useAwsSettings", () => ({
@@ -173,6 +182,17 @@ describe("LogsPage", () => {
       content: `downloaded ${key}`
     }));
     saveTextFile.mockResolvedValue("/tmp/job-running-driver-stdout.log");
+    useVirtualClusters.mockReturnValue({
+      data: {
+        clusters: [
+          { id: "vc-1", name: "Cluster One", state: "RUNNING" },
+          { id: "current-vc", name: "Current Cluster", state: "RUNNING" }
+        ]
+      },
+      isLoading: false,
+      error: null
+    });
+    useEffectiveVirtualClusterId.mockReturnValue("vc-1");
   });
 
   it("lets users enter a job id directly and view its logs in the selected virtual cluster", async () => {
@@ -193,8 +213,9 @@ describe("LogsPage", () => {
     expect(useDescribeJobRun).toHaveBeenLastCalledWith("job-manual", "vc-1");
   });
 
-  it("uses the same virtual cluster for manual job entry display and submit", async () => {
+  it("uses the effective virtual cluster for manual job entry submit", async () => {
     const user = userEvent.setup();
+    useEffectiveVirtualClusterId.mockReturnValue("current-vc");
     useSessionStore.setState({
       selectedJobId: "old-job",
       selectedJobVirtualClusterId: "stale-vc",
@@ -203,13 +224,37 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    expect(screen.getByText("current-vc")).toBeInTheDocument();
+    expect(screen.getByTestId("virtual-cluster-select")).toBeInTheDocument();
     await user.clear(screen.getByPlaceholderText(/Enter job id/i));
     await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual");
     await user.click(screen.getByRole("button", { name: /View Logs/i }));
 
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("current-vc");
+  });
+
+  it("auto-selects virtual cluster from navigation when the cluster exists in the list", async () => {
+    useSessionStore.setState({
+      selectedJobId: "job-running",
+      selectedJobVirtualClusterId: "vc-1",
+      selectedVirtualClusterId: undefined
+    });
+
+    renderLogsPage();
+
+    await waitFor(() => expect(useSessionStore.getState().selectedVirtualClusterId).toBe("vc-1"));
+  });
+
+  it("does not auto-select virtual cluster when navigation cluster is missing from the list", async () => {
+    useSessionStore.setState({
+      selectedJobId: "job-running",
+      selectedJobVirtualClusterId: "missing-vc",
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    expect(useSessionStore.getState().selectedVirtualClusterId).toBe("vc-1");
   });
 
   it("resolves destinations from describe, defaults to S3, and keeps CloudWatch as a tab", async () => {
@@ -225,7 +270,9 @@ describe("LogsPage", () => {
     });
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["S3", "CloudWatch"]);
     expect(screen.getByRole("tab", { name: /^S3$/i })).toHaveAttribute("aria-selected", "true");
+    await openDestinationPopover(user);
     expect(screen.getByText("s3://logs-bucket/logs/vc-1/jobs/job-running/")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
 
     await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     expect(useJobLogStreams).toHaveBeenCalledWith({
@@ -233,6 +280,7 @@ describe("LogsPage", () => {
       logGroupName: "/emr-containers/jobs",
       streamNamePrefix: "20260612/vc-1/jobs/job-running/"
     });
+    await openDestinationPopover(user);
     expect(screen.getByText("/emr-containers/jobs")).toBeInTheDocument();
     expect(screen.getByText("20260612/vc-1/jobs/job-running/")).toBeInTheDocument();
   });
@@ -281,7 +329,8 @@ describe("LogsPage", () => {
     });
   });
 
-  it("uses the default CloudWatch destination when monitoring config is absent", () => {
+  it("uses the default CloudWatch destination when monitoring config is absent", async () => {
+    const user = userEvent.setup();
     useDescribeJobRun.mockReturnValue({
       data: {
         id: "job-running",
@@ -297,6 +346,7 @@ describe("LogsPage", () => {
     renderLogsPage();
 
     expect(screen.getByRole("tab", { name: /^CloudWatch$/i })).toHaveAttribute("aria-selected", "true");
+    await openDestinationPopover(user);
     expect(screen.getByText("/aws/emr-containers/jobs/job-running")).toBeInTheDocument();
     expect(screen.getByText("job-running")).toBeInTheDocument();
   });
@@ -358,7 +408,7 @@ describe("LogsPage", () => {
     renderLogsPage();
 
     fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
-    fireEvent.contextMenu(screen.getByText("driver"));
+    fireEvent.contextMenu(screen.getByRole("navigation", { name: "Log files" }));
 
     expect(screen.queryByRole("menuitem", { name: /Download logs/i })).not.toBeInTheDocument();
   });
@@ -368,6 +418,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
+    await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
     await user.click(screen.getByRole("button", { name: /Download selected log/i }));
 
     expect(getJobLogObject).toHaveBeenCalledWith(
@@ -397,7 +448,9 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    const searchInput = screen.getByPlaceholderText(/Search in this log/i);
+    await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
+
+    const searchInput = screen.getByPlaceholderText(/Search in current log/i);
     expect(screen.getByRole("button", { name: /Search log/i })).toBeInTheDocument();
     expect(screen.getByText("No results yet")).toBeInTheDocument();
 
@@ -426,6 +479,8 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
+    await waitFor(() => expect(screen.getByTestId("log-content").textContent).toHaveLength(MAX_LOG_VIEW_CHARACTERS));
+
     expect(screen.getByText(/Previewing the first/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Load full log/i })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^Download$/i }).length).toBeGreaterThan(0);
@@ -437,6 +492,10 @@ describe("LogsPage", () => {
     expect(screen.getByTestId("log-content").textContent).toHaveLength(longContent.length);
   });
 });
+
+async function openDestinationPopover(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /Log destination details/i }));
+}
 
 function renderLogsPage() {
   return render(
