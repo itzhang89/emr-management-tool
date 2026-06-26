@@ -7,7 +7,8 @@ import {
   Layers3,
   ScrollText,
   Send,
-  Settings
+  Settings,
+  Table2
 } from "lucide-react";
 
 export type PageId =
@@ -18,6 +19,7 @@ export type PageId =
   | "templates"
   | "clusters"
   | "s3"
+  | "glue"
   | "settings";
 
 export const navigationItems = [
@@ -25,6 +27,7 @@ export const navigationItems = [
   { id: "history", label: "Job History", description: "Track and clone jobs", icon: History },
   { id: "logs", label: "Logs", description: "Job log browsing", icon: ScrollText },
   { id: "s3", label: "S3 Browser", description: "Text file editing", icon: FileCode2 },
+  { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL", icon: Table2 },
   { id: "templates", label: "Templates", description: "Application and resource templates", icon: Layers3 },
   { id: "dashboard", label: "Dashboard", description: "Activity overview", icon: LayoutDashboard },
   { id: "clusters", label: "Virtual Clusters", description: "EMR on EKS clusters", icon: Database },

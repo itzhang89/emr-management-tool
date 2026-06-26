@@ -25,6 +25,9 @@ const VirtualClustersPage = lazy(() =>
   import("@/pages/VirtualClustersPage").then((module) => ({ default: module.VirtualClustersPage }))
 );
 const S3BrowserPage = lazy(() => import("@/pages/S3BrowserPage").then((module) => ({ default: module.S3BrowserPage })));
+const GlueCatalogPage = lazy(() =>
+  import("@/pages/GlueCatalogPage").then((module) => ({ default: module.GlueCatalogPage }))
+);
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 
 export function AppShell() {
@@ -61,6 +64,8 @@ export function AppShell() {
         return <VirtualClustersPage />;
       case "s3":
         return <S3BrowserPage />;
+      case "glue":
+        return <GlueCatalogPage />;
       case "settings":
         return <SettingsPage />;
       default:

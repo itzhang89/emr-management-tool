@@ -395,6 +395,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-athena"
+version = "1.110.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed493119b64c246423de46c8f69a2c3a7f9bbf38401c7cca5e3a52385ddf09d6"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.2",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-cloudwatchlogs"
 version = "1.139.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -425,6 +450,31 @@ name = "aws-sdk-emrcontainers"
 version = "1.108.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b90b6b24f6139b1b10840d6631167a2225443c2c09d02de11135d4922a6041f"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 0.2.12",
+ "http 1.4.2",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
+name = "aws-sdk-glue"
+version = "1.152.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "267d3459c708985a1c1472bb2eb8def3b8673abbcdb3e8057d73e40fa5a7f5b4"
 dependencies = [
  "arc-swap",
  "aws-credential-types",
@@ -1723,8 +1773,10 @@ dependencies = [
  "apple-native-keyring-store",
  "aws-config",
  "aws-credential-types",
+ "aws-sdk-athena",
  "aws-sdk-cloudwatchlogs",
  "aws-sdk-emrcontainers",
+ "aws-sdk-glue",
  "aws-sdk-s3",
  "aws-sdk-sts",
  "aws-smithy-types",
