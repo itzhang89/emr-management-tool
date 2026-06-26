@@ -25,7 +25,20 @@ import type {
   S3JobLogObjectsResponse,
   S3ObjectEntry,
   S3TextObject,
-  StartJobRunRequest
+  StartJobRunRequest,
+  GlueListRequest,
+  GlueListDatabasesResponse,
+  GlueListTablesResponse,
+  GlueGetTableRequest,
+  GlueTableDetail,
+  GlueUpdateTableRequest,
+  AthenaWorkgroup,
+  StartAthenaQueryRequest,
+  AthenaQueryExecution,
+  AthenaQueryExecutionRequest,
+  AthenaQueryResults,
+  AthenaQueryResultsRequest,
+  ExportAthenaQueryCsvRequest
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -96,7 +109,20 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<string | undefined>("save_text_file", request),
     openTextFile: () => call<string | undefined>("open_text_file"),
     deleteS3Object: (request: { accountId?: string; bucket: string; key: string }) =>
-      call("delete_s3_object", request)
+      call("delete_s3_object", request),
+    listGlueDatabases: (request: GlueListRequest = {}) => call<GlueListDatabasesResponse>("list_glue_databases", request),
+    listGlueTables: (request: GlueListRequest) => call<GlueListTablesResponse>("list_glue_tables", request),
+    getGlueTable: (request: GlueGetTableRequest) => call<GlueTableDetail>("get_glue_table", request),
+    updateGlueTable: (request: GlueUpdateTableRequest) => call<GlueTableDetail>("update_glue_table", request),
+    listAthenaWorkgroups: (request: AwsCommandContext = {}) => call<AthenaWorkgroup[]>("list_athena_workgroups", request),
+    startAthenaQuery: (request: StartAthenaQueryRequest) => call<AthenaQueryExecution>("start_athena_query", request),
+    getAthenaQueryExecution: (request: AthenaQueryExecutionRequest) =>
+      call<AthenaQueryExecution>("get_athena_query_execution", request),
+    getAthenaQueryResults: (request: AthenaQueryResultsRequest) =>
+      call<AthenaQueryResults>("get_athena_query_results", request),
+    stopAthenaQuery: (request: AthenaQueryExecutionRequest) => call<AthenaQueryExecution>("stop_athena_query", request),
+    exportAthenaQueryCsv: (request: ExportAthenaQueryCsvRequest) =>
+      call<string | undefined>("export_athena_query_csv", request)
   };
 }
 

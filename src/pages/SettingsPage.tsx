@@ -21,6 +21,7 @@ import {
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
 import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
+import { AthenaSettingsCard } from "@/components/glue/AthenaSettingsCard";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
 import type { AppError } from "@/types/domain";
@@ -210,6 +211,8 @@ export function SettingsPage() {
           ))}
         </CardContent>
       </Card>
+
+      <AthenaSettingsCard />
 
       <Card>
         <CardHeader>

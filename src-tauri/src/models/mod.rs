@@ -466,3 +466,153 @@ pub struct S3RenameObjectRequest {
     pub source_key: String,
     pub destination_key: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueListRequest {
+    pub account_id: Option<String>,
+    pub catalog_id: Option<String>,
+    pub database_name: Option<String>,
+    pub next_token: Option<String>,
+    pub max_results: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueDatabase {
+    pub name: String,
+    pub description: Option<String>,
+    pub location_uri: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueListDatabasesResponse {
+    pub databases: Vec<GlueDatabase>,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueTableSummary {
+    pub name: String,
+    pub database_name: String,
+    pub table_type: Option<String>,
+    pub create_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueListTablesResponse {
+    pub tables: Vec<GlueTableSummary>,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueColumn {
+    pub name: String,
+    pub r#type: String,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueTableDetail {
+    pub name: String,
+    pub database_name: String,
+    pub catalog_id: String,
+    pub description: Option<String>,
+    pub table_type: Option<String>,
+    pub owner: Option<String>,
+    pub create_time: Option<String>,
+    pub update_time: Option<String>,
+    pub parameters: HashMap<String, String>,
+    pub columns: Vec<GlueColumn>,
+    pub partition_keys: Vec<GlueColumn>,
+    pub location: Option<String>,
+    pub input_format: Option<String>,
+    pub output_format: Option<String>,
+    pub serde_library: Option<String>,
+    pub serde_parameters: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueGetTableRequest {
+    pub account_id: Option<String>,
+    pub catalog_id: Option<String>,
+    pub database_name: String,
+    pub table_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueUpdateTableRequest {
+    pub account_id: Option<String>,
+    pub catalog_id: Option<String>,
+    pub table: GlueTableDetail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AthenaWorkgroup {
+    pub name: String,
+    pub description: Option<String>,
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartAthenaQueryRequest {
+    pub account_id: Option<String>,
+    pub sql: String,
+    pub database: Option<String>,
+    pub workgroup: String,
+    pub output_location: String,
+    pub catalog: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AthenaQueryExecutionRequest {
+    pub account_id: Option<String>,
+    pub query_execution_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AthenaQueryExecution {
+    pub query_execution_id: String,
+    pub state: String,
+    pub state_change_reason: Option<String>,
+    pub submission_date_time: Option<String>,
+    pub completion_date_time: Option<String>,
+    pub data_scanned_bytes: Option<i64>,
+    pub engine_execution_time_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AthenaQueryResultsRequest {
+    pub account_id: Option<String>,
+    pub query_execution_id: String,
+    pub next_token: Option<String>,
+    pub max_results: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AthenaQueryResults {
+    pub column_names: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub next_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAthenaQueryCsvRequest {
+    pub account_id: Option<String>,
+    pub query_execution_id: String,
+    pub suggested_name: String,
+}
