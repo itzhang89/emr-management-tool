@@ -1,5 +1,5 @@
 import { Copy, Download, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,9 @@ const pageSize = 10;
 const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
 const jobHistoryRefreshIntervalMs = 5_000;
 const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
+const jobDetailPopoverDefaultWidth = 520;
+const jobDetailPopoverMinWidth = 400;
+const jobDetailPopoverMaxWidth = 900;
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const [detailJobId, setDetailJobId] = useState<string>();
@@ -341,6 +344,7 @@ function JobDetailAction({
 }
 
 function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
+  const [width, setWidth] = useState(jobDetailPopoverDefaultWidth);
   const describedJob = useDescribeJobRun(job.id, job.virtualClusterId);
   const detail = describedJob.data ?? job;
   const describeDetails = detail.describeDetails;
@@ -362,32 +366,63 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
     }
   };
 
+  const beginResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = width;
+
+    const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
+      const nextWidth = Math.min(
+        jobDetailPopoverMaxWidth,
+        Math.max(jobDetailPopoverMinWidth, startWidth + (startX - moveEvent.clientX))
+      );
+      setWidth(nextWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
   return (
     <PopoverContent
       side="left"
       align="center"
       sideOffset={8}
       collisionPadding={16}
-      aria-label="Job Detail"
-      className="flex w-[420px] max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-0"
+      aria-label="Job run details"
+      style={{ width }}
+      className="relative flex max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-0"
     >
-      <div className="shrink-0 border-b bg-popover p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="font-semibold">Job Detail</p>
-            <p className="break-all text-xs text-muted-foreground">{job.id}</p>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Button variant="outline" size="sm" onClick={() => void downloadDescription()}>
-              <Download data-icon="inline-start" />
-              Download JSON
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => void copyJobId()}>
-              <Copy data-icon="inline-start" />
-              Copy Job ID
-            </Button>
-          </div>
-        </div>
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize job details panel"
+        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none hover:bg-border/80"
+        onMouseDown={beginResize}
+      />
+      <div className="flex shrink-0 justify-end gap-1 border-b bg-popover px-3 py-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Download JSON"
+          onClick={() => void downloadDescription()}
+        >
+          <Download className="size-4" />
+        </Button>
+        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label="Copy Job ID" onClick={() => void copyJobId()}>
+          <Copy className="size-4" />
+        </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
@@ -396,21 +431,10 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
             {errorMessage(describedJob.error)}
           </p>
         ) : null}
-        <div className="grid gap-3 text-sm">
-          <Detail label="Name" value={detail.name} />
-          <Detail label="State" value={detail.state} />
-          <Detail label="Virtual Cluster" value={detail.virtualClusterId} />
-          <Detail label="Created" value={formatTimestamp(detail.createdAt)} />
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
           <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
           <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
-          <Detail label="Duration" value={formatDuration(detail)} />
-          <Detail label="ARN" value={describeDetails?.arn} />
           <Detail label="Release Label" value={describeDetails?.releaseLabel} />
-          <Detail label="Execution Role" value={describeDetails?.executionRoleArn} />
-          <Detail label="Created By" value={describeDetails?.createdBy} />
-          <Detail label="Client Token" value={describeDetails?.clientToken} />
-          <Detail label="State Details" value={describeDetails?.stateDetails} />
-          <Detail label="Failure Reason" value={describeDetails?.failureReason} />
           <Detail
             label="Retry Attempts"
             value={
@@ -419,9 +443,20 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
                 : undefined
             }
           />
-          <Detail label="Job Driver" value={formatJobDriver(describeDetails)} multiline />
-          <Detail label="Tags" value={formatJson(describeDetails?.tags)} multiline />
-          <Detail label="Configuration Overrides" value={formatJson(describeDetails?.configurationOverrides)} multiline />
+          <Detail label="State Details" value={describeDetails?.stateDetails} span="full" />
+          <Detail label="Failure Reason" value={describeDetails?.failureReason} span="full" />
+          <Detail label="ARN" value={describeDetails?.arn} span="full" />
+          <Detail label="Execution Role" value={describeDetails?.executionRoleArn} span="full" />
+          <Detail label="Created By" value={describeDetails?.createdBy} />
+          <Detail label="Client Token" value={describeDetails?.clientToken} />
+          <Detail label="Job Driver" value={formatJobDriver(describeDetails)} span="full" multiline />
+          <Detail label="Tags" value={formatJson(describeDetails?.tags)} span="full" multiline />
+          <Detail
+            label="Configuration Overrides"
+            value={formatJson(describeDetails?.configurationOverrides)}
+            span="full"
+            multiline
+          />
         </div>
       </div>
     </PopoverContent>
@@ -445,13 +480,23 @@ function durationFromTimestamps(job: JobRunSummary) {
   return Math.max(0, Math.round((end - start) / 1000));
 }
 
-function Detail({ label, value, multiline = false }: { label: string; value?: string; multiline?: boolean }) {
+function Detail({
+  label,
+  value,
+  multiline = false,
+  span = "half"
+}: {
+  label: string;
+  value?: string;
+  multiline?: boolean;
+  span?: "half" | "full";
+}) {
   if (!value) return null;
 
   return (
-    <div>
+    <div className={span === "full" ? "col-span-2" : undefined}>
       <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={multiline ? "whitespace-pre-wrap break-all font-medium" : "break-all font-medium"}>{value}</p>
+      <p className={cn(multiline ? "whitespace-pre-wrap break-all font-medium" : "break-all font-medium")}>{value}</p>
     </div>
   );
 }

@@ -146,12 +146,12 @@ describe("JobHistoryPage", () => {
     renderJobHistoryPage();
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
-    expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Job run details/i })).toBeInTheDocument();
     expect(describeJob).toHaveBeenCalledWith("job-running", "vc-1");
 
     await user.click(screen.getByRole("button", { name: /Copy Job ID/i }));
     expect(writeText).toHaveBeenCalledWith("job-running");
-    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Job run details/i })).not.toBeInTheDocument();
   });
 
   it("downloads the described job detail as JSON", async () => {
@@ -198,7 +198,7 @@ describe("JobHistoryPage", () => {
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
 
-    const dialog = screen.getByRole("dialog", { name: /Job Detail/i });
+    const dialog = screen.getByRole("dialog", { name: /Job run details/i });
     expect(within(dialog).getByRole("button", { name: /Copy Job ID/i })).toBeInTheDocument();
     expect(within(dialog).getByText("emr-7.2.0-latest")).toBeInTheDocument();
     expect(within(dialog).getByText("arn:aws:iam::123456789012:role/EMR")).toBeInTheDocument();
@@ -215,10 +215,10 @@ describe("JobHistoryPage", () => {
     expect(screen.getByRole("row", { name: /completed-duration COMPLETED/i })).toHaveTextContent("1m 30s");
 
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Detail/i }));
-    expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Job run details/i })).toBeInTheDocument();
 
     await user.click(screen.getByPlaceholderText(/search jobs/i));
-    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Job run details/i })).not.toBeInTheDocument();
   });
 
   it("does not show filter empty message while the initial AWS sync is in progress", () => {
@@ -278,7 +278,7 @@ describe("JobHistoryPage", () => {
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     expect(describeJobRun).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog", { name: /Job Detail/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Job run details/i })).not.toBeInTheDocument();
     expect(useSessionStore.getState().selectedJobId).toBe("job-running");
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
     expect(onOpenLogs).toHaveBeenCalled();
@@ -306,7 +306,7 @@ describe("JobHistoryPage", () => {
 
     expect(describeJobRun).toHaveBeenCalledWith("job-remote-only", "vc-1");
     expect(screen.getByRole("row", { name: /remote-only-etl RUNNING/i })).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: /Job Detail/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Job run details/i })).toBeInTheDocument();
   });
 
   it("uses Enter to look up a submitted job id in AWS after local cache search is empty", async () => {
