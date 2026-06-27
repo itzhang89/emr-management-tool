@@ -10,7 +10,7 @@ import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
-import { buildEmrLogTree } from "@/services/emrLogTree";
+import { buildEmrLogTree, pickDefaultLogItem } from "@/services/emrLogTree";
 import { saveTextFile } from "@/services/fileDownload";
 import { formatCloudWatchMessages } from "@/services/logDisplay";
 import {
@@ -202,7 +202,7 @@ function S3LogsSource({
       : undefined
   );
   const objects = s3LogObjects.data?.objects ?? [];
-  const resolvedSelectedKey = selectedKey ?? objects[0]?.s3Key;
+  const resolvedSelectedKey = selectedKey ?? pickDefaultLogItem(objects)?.s3Key;
   const s3LogObject = useS3JobLogObject(isActive ? destination.bucket : undefined, isActive ? resolvedSelectedKey : undefined);
   const s3Tree = useMemo(() => buildEmrLogTree(objects), [objects]);
   const selectedS3Item = useMemo(
@@ -286,7 +286,7 @@ function CloudWatchLogsSource({
       : undefined
   );
   const streams = logStreams.data?.streams ?? [];
-  const resolvedSelectedStream = selectedStream ?? streams[0]?.cloudWatchStreamName;
+  const resolvedSelectedStream = selectedStream ?? pickDefaultLogItem(streams)?.cloudWatchStreamName;
   const logs = useJobLogs(
     isActive && resolvedSelectedStream
       ? {
