@@ -15,7 +15,7 @@ import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { isShortcutsHelpKey } from "@/lib/keyboardShortcut";
+import { formatModShortcut, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { navigationItems, type PageId } from "@/pages/pageMeta";
@@ -54,6 +54,10 @@ export function AppShell() {
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
   }, []);
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
+  const sidebarToggleShortcut = formatModShortcut("/");
 
   useEffect(() => {
     let unbindMenuEvents = () => {};
@@ -71,17 +75,23 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (isTauriRuntime()) return;
-
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isSidebarToggleKey(event)) {
+        event.preventDefault();
+        toggleSidebar();
+        return;
+      }
+
+      if (isTauriRuntime()) return;
       if (!isShortcutsHelpKey(event)) return;
+
       event.preventDefault();
       setShortcutsDialogOpen(true);
     };
 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [toggleSidebar]);
 
   const activePageContent = useMemo(() => {
     switch (activePage) {
@@ -111,10 +121,21 @@ export function AppShell() {
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className={cn("flex shrink-0 flex-col border-r bg-card transition-[width]", sidebarCollapsed ? "w-20" : "w-72")}>
-        <div className={cn("flex h-20 items-center gap-3 px-4", sidebarCollapsed ? "justify-center px-2" : "justify-between px-6")}>
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Cloud className="size-5" />
+        <div
+          className={cn(
+            sidebarCollapsed
+              ? "flex flex-col items-center gap-2 px-2 py-3"
+              : "flex h-20 items-center justify-between gap-3 px-6"
+          )}
+        >
+          <div className={cn("flex min-w-0 items-center gap-3", sidebarCollapsed && "justify-center")}>
+            <div
+              className={cn(
+                "flex shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground",
+                sidebarCollapsed ? "size-9" : "size-10"
+              )}
+            >
+              <Cloud className={sidebarCollapsed ? "size-4" : "size-5"} />
             </div>
             {!sidebarCollapsed ? (
               <div className="min-w-0">
@@ -127,11 +148,16 @@ export function AppShell() {
             type="button"
             variant="ghost"
             size="icon"
+            className={sidebarCollapsed ? "size-8 shrink-0" : undefined}
             aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-            title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            title={
+              sidebarCollapsed
+                ? `Expand navigation (${sidebarToggleShortcut})`
+                : `Collapse navigation (${sidebarToggleShortcut})`
+            }
+            onClick={toggleSidebar}
           >
-            {sidebarCollapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+            {sidebarCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose />}
           </Button>
         </div>
         <Separator />
