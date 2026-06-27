@@ -8,6 +8,16 @@ describe("getS3ObjectEditability", () => {
       previewable: true,
       reason: undefined
     });
+    expect(getS3ObjectEditability({ key: "src/Main.scala", size: 1024 })).toEqual({
+      editable: true,
+      previewable: true,
+      reason: undefined
+    });
+    expect(getS3ObjectEditability({ key: "src/Lib.sc", size: 1024 })).toEqual({
+      editable: true,
+      previewable: true,
+      reason: undefined
+    });
   });
 
   it("keeps binary and archive extensions read-only", () => {

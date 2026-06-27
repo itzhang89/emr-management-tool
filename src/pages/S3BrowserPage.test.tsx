@@ -57,6 +57,62 @@ vi.mock("@/hooks/useS3", () => ({
   useRenameS3Object: (...args: unknown[]) => useRenameS3Object(...args)
 }));
 
+vi.mock("@/components/s3/S3ObjectEditor", async () => {
+  const React = await import("react");
+
+  return {
+    S3ObjectEditor: React.forwardRef<
+      { focus: () => void },
+      {
+        value: string;
+        readOnly?: boolean;
+        onChange: (value: string) => void;
+        onSave?: () => void;
+        onFocusList?: () => void;
+        onReadOnlyInput?: () => void;
+      }
+    >(function MockS3ObjectEditor(
+      { value, readOnly, onChange, onSave, onFocusList, onReadOnlyInput },
+      ref
+    ) {
+      const inputRef = React.useRef<HTMLTextAreaElement>(null);
+      React.useImperativeHandle(ref, () => ({
+        focus: () => inputRef.current?.focus()
+      }));
+
+      return (
+        <textarea
+          ref={inputRef}
+          aria-label="S3 object content"
+          readOnly={readOnly}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              onFocusList?.();
+              return;
+            }
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              onSave?.();
+              return;
+            }
+            if (!readOnly) return;
+            event.preventDefault();
+            onReadOnlyInput?.();
+          }}
+          onPaste={(event) => {
+            if (!readOnly) return;
+            event.preventDefault();
+            onReadOnlyInput?.();
+          }}
+        />
+      );
+    })
+  };
+});
+
 function renderS3BrowserPage() {
   return render(
     <TooltipProvider>
@@ -203,15 +259,15 @@ describe("S3BrowserPage", () => {
     renderS3BrowserPage();
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
-    expect(within(browser).getByRole("button", { name: /logs\//i })).toBeInTheDocument();
+    expect(within(browser).getByRole("button", { name: /^logs$/i })).toBeInTheDocument();
     expect(within(browser).getByRole("button", { name: /readme\.txt/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/readme.txt")).not.toBeInTheDocument();
 
-    await user.click(within(browser).getByRole("button", { name: /logs\//i }));
+    await user.click(within(browser).getByRole("button", { name: /^logs$/i }));
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
     expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
-    expect(within(browser).getByRole("button", { name: /app\//i })).toBeInTheDocument();
+    expect(within(browser).getByRole("button", { name: /^app$/i })).toBeInTheDocument();
     expect(within(browser).getByRole("button", { name: /stdout\.log/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/stdout.log")).not.toBeInTheDocument();
 
@@ -259,13 +315,13 @@ describe("S3BrowserPage", () => {
 
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
     fireEvent.keyDown(browser, { key: "ArrowRight" });
-    expect(screen.getByRole("textbox")).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: /S3 object content/i })).toHaveFocus();
 
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "ArrowLeft" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /S3 object content/i }), { key: "ArrowLeft" });
     expect(browser).toHaveFocus();
   });
 
-  it("saves the editable selected file with Enter from the editor and shows save status", async () => {
+  it("saves the editable selected file with Cmd/Ctrl+S from the editor and shows save status", async () => {
     const user = userEvent.setup();
 
     renderS3BrowserPage();
@@ -273,10 +329,9 @@ describe("S3BrowserPage", () => {
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
 
-    const editor = screen.getByRole("textbox");
-    editor.focus();
+    const editor = screen.getByRole("textbox", { name: /S3 object content/i });
     fireEvent.change(editor, { target: { value: "updated" } });
-    fireEvent.keyDown(editor, { key: "Enter" });
+    fireEvent.keyDown(editor, { key: "s", metaKey: true, ctrlKey: true });
 
     await waitFor(() =>
       expect(saveMutateAsync).toHaveBeenCalledWith(
@@ -292,7 +347,7 @@ describe("S3BrowserPage", () => {
   it("does not show a read-only prompt when a selected directory receives editor key input", () => {
     renderS3BrowserPage();
 
-    fireEvent.keyDown(screen.getByRole("textbox"), { key: "a" });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /S3 object content/i }), { key: "a" });
 
     expect(toastError).not.toHaveBeenCalledWith("File type is read-only.");
   });
