@@ -523,4 +523,5 @@ export interface AthenaAccountPreferences {
   lastWorkgroup?: string;
   catalogCollapsed?: boolean;
   lastDatabase?: string;
+  querySettingsIntroSeen?: boolean;
 }

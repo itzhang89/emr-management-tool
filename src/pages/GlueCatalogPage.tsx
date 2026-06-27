@@ -8,7 +8,7 @@ import {
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
-import { AthenaQueryOptionsBar } from "@/components/glue/AthenaQueryOptionsBar";
+import { AthenaQuerySettingsButton, AthenaQuerySettingsDialog, type AthenaQuerySettingsMode } from "@/components/glue/AthenaQuerySettingsDialog";
 import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
 import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
 import {
@@ -48,6 +48,7 @@ import {
   resolveAthenaOutputLocation,
   resolveAthenaQueryOutputLocation
 } from "@/services/athenaOutputPath";
+import { isAthenaOutputPathError } from "@/services/athenaOutputPathErrors";
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
 import { glueService } from "@/services/glueService";
@@ -105,8 +106,13 @@ export function GlueCatalogPage() {
   const [dropDialogOpen, setDropDialogOpen] = useState(false);
   const [favoriteDialogOpen, setFavoriteDialogOpen] = useState(false);
   const [pendingFavoriteEntry, setPendingFavoriteEntry] = useState<SqlHistoryEntry | null>(null);
+  const [querySettingsOpen, setQuerySettingsOpen] = useState(false);
+  const [querySettingsMode, setQuerySettingsMode] = useState<AthenaQuerySettingsMode>("normal");
+  const [querySettingsHighlight, setQuerySettingsHighlight] = useState<"s3" | "workgroup" | undefined>();
+  const [querySettingsError, setQuerySettingsError] = useState<string | undefined>();
   const loadedResultsRef = useRef<Set<string>>(new Set());
   const restoredCatalogAccountRef = useRef<string | undefined>(undefined);
+  const shownOutputErrorRef = useRef<string | undefined>(undefined);
 
   const activeResultTab = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultTabId) ?? resultTabs[0],
@@ -203,6 +209,20 @@ export function GlueCatalogPage() {
     [selectedDatabase]
   );
 
+  const openQuerySettings = useCallback(
+    (options?: {
+      mode?: AthenaQuerySettingsMode;
+      highlight?: "s3" | "workgroup";
+      errorMessage?: string;
+    }) => {
+      setQuerySettingsMode(options?.mode ?? "normal");
+      setQuerySettingsHighlight(options?.highlight);
+      setQuerySettingsError(options?.errorMessage);
+      setQuerySettingsOpen(true);
+    },
+    []
+  );
+
   const handleRefreshCatalog = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["glue-databases", accountId] });
     void queryClient.invalidateQueries({ queryKey: ["glue-tables", accountId] });
@@ -217,6 +237,7 @@ export function GlueCatalogPage() {
       setCatalogViewDatabase(undefined);
       setSelectedDatabase(undefined);
       setSelectedTable(undefined);
+      shownOutputErrorRef.current = undefined;
       return;
     }
     setHistory(readSqlHistory(accountId));
@@ -234,6 +255,38 @@ export function GlueCatalogPage() {
       setSelectedDatabase(restored);
     }
   }, [athenaPrefs.ready, accountId, athenaPrefs.lastDatabase]);
+
+  useEffect(() => {
+    if (!accountId || !athenaPrefs.ready || !outputPathRequired) return;
+    if (outputBasePath.trim() || displayResultsPath.trim()) return;
+    if (athenaPrefs.preferences.querySettingsIntroSeen) return;
+
+    athenaPrefs.updatePreferences({ querySettingsIntroSeen: true });
+    openQuerySettings({ mode: "setup", highlight: "s3" });
+  }, [
+    accountId,
+    athenaPrefs.preferences.querySettingsIntroSeen,
+    athenaPrefs.ready,
+    athenaPrefs.updatePreferences,
+    displayResultsPath,
+    openQuerySettings,
+    outputBasePath,
+    outputPathRequired
+  ]);
+
+  useEffect(() => {
+    const reason = activeResultTab?.execution?.stateChangeReason;
+    if (activeResultTab?.execution?.state !== "FAILED" || !reason) return;
+    if (!isAthenaOutputPathError(reason)) return;
+    if (shownOutputErrorRef.current === reason) return;
+
+    shownOutputErrorRef.current = reason;
+    openQuerySettings({ mode: "error", highlight: "s3", errorMessage: reason });
+  }, [
+    activeResultTab?.execution?.state,
+    activeResultTab?.execution?.stateChangeReason,
+    openQuerySettings
+  ]);
 
   const loadResultsForTab = useCallback(
     async (tabId: string, executionId: string, nextToken?: string) => {
@@ -322,7 +375,8 @@ export function GlueCatalogPage() {
       return;
     }
     if (outputPathRequired) {
-      toast.error("Set an Athena results S3 path before running a query.");
+      toast.error("Configure an S3 query results path before running Athena queries.");
+      openQuerySettings({ mode: "setup", highlight: "s3" });
       return;
     }
 
@@ -356,7 +410,11 @@ export function GlueCatalogPage() {
       setHistory(addSqlHistory(accountId, sqlToRun));
       toast.success("Athena query started.");
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to start Athena query."));
+      const message = formatAppError(error, "Failed to start Athena query.");
+      if (isAthenaOutputPathError(message)) {
+        openQuerySettings({ mode: "error", highlight: "s3", errorMessage: message });
+      }
+      toast.error(message);
     }
   };
 
@@ -615,26 +673,27 @@ export function GlueCatalogPage() {
             onValueChange={(value) => setTopTab(value as TopTab)}
             className="flex min-h-0 flex-1 flex-col gap-3"
           >
-            <TabsList className="shrink-0 self-start">
-              <TabsTrigger value="query">Query</TabsTrigger>
-              <TabsTrigger value="metadata">Table Metadata</TabsTrigger>
-            </TabsList>
+            <div className="flex shrink-0 items-center justify-between gap-2">
+              <TabsList className="self-start">
+                <TabsTrigger value="query">Query</TabsTrigger>
+                <TabsTrigger value="metadata">Table Metadata</TabsTrigger>
+              </TabsList>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <AthenaQuerySettingsButton
+                      setupRequired={outputPathRequired}
+                      onClick={() => openQuerySettings()}
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {outputPathRequired ? "Query settings · S3 path required" : "Query settings"}
+                </TooltipContent>
+              </Tooltip>
+            </div>
 
             <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-              <AthenaQueryOptionsBar
-                workgroup={workgroup}
-                onWorkgroupChange={athenaPrefs.setWorkgroup}
-                outputBasePath={outputBasePath}
-                onOutputBasePathChange={athenaPrefs.setOutputBasePath}
-                appendSubmitUser={appendSubmitUser}
-                onAppendSubmitUserChange={athenaPrefs.setAppendSubmitUser}
-                submitUser={submitUser}
-                displayResultsPath={displayResultsPath}
-                managedResultsEnabled={managedResultsEnabled}
-                outputPathRequired={outputPathRequired}
-                preferencesReady={athenaPrefs.ready}
-              />
-
               <div className="flex shrink-0 items-center gap-1">
                 <SqlTemplatesButton onSelect={setSql} />
                 <HistoryMenu
@@ -742,6 +801,25 @@ export function GlueCatalogPage() {
           </Tabs>
         </section>
       </div>
+
+      <AthenaQuerySettingsDialog
+        open={querySettingsOpen}
+        onOpenChange={setQuerySettingsOpen}
+        mode={querySettingsMode}
+        highlightSection={querySettingsHighlight}
+        errorMessage={querySettingsError}
+        workgroup={workgroup}
+        onWorkgroupChange={athenaPrefs.setWorkgroup}
+        outputBasePath={outputBasePath}
+        onOutputBasePathChange={athenaPrefs.setOutputBasePath}
+        appendSubmitUser={appendSubmitUser}
+        onAppendSubmitUserChange={athenaPrefs.setAppendSubmitUser}
+        submitUser={submitUser}
+        displayResultsPath={displayResultsPath}
+        managedResultsEnabled={managedResultsEnabled}
+        outputPathRequired={outputPathRequired}
+        preferencesReady={athenaPrefs.ready}
+      />
 
       <FavoriteNameDialog
         open={favoriteDialogOpen}
