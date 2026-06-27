@@ -42,7 +42,7 @@ export function QueryResultTabsPanel({
               <button
                 type="button"
                 className={cn(
-                  "min-w-0 truncate px-1.5 py-0.5 text-left text-[10px]",
+                  "min-w-0 overflow-hidden whitespace-nowrap px-1.5 py-0.5 text-left text-[10px] [text-overflow:clip]",
                   isActive
                     ? "font-semibold text-primary"
                     : "text-muted-foreground hover:text-foreground",

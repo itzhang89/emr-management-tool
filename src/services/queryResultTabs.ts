@@ -34,7 +34,7 @@ function parseTableToken(token: string): string | undefined {
 
 export function formatResultTabTableName(name: string, maxLength = 22): string {
   if (name.length <= maxLength) return name;
-  return `…${name.slice(name.length - (maxLength - 1))}`;
+  return `\u2026${name.slice(-(maxLength - 1))}`;
 }
 
 const TABLE_IDENTIFIER =

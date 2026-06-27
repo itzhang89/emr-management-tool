@@ -13,9 +13,10 @@ describe("queryResultTabs", () => {
     expect(extractPrimaryTableName("SELECT * FROM AwsDataCatalog.analytics.orders")).toBe("orders");
   });
 
-  it("shows the trailing portion of long table names in tab titles", () => {
-    expect(formatResultTabTableName("enterprise_customer_orders_daily", 16)).toBe("…er_orders_daily");
-    expect(buildResultTabTitle("SELECT * FROM enterprise_customer_orders_daily")).toBe("…customer_orders_daily");
+  it("shows the trailing portion of long table names with a leading ellipsis only", () => {
+    expect(formatResultTabTableName("enterprise_customer_orders_daily", 16)).toBe("\u2026er_orders_daily");
+    expect(formatResultTabTableName("enterprise_customer_orders_daily", 16).endsWith("\u2026")).toBe(false);
+    expect(buildResultTabTitle("SELECT * FROM enterprise_customer_orders_daily")).toBe("\u2026customer_orders_daily");
   });
 
   it("extracts table names from ddl statements", () => {
