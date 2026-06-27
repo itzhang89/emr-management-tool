@@ -1,4 +1,4 @@
-import { ArrowLeft, Database, RefreshCw, Search, Table2 } from "lucide-react";
+import { ArrowLeft, Database, PanelLeftClose, RefreshCw, Search, Table2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,8 @@ export function CatalogTree({
   onFocusDatabase,
   onExitDatabase,
   onSelectTable,
-  onRefresh
+  onRefresh,
+  onCollapse
 }: {
   selectedDatabase?: string;
   selectedTable?: string;
@@ -19,6 +20,7 @@ export function CatalogTree({
   onExitDatabase: () => void;
   onSelectTable: (databaseName: string, tableName: string) => void;
   onRefresh: () => void;
+  onCollapse?: () => void;
 }) {
   const databases = useGlueDatabases();
   const [viewDatabase, setViewDatabase] = useState<string | undefined>();
@@ -93,6 +95,19 @@ export function CatalogTree({
         >
           <RefreshCw className={cn("size-3.5", databases.isFetching && "animate-spin")} />
         </Button>
+        {onCollapse ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-7"
+            aria-label="Collapse catalog panel"
+            title="Hide catalog"
+            onClick={onCollapse}
+          >
+            <PanelLeftClose className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-md border text-xs">
