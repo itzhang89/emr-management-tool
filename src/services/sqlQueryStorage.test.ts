@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addSqlHistory, readSqlFavorites, readSqlHistory, addSqlFavorite, MAX_SQL_HISTORY } from "./sqlQueryStorage";
+import { addSqlHistory, readSqlFavorites, readSqlHistory, addSqlFavorite, removeSqlFavorite, MAX_SQL_HISTORY } from "./sqlQueryStorage";
 
 describe("sqlQueryStorage", () => {
   beforeEach(() => {
@@ -25,5 +25,21 @@ describe("sqlQueryStorage", () => {
   it("stores favorites by account", () => {
     addSqlFavorite("account-1", "Daily report", "SELECT * FROM reports;");
     expect(readSqlFavorites("account-1")[0]?.name).toBe("Daily report");
+  });
+
+  it("dedupes favorites by sql text", () => {
+    addSqlFavorite("account-1", "First name", "SELECT 1;");
+    addSqlFavorite("account-1", "Second name", "SELECT 1;");
+    expect(readSqlFavorites("account-1")).toHaveLength(1);
+    expect(readSqlFavorites("account-1")[0]?.name).toBe("Second name");
+  });
+
+  it("removes favorites by id", () => {
+    addSqlFavorite("account-1", "Daily report", "SELECT * FROM reports;");
+    const favoriteId = readSqlFavorites("account-1")[0]?.id;
+    expect(favoriteId).toBeDefined();
+
+    removeSqlFavorite("account-1", favoriteId!);
+    expect(readSqlFavorites("account-1")).toEqual([]);
   });
 });
