@@ -16,9 +16,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [findInAwsSignal, setFindInAwsSignal] = useState(0);
   const submittedKeyword = submittedSearch.trim() || undefined;
-  const { autoRefresh, setAutoRefresh, refreshCountdown, setRefreshCountdown } = useJobHistoryAutoRefresh({
-    persistPreference: true
-  });
+  const { autoRefresh, setAutoRefresh, refreshCountdown, setRefreshCountdown } = useJobHistoryAutoRefresh();
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
 
   useEffect(() => {
