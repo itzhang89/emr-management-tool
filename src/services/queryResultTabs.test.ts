@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildResultTabTitle, createQueryResultTab, extractPrimaryTableName } from "./queryResultTabs";
+import { buildResultTabTitle, createQueryResultTab, extractPrimaryTableName, formatResultTabTableName } from "./queryResultTabs";
 
 describe("queryResultTabs", () => {
   it("prefers table name from select queries", () => {
@@ -10,6 +10,12 @@ describe("queryResultTabs", () => {
   it("extracts table names from qualified and quoted identifiers", () => {
     expect(extractPrimaryTableName('SELECT * FROM analytics."order facts" LIMIT 10')).toBe("order facts");
     expect(extractPrimaryTableName("SELECT * FROM `legacy-table`")).toBe("legacy-table");
+    expect(extractPrimaryTableName("SELECT * FROM AwsDataCatalog.analytics.orders")).toBe("orders");
+  });
+
+  it("shows the trailing portion of long table names in tab titles", () => {
+    expect(formatResultTabTableName("enterprise_customer_orders_daily", 16)).toBe("…er_orders_daily");
+    expect(buildResultTabTitle("SELECT * FROM enterprise_customer_orders_daily")).toBe("…customer_orders_daily");
   });
 
   it("extracts table names from ddl statements", () => {
