@@ -14,11 +14,16 @@ import { Label } from "@/components/ui/label";
 import { useS3Buckets, useS3Objects } from "@/hooks/useS3";
 import { formatAppError } from "@/services/appErrorMessage";
 import {
-  displayObjectName,
+  appendSlashForMatching,
+  buildBrowseListItems,
+  buildBucketSuggestions,
+  buildFolderSuggestions,
   formatPathInput,
   formatS3Path,
   parentPrefix,
-  parseS3PathInput
+  parsePathInputForSuggestions,
+  parseS3PathInput,
+  resolvePathInputEnterAction
 } from "@/services/s3PathUtils";
 import { cn } from "@/lib/utils";
 import { resolveAthenaOutputLocation } from "@/services/athenaOutputPath";
@@ -116,9 +121,6 @@ export function S3PathPickerDialog({
   submitUser?: string;
 }) {
   const buckets = useS3Buckets();
-  const parsedInitial = useMemo(() => parseS3PathInput(initialPath), [initialPath]);
-  const [bucket, setBucket] = useState<string>();
-  const [prefix, setPrefix] = useState("");
   const [pathInput, setPathInput] = useState("");
   const [appendUser, setAppendUser] = useState(appendSubmitUser ?? false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
@@ -129,25 +131,54 @@ export function S3PathPickerDialog({
     if (!open) return;
     const parsed = parseS3PathInput(initialPath);
     const fallbackBucket = parsed?.bucket ?? buckets.data?.[0]?.name;
-    setBucket(fallbackBucket);
-    setPrefix(parsed?.prefix ?? "");
     setPathInput(formatPathInput(fallbackBucket, parsed?.prefix ?? ""));
     setAppendUser(appendSubmitUser ?? false);
     setHighlightIndex(-1);
     setSuggestionsOpen(false);
   }, [open, initialPath, buckets.data, appendSubmitUser]);
 
-  const selectedBucket = bucket ?? parsedInitial?.bucket ?? buckets.data?.[0]?.name;
-  const objects = useS3Objects(open ? selectedBucket : undefined, prefix);
-  const currentPath = formatS3Path(selectedBucket, prefix);
+  const suggestionContext = useMemo(() => parsePathInputForSuggestions(pathInput), [pathInput]);
+  const suggestionObjects = useS3Objects(
+    open && suggestionContext.mode === "folder" ? suggestionContext.bucket : undefined,
+    suggestionContext.mode === "folder" ? suggestionContext.parentPrefix : undefined
+  );
+  const parsedPathInput = useMemo(() => parseS3PathInput(pathInput), [pathInput]);
+  const browsePath =
+    suggestionContext.mode === "folder"
+      ? formatS3Path(suggestionContext.bucket, suggestionContext.parentPrefix)
+      : "s3://";
+  const currentPath = formatS3Path(parsedPathInput?.bucket, parsedPathInput?.prefix ?? "");
   const effectivePath = resolveAthenaOutputLocation(currentPath, submitUser ?? "user", appendUser);
 
   const suggestions = useMemo(() => {
-    const needle = pathInput.trim().toLowerCase();
-    const bucketOptions = (buckets.data ?? []).map((entry) => `${entry.name}/`);
-    if (!needle) return bucketOptions.slice(0, 12);
-    return bucketOptions.filter((option) => option.toLowerCase().includes(needle)).slice(0, 12);
-  }, [buckets.data, pathInput]);
+    if (suggestionContext.mode === "bucket") {
+      return buildBucketSuggestions(
+        (buckets.data ?? []).map((entry) => entry.name),
+        suggestionContext.needle
+      );
+    }
+
+    return buildFolderSuggestions(
+      suggestionContext.bucket,
+      suggestionContext.parentPrefix,
+      suggestionObjects.data ?? [],
+      suggestionContext.needle
+    );
+  }, [buckets.data, suggestionContext, suggestionObjects.data]);
+
+  const browseListItems = useMemo(
+    () =>
+      buildBrowseListItems(
+        suggestionContext,
+        (buckets.data ?? []).map((entry) => entry.name),
+        suggestionObjects.data ?? []
+      ),
+    [buckets.data, suggestionContext, suggestionObjects.data]
+  );
+
+  const browseListLoading =
+    suggestionContext.mode === "bucket" ? buckets.isLoading : suggestionObjects.isLoading;
+  const browseListError = suggestionContext.mode === "bucket" ? buckets.error : suggestionObjects.error;
 
   const applyParsedPath = (raw: string) => {
     const parsed = parseS3PathInput(raw);
@@ -155,17 +186,46 @@ export function S3PathPickerDialog({
       toast.error("Enter a valid S3 path like bucket/folder/");
       return false;
     }
-    setBucket(parsed.bucket);
-    setPrefix(parsed.prefix);
     setPathInput(formatPathInput(parsed.bucket, parsed.prefix));
     setSuggestionsOpen(false);
     setHighlightIndex(-1);
     return true;
   };
 
+  const applyPathForMatching = (raw: string) => {
+    const parsed = parseS3PathInput(appendSlashForMatching(raw));
+    if (!parsed) {
+      toast.error("Enter a valid S3 path like bucket/folder/");
+      return false;
+    }
+    setPathInput(formatPathInput(parsed.bucket, parsed.prefix));
+    setSuggestionsOpen(true);
+    setHighlightIndex(-1);
+    return true;
+  };
+
+  const selectBrowseItem = (itemPathInput: string) => {
+    setPathInput(itemPathInput);
+    setSuggestionsOpen(true);
+    setHighlightIndex(-1);
+  };
+
   const selectSuggestion = (suggestion: string) => {
     setPathInput(suggestion);
-    applyParsedPath(suggestion);
+    applyPathForMatching(suggestion);
+  };
+
+  const submitPathInput = (raw: string) => {
+    const action = resolvePathInputEnterAction(raw, suggestions.length);
+    if (action === "select-suggestion") {
+      selectSuggestion(suggestions[0]);
+      return;
+    }
+    if (action === "navigate") {
+      applyPathForMatching(raw);
+      return;
+    }
+    setSuggestionsOpen(true);
   };
 
   const handlePathKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -179,7 +239,7 @@ export function S3PathPickerDialog({
     if (!suggestionsOpen || suggestions.length === 0) {
       if (event.key === "Enter") {
         event.preventDefault();
-        applyParsedPath(event.currentTarget.value);
+        submitPathInput(event.currentTarget.value);
       }
       return;
     }
@@ -202,7 +262,7 @@ export function S3PathPickerDialog({
         selectSuggestion(suggestions[highlightIndex]);
         return;
       }
-      applyParsedPath(event.currentTarget.value);
+      submitPathInput(event.currentTarget.value);
       return;
     }
 
@@ -213,7 +273,7 @@ export function S3PathPickerDialog({
   };
 
   const confirmSelection = () => {
-    if (!selectedBucket) {
+    if (!parsedPathInput?.bucket) {
       toast.error("Select an S3 bucket first.");
       return;
     }
@@ -288,18 +348,19 @@ export function S3PathPickerDialog({
 
           <div className="rounded-md border">
             <div className="flex min-w-0 items-center justify-between gap-2 border-b px-3 py-2">
-              <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={currentPath || "s3://"}>
-                {currentPath || "s3://"}
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={browsePath}>
+                {browsePath}
               </p>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={!prefix}
+                disabled={suggestionContext.mode !== "folder" || !suggestionContext.parentPrefix}
                 onClick={() => {
-                  const parent = parentPrefix(prefix);
-                  setPrefix(parent);
-                  setPathInput(formatPathInput(selectedBucket, parent));
+                  if (suggestionContext.mode !== "folder") return;
+                  const parent = parentPrefix(suggestionContext.parentPrefix);
+                  setPathInput(formatPathInput(suggestionContext.bucket, parent));
+                  setSuggestionsOpen(true);
                 }}
               >
                 <ArrowUp data-icon="inline-start" />
@@ -307,40 +368,29 @@ export function S3PathPickerDialog({
               </Button>
             </div>
             <div className="max-h-64 overflow-auto p-2">
-              {buckets.isLoading || objects.isLoading ? (
+              {browseListLoading ? (
                 <p className="px-2 py-1 text-sm text-muted-foreground">Loading...</p>
               ) : null}
-              {buckets.error || objects.error ? (
+              {browseListError ? (
                 <p className="px-2 py-1 text-sm text-destructive">
-                  {formatAppError(buckets.error ?? objects.error, "Failed to load S3 objects.")}
+                  {formatAppError(browseListError, "Failed to load S3 objects.")}
                 </p>
               ) : null}
-              {(objects.data ?? []).map((object) => (
+              {browseListItems.map((item) => (
                 <button
-                  key={object.key}
+                  key={item.pathInput}
                   type="button"
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-                  onClick={() => {
-                    if (object.kind === "folder") {
-                      setPrefix(object.key);
-                      setPathInput(formatPathInput(selectedBucket, object.key));
-                      return;
-                    }
-                    const folderPrefix = object.key.includes("/")
-                      ? object.key.slice(0, object.key.lastIndexOf("/") + 1)
-                      : "";
-                    setPrefix(folderPrefix);
-                    setPathInput(formatPathInput(selectedBucket, folderPrefix));
-                  }}
+                  onClick={() => selectBrowseItem(item.pathInput)}
                 >
                   <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate font-mono text-xs">
-                    {displayObjectName(object.key, prefix, object.kind)}
-                  </span>
+                  <span className="truncate font-mono text-xs">{item.label}</span>
                 </button>
               ))}
-              {(objects.data?.length ?? 0) === 0 && !objects.isLoading ? (
-                <p className="px-2 py-1 text-sm text-muted-foreground">No folders under this prefix.</p>
+              {browseListItems.length === 0 && !browseListLoading ? (
+                <p className="px-2 py-1 text-sm text-muted-foreground">
+                  {suggestionContext.mode === "bucket" ? "No matching buckets." : "No matching folders under this prefix."}
+                </p>
               ) : null}
             </div>
           </div>
