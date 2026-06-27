@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEmrLogTree, parseCloudWatchLogStream, parseS3LogObjectKey } from "./emrLogTree";
+import { buildEmrLogTree, parseCloudWatchLogStream, parseS3LogObjectKey, pickDefaultLogItem } from "./emrLogTree";
 import type { JobLogObject, JobLogStream } from "@/types/domain";
 
 describe("emrLogTree", () => {
@@ -47,6 +47,20 @@ describe("emrLogTree", () => {
       stream: "stderr",
       s3Key:
         "logs/li36cjq5163l1bh8ms7d6kr04/jobs/000000037lsld3h8l1d/containers/spark-000000037lsld3h8l1d/spark-000000037lsld3h8l1d-77fab59ebcabdbc6-exec-1/stderr.gz"
+    });
+  });
+
+  it("prefers driver stderr as the default log selection", () => {
+    const items: Array<JobLogStream | JobLogObject> = [
+      cloudWatch("containers/spark-000000037lsld3h8l1d/spark-000000037lsld3h8l1d-77fab59ebcabdbc6-exec-1/stderr"),
+      cloudWatch("containers/spark-000000037lsld3h8l1d/spark-000000037lsld3h8l1d-driver/stdout"),
+      cloudWatch("containers/spark-000000037lsld3h8l1d/spark-000000037lsld3h8l1d-driver/stderr")
+    ];
+
+    expect(pickDefaultLogItem(items)).toMatchObject({
+      type: "driver",
+      stream: "stderr",
+      pod: "spark-000000037lsld3h8l1d-driver"
     });
   });
 
