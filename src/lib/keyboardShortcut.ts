@@ -13,16 +13,22 @@ export function formatModShortcut(
     alt?: boolean;
   }
 ) {
-  if (isMacPlatform()) {
-    let shortcut = modKeyLabel();
-    if (options?.shift) shortcut += "⇧";
-    if (options?.alt) shortcut += "⌥";
-    return `${shortcut}${key}`;
-  }
-
   const parts = [modKeyLabel()];
-  if (options?.shift) parts.push("Shift");
-  if (options?.alt) parts.push("Alt");
+  if (options?.shift) parts.push(isMacPlatform() ? "⇧" : "Shift");
+  if (options?.alt) parts.push(isMacPlatform() ? "⌥" : "Alt");
   parts.push(key);
   return parts.join("+");
+}
+
+export function formatShortcutsHelpLabel() {
+  return formatModShortcut("/", { shift: true });
+}
+
+export function isShortcutsHelpKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey">
+) {
+  const mod = event.metaKey || event.ctrlKey;
+  if (!mod || !event.shiftKey) return false;
+
+  return event.key === "/" || event.code === "Slash" || event.key === "?" || event.key === "¿";
 }

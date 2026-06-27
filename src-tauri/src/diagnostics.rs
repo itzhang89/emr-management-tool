@@ -51,7 +51,10 @@ pub fn init_file_logger() -> AppResult<()> {
 pub fn app_log_path() -> AppResult<PathBuf> {
     let base = dirs::data_local_dir()
         .ok_or_else(|| AppError::storage("Could not resolve the local app data directory."))?;
-    Ok(base.join("emr-management-tool").join("logs").join("app.log"))
+    Ok(base
+        .join("emr-management-tool")
+        .join("logs")
+        .join("app.log"))
 }
 
 pub fn append_log_line(level: &str, message: &str) {

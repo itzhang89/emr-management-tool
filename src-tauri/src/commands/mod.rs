@@ -1,9 +1,9 @@
+pub mod athena;
 pub mod credentials;
 pub mod diagnostics;
 pub mod emr;
 pub mod files;
 pub mod glue;
-pub mod athena;
 pub mod job_config_templates;
 pub mod logs;
 pub mod s3;
