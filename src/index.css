@@ -52,3 +52,40 @@ textarea,
 select {
   font: inherit;
 }
+
+.athena-sql-editor {
+  overflow: visible;
+}
+
+.athena-sql-editor .cm-scroller {
+  overflow: auto;
+}
+
+.cm-tooltip {
+  z-index: 1000;
+  max-width: min(480px, 90vw);
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-popover);
+  color: var(--color-popover-foreground);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.12);
+}
+
+.cm-tooltip.cm-tooltip-lint {
+  white-space: pre-wrap;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+}
+
