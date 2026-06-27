@@ -136,9 +136,17 @@ export function formatAppError(error: unknown, fallback: string, context?: AwsEr
   return appError.message ?? fallback;
 }
 
-export function formatS3BrowserError(error: unknown, operation: "listBuckets" | "listObjects", resource?: string) {
+export function formatS3BrowserError(
+  error: unknown,
+  operation: "listBuckets" | "listObjects" | "getObject",
+  resource?: string
+) {
   const fallback =
-    operation === "listBuckets" ? "Failed to load S3 buckets." : "Failed to load S3 objects.";
+    operation === "listBuckets"
+      ? "Failed to load S3 buckets."
+      : operation === "listObjects"
+        ? "Failed to load S3 objects."
+        : "Failed to load S3 object content.";
   const demoFallback =
     operation === "listBuckets"
       ? "S3 requires the Tauri desktop runtime. Start with npm run tauri -- dev."
