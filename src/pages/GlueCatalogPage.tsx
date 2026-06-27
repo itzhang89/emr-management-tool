@@ -36,7 +36,7 @@ import {
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useGlueTable, useUpdateGlueTable } from "@/hooks/useGlue";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
-import { mergeAthenaPreferences, readAthenaPreferences } from "@/services/athenaPreferencesStorage";
+import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import {
   displayAthenaResultsPath,
   isAthenaManagedResultsWorkgroup,
@@ -73,9 +73,10 @@ export function GlueCatalogPage() {
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
-  const [workgroup, setWorkgroup] = useState("primary");
-  const [outputBasePath, setOutputBasePath] = useState("");
-  const [appendSubmitUser, setAppendSubmitUser] = useState(true);
+  const athenaPrefs = useAthenaAccountPreferences(accountId);
+  const outputBasePath = athenaPrefs.outputBasePath;
+  const appendSubmitUser = athenaPrefs.appendSubmitUser;
+  const workgroup = athenaPrefs.workgroup;
   const [queryExecutionId, setQueryExecutionId] = useState<string>();
   const [metadataEditMode, setMetadataEditMode] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(WORKSPACE_PANE_DEFAULT_WIDTH);
@@ -135,22 +136,9 @@ export function GlueCatalogPage() {
 
   useEffect(() => {
     if (!accountId) return;
-    const preferences = readAthenaPreferences(accountId);
-    setOutputBasePath(preferences.outputBasePath ?? "");
-    setAppendSubmitUser(preferences.appendSubmitUser ?? true);
-    setWorkgroup(preferences.lastWorkgroup ?? preferences.defaultWorkgroup ?? "primary");
     setHistory(readSqlHistory(accountId));
     setFavorites(readSqlFavorites(accountId));
   }, [accountId]);
-
-  useEffect(() => {
-    if (!accountId) return;
-    mergeAthenaPreferences(accountId, {
-      outputBasePath,
-      appendSubmitUser,
-      lastWorkgroup: workgroup
-    });
-  }, [accountId, appendSubmitUser, outputBasePath, workgroup]);
 
   const loadResultsPage = useCallback(
     async (executionId: string, nextToken?: string) => {
@@ -382,15 +370,16 @@ export function GlueCatalogPage() {
             <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3">
               <AthenaQueryOptionsBar
                 workgroup={workgroup}
-                onWorkgroupChange={setWorkgroup}
+                onWorkgroupChange={athenaPrefs.setWorkgroup}
                 outputBasePath={outputBasePath}
-                onOutputBasePathChange={setOutputBasePath}
+                onOutputBasePathChange={athenaPrefs.setOutputBasePath}
                 appendSubmitUser={appendSubmitUser}
-                onAppendSubmitUserChange={setAppendSubmitUser}
+                onAppendSubmitUserChange={athenaPrefs.setAppendSubmitUser}
                 submitUser={submitUser}
                 displayResultsPath={displayResultsPath}
                 managedResultsEnabled={managedResultsEnabled}
                 outputPathRequired={outputPathRequired}
+                preferencesReady={athenaPrefs.ready}
               />
 
               <div className="flex flex-wrap gap-2">
