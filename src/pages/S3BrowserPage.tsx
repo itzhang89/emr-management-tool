@@ -270,34 +270,35 @@ export function S3BrowserPage() {
     void openDeleteDialog({ bucket: selectedBucket, key: object.key, kind: object.kind });
   };
 
-  const confirmDelete = async () => {
+  const confirmDelete = () => {
     if (!deleteTarget) return;
-    try {
-      if (deleteTarget.kind === "folder") {
-        await deletePrefix.mutateAsync({ bucket: deleteTarget.bucket, key: deleteTarget.key });
-      } else {
-        await deleteObject.mutateAsync({ bucket: deleteTarget.bucket, key: deleteTarget.key });
-      }
+    const target = deleteTarget;
+    closeDeleteDialog();
 
-      if (selectedKey === deleteTarget.key || selectedKey?.startsWith(deleteTarget.key)) {
-        setSelectedKey(undefined);
-        setContent("");
-      }
-      if (deleteTarget.kind === "folder" && prefix.startsWith(deleteTarget.key)) {
-        setPrefix(parentPrefix(deleteTarget.key));
-      }
+    void (async () => {
+      try {
+        if (target.kind === "folder") {
+          await deletePrefix.mutateAsync({ bucket: target.bucket, key: target.key });
+        } else {
+          await deleteObject.mutateAsync({ bucket: target.bucket, key: target.key });
+        }
 
-      await objects.refetch();
-      toast.success(
-        deleteTarget.kind === "folder"
-          ? `Deleted folder ${deleteTarget.key}`
-          : `Deleted ${deleteTarget.key}`
-      );
-    } catch (error) {
-      toast.error(formatAppError(error, "Failed to delete object."));
-    } finally {
-      closeDeleteDialog();
-    }
+        if (selectedKey === target.key || selectedKey?.startsWith(target.key)) {
+          setSelectedKey(undefined);
+          setContent("");
+        }
+        if (target.kind === "folder" && prefix.startsWith(target.key)) {
+          setPrefix(parentPrefix(target.key));
+        }
+
+        await objects.refetch();
+        toast.success(
+          target.kind === "folder" ? `Deleted folder ${target.key}` : `Deleted ${target.key}`
+        );
+      } catch (error) {
+        toast.error(formatAppError(error, "Failed to delete object."));
+      }
+    })();
   };
 
   const submitCreateFolder = async (event: FormEvent<HTMLFormElement>) => {
@@ -833,10 +834,10 @@ export function S3BrowserPage() {
             </Button>
             <Button
               variant="destructive"
-              disabled={deletePending || deleteSummaryLoading}
-              onClick={() => void confirmDelete()}
+              disabled={deleteSummaryLoading}
+              onClick={confirmDelete}
             >
-              {deletePending ? "Deleting..." : "Delete"}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
