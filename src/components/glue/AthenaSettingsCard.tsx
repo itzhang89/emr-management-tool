@@ -2,25 +2,22 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { S3PathPicker } from "@/components/s3/S3PathPicker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAthenaWorkgroups } from "@/hooks/useAthena";
+import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import { mergeAthenaPreferences, readAthenaPreferences } from "@/services/athenaPreferencesStorage";
 
 export function AthenaSettingsCard() {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const workgroups = useAthenaWorkgroups();
+  const athenaPrefs = useAthenaAccountPreferences(accountId);
   const [defaultWorkgroup, setDefaultWorkgroup] = useState("primary");
-  const [outputBasePath, setOutputBasePath] = useState("");
 
   useEffect(() => {
-    if (!accountId) return;
-    const preferences = readAthenaPreferences(accountId);
-    setDefaultWorkgroup(preferences.defaultWorkgroup ?? "primary");
-    setOutputBasePath(preferences.outputBasePath ?? "");
-  }, [accountId]);
+    if (!accountId || !athenaPrefs.ready) return;
+    setDefaultWorkgroup(athenaPrefs.preferences.defaultWorkgroup ?? "primary");
+  }, [accountId, athenaPrefs.ready, athenaPrefs.preferences.defaultWorkgroup]);
 
   if (!accountId) {
     return null;
@@ -30,18 +27,13 @@ export function AthenaSettingsCard() {
     new Set([defaultWorkgroup, ...(workgroups.data ?? []).map((entry) => entry.name)])
   ).sort((left, right) => left.localeCompare(right));
 
-  const persist = (patch: { defaultWorkgroup?: string; outputBasePath?: string }) => {
-    mergeAthenaPreferences(accountId, patch);
-    toast.success("Athena settings saved.");
-  };
-
   return (
     <Card>
       <CardHeader>
         <CardTitle>Athena Defaults</CardTitle>
         <CardDescription>
-          Per-account defaults for the Data Catalog page on {activeAccount.data?.name}. Workgroups are discovered from
-          AWS automatically.
+          Per-account default workgroup for the Data Catalog page on {activeAccount.data?.name}. Workgroups are
+          discovered from AWS automatically. Set the Athena results S3 path from the Data Catalog query bar.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-2">
@@ -51,7 +43,8 @@ export function AthenaSettingsCard() {
             value={defaultWorkgroup}
             onValueChange={(value) => {
               setDefaultWorkgroup(value);
-              persist({ defaultWorkgroup: value });
+              athenaPrefs.updatePreferences({ defaultWorkgroup: value });
+              toast.success("Athena settings saved.");
             }}
           >
             <SelectTrigger id="settings-athena-workgroup">
@@ -65,18 +58,6 @@ export function AthenaSettingsCard() {
               ))}
             </SelectContent>
           </Select>
-        </div>
-        <div className="space-y-2 md:col-span-2">
-          <S3PathPicker
-            id="settings-athena-output"
-            label="Default results S3 path"
-            value={outputBasePath}
-            onChange={(path) => {
-              setOutputBasePath(path);
-              persist({ outputBasePath: path });
-            }}
-            placeholder="s3://bucket/athena-results/"
-          />
         </div>
       </CardContent>
     </Card>
