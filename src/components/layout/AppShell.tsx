@@ -15,12 +15,13 @@ import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { formatModShortcut, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
+import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { navigationItems, type PageId } from "@/pages/pageMeta";
 import { PageLoader } from "@/components/layout/PageLoader";
 import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
+import { getAdjacentPageId, getNavigationIndex, getPageIdByNavigationIndex } from "@/services/pageNavigation";
 
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const JobHistoryPage = lazy(() => import("@/pages/JobHistoryPage").then((module) => ({ default: module.JobHistoryPage })));
@@ -57,7 +58,11 @@ export function AppShell() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
   }, []);
+  const openAccountDialog = useCallback(() => {
+    setAccountDialogOpen(true);
+  }, []);
   const sidebarToggleShortcut = formatModShortcut("/");
+  const accountSwitchShortcut = formatModShortcut("E");
 
   useEffect(() => {
     let unbindMenuEvents = () => {};
@@ -82,6 +87,36 @@ export function AppShell() {
         return;
       }
 
+      if (isAccountSwitchKey(event)) {
+        event.preventDefault();
+        openAccountDialog();
+        return;
+      }
+
+      if (!accountDialogOpen && !shortcutsDialogOpen) {
+        if (isPageCyclePreviousKey(event)) {
+          event.preventDefault();
+          navigateToPage(getAdjacentPageId(activePage, -1));
+          return;
+        }
+
+        if (isPageCycleNextKey(event)) {
+          event.preventDefault();
+          navigateToPage(getAdjacentPageId(activePage, 1));
+          return;
+        }
+
+        const navigationIndex = getPageNavigationIndex(event);
+        if (navigationIndex !== null) {
+          const pageId = getPageIdByNavigationIndex(navigationIndex);
+          if (pageId) {
+            event.preventDefault();
+            navigateToPage(pageId);
+          }
+          return;
+        }
+      }
+
       if (isTauriRuntime()) return;
       if (!isShortcutsHelpKey(event)) return;
 
@@ -91,7 +126,7 @@ export function AppShell() {
 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [toggleSidebar]);
+  }, [accountDialogOpen, activePage, navigateToPage, openAccountDialog, shortcutsDialogOpen, toggleSidebar]);
 
   const activePageContent = useMemo(() => {
     switch (activePage) {
@@ -169,8 +204,8 @@ export function AppShell() {
               sidebarCollapsed ? "flex justify-center" : undefined
             )}
             aria-label="Switch AWS account"
-            title="Switch AWS account"
-            onClick={() => setAccountDialogOpen(true)}
+            title={`Switch AWS account (${accountSwitchShortcut})`}
+            onClick={openAccountDialog}
           >
             {sidebarCollapsed ? (
               <Cloud className="size-5 text-muted-foreground" />
@@ -268,6 +303,8 @@ function renderNavButton({
 }) {
   const Icon = item.icon;
   const active = item.id === activePage;
+  const navigationIndex = getNavigationIndex(item.id);
+  const navigationShortcut = navigationIndex ? formatModShortcut(String(navigationIndex)) : undefined;
 
   return (
     <button
@@ -281,7 +318,7 @@ function renderNavButton({
         active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       )}
       aria-label={item.label}
-      title={item.label}
+      title={navigationShortcut ? `${item.label} (${navigationShortcut})` : item.label}
     >
       <Icon className="size-4 shrink-0" />
       {!sidebarCollapsed ? (
