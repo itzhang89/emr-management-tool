@@ -469,6 +469,26 @@ pub struct S3RenameObjectRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct S3CreateFolderRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub parent_prefix: Option<String>,
+    pub folder_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3PrefixDeletionSummary {
+    pub prefix: String,
+    pub file_count: u64,
+    pub folder_count: u64,
+    pub total_object_count: u64,
+    pub total_bytes: u64,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GlueListRequest {
     pub account_id: Option<String>,
     pub catalog_id: Option<String>,
