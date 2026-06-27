@@ -599,60 +599,41 @@ export function S3BrowserPage() {
                 }
 
                 return (
-                  <div
+                  <button
                     key={object.key}
                     className={cn(
-                      "flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5",
+                      "flex min-w-0 w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-accent",
+                      object.kind === "file" && "font-mono",
                       object.key === selectedKey && "bg-primary/10 text-primary"
                     )}
+                    type="button"
+                    data-active={object.key === selectedKey}
+                    title={objectName}
+                    onClick={() => setSelectedKey(object.key)}
+                    onDoubleClick={() => {
+                      if (object.kind === "folder") {
+                        setPrefix(object.key);
+                        setSelectedKey(undefined);
+                        setContent("");
+                        return;
+                      }
+                      startRename(object);
+                    }}
                   >
-                    <button
-                      className={cn(
-                        "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left text-xs hover:bg-accent",
-                        object.kind === "file" && "font-mono"
-                      )}
-                      type="button"
-                      data-active={object.key === selectedKey}
-                      title={objectName}
-                      onClick={() => setSelectedKey(object.key)}
-                      onDoubleClick={() => {
-                        if (object.kind === "folder") {
-                          setPrefix(object.key);
-                          setSelectedKey(undefined);
-                          setContent("");
-                          return;
-                        }
-                        startRename(object);
-                      }}
-                    >
+                    <span className="flex min-w-0 w-full items-center gap-1.5">
                       {object.kind === "folder" ? (
                         <Folder className="size-3.5 shrink-0 text-muted-foreground" />
                       ) : (
                         <FileText className="size-3.5 shrink-0 text-muted-foreground" />
                       )}
                       <span className="min-w-0 truncate">{objectName}</span>
-                    </button>
-                    {object.key === selectedKey && selectedBucket ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 shrink-0 p-0"
-                            aria-label="Copy S3 path"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void copyS3Path(`s3://${selectedBucket}/${object.key}`);
-                            }}
-                          >
-                            <Copy className="size-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Copy S3 path</TooltipContent>
-                      </Tooltip>
+                    </span>
+                    {object.kind === "file" ? (
+                      <span className="w-full truncate pl-5 text-[10px] leading-tight text-muted-foreground">
+                        {formatObjectListMeta(object)}
+                      </span>
                     ) : null}
-                  </div>
+                  </button>
                 );
               })}
             </nav>
@@ -685,8 +666,25 @@ export function S3BrowserPage() {
         <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="region" aria-label="Selected S3 object">
           <CardHeader className="shrink-0 flex-row items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <CardTitle className="min-w-0 break-all font-mono text-base">
-                {selectedKey ?? "Select an object"}
+              <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
+                <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
+                {selectedObjectPath ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-1.5"
+                        aria-label="Copy S3 path"
+                        onClick={() => void copyS3Path(selectedObjectPath)}
+                      >
+                        <Copy className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Copy S3 path</TooltipContent>
+                  </Tooltip>
+                ) : null}
               </CardTitle>
               <CardDescription>
                 {editability?.editable
@@ -844,6 +842,13 @@ export function S3BrowserPage() {
       </Dialog>
     </div>
   );
+}
+
+function formatObjectListMeta(object: S3ObjectEntry) {
+  const parts = [formatBytes(object.size)];
+  const modified = formatS3Timestamp(object.lastModified);
+  if (modified) parts.push(modified);
+  return parts.join(" · ");
 }
 
 function ObjectProperties({ object }: { object?: S3ObjectEntry }) {

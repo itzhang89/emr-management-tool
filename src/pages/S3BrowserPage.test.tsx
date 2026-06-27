@@ -416,7 +416,7 @@ describe("S3BrowserPage", () => {
     expect(toastInfo).toHaveBeenCalledWith("Upload canceled.");
   });
 
-  it("copies the selected object path from the object list", async () => {
+  it("copies the selected object path from the preview header", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -428,10 +428,20 @@ describe("S3BrowserPage", () => {
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
-    await user.click(within(browser).getByRole("button", { name: /^Copy S3 path$/i }));
+
+    const preview = screen.getByRole("region", { name: /Selected S3 object/i });
+    await user.click(within(preview).getByRole("button", { name: /^Copy S3 path$/i }));
 
     expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/readme.txt");
-    expect(screen.queryByRole("button", { name: /^Copy object S3 path$/i })).not.toBeInTheDocument();
+    expect(within(browser).queryByRole("button", { name: /^Copy S3 path$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows file size and last modified in the left object list", () => {
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    expect(within(browser).getByText(/10 B · 2026-06-10/)).toBeInTheDocument();
+    expect(within(browser).getByText(/1\.0 KB · 2026-06-10/)).toBeInTheDocument();
   });
 
   it("shows selected file properties compactly in the right preview header", async () => {
@@ -444,7 +454,7 @@ describe("S3BrowserPage", () => {
 
     const preview = screen.getByRole("region", { name: /Selected S3 object/i });
     expect(within(preview).queryByRole("button", { name: "s3://logs-bucket/readme.txt" })).not.toBeInTheDocument();
-    expect(within(preview).queryByRole("button", { name: /^Copy S3 path$/i })).not.toBeInTheDocument();
+    expect(within(preview).getByRole("button", { name: /^Copy S3 path$/i })).toBeInTheDocument();
     expect(within(preview).getByText("Size")).toBeInTheDocument();
     expect(within(preview).getByText("10 B")).toBeInTheDocument();
     expect(within(preview).getByText("Last modified")).toBeInTheDocument();
