@@ -34,10 +34,6 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useActiveAwsAccount: () => ({ data: undefined, isLoading: false, error: null })
 }));
 
-vi.mock("@/hooks/useAthena", () => ({
-  useAthenaWorkgroups: () => ({ data: [], isLoading: false, error: null })
-}));
-
 describe("SettingsPage updates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
