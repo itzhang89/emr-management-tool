@@ -1,4 +1,6 @@
-const EDITABLE_EXTENSIONS: &[&str] = &["sql", "yaml", "yml", "json", "conf", "properties", "txt"];
+const EDITABLE_EXTENSIONS: &[&str] = &[
+    "sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc",
+];
 const EDITOR_LIMIT_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,16 @@ mod tests {
         assert!(result.editable);
         assert!(result.previewable);
         assert!(result.reason.is_none());
+
+        let scala = s3_object_editability("src/Main.scala", 1024);
+        assert!(scala.editable);
+        assert!(scala.previewable);
+        assert!(scala.reason.is_none());
+
+        let sc = s3_object_editability("src/Lib.sc", 1024);
+        assert!(sc.editable);
+        assert!(sc.previewable);
+        assert!(sc.reason.is_none());
     }
 
     #[test]
