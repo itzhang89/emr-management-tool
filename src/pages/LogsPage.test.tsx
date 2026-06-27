@@ -283,6 +283,71 @@ describe("LogsPage", () => {
     expect(screen.getByText("20260612/vc-1/jobs/job-running/")).toBeInTheDocument();
   });
 
+  it("defaults to driver stderr instead of the first returned log item", async () => {
+    const user = userEvent.setup();
+    const driverStderrKey = "logs/vc-1/jobs/job-running/containers/spark-app/driver/stderr.gz";
+    const execStderrKey =
+      "logs/vc-1/jobs/job-running/containers/spark-app/spark-000000037lsld3h8l1d-77fab59ebcabdbc6-exec-1/stderr.gz";
+
+    useS3JobLogObjects.mockReturnValue({
+      data: {
+        bucket: "logs-bucket",
+        objects: [
+          {
+            source: "s3",
+            id: "s3-exec-stderr",
+            label: "exec-1 stderr",
+            type: "executor",
+            container: "spark-app",
+            pod: "spark-000000037lsld3h8l1d-77fab59ebcabdbc6-exec-1",
+            stream: "stderr",
+            s3Key: execStderrKey,
+            size: 456
+          },
+          {
+            source: "s3",
+            id: "s3-driver-stderr",
+            label: "driver stderr",
+            type: "driver",
+            container: "spark-app",
+            pod: "driver",
+            stream: "stderr",
+            s3Key: driverStderrKey,
+            size: 789
+          },
+          {
+            source: "s3",
+            id: "s3-driver-stdout",
+            label: "driver stdout",
+            type: "driver",
+            container: "spark-app",
+            pod: "driver",
+            stream: "stdout",
+            s3Key: "logs/vc-1/jobs/job-running/containers/spark-app/driver/stdout.gz",
+            size: 123
+          }
+        ]
+      },
+      isLoading: false,
+      error: null
+    });
+
+    renderLogsPage();
+
+    await waitFor(() => expect(useS3JobLogObject).toHaveBeenCalledWith("logs-bucket", driverStderrKey));
+    expect(useS3JobLogObject).not.toHaveBeenCalledWith("logs-bucket", execStderrKey);
+
+    await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
+
+    await waitFor(() =>
+      expect(useJobLogs).toHaveBeenCalledWith(
+        expect.objectContaining({
+          logStreamName: "20260612/vc-1/jobs/job-running/containers/spark-app/driver/stderr"
+        })
+      )
+    );
+  });
+
   it("removes low-value controls and manual CloudWatch inputs", () => {
     renderLogsPage();
 

@@ -42,6 +42,16 @@ export function parseS3LogObjectKey(key: string, jobId: string, size = 0, lastMo
   };
 }
 
+export function pickDefaultLogItem<T extends JobLogStream | JobLogObject>(items: readonly T[]): T | undefined {
+  if (!items.length) return undefined;
+  return (
+    items.find((item) => item.type === "driver" && item.stream === "stderr") ??
+    items.find((item) => item.type === "driver") ??
+    items.find((item) => item.stream === "stderr") ??
+    items[0]
+  );
+}
+
 export function buildEmrLogTree(items: Array<JobLogStream | JobLogObject>): JobLogTreeSection[] {
   const grouped = new Map<JobLogType, Map<string, Array<JobLogStream | JobLogObject>>>();
 
