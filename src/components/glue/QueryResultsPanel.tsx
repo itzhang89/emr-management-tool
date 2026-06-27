@@ -30,7 +30,7 @@ export function QueryResultsPanel({
   exporting: boolean;
 }) {
   if (!execution) {
-    return <p className="text-sm text-muted-foreground">Run a query to see results.</p>;
+    return <p className="text-xs text-muted-foreground">Run a query to see results.</p>;
   }
 
   const dataRows = skipHeaderRow(results);
@@ -38,7 +38,7 @@ export function QueryResultsPanel({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="flex flex-wrap gap-3 text-muted-foreground">
+        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
           <span>Status: {execution.state}</span>
           <span>Scanned: {formatBytes(execution.dataScannedBytes)}</span>
           <span>
@@ -64,7 +64,7 @@ export function QueryResultsPanel({
 
       {execution.state === "SUCCEEDED" && results ? (
         <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-          <table className="min-w-full text-sm">
+          <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground">
               <tr>
                 {results.columnNames.map((column) => (

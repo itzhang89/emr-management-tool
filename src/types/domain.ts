@@ -521,4 +521,5 @@ export interface AthenaAccountPreferences {
   outputBasePath?: string;
   appendSubmitUser?: boolean;
   lastWorkgroup?: string;
+  catalogCollapsed?: boolean;
 }
