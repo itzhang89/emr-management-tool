@@ -225,14 +225,14 @@ export function S3PathPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>Select S3 path</DialogTitle>
           <DialogDescription>Browse buckets and folders, or type a path directly.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <div className="relative flex gap-2">
+        <div className="min-w-0 space-y-3 overflow-hidden">
+          <div className="relative flex min-w-0 gap-2 overflow-hidden">
             <Input
               ref={inputRef}
               value={pathInput}
@@ -247,12 +247,13 @@ export function S3PathPickerDialog({
               }}
               onKeyDown={handlePathKeyDown}
               placeholder="bucket/folder/"
-              className="font-mono text-sm"
+              className="min-w-0 flex-1 font-mono text-sm"
               autoComplete="off"
             />
             <Button
               type="button"
               variant="outline"
+              className="shrink-0"
               onClick={() => applyParsedPath(pathInput)}
             >
               Go
@@ -286,8 +287,10 @@ export function S3PathPickerDialog({
           </div>
 
           <div className="rounded-md border">
-            <div className="flex items-center justify-between border-b px-3 py-2">
-              <p className="truncate font-mono text-xs text-muted-foreground">{currentPath || "s3://"}</p>
+            <div className="flex min-w-0 items-center justify-between gap-2 border-b px-3 py-2">
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={currentPath || "s3://"}>
+                {currentPath || "s3://"}
+              </p>
               <Button
                 type="button"
                 variant="ghost"
@@ -356,8 +359,11 @@ export function S3PathPickerDialog({
           ) : null}
 
           {onAppendSubmitUserChange ? (
-            <p className="text-xs text-muted-foreground">
-              Athena results path: <span className="font-mono text-foreground">{effectivePath || "—"}</span>
+            <p className="overflow-hidden text-xs text-muted-foreground">
+              Athena results path:{" "}
+              <span className="block truncate font-mono text-foreground" title={effectivePath || undefined}>
+                {effectivePath || "—"}
+              </span>
             </p>
           ) : null}
         </div>
