@@ -28,7 +28,10 @@ vi.mock("@/hooks/useEmr", () => ({
       clusters: [{ id: "vc-1", name: "analytics", namespace: "emr", state: "RUNNING", eksClusterName: "eks", createdAt: "" }]
     }
   }),
-  useStartJobRun: () => ({ mutateAsync: mocks.startJobRun, isPending: false })
+  useStartJobRun: () => ({ mutateAsync: mocks.startJobRun, isPending: false, mutate: vi.fn() }),
+  useCancelJobRun: () => ({ mutate: vi.fn(), isPending: false }),
+  useJobRuns: () => ({ data: [], isLoading: false, error: null, isFetching: false }),
+  useSubmissionHistory: () => ({ data: [], isLoading: false, error: null, isFetching: false })
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
@@ -111,6 +114,7 @@ describe("SubmitJobPage", () => {
     expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
     expect(screen.getByText("Job Config Template")).toBeInTheDocument();
     expect(screen.getByText("Runtime Selection")).toBeInTheDocument();
+    expect(screen.getByText("Recent Submissions")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Preview JSON/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save Template/i })).not.toBeInTheDocument();
   });
