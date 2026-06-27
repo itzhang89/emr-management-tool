@@ -81,19 +81,19 @@ export function AthenaQuerySettingsDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg overflow-hidden">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="size-4" />
-              {title}
+            <DialogTitle className="flex min-w-0 items-center gap-2">
+              <Settings2 className="size-4 shrink-0" />
+              <span className="truncate">{title}</span>
             </DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
 
           {mode === "setup" ? (
-            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground break-words">
               Query results are written to S3. Pick a bucket prefix your AWS account can write to, for example{" "}
-              <span className="font-mono">s3://my-bucket/athena-results/</span>.
+              <span className="break-all font-mono">s3://my-bucket/athena-results/</span>.
             </div>
           ) : null}
 
@@ -104,21 +104,21 @@ export function AthenaQuerySettingsDialog({
             </div>
           ) : null}
 
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4 overflow-hidden">
             <div
               className={cn(
-                "space-y-2 rounded-md border p-3",
+                "min-w-0 space-y-2 overflow-hidden rounded-md border p-3",
                 highlightSection === "workgroup" && "border-primary/50 bg-primary/5"
               )}
             >
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center justify-between gap-2">
                 <Label htmlFor="athena-workgroup">Workgroup</Label>
-                <Badge variant={managedResultsEnabled ? "secondary" : "outline"} className="font-normal">
+                <Badge variant={managedResultsEnabled ? "secondary" : "outline"} className="shrink-0 font-normal">
                   {managedResultsEnabled ? "Managed results" : "S3 results"}
                 </Badge>
               </div>
               <Select value={workgroup} onValueChange={onWorkgroupChange}>
-                <SelectTrigger id="athena-workgroup" className="h-9">
+                <SelectTrigger id="athena-workgroup" className="h-9 w-full max-w-full">
                   <SelectValue placeholder="Workgroup" />
                 </SelectTrigger>
                 <SelectContent>
@@ -144,20 +144,19 @@ export function AthenaQuerySettingsDialog({
 
             <div
               className={cn(
-                "space-y-2 rounded-md border p-3",
+                "min-w-0 space-y-2 rounded-md border p-3",
                 highlightSection === "s3" && "border-primary/50 bg-primary/5",
                 outputPathRequired && "border-destructive/40"
               )}
             >
               <Label htmlFor="athena-output-path">S3 query results path</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-stretch gap-2">
                 <p
                   id="athena-output-path"
                   className={cn(
-                    "h-9 min-w-0 flex-1 truncate rounded-md border bg-muted/40 px-2 font-mono text-xs leading-9",
+                    "min-h-9 min-w-0 flex-1 break-all rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs leading-snug",
                     outputPathRequired ? "border-destructive/50 text-destructive" : "text-muted-foreground"
                   )}
-                  title={displayResultsPath}
                 >
                   {preferencesReady
                     ? displayResultsPath ||
@@ -168,20 +167,20 @@ export function AthenaQuerySettingsDialog({
                   type="button"
                   variant="outline"
                   size="icon"
-                  className="size-9 shrink-0"
+                  className="h-auto min-h-9 w-9 shrink-0 self-stretch"
                   aria-label="Browse S3 results path"
                   onClick={() => setS3DialogOpen(true)}
                 >
-                  <FolderOpen className="size-4" />
+                  <FolderOpen className="size-4 shrink-0" />
                 </Button>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-start gap-2">
                 <Checkbox
                   id="append-submit-user"
                   checked={appendSubmitUser}
                   onCheckedChange={(checked) => onAppendSubmitUserChange(checked === true)}
                 />
-                <Label htmlFor="append-submit-user" className="text-xs font-normal">
+                <Label htmlFor="append-submit-user" className="min-w-0 text-xs font-normal break-words">
                   Append submit user folder ({submitUser || "user"})
                 </Label>
               </div>
