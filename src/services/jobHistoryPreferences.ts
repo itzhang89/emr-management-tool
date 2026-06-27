@@ -1,9 +1,9 @@
-const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
+const jobHistoryAutoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
 
-export function readAutoRefreshPreference() {
+export function readJobHistoryAutoRefreshPreference() {
   if (typeof window === "undefined") return true;
   try {
-    const stored = window.localStorage.getItem(autoRefreshStorageKey);
+    const stored = window.localStorage.getItem(jobHistoryAutoRefreshStorageKey);
     if (stored === null) return true;
     return stored === "true";
   } catch {
@@ -11,11 +11,17 @@ export function readAutoRefreshPreference() {
   }
 }
 
-export function writeAutoRefreshPreference(enabled: boolean) {
+export function writeJobHistoryAutoRefreshPreference(enabled: boolean) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(autoRefreshStorageKey, String(enabled));
+    window.localStorage.setItem(jobHistoryAutoRefreshStorageKey, String(enabled));
   } catch {
     // Local storage can be unavailable in hardened browser contexts.
   }
 }
+
+/** @deprecated Use readJobHistoryAutoRefreshPreference */
+export const readAutoRefreshPreference = readJobHistoryAutoRefreshPreference;
+
+/** @deprecated Use writeJobHistoryAutoRefreshPreference */
+export const writeAutoRefreshPreference = writeJobHistoryAutoRefreshPreference;

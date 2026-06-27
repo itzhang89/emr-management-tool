@@ -3,23 +3,15 @@ import {
   JOB_HISTORY_REFRESH_INTERVAL_SECONDS,
   JOB_HISTORY_REFRESH_INTERVAL_MS
 } from "@/services/jobHistoryConstants";
-import { readAutoRefreshPreference, writeAutoRefreshPreference } from "@/services/jobHistoryPreferences";
+import {
+  readJobHistoryAutoRefreshPreference,
+  writeJobHistoryAutoRefreshPreference
+} from "@/services/jobHistoryPreferences";
 
-export function useJobHistoryAutoRefresh(options?: {
-  enabled?: boolean;
-  persistPreference?: boolean;
-}) {
-  const enabled = options?.enabled ?? true;
-  const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
+export function useAutoRefreshCountdown(autoRefresh: boolean, dataUpdatedAt?: number) {
   const [refreshCountdown, setRefreshCountdown] = useState(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
 
   useEffect(() => {
-    if (!enabled || !options?.persistPreference) return;
-    writeAutoRefreshPreference(autoRefresh);
-  }, [autoRefresh, enabled, options?.persistPreference]);
-
-  useEffect(() => {
-    if (!enabled) return;
     if (!autoRefresh) {
       setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
       return;
@@ -33,7 +25,25 @@ export function useJobHistoryAutoRefresh(options?: {
     }, 1_000);
 
     return () => window.clearInterval(timer);
-  }, [autoRefresh, enabled]);
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    if (autoRefresh && dataUpdatedAt) {
+      setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
+    }
+  }, [autoRefresh, dataUpdatedAt]);
+
+  return { refreshCountdown, setRefreshCountdown };
+}
+
+/** Job History auto-refresh: persisted preference, default on. */
+export function useJobHistoryAutoRefresh(options?: { dataUpdatedAt?: number }) {
+  const [autoRefresh, setAutoRefresh] = useState(() => readJobHistoryAutoRefreshPreference());
+  const { refreshCountdown, setRefreshCountdown } = useAutoRefreshCountdown(autoRefresh, options?.dataUpdatedAt);
+
+  useEffect(() => {
+    writeJobHistoryAutoRefreshPreference(autoRefresh);
+  }, [autoRefresh]);
 
   return {
     autoRefresh,

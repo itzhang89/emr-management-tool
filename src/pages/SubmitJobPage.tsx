@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
+import { useSubmitJobSubmissionHistory } from "@/hooks/useSubmitJobAutoRefresh";
 import {
   useJobConfigTemplates,
   useSubmitUser
@@ -51,6 +52,13 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const startJobRun = useStartJobRun();
+  const {
+    autoRefresh: submissionAutoRefresh,
+    setAutoRefresh: setSubmissionAutoRefresh,
+    enableAfterSubmit,
+    refreshCountdown: submissionRefreshCountdown,
+    submissionJobs
+  } = useSubmitJobSubmissionHistory(virtualClusterId);
   const jobConfigTemplates = useJobConfigTemplates();
   const resourceTemplates = useTemplates();
   const submitUserQuery = useSubmitUser();
@@ -147,10 +155,11 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
       const job = await startJobRun.mutateAsync(request);
       toast.success(`Submitted ${job.name}`);
       setCloneRequest(undefined);
+      enableAfterSubmit();
     } catch (error) {
       toast.error(errorMessage(error, "Failed to submit job."));
     }
-  }, [cloneRequest, customVariables, resolvedPayload, selectedResources, selectedTemplate, startJobRun]);
+  }, [cloneRequest, customVariables, enableAfterSubmit, resolvedPayload, selectedResources, selectedTemplate, startJobRun]);
 
   const validateAndSubmit = useCallback(() => {
     if (cloneRequest) {
@@ -328,7 +337,12 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
           title="Recent Submissions"
           showAutoRefreshControl
           submittedOnly
+          autoRefresh={submissionAutoRefresh}
+          onAutoRefreshChange={setSubmissionAutoRefresh}
+          refreshCountdown={submissionRefreshCountdown}
+          submissionJobsQuery={submissionJobs}
           onOpenLogs={onOpenLogs}
+          onSubmissionStarted={enableAfterSubmit}
           className="min-h-0 flex-1"
         />
       </div>
