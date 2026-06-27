@@ -1,5 +1,5 @@
 import { ArrowUp, Folder, FolderOpen } from "lucide-react";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,20 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useS3Buckets, useS3Objects } from "@/hooks/useS3";
+import { useS3PathPicker } from "@/hooks/useS3PathPicker";
 import { formatAppError } from "@/services/appErrorMessage";
-import {
-  appendSlashForMatching,
-  buildBrowseListItems,
-  buildBucketSuggestions,
-  buildFolderSuggestions,
-  formatPathInput,
-  formatS3Path,
-  parentPrefix,
-  parsePathInputForSuggestions,
-  parseS3PathInput,
-  resolvePathInputEnterAction
-} from "@/services/s3PathUtils";
 import { cn } from "@/lib/utils";
 import { resolveAthenaOutputLocation } from "@/services/athenaOutputPath";
 import { toast } from "sonner";
@@ -47,6 +35,18 @@ export function S3PathPicker({
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
+  const dialog = (
+    <S3PathPickerDialog
+      open={dialogOpen}
+      onOpenChange={setDialogOpen}
+      initialPath={value}
+      onSelect={(path) => {
+        onChange(path);
+        setDialogOpen(false);
+      }}
+    />
+  );
+
   if (compact) {
     return (
       <>
@@ -61,15 +61,7 @@ export function S3PathPicker({
         <Button type="button" variant="outline" size="icon" onClick={() => setDialogOpen(true)} aria-label="Browse S3">
           <FolderOpen className="size-4" />
         </Button>
-        <S3PathPickerDialog
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          initialPath={value}
-          onSelect={(path) => {
-            onChange(path);
-            setDialogOpen(false);
-          }}
-        />
+        {dialog}
       </>
     );
   }
@@ -90,15 +82,7 @@ export function S3PathPicker({
           Browse
         </Button>
       </div>
-      <S3PathPickerDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        initialPath={value}
-        onSelect={(path) => {
-          onChange(path);
-          setDialogOpen(false);
-        }}
-      />
+      {dialog}
     </div>
   );
 }
@@ -120,167 +104,18 @@ export function S3PathPickerDialog({
   onAppendSubmitUserChange?: (value: boolean) => void;
   submitUser?: string;
 }) {
-  const buckets = useS3Buckets();
-  const [pathInput, setPathInput] = useState("");
-  const [appendUser, setAppendUser] = useState(appendSubmitUser ?? false);
-  const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const parsed = parseS3PathInput(initialPath);
-    const fallbackBucket = parsed?.bucket ?? buckets.data?.[0]?.name;
-    setPathInput(formatPathInput(fallbackBucket, parsed?.prefix ?? ""));
-    setAppendUser(appendSubmitUser ?? false);
-    setHighlightIndex(-1);
-    setSuggestionsOpen(false);
-  }, [open, initialPath, buckets.data, appendSubmitUser]);
-
-  const suggestionContext = useMemo(() => parsePathInputForSuggestions(pathInput), [pathInput]);
-  const suggestionObjects = useS3Objects(
-    open && suggestionContext.mode === "folder" ? suggestionContext.bucket : undefined,
-    suggestionContext.mode === "folder" ? suggestionContext.parentPrefix : undefined
-  );
-  const parsedPathInput = useMemo(() => parseS3PathInput(pathInput), [pathInput]);
-  const browsePath =
-    suggestionContext.mode === "folder"
-      ? formatS3Path(suggestionContext.bucket, suggestionContext.parentPrefix)
-      : "s3://";
-  const currentPath = formatS3Path(parsedPathInput?.bucket, parsedPathInput?.prefix ?? "");
-  const effectivePath = resolveAthenaOutputLocation(currentPath, submitUser ?? "user", appendUser);
-
-  const suggestions = useMemo(() => {
-    if (suggestionContext.mode === "bucket") {
-      return buildBucketSuggestions(
-        (buckets.data ?? []).map((entry) => entry.name),
-        suggestionContext.needle
-      );
-    }
-
-    return buildFolderSuggestions(
-      suggestionContext.bucket,
-      suggestionContext.parentPrefix,
-      suggestionObjects.data ?? [],
-      suggestionContext.needle
-    );
-  }, [buckets.data, suggestionContext, suggestionObjects.data]);
-
-  const browseListItems = useMemo(
-    () =>
-      buildBrowseListItems(
-        suggestionContext,
-        (buckets.data ?? []).map((entry) => entry.name),
-        suggestionObjects.data ?? []
-      ),
-    [buckets.data, suggestionContext, suggestionObjects.data]
-  );
-
-  const browseListLoading =
-    suggestionContext.mode === "bucket" ? buckets.isLoading : suggestionObjects.isLoading;
-  const browseListError = suggestionContext.mode === "bucket" ? buckets.error : suggestionObjects.error;
-
-  const applyParsedPath = (raw: string) => {
-    const parsed = parseS3PathInput(raw);
-    if (!parsed) {
-      toast.error("Enter a valid S3 path like bucket/folder/");
-      return false;
-    }
-    setPathInput(formatPathInput(parsed.bucket, parsed.prefix));
-    setSuggestionsOpen(false);
-    setHighlightIndex(-1);
-    return true;
-  };
-
-  const applyPathForMatching = (raw: string) => {
-    const parsed = parseS3PathInput(appendSlashForMatching(raw));
-    if (!parsed) {
-      toast.error("Enter a valid S3 path like bucket/folder/");
-      return false;
-    }
-    setPathInput(formatPathInput(parsed.bucket, parsed.prefix));
-    setSuggestionsOpen(true);
-    setHighlightIndex(-1);
-    return true;
-  };
-
-  const selectBrowseItem = (itemPathInput: string) => {
-    setPathInput(itemPathInput);
-    setSuggestionsOpen(true);
-    setHighlightIndex(-1);
-  };
-
-  const selectSuggestion = (suggestion: string) => {
-    setPathInput(suggestion);
-    applyPathForMatching(suggestion);
-  };
-
-  const submitPathInput = (raw: string) => {
-    const action = resolvePathInputEnterAction(raw, suggestions.length);
-    if (action === "select-suggestion") {
-      selectSuggestion(suggestions[0]);
-      return;
-    }
-    if (action === "navigate") {
-      applyPathForMatching(raw);
-      return;
-    }
-    setSuggestionsOpen(true);
-  };
-
-  const handlePathKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (!suggestionsOpen && (event.key === "ArrowDown" || event.key === "ArrowUp") && suggestions.length > 0) {
-      event.preventDefault();
-      setSuggestionsOpen(true);
-      setHighlightIndex(event.key === "ArrowDown" ? 0 : suggestions.length - 1);
-      return;
-    }
-
-    if (!suggestionsOpen || suggestions.length === 0) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submitPathInput(event.currentTarget.value);
-      }
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setHighlightIndex((current) => (current + 1) % suggestions.length);
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setHighlightIndex((current) => (current <= 0 ? suggestions.length - 1 : current - 1));
-      return;
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (highlightIndex >= 0 && highlightIndex < suggestions.length) {
-        selectSuggestion(suggestions[highlightIndex]);
-        return;
-      }
-      submitPathInput(event.currentTarget.value);
-      return;
-    }
-
-    if (event.key === "Escape") {
-      setSuggestionsOpen(false);
-      setHighlightIndex(-1);
-    }
-  };
+  const picker = useS3PathPicker({ open, initialPath, appendSubmitUser });
+  const effectivePath = resolveAthenaOutputLocation(picker.currentPath, submitUser ?? "user", picker.appendUser);
 
   const confirmSelection = () => {
-    if (!parsedPathInput?.bucket) {
+    if (!picker.parsedPathInput?.bucket) {
       toast.error("Select an S3 bucket first.");
       return;
     }
-    if (onAppendSubmitUserChange && appendUser !== appendSubmitUser) {
-      onAppendSubmitUserChange(appendUser);
+    if (onAppendSubmitUserChange && picker.appendUser !== appendSubmitUser) {
+      onAppendSubmitUserChange(picker.appendUser);
     }
-    onSelect(currentPath);
+    onSelect(picker.currentPath);
   };
 
   return (
@@ -294,18 +129,13 @@ export function S3PathPickerDialog({
         <div className="min-w-0 space-y-3 overflow-hidden">
           <div className="relative flex min-w-0 gap-2 overflow-hidden">
             <Input
-              ref={inputRef}
-              value={pathInput}
-              onChange={(event) => {
-                setPathInput(event.target.value);
-                setSuggestionsOpen(true);
-                setHighlightIndex(-1);
-              }}
-              onFocus={() => setSuggestionsOpen(true)}
+              value={picker.pathInput}
+              onChange={(event) => picker.onPathInputChange(event.target.value)}
+              onFocus={() => picker.setSuggestionsOpen(true)}
               onBlur={() => {
-                window.setTimeout(() => setSuggestionsOpen(false), 150);
+                window.setTimeout(() => picker.setSuggestionsOpen(false), 150);
               }}
-              onKeyDown={handlePathKeyDown}
+              onKeyDown={picker.handlePathKeyDown}
               placeholder="bucket/folder/"
               className="min-w-0 flex-1 font-mono text-sm"
               autoComplete="off"
@@ -314,28 +144,28 @@ export function S3PathPickerDialog({
               type="button"
               variant="outline"
               className="shrink-0"
-              onClick={() => applyParsedPath(pathInput)}
+              onClick={() => picker.navigateTo(picker.pathInput, "commit")}
             >
               Go
             </Button>
-            {suggestionsOpen && suggestions.length > 0 ? (
+            {picker.suggestionsOpen && picker.suggestions.length > 0 ? (
               <ul
                 className="absolute top-full z-50 mt-1 w-full overflow-hidden rounded-md border bg-popover shadow-md"
                 role="listbox"
               >
-                {suggestions.map((suggestion, index) => (
+                {picker.suggestions.map((suggestion, index) => (
                   <li key={suggestion}>
                     <button
                       type="button"
                       role="option"
-                      aria-selected={index === highlightIndex}
+                      aria-selected={index === picker.highlightIndex}
                       className={cn(
                         "block w-full px-3 py-2 text-left font-mono text-sm hover:bg-accent",
-                        index === highlightIndex && "bg-accent"
+                        index === picker.highlightIndex && "bg-accent"
                       )}
                       onMouseDown={(event) => {
                         event.preventDefault();
-                        selectSuggestion(suggestion);
+                        picker.selectOption(suggestion);
                       }}
                     >
                       {suggestion}
@@ -348,48 +178,37 @@ export function S3PathPickerDialog({
 
           <div className="rounded-md border">
             <div className="flex min-w-0 items-center justify-between gap-2 border-b px-3 py-2">
-              <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={browsePath}>
-                {browsePath}
+              <p className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={picker.browsePath}>
+                {picker.browsePath}
               </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={suggestionContext.mode !== "folder" || !suggestionContext.parentPrefix}
-                onClick={() => {
-                  if (suggestionContext.mode !== "folder") return;
-                  const parent = parentPrefix(suggestionContext.parentPrefix);
-                  setPathInput(formatPathInput(suggestionContext.bucket, parent));
-                  setSuggestionsOpen(true);
-                }}
-              >
+              <Button type="button" variant="ghost" size="sm" disabled={!picker.canGoUp} onClick={picker.goUp}>
                 <ArrowUp data-icon="inline-start" />
                 Up
               </Button>
             </div>
             <div className="max-h-64 overflow-auto p-2">
-              {browseListLoading ? (
+              {picker.isLoading ? (
                 <p className="px-2 py-1 text-sm text-muted-foreground">Loading...</p>
               ) : null}
-              {browseListError ? (
+              {picker.error ? (
                 <p className="px-2 py-1 text-sm text-destructive">
-                  {formatAppError(browseListError, "Failed to load S3 objects.")}
+                  {formatAppError(picker.error, "Failed to load S3 objects.")}
                 </p>
               ) : null}
-              {browseListItems.map((item) => (
+              {picker.options.map((item) => (
                 <button
                   key={item.pathInput}
                   type="button"
                   className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent"
-                  onClick={() => selectBrowseItem(item.pathInput)}
+                  onClick={() => picker.selectOption(item.pathInput)}
                 >
                   <Folder className="size-4 shrink-0 text-muted-foreground" />
                   <span className="truncate font-mono text-xs">{item.label}</span>
                 </button>
               ))}
-              {browseListItems.length === 0 && !browseListLoading ? (
+              {picker.options.length === 0 && !picker.isLoading ? (
                 <p className="px-2 py-1 text-sm text-muted-foreground">
-                  {suggestionContext.mode === "bucket" ? "No matching buckets." : "No matching folders under this prefix."}
+                  {picker.context.mode === "bucket" ? "No matching buckets." : "No matching folders under this prefix."}
                 </p>
               ) : null}
             </div>
@@ -398,8 +217,8 @@ export function S3PathPickerDialog({
           {onAppendSubmitUserChange ? (
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
-                checked={appendUser}
-                onCheckedChange={(checked) => setAppendUser(checked === true)}
+                checked={picker.appendUser}
+                onCheckedChange={(checked) => picker.setAppendUser(checked === true)}
               />
               <span>
                 Append submitUser subdirectory

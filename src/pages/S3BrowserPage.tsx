@@ -28,6 +28,14 @@ import {
 import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
 import { formatAppError, formatS3BrowserError } from "@/services/appErrorMessage";
 import { readLastS3Path, writeLastS3Path } from "@/services/s3PathStorage";
+import {
+  displayObjectName,
+  formatCompactS3Path,
+  formatPathInput,
+  formatS3Path,
+  parentPrefix,
+  parseS3PathInput
+} from "@/services/s3PathUtils";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { S3ObjectEntry } from "@/types/domain";
@@ -48,7 +56,7 @@ export function S3BrowserPage() {
   const objectListRef = useRef<HTMLElement>(null);
   const editorRef = useRef<S3ObjectEditorHandle>(null);
   const selectedBucket = bucket ?? selectedS3Bucket ?? (buckets.isSuccess ? buckets.data?.[0]?.name : undefined);
-  const currentS3Path = formatS3Path(selectedBucket, prefix);
+  const currentS3Path = formatS3Path(selectedBucket, prefix) || "s3://";
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
   const [editingPath, setEditingPath] = useState(false);
   const [pathInput, setPathInput] = useState(formatPathInput(selectedBucket, prefix));
@@ -650,14 +658,6 @@ export function S3BrowserPage() {
   );
 }
 
-function displayObjectName(key: string, prefix: string, kind: "folder" | "file") {
-  const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
-  if (kind === "folder") {
-    return relative.split("/").filter(Boolean)[0] ?? relative;
-  }
-  return relative.split("/").filter(Boolean).at(-1) ?? relative;
-}
-
 function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
   if (!object || object.kind !== "file") return null;
 
@@ -683,15 +683,6 @@ function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
   );
 }
 
-function parentPrefix(prefix: string) {
-  const parent = prefix.split("/").filter(Boolean).slice(0, -1).join("/");
-  return parent ? `${parent}/` : "";
-}
-
-function formatS3Path(bucket: string | undefined, prefix: string) {
-  return bucket ? `s3://${bucket}/${prefix}` : "s3://";
-}
-
 function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -708,27 +699,4 @@ function formatS3Timestamp(value?: string) {
 
 function trimEtag(value?: string) {
   return value?.replace(/^"|"$/g, "");
-}
-
-function formatCompactS3Path(bucket: string | undefined, prefix: string) {
-  if (!bucket) return "s3://";
-  const parts = prefix.split("/").filter(Boolean);
-  if (parts.length <= 2) return formatS3Path(bucket, prefix);
-  return `s3://${bucket}/.../${parts.slice(-2).join("/")}/`;
-}
-
-function formatPathInput(bucket: string | undefined, prefix: string) {
-  return bucket ? `${bucket}/${prefix}` : "";
-}
-
-function parseS3PathInput(value: string) {
-  const trimmed = value.trim();
-  const withoutScheme = trimmed.startsWith("s3://") ? trimmed.slice("s3://".length) : trimmed;
-  const match = /^([^/\s]+)\/?(.*)$/.exec(withoutScheme);
-  if (!match) return undefined;
-  const prefix = match[2] ?? "";
-  return {
-    bucket: match[1],
-    prefix: prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
-  };
 }
