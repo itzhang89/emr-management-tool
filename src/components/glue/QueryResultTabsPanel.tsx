@@ -33,15 +33,20 @@ export function QueryResultTabsPanel({
             <div
               key={tab.id}
               className={cn(
-                "flex max-w-[180px] shrink-0 items-center gap-0 rounded-sm border px-0.5",
-                isActive ? "border-border bg-background shadow-sm" : "border-transparent"
+                "flex max-w-[180px] shrink-0 items-center gap-0 rounded-sm border px-0.5 transition-colors",
+                isActive
+                  ? "border-primary/60 bg-primary/10 shadow-sm ring-1 ring-primary/20"
+                  : "border-transparent hover:bg-muted/60"
               )}
             >
               <button
                 type="button"
                 className={cn(
                   "min-w-0 truncate px-1.5 py-0.5 text-left text-[10px]",
-                  isActive ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
+                  isActive
+                    ? "font-semibold text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                  running && !isActive && "text-amber-600 dark:text-amber-400"
                 )}
                 title={tab.sqlSnapshot || tab.title}
                 onClick={() => onSelectTab(tab.id)}

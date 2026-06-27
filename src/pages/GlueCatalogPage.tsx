@@ -282,7 +282,13 @@ export function GlueCatalogPage() {
 
     updateResultTab(tabId, {
       sqlSnapshot: sqlToRun,
-      title: buildResultTabTitle(sqlToRun, resultTabs.length),
+      title: buildResultTabTitle(
+        sqlToRun,
+        Math.max(
+          resultTabs.findIndex((tab) => tab.id === tabId) + 1,
+          1
+        )
+      ),
       results: undefined,
       resultsError: undefined,
       resultsLoading: false,
