@@ -24,6 +24,7 @@ import type {
   S3JobLogObjectsRequest,
   S3JobLogObjectsResponse,
   S3ObjectEntry,
+  S3PrefixDeletionSummary,
   S3TextObject,
   StartJobRunRequest,
   GlueListRequest,
@@ -110,6 +111,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     openTextFile: () => call<string | undefined>("open_text_file"),
     deleteS3Object: (request: { accountId?: string; bucket: string; key: string }) =>
       call("delete_s3_object", request),
+    createS3Folder: (request: { accountId?: string; bucket: string; parentPrefix?: string; folderName: string }) =>
+      call<S3ObjectEntry>("create_s3_folder", request),
+    describeS3PrefixDeletion: (request: { accountId?: string; bucket: string; key: string }) =>
+      call<S3PrefixDeletionSummary>("describe_s3_prefix_deletion", request),
+    deleteS3Prefix: (request: { accountId?: string; bucket: string; key: string }) =>
+      call("delete_s3_prefix", request),
     listGlueDatabases: (request: GlueListRequest = {}) => call<GlueListDatabasesResponse>("list_glue_databases", request),
     listGlueTables: (request: GlueListRequest) => call<GlueListTablesResponse>("list_glue_tables", request),
     getGlueTable: (request: GlueGetTableRequest) => call<GlueTableDetail>("get_glue_table", request),

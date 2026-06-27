@@ -12,7 +12,12 @@ const useS3Objects = vi.fn();
 const useS3TextObject = vi.fn();
 const useSaveS3TextObject = vi.fn();
 const useDeleteS3Object = vi.fn();
+const useDeleteS3Prefix = vi.fn();
+const useCreateS3Folder = vi.fn();
 const useRenameS3Object = vi.fn();
+const describePrefixDeletion = vi.fn();
+const deletePrefixMutateAsync = vi.fn();
+const createFolderMutateAsync = vi.fn();
 const uploadS3ObjectFromDisk = vi.fn();
 const downloadS3ObjectToDisk = vi.fn();
 const deleteMutateAsync = vi.fn();
@@ -48,12 +53,20 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   })
 }));
 
+vi.mock("@/services/s3Service", () => ({
+  s3Service: {
+    describePrefixDeletion: (...args: unknown[]) => describePrefixDeletion(...args)
+  }
+}));
+
 vi.mock("@/hooks/useS3", () => ({
   useS3Buckets: (...args: unknown[]) => useS3Buckets(...args),
   useS3Objects: (...args: unknown[]) => useS3Objects(...args),
   useS3TextObject: (...args: unknown[]) => useS3TextObject(...args),
   useSaveS3TextObject: (...args: unknown[]) => useSaveS3TextObject(...args),
   useDeleteS3Object: (...args: unknown[]) => useDeleteS3Object(...args),
+  useDeleteS3Prefix: (...args: unknown[]) => useDeleteS3Prefix(...args),
+  useCreateS3Folder: (...args: unknown[]) => useCreateS3Folder(...args),
   useRenameS3Object: (...args: unknown[]) => useRenameS3Object(...args)
 }));
 
@@ -161,8 +174,25 @@ describe("S3BrowserPage", () => {
     }));
     useSaveS3TextObject.mockReturnValue({ mutateAsync: saveMutateAsync, isPending: false });
     useDeleteS3Object.mockReturnValue({ mutateAsync: deleteMutateAsync, isPending: false });
+    useDeleteS3Prefix.mockReturnValue({ mutateAsync: deletePrefixMutateAsync, isPending: false });
+    useCreateS3Folder.mockReturnValue({ mutateAsync: createFolderMutateAsync, isPending: false });
     useRenameS3Object.mockReturnValue({ mutateAsync: renameMutateAsync, isPending: false });
     deleteMutateAsync.mockResolvedValue(undefined);
+    deletePrefixMutateAsync.mockResolvedValue(undefined);
+    createFolderMutateAsync.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "reports/",
+      kind: "folder",
+      size: 0
+    });
+    describePrefixDeletion.mockResolvedValue({
+      prefix: "logs/",
+      fileCount: 2,
+      folderCount: 1,
+      totalObjectCount: 4,
+      totalBytes: 4096,
+      truncated: false
+    });
     saveMutateAsync.mockImplementation(async (object) => object);
     renameMutateAsync.mockResolvedValue({
       bucket: "logs-bucket",
@@ -263,7 +293,7 @@ describe("S3BrowserPage", () => {
     expect(within(browser).getByRole("button", { name: /readme\.txt/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/readme.txt")).not.toBeInTheDocument();
 
-    await user.click(within(browser).getByRole("button", { name: /^logs\/$/i }));
+    await user.dblClick(within(browser).getByRole("button", { name: /^logs\/$/i }));
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
     expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
@@ -386,22 +416,7 @@ describe("S3BrowserPage", () => {
     expect(toastInfo).toHaveBeenCalledWith("Upload canceled.");
   });
 
-  it("copies the current S3 path from the path bar icon", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText }
-    });
-
-    renderS3BrowserPage();
-
-    await user.click(screen.getByRole("button", { name: /^Copy S3 path$/i }));
-    expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/");
-    expect(screen.queryByText("Copy S3 Path")).not.toBeInTheDocument();
-  });
-
-  it("copies the selected object path from the preview header", async () => {
+  it("copies the selected object path from the object list", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -413,9 +428,10 @@ describe("S3BrowserPage", () => {
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
-    await user.click(screen.getByRole("button", { name: /^Copy object S3 path$/i }));
+    await user.click(within(browser).getByRole("button", { name: /^Copy S3 path$/i }));
 
     expect(writeText).toHaveBeenCalledWith("s3://logs-bucket/readme.txt");
+    expect(screen.queryByRole("button", { name: /^Copy object S3 path$/i })).not.toBeInTheDocument();
   });
 
   it("shows selected file properties compactly in the right preview header", async () => {
@@ -428,7 +444,7 @@ describe("S3BrowserPage", () => {
 
     const preview = screen.getByRole("region", { name: /Selected S3 object/i });
     expect(within(preview).queryByRole("button", { name: "s3://logs-bucket/readme.txt" })).not.toBeInTheDocument();
-    expect(within(preview).getByRole("button", { name: /^Copy object S3 path$/i })).toBeInTheDocument();
+    expect(within(preview).queryByRole("button", { name: /^Copy S3 path$/i })).not.toBeInTheDocument();
     expect(within(preview).getByText("Size")).toBeInTheDocument();
     expect(within(preview).getByText("10 B")).toBeInTheDocument();
     expect(within(preview).getByText("Last modified")).toBeInTheDocument();
@@ -461,13 +477,62 @@ describe("S3BrowserPage", () => {
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
-    await user.click(screen.getByRole("button", { name: /^Delete$/i }));
+    await user.click(within(screen.getByRole("region", { name: /Selected S3 object/i })).getByRole("button", { name: /^Delete$/i }));
 
     const dialog = screen.getByRole("dialog", { name: /Delete S3 object/i });
     await user.click(within(dialog).getByRole("button", { name: /^Delete$/i }));
 
     expect(deleteMutateAsync).toHaveBeenCalledWith({ bucket: "logs-bucket", key: "readme.txt" });
     expect(refetchObjects).toHaveBeenCalled();
+  });
+
+  it("creates a folder when the name does not already exist", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
+    await user.type(screen.getByPlaceholderText("folder-name"), "reports");
+    await user.click(within(screen.getByRole("dialog", { name: /Create folder/i })).getByRole("button", { name: /^Create$/i }));
+
+    expect(createFolderMutateAsync).toHaveBeenCalledWith({
+      bucket: "logs-bucket",
+      parentPrefix: "",
+      folderName: "reports"
+    });
+    expect(toastSuccess).toHaveBeenCalledWith("Created reports/");
+  });
+
+  it("rejects creating a folder that already exists", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
+    await user.type(screen.getByPlaceholderText("folder-name"), "logs");
+    await user.click(within(screen.getByRole("dialog", { name: /Create folder/i })).getByRole("button", { name: /^Create$/i }));
+
+    expect(createFolderMutateAsync).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith('Folder "logs/" already exists.');
+  });
+
+  it("shows folder deletion summary before deleting a non-empty directory", async () => {
+    const user = userEvent.setup();
+
+    renderS3BrowserPage();
+
+    const browser = screen.getByRole("navigation", { name: /S3 objects/i });
+    await user.click(within(browser).getByRole("button", { name: /^logs\/$/i }));
+    await user.click(screen.getByRole("button", { name: /^Delete$/i }));
+
+    expect(describePrefixDeletion).toHaveBeenCalledWith("acct-test", "logs-bucket", "logs/");
+    expect(await screen.findByText("Expected deletion summary")).toBeInTheDocument();
+    expect(screen.getByText("Files: 2")).toBeInTheDocument();
+    expect(screen.getByText("Subfolders: 1")).toBeInTheDocument();
+
+    await user.click(within(screen.getByRole("dialog", { name: /Delete S3 folder/i })).getByRole("button", { name: /^Delete$/i }));
+
+    expect(deletePrefixMutateAsync).toHaveBeenCalledWith({ bucket: "logs-bucket", key: "logs/" });
   });
 
   it("shows actionable guidance when bucket listing fails with an AWS permission error", () => {

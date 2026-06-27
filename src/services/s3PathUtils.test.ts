@@ -144,3 +144,12 @@ describe("formatCompactS3Path", () => {
     expect(formatCompactS3Path(undefined, "a/")).toBe("s3://");
   });
 });
+
+describe("validateS3FolderName", () => {
+  it("rejects empty and invalid folder names", async () => {
+    const { validateS3FolderName, buildFolderKey } = await import("./s3PathUtils");
+    expect(validateS3FolderName("")).toBe("Folder name is required.");
+    expect(validateS3FolderName("bad/name")).toBe("Folder name cannot contain '/'.");
+    expect(buildFolderKey("logs/", "reports")).toBe("logs/reports/");
+  });
+});

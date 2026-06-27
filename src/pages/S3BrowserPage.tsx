@@ -1,4 +1,4 @@
-import { ArrowUp, Copy, Download, FileText, Folder, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { ArrowUp, Copy, Download, FileText, Folder, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,9 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
+  useCreateS3Folder,
   useDeleteS3Object,
+  useDeleteS3Prefix,
   useRenameS3Object,
   useS3Buckets,
   useS3Objects,
@@ -27,18 +29,27 @@ import {
 } from "@/hooks/useS3";
 import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
 import { formatAppError, formatS3BrowserError } from "@/services/appErrorMessage";
+import { s3Service } from "@/services/s3Service";
 import { readLastS3Path, writeLastS3Path } from "@/services/s3PathStorage";
 import {
+  buildFolderKey,
   displayObjectName,
   formatCompactS3Path,
   formatPathInput,
   formatS3Path,
   parentPrefix,
-  parseS3PathInput
+  parseS3PathInput,
+  validateS3FolderName
 } from "@/services/s3PathUtils";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { S3ObjectEntry } from "@/types/domain";
+import type { S3ObjectEntry, S3PrefixDeletionSummary } from "@/types/domain";
+
+type DeleteTarget = {
+  bucket: string;
+  key: string;
+  kind: S3ObjectEntry["kind"];
+};
 
 const BROWSER_PANE_MIN_WIDTH = 220;
 const BROWSER_PANE_MAX_WIDTH = 720;
@@ -63,7 +74,11 @@ export function S3BrowserPage() {
   const [browserPaneWidth, setBrowserPaneWidth] = useState(BROWSER_PANE_DEFAULT_WIDTH);
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
-  const [deleteTarget, setDeleteTarget] = useState<{ bucket: string; key: string }>();
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>();
+  const [deleteSummary, setDeleteSummary] = useState<S3PrefixDeletionSummary>();
+  const [deleteSummaryLoading, setDeleteSummaryLoading] = useState(false);
+  const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
   const [renamingKey, setRenamingKey] = useState<string>();
   const [renameValue, setRenameValue] = useState("");
   const selectedObject = useMemo(
@@ -73,6 +88,8 @@ export function S3BrowserPage() {
   const textObject = useS3TextObject(selectedBucket, selectedObject?.kind === "file" ? selectedKey : undefined);
   const saveObject = useSaveS3TextObject();
   const deleteObject = useDeleteS3Object();
+  const deletePrefix = useDeleteS3Prefix();
+  const createFolder = useCreateS3Folder();
   const renameObject = useRenameS3Object();
   const [content, setContent] = useState("");
   const [transferPending, setTransferPending] = useState(false);
@@ -217,20 +234,101 @@ export function S3BrowserPage() {
     setContent("");
   };
 
+  const closeDeleteDialog = () => {
+    setDeleteTarget(undefined);
+    setDeleteSummary(undefined);
+    setDeleteSummaryLoading(false);
+  };
+
+  const openDeleteDialog = async (target: DeleteTarget) => {
+    setDeleteTarget(target);
+    setDeleteSummary(undefined);
+    if (target.kind !== "folder") return;
+
+    if (!accountId) {
+      toast.error("Select an AWS account first.");
+      closeDeleteDialog();
+      return;
+    }
+
+    setDeleteSummaryLoading(true);
+    try {
+      const summary = await s3Service.describePrefixDeletion(accountId, target.bucket, target.key);
+      setDeleteSummary(summary);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to inspect folder contents."));
+      closeDeleteDialog();
+    } finally {
+      setDeleteSummaryLoading(false);
+    }
+  };
+
+  const requestDeleteSelected = () => {
+    if (!selectedBucket || !selectedKey) return;
+    const object = objects.data?.find((entry) => entry.key === selectedKey);
+    if (!object) return;
+    void openDeleteDialog({ bucket: selectedBucket, key: object.key, kind: object.kind });
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await deleteObject.mutateAsync(deleteTarget);
-      if (selectedKey === deleteTarget.key) {
+      if (deleteTarget.kind === "folder") {
+        await deletePrefix.mutateAsync({ bucket: deleteTarget.bucket, key: deleteTarget.key });
+      } else {
+        await deleteObject.mutateAsync({ bucket: deleteTarget.bucket, key: deleteTarget.key });
+      }
+
+      if (selectedKey === deleteTarget.key || selectedKey?.startsWith(deleteTarget.key)) {
         setSelectedKey(undefined);
         setContent("");
       }
+      if (deleteTarget.kind === "folder" && prefix.startsWith(deleteTarget.key)) {
+        setPrefix(parentPrefix(deleteTarget.key));
+      }
+
       await objects.refetch();
-      toast.success(`Deleted ${deleteTarget.key}`);
+      toast.success(
+        deleteTarget.kind === "folder"
+          ? `Deleted folder ${deleteTarget.key}`
+          : `Deleted ${deleteTarget.key}`
+      );
     } catch (error) {
       toast.error(formatAppError(error, "Failed to delete object."));
     } finally {
-      setDeleteTarget(undefined);
+      closeDeleteDialog();
+    }
+  };
+
+  const submitCreateFolder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedBucket) return;
+
+    const validationError = validateS3FolderName(newFolderName);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
+    const folderKey = buildFolderKey(prefix, newFolderName);
+    const folderExists = (objects.data ?? []).some((object) => object.key === folderKey);
+    if (folderExists) {
+      toast.error(`Folder "${displayObjectName(folderKey, prefix, "folder")}" already exists.`);
+      return;
+    }
+
+    try {
+      await createFolder.mutateAsync({
+        bucket: selectedBucket,
+        parentPrefix: prefix,
+        folderName: newFolderName.trim()
+      });
+      await objects.refetch();
+      toast.success(`Created ${newFolderName.trim()}/`);
+      setCreateFolderOpen(false);
+      setNewFolderName("");
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to create folder."));
     }
   };
 
@@ -333,11 +431,21 @@ export function S3BrowserPage() {
       if (prefix) {
         goUp();
       }
+      return;
+    }
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      requestDeleteSelected();
     }
   };
 
   const selectedObjectPath =
-    selectedBucket && selectedKey && selectedObject?.kind === "file" ? `s3://${selectedBucket}/${selectedKey}` : undefined;
+    selectedBucket && selectedKey ? `s3://${selectedBucket}/${selectedKey}` : undefined;
+
+  const deletePending = deleteObject.isPending || deletePrefix.isPending;
+  const folderDeleteIsNonEmpty =
+    deleteSummary != null && (deleteSummary.fileCount > 0 || deleteSummary.folderCount > 0);
 
   const beginBrowserPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -419,21 +527,6 @@ export function S3BrowserPage() {
                   {displayedS3Path}
                 </button>
               )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Copy S3 path"
-                    disabled={!selectedBucket}
-                    onClick={() => void copyS3Path(currentS3Path)}
-                  >
-                    <Copy className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Copy S3 path</TooltipContent>
-              </Tooltip>
               <Button
                 type="button"
                 variant="ghost"
@@ -453,6 +546,20 @@ export function S3BrowserPage() {
             <div className="flex shrink-0 gap-2">
               <Button type="button" variant="outline" size="sm" className="h-7 px-2" aria-label="Up" disabled={!prefix} onClick={goUp}>
                 <ArrowUp data-icon="inline-start" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                aria-label="Create folder"
+                disabled={!selectedBucket || createFolder.isPending}
+                onClick={() => {
+                  setNewFolderName("");
+                  setCreateFolderOpen(true);
+                }}
+              >
+                <FolderPlus data-icon="inline-start" />
               </Button>
             </div>
             {buckets.isLoading || objects.isLoading ? (
@@ -491,34 +598,60 @@ export function S3BrowserPage() {
                 }
 
                 return (
-                  <button
+                  <div
                     key={object.key}
                     className={cn(
-                      "flex min-w-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-accent",
-                      object.kind === "file" && "font-mono",
+                      "flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5",
                       object.key === selectedKey && "bg-primary/10 text-primary"
                     )}
-                    type="button"
-                    data-active={object.key === selectedKey}
-                    title={objectName}
-                    onClick={() => {
-                      if (object.kind === "folder") {
-                        setPrefix(object.key);
-                        setSelectedKey(undefined);
-                        setContent("");
-                        return;
-                      }
-                      setSelectedKey(object.key);
-                    }}
-                    onDoubleClick={() => startRename(object)}
                   >
-                    {object.kind === "folder" ? (
-                      <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="min-w-0 truncate">{objectName}</span>
-                  </button>
+                    <button
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left text-xs hover:bg-accent",
+                        object.kind === "file" && "font-mono"
+                      )}
+                      type="button"
+                      data-active={object.key === selectedKey}
+                      title={objectName}
+                      onClick={() => setSelectedKey(object.key)}
+                      onDoubleClick={() => {
+                        if (object.kind === "folder") {
+                          setPrefix(object.key);
+                          setSelectedKey(undefined);
+                          setContent("");
+                          return;
+                        }
+                        startRename(object);
+                      }}
+                    >
+                      {object.kind === "folder" ? (
+                        <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 truncate">{objectName}</span>
+                    </button>
+                    {object.key === selectedKey && selectedBucket ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 shrink-0 p-0"
+                            aria-label="Copy S3 path"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void copyS3Path(`s3://${selectedBucket}/${object.key}`);
+                            }}
+                          >
+                            <Copy className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Copy S3 path</TooltipContent>
+                      </Tooltip>
+                    ) : null}
+                  </div>
                 );
               })}
             </nav>
@@ -551,25 +684,8 @@ export function S3BrowserPage() {
         <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="region" aria-label="Selected S3 object">
           <CardHeader className="shrink-0 flex-row items-start justify-between gap-4">
             <div className="min-w-0 flex-1 space-y-1.5">
-              <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
-                <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
-                {selectedObjectPath ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-1.5"
-                        aria-label="Copy object S3 path"
-                        onClick={() => void copyS3Path(selectedObjectPath)}
-                      >
-                        <Copy className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copy S3 path</TooltipContent>
-                  </Tooltip>
-                ) : null}
+              <CardTitle className="min-w-0 break-all font-mono text-base">
+                {selectedKey ?? "Select an object"}
               </CardTitle>
               <CardDescription>
                 {editability?.editable
@@ -617,8 +733,8 @@ export function S3BrowserPage() {
             <div className="flex shrink-0 justify-end gap-2">
               <Button
                 variant="outline"
-                disabled={!selectedBucket || !selectedKey || deleteObject.isPending}
-                onClick={() => selectedBucket && selectedKey && setDeleteTarget({ bucket: selectedBucket, key: selectedKey })}
+                disabled={!selectedBucket || !selectedKey || deletePending || deleteSummaryLoading}
+                onClick={requestDeleteSelected}
               >
                 <Trash2 data-icon="inline-start" />
                 Delete
@@ -636,20 +752,91 @@ export function S3BrowserPage() {
           <option key={entry.name} value={`${entry.name}/`} />
         ))}
       </datalist>
-      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
+      <Dialog open={createFolderOpen} onOpenChange={(open) => !open && setCreateFolderOpen(false)}>
         <DialogContent>
+          <form onSubmit={(event) => void submitCreateFolder(event)}>
+            <DialogHeader>
+              <DialogTitle>Create folder</DialogTitle>
+              <DialogDescription>
+                {selectedBucket
+                  ? `Create a new folder under s3://${selectedBucket}/${prefix}`
+                  : "Select a bucket first."}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Input
+                autoFocus
+                value={newFolderName}
+                placeholder="folder-name"
+                className="font-mono text-sm"
+                onChange={(event) => setNewFolderName(event.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateFolderOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createFolder.isPending || !selectedBucket}>
+                {createFolder.isPending ? "Creating..." : "Create"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && closeDeleteDialog()}>
+        <DialogContent className="max-w-lg overflow-hidden">
           <DialogHeader>
-            <DialogTitle>Delete S3 object?</DialogTitle>
-            <DialogDescription>
-              {deleteTarget ? `This will permanently delete s3://${deleteTarget.bucket}/${deleteTarget.key}.` : null}
+            <DialogTitle>
+              {deleteTarget?.kind === "folder" ? "Delete S3 folder?" : "Delete S3 object?"}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                {deleteTarget ? (
+                  <p>
+                    This will permanently delete{" "}
+                    <span className="block break-all font-mono text-foreground">
+                      s3://{deleteTarget.bucket}/{deleteTarget.key}
+                    </span>
+                  </p>
+                ) : null}
+                {deleteTarget?.kind === "folder" && deleteSummaryLoading ? (
+                  <p>Inspecting folder contents...</p>
+                ) : null}
+                {deleteTarget?.kind === "folder" && deleteSummary && folderDeleteIsNonEmpty ? (
+                  <div className="rounded-md border bg-muted/30 p-3 text-foreground">
+                    <p className="font-medium">Expected deletion summary</p>
+                    <ul className="mt-2 space-y-1 font-mono text-xs">
+                      <li>Files: {deleteSummary.fileCount}</li>
+                      <li>Subfolders: {deleteSummary.folderCount}</li>
+                      <li>Total objects: {deleteSummary.totalObjectCount}</li>
+                      <li>Total size: {formatBytes(deleteSummary.totalBytes)}</li>
+                    </ul>
+                    {deleteSummary.truncated ? (
+                      <p className="mt-2 text-xs text-amber-600">
+                        Preview is truncated. The folder may contain more objects than shown.
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs">
+                      All files and subfolders under this prefix will be deleted.
+                    </p>
+                  </div>
+                ) : null}
+                {deleteTarget?.kind === "folder" && deleteSummary && !folderDeleteIsNonEmpty ? (
+                  <p>This folder appears empty and will be removed.</p>
+                ) : null}
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(undefined)}>
+            <Button variant="outline" onClick={closeDeleteDialog}>
               Cancel
             </Button>
-            <Button variant="destructive" disabled={deleteObject.isPending} onClick={() => void confirmDelete()}>
-              {deleteObject.isPending ? "Deleting..." : "Delete"}
+            <Button
+              variant="destructive"
+              disabled={deletePending || deleteSummaryLoading}
+              onClick={() => void confirmDelete()}
+            >
+              {deletePending ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

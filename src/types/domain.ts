@@ -364,6 +364,15 @@ export interface S3TextObject {
   lastModified?: string;
 }
 
+export interface S3PrefixDeletionSummary {
+  prefix: string;
+  fileCount: number;
+  folderCount: number;
+  totalObjectCount: number;
+  totalBytes: number;
+  truncated: boolean;
+}
+
 export interface S3JobLogObjectsRequest extends AwsCommandContext {
   bucket: string;
   prefix: string;

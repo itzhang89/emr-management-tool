@@ -3,13 +3,15 @@ use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsCommandContext, S3Bucket, S3JobLogObject, S3JobLogObjectsRequest, S3JobLogObjectsResponse,
-    S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest, S3RenameObjectRequest, S3TextObject,
-    S3UploadFromDiskRequest,
+    AwsCommandContext, S3Bucket, S3CreateFolderRequest, S3JobLogObject, S3JobLogObjectsRequest,
+    S3JobLogObjectsResponse, S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest,
+    S3PrefixDeletionSummary, S3RenameObjectRequest, S3TextObject, S3UploadFromDiskRequest,
 };
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{Delete, ObjectIdentifier};
 use chrono::Utc;
 use flate2::read::GzDecoder;
+use std::collections::HashSet;
 use std::io::Read;
 use tauri::AppHandle;
 
@@ -508,6 +510,273 @@ pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppRe
     Ok(())
 }
 
+const S3_PREFIX_SCAN_LIMIT: usize = 10_000;
+
+#[tauri::command]
+pub async fn create_s3_folder(
+    app: AppHandle,
+    request: S3CreateFolderRequest,
+) -> AppResult<S3ObjectEntry> {
+    if request.bucket.trim().is_empty() {
+        return Err(AppError::validation("Bucket is required."));
+    }
+
+    let folder_name = request.folder_name.trim();
+    if folder_name.is_empty() {
+        return Err(AppError::validation("Folder name is required."));
+    }
+    if folder_name.contains('/') {
+        return Err(AppError::validation("Folder name cannot contain '/'."));
+    }
+
+    let parent_prefix = normalize_s3_prefix(request.parent_prefix.as_deref().unwrap_or_default());
+    let folder_key = format!("{parent_prefix}{folder_name}/");
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+
+    if prefix_exists(&client, &request.bucket, &parent_prefix, folder_name).await? {
+        return Err(AppError::validation(format!(
+            "Folder '{folder_name}/' already exists."
+        )));
+    }
+
+    client
+        .put_object()
+        .bucket(&request.bucket)
+        .key(&folder_key)
+        .body(ByteStream::from_static(b""))
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
+
+    Ok(object(
+        &request.bucket,
+        folder_key,
+        0,
+        "folder",
+        Some(Utc::now().to_rfc3339()),
+        None,
+    ))
+}
+
+#[tauri::command]
+pub async fn describe_s3_prefix_deletion(
+    app: AppHandle,
+    request: S3ObjectRequest,
+) -> AppResult<S3PrefixDeletionSummary> {
+    if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
+        return Err(AppError::validation("Bucket and prefix are required."));
+    }
+
+    let prefix = normalize_s3_prefix(&request.key);
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+    let listed = list_all_object_keys(&client, &request.bucket, &prefix, S3_PREFIX_SCAN_LIMIT).await?;
+
+    Ok(build_prefix_deletion_summary(&prefix, listed))
+}
+
+#[tauri::command]
+pub async fn delete_s3_prefix(app: AppHandle, request: S3ObjectRequest) -> AppResult<()> {
+    if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
+        return Err(AppError::validation("Bucket and prefix are required."));
+    }
+
+    let prefix = normalize_s3_prefix(&request.key);
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+    let listed = list_all_object_keys(&client, &request.bucket, &prefix, usize::MAX).await?;
+
+    for chunk in listed.keys.chunks(1000) {
+        let objects = chunk
+            .iter()
+            .map(|key| ObjectIdentifier::builder().key(key).build())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::validation(error.to_string()))?;
+        client
+            .delete_objects()
+            .bucket(&request.bucket)
+            .delete(
+                Delete::builder()
+                    .set_objects(Some(objects))
+                    .build()
+                    .map_err(|error| AppError::validation(error.to_string()))?,
+            )
+            .send()
+            .await
+            .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
+    }
+
+    Ok(())
+}
+
+async fn prefix_exists(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    parent_prefix: &str,
+    folder_name: &str,
+) -> AppResult<bool> {
+    let folder_key = format!("{parent_prefix}{folder_name}/");
+    let response = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(&folder_key)
+        .max_keys(1)
+        .send()
+        .await
+        .map_err(|error| AppError::aws("s3", error))?;
+
+    if !response.contents().is_empty() {
+        return Ok(true);
+    }
+
+    let delimiter_response = client
+        .list_objects_v2()
+        .bucket(bucket)
+        .prefix(parent_prefix)
+        .delimiter("/")
+        .send()
+        .await
+        .map_err(|error| AppError::aws("s3", error))?;
+
+    Ok(delimiter_response
+        .common_prefixes()
+        .iter()
+        .filter_map(|entry| entry.prefix())
+        .any(|entry| entry == folder_key))
+}
+
+struct ListedPrefixObjects {
+    keys: Vec<String>,
+    total_bytes: u64,
+    truncated: bool,
+}
+
+async fn list_all_object_keys(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    prefix: &str,
+    limit: usize,
+) -> AppResult<ListedPrefixObjects> {
+    let mut keys = Vec::new();
+    let mut total_bytes = 0_u64;
+    let mut continuation_token: Option<String> = None;
+    let mut truncated = false;
+
+    loop {
+        let mut operation = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .max_keys(1000);
+        if let Some(token) = continuation_token.clone() {
+            operation = operation.continuation_token(token);
+        }
+
+        let response = operation
+            .send()
+            .await
+            .map_err(|error| AppError::aws("s3", error))?;
+
+        for object_summary in response.contents() {
+            if keys.len() >= limit {
+                truncated = true;
+                break;
+            }
+            keys.push(object_summary.key().unwrap_or_default().to_string());
+            total_bytes += object_summary.size().unwrap_or_default().max(0) as u64;
+        }
+
+        if truncated {
+            break;
+        }
+
+        continuation_token = response.next_continuation_token().map(ToString::to_string);
+        if continuation_token.is_none() {
+            break;
+        }
+    }
+
+    Ok(ListedPrefixObjects {
+        keys,
+        total_bytes,
+        truncated,
+    })
+}
+
+fn normalize_s3_prefix(prefix: &str) -> String {
+    if prefix.is_empty() {
+        return String::new();
+    }
+    if prefix.ends_with('/') {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/")
+    }
+}
+
+fn build_prefix_deletion_summary(prefix: &str, listed: ListedPrefixObjects) -> S3PrefixDeletionSummary {
+    let (file_count, folder_count) = count_prefix_children(&listed.keys, prefix);
+
+    S3PrefixDeletionSummary {
+        prefix: prefix.to_string(),
+        file_count,
+        folder_count,
+        total_object_count: listed.keys.len() as u64,
+        total_bytes: listed.total_bytes,
+        truncated: listed.truncated,
+    }
+}
+
+fn count_prefix_children(keys: &[String], prefix: &str) -> (u64, u64) {
+    let mut file_count = 0_u64;
+    let mut folder_paths = HashSet::new();
+
+    for key in keys {
+        if key.ends_with('/') {
+            if key != prefix {
+                folder_paths.insert(key.clone());
+            }
+            continue;
+        }
+
+        file_count += 1;
+        let relative = key.strip_prefix(prefix).unwrap_or(key);
+        let segments = relative
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        if segments.len() <= 1 {
+            continue;
+        }
+
+        for index in 0..segments.len() - 1 {
+            folder_paths.insert(format!("{}{}/", prefix, segments[..=index].join("/")));
+        }
+    }
+
+    (file_count, folder_paths.len() as u64)
+}
+
 fn object(
     bucket: &str,
     key: String,
@@ -629,7 +898,7 @@ fn job_id_from_prefix(prefix: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_s3_log_content;
+    use super::{count_prefix_children, decode_s3_log_content, normalize_s3_prefix};
 
     #[test]
     fn decodes_gzip_s3_log_archives_as_text() {
@@ -643,5 +912,25 @@ mod tests {
                 .expect("gzip log decodes");
 
         assert_eq!(content, "hello log\n");
+    }
+
+    #[test]
+    fn normalizes_prefixes_with_trailing_slash() {
+        assert_eq!(normalize_s3_prefix("logs"), "logs/");
+        assert_eq!(normalize_s3_prefix("logs/"), "logs/");
+        assert_eq!(normalize_s3_prefix(""), "");
+    }
+
+    #[test]
+    fn counts_nested_files_and_folders_for_deletion_summary() {
+        let keys = vec![
+            "logs/".to_string(),
+            "logs/readme.txt".to_string(),
+            "logs/app/stdout.log".to_string(),
+            "logs/app/trace.log".to_string(),
+        ];
+        let (file_count, folder_count) = count_prefix_children(&keys, "logs/");
+        assert_eq!(file_count, 3);
+        assert_eq!(folder_count, 1);
     }
 }
