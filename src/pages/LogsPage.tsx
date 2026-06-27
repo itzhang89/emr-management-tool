@@ -1,10 +1,10 @@
-import { type FormEvent, useEffect, useMemo, useState, useTransition } from "react";
+import { Search } from "lucide-react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { LogWorkspace } from "@/components/logs/LogWorkspace";
 import { LogsEmptyState } from "@/components/logs/LogsEmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -79,8 +79,7 @@ export function LogsPage() {
     });
   }, [resolvedActiveSource]);
 
-  const submitJobId = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitJobId = () => {
     const trimmedJobId = jobIdInput.trim();
     if (!trimmedJobId || !effectiveVirtualClusterId) return;
     setSelectedJobForLogs(trimmedJobId, effectiveVirtualClusterId);
@@ -99,18 +98,22 @@ export function LogsPage() {
         pageId="logs"
         actions={
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <form className="flex items-center gap-2" onSubmit={submitJobId}>
+            <div className="relative w-[16rem] min-w-[16rem]">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                className="h-9 w-[13rem] min-w-[13rem] shrink-0 font-mono text-sm"
+                className="h-9 pl-9 font-mono text-sm"
                 placeholder="Enter job id"
                 title={jobIdInput}
                 value={jobIdInput}
                 onChange={(event) => setJobIdInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitJobId();
+                  }
+                }}
               />
-              <Button type="submit" className="h-9" disabled={!jobIdInput.trim() || !effectiveVirtualClusterId}>
-                View Logs
-              </Button>
-            </form>
+            </div>
             <VirtualClusterSelect />
           </div>
         }
