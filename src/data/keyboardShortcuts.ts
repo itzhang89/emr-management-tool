@@ -2,6 +2,7 @@ import { formatModShortcut, formatShortcutsHelpLabel } from "@/lib/keyboardShort
 
 export const SHORTCUT_IDS = {
   OPEN_SHORTCUTS_HELP: "open-shortcuts-help",
+  SIDEBAR_TOGGLE: "sidebar-toggle",
   GLUE_CATALOG_TOGGLE: "glue-catalog-toggle",
   GLUE_RUN_QUERY: "glue-run-query",
   GLUE_RUN_NEW_TAB: "glue-run-new-tab",
@@ -46,6 +47,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Open shortcuts",
     description: "Show keyboard shortcuts for the app (Help menu)",
     keys: [formatShortcutsHelpLabel()]
+  },
+  {
+    id: SHORTCUT_IDS.SIDEBAR_TOGGLE,
+    category: "global",
+    label: "Toggle navigation",
+    description: "Collapse or expand the primary navigation sidebar",
+    keys: [formatModShortcut("/")]
   },
   {
     id: SHORTCUT_IDS.GLUE_CATALOG_TOGGLE,

@@ -3,8 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const setActiveAccountMutate = vi.fn();
+
+function renderAppShell(queryClient: QueryClient) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <AppShell />
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}
 
 vi.mock("@/hooks/useAwsSettings", () => ({
   useAwsAccounts: () => ({
@@ -96,6 +107,7 @@ vi.mock("@/hooks/useEmr", () => ({
     isLoading: false,
     error: null
   }),
+  useSubmissionHistory: () => ({ data: [], isLoading: false, error: null, isFetching: false }),
   useDescribeJobRun: () => ({ data: undefined, isLoading: false, error: null }),
   useCancelJobRun: () => ({ mutate: vi.fn(), isPending: false }),
   useStartJobRun: () => ({ mutate: vi.fn(), isPending: false })
@@ -151,11 +163,7 @@ describe("AppShell", () => {
   it("prioritizes Submit Job and switches pages from the sidebar", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
     expect(within(screen.getByRole("main")).getByText("Template-driven submission")).toBeInTheDocument();
@@ -168,11 +176,7 @@ describe("AppShell", () => {
   it("collapses the sidebar to icon-only navigation", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: /Collapse navigation/i }));
 
@@ -185,11 +189,7 @@ describe("AppShell", () => {
   it("opens Templates as a standalone page with Application Config as the default tab", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     expect(screen.getByRole("button", { name: "Templates" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Templates" }));
@@ -202,11 +202,7 @@ describe("AppShell", () => {
   it("switches Resource Templates inside the Templates page", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: "Templates" }));
     await user.click(screen.getByRole("tab", { name: "Resource Templates" }));
@@ -218,11 +214,7 @@ describe("AppShell", () => {
   it("opens the account dialog from the account summary and switches accounts", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: /Switch AWS account/i }));
     const dialog = screen.getByRole("dialog", { name: /Switch AWS Account/i });
@@ -237,11 +229,7 @@ describe("AppShell", () => {
   it("opens Logs from a Job History row", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
     await screen.findByRole("heading", { name: "Job History" });
@@ -255,15 +243,27 @@ describe("AppShell", () => {
   it("opens the shortcuts dialog with the global shortcut in browser mode", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AppShell />
-      </QueryClientProvider>
-    );
+    renderAppShell(queryClient);
 
     await user.keyboard("{Meta>}{Shift>}/{/Shift}{/Meta}");
 
     expect(await screen.findByRole("dialog", { name: /Keyboard shortcuts/i })).toBeInTheDocument();
     expect(within(screen.getByRole("dialog", { name: /Keyboard shortcuts/i })).getByText("Run query")).toBeInTheDocument();
+  });
+
+  it("toggles the sidebar with the global shortcut", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    expect(screen.getByRole("button", { name: /Collapse navigation/i })).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}/{/Meta}");
+
+    expect(await screen.findByRole("button", { name: /Expand navigation/i })).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}/{/Meta}");
+
+    expect(await screen.findByRole("button", { name: /Collapse navigation/i })).toBeInTheDocument();
   });
 });
