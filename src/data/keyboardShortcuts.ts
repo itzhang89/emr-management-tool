@@ -1,8 +1,12 @@
 import { formatModShortcut, formatShortcutsHelpLabel } from "@/lib/keyboardShortcut";
+import { navigationItems, type PageId } from "@/pages/pageMeta";
 
 export const SHORTCUT_IDS = {
   OPEN_SHORTCUTS_HELP: "open-shortcuts-help",
   SIDEBAR_TOGGLE: "sidebar-toggle",
+  ACCOUNT_SWITCH: "account-switch",
+  NAV_PREV_PAGE: "nav-prev-page",
+  NAV_NEXT_PAGE: "nav-next-page",
   GLUE_CATALOG_TOGGLE: "glue-catalog-toggle",
   GLUE_RUN_QUERY: "glue-run-query",
   GLUE_RUN_NEW_TAB: "glue-run-new-tab",
@@ -17,7 +21,11 @@ export const SHORTCUT_IDS = {
   SUBMIT_PREVIEW_JSON: "submit-preview-json"
 } as const;
 
-export type ShortcutCategoryId = "global" | "glue" | "s3" | "submit";
+export type NavigationShortcutId = `nav-${PageId}`;
+
+export type ShortcutId = (typeof SHORTCUT_IDS)[keyof typeof SHORTCUT_IDS] | NavigationShortcutId;
+
+export type ShortcutCategoryId = "global" | "navigation" | "account" | "glue" | "s3" | "submit";
 
 export interface ShortcutCategory {
   id: ShortcutCategoryId;
@@ -26,7 +34,7 @@ export interface ShortcutCategory {
 }
 
 export interface KeyboardShortcutEntry {
-  id: (typeof SHORTCUT_IDS)[keyof typeof SHORTCUT_IDS];
+  id: ShortcutId;
   category: ShortcutCategoryId;
   label: string;
   description: string;
@@ -35,10 +43,20 @@ export interface KeyboardShortcutEntry {
 
 export const shortcutCategories: ShortcutCategory[] = [
   { id: "global", label: "Global", description: "Available from any page" },
+  { id: "navigation", label: "Navigation", description: "Jump between primary pages" },
+  { id: "account", label: "Account", description: "AWS account switching" },
   { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL" },
   { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
   { id: "submit", label: "Submit Job", description: "Template-driven job submission" }
 ];
+
+const navigationShortcuts: KeyboardShortcutEntry[] = navigationItems.map((item, index) => ({
+  id: `nav-${item.id}`,
+  category: "navigation",
+  label: `Go to ${item.label}`,
+  description: item.description,
+  keys: [formatModShortcut(String(index + 1))]
+}));
 
 export const keyboardShortcuts: KeyboardShortcutEntry[] = [
   {
@@ -54,6 +72,28 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Toggle navigation",
     description: "Collapse or expand the primary navigation sidebar",
     keys: [formatModShortcut("/")]
+  },
+  {
+    id: SHORTCUT_IDS.ACCOUNT_SWITCH,
+    category: "account",
+    label: "Switch AWS account",
+    description: "Open the account switcher dialog",
+    keys: [formatModShortcut("E")]
+  },
+  ...navigationShortcuts,
+  {
+    id: SHORTCUT_IDS.NAV_PREV_PAGE,
+    category: "navigation",
+    label: "Previous page",
+    description: "Go to the previous page in the sidebar order",
+    keys: [formatModShortcut("[")]
+  },
+  {
+    id: SHORTCUT_IDS.NAV_NEXT_PAGE,
+    category: "navigation",
+    label: "Next page",
+    description: "Go to the next page in the sidebar order",
+    keys: [formatModShortcut("]")]
   },
   {
     id: SHORTCUT_IDS.GLUE_CATALOG_TOGGLE,
@@ -141,7 +181,7 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
   }
 ];
 
-export function getShortcutKeys(id: KeyboardShortcutEntry["id"]) {
+export function getShortcutKeys(id: ShortcutId) {
   const entry = keyboardShortcuts.find((shortcut) => shortcut.id === id);
   if (!entry) {
     throw new Error(`Unknown shortcut id: ${id}`);
@@ -149,7 +189,7 @@ export function getShortcutKeys(id: KeyboardShortcutEntry["id"]) {
   return entry.keys;
 }
 
-export function getShortcutPrimaryKey(id: KeyboardShortcutEntry["id"]) {
+export function getShortcutPrimaryKey(id: ShortcutId) {
   return getShortcutKeys(id)[0] ?? "";
 }
 
