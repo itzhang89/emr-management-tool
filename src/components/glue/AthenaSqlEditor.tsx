@@ -40,15 +40,13 @@ const sqlHighlightStyle = HighlightStyle.define([
 ]);
 
 const editorTheme = EditorView.theme({
-  "&": {
+  // Height rules must target &.cm-editor only — tooltips({ parent: document.body })
+  // mounts a sibling wrapper on <body> that shares theme classes but not .cm-editor.
+  "&.cm-editor": {
     fontSize: "11px",
     fontFamily: "var(--font-mono)",
     backgroundColor: "var(--color-background)",
     color: "var(--color-foreground)",
-    height: "100%",
-    minHeight: "140px"
-  },
-  ".cm-editor": {
     height: "100%",
     minHeight: "140px"
   },
