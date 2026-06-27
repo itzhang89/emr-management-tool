@@ -259,15 +259,15 @@ describe("S3BrowserPage", () => {
     renderS3BrowserPage();
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
-    expect(within(browser).getByRole("button", { name: /^logs$/i })).toBeInTheDocument();
+    expect(within(browser).getByRole("button", { name: /^logs\/$/i })).toBeInTheDocument();
     expect(within(browser).getByRole("button", { name: /readme\.txt/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/readme.txt")).not.toBeInTheDocument();
 
-    await user.click(within(browser).getByRole("button", { name: /^logs$/i }));
+    await user.click(within(browser).getByRole("button", { name: /^logs\/$/i }));
 
     expect(useS3Objects).toHaveBeenLastCalledWith("logs-bucket", "logs/");
     expect(screen.getByText("s3://logs-bucket/logs/")).toBeInTheDocument();
-    expect(within(browser).getByRole("button", { name: /^app$/i })).toBeInTheDocument();
+    expect(within(browser).getByRole("button", { name: /^app\/$/i })).toBeInTheDocument();
     expect(within(browser).getByRole("button", { name: /stdout\.log/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/stdout.log")).not.toBeInTheDocument();
 

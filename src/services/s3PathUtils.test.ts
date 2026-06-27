@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   appendSlashForMatching,
-  buildBrowseListItems,
-  buildBucketSuggestions,
-  buildFolderSuggestions,
+  formatCompactS3Path,
+  listS3PathOptions,
+  listS3PathSuggestions,
   parsePathInputForSuggestions,
   resolvePathInputEnterAction
 } from "./s3PathUtils";
@@ -20,6 +20,7 @@ describe("appendSlashForMatching", () => {
     expect(appendSlashForMatching("data-bucket/logs/")).toBe("data-bucket/logs/");
   });
 });
+
 describe("resolvePathInputEnterAction", () => {
   it("selects when there is exactly one suggestion", () => {
     expect(resolvePathInputEnterAction("data", 1)).toBe("select-suggestion");
@@ -40,6 +41,7 @@ describe("resolvePathInputEnterAction", () => {
     expect(resolvePathInputEnterAction("data-bucket/lo", 0)).toBe("noop");
   });
 });
+
 describe("parsePathInputForSuggestions", () => {
   it("treats input without a slash as bucket selection", () => {
     expect(parsePathInputForSuggestions("data")).toEqual({ mode: "bucket", needle: "data" });
@@ -71,56 +73,19 @@ describe("parsePathInputForSuggestions", () => {
   });
 });
 
-describe("buildBucketSuggestions", () => {
-  const bucketNames = ["data-bucket", "logs-bucket", "archive-data"];
-
-  it("returns bucket options with prefix matching only", () => {
-    expect(buildBucketSuggestions(bucketNames, "data")).toEqual(["data-bucket/"]);
-    expect(buildBucketSuggestions(bucketNames, "logs")).toEqual(["logs-bucket/"]);
-    expect(buildBucketSuggestions(bucketNames, "bucket")).toEqual([]);
-  });
-});
-
-describe("buildFolderSuggestions", () => {
-  const objects = [
-    { key: "logs/", kind: "folder" as const },
-    { key: "logs/archive/", kind: "folder" as const },
-    { key: "logs/artifacts/", kind: "folder" as const },
-    { key: "logs/archive/2024/", kind: "folder" as const },
-    { key: "data/", kind: "folder" as const }
-  ];
-
-  it("lists only the next level under the current prefix", () => {
-    expect(buildFolderSuggestions("data-bucket", "", objects, "")).toEqual([
-      "data-bucket/data/",
-      "data-bucket/logs/"
-    ]);
-    expect(buildFolderSuggestions("data-bucket", "logs/", objects, "")).toEqual([
-      "data-bucket/logs/archive/",
-      "data-bucket/logs/artifacts/"
-    ]);
-  });
-
-  it("filters the next level by prefix only", () => {
-    expect(buildFolderSuggestions("data-bucket", "", objects, "lo")).toEqual(["data-bucket/logs/"]);
-    expect(buildFolderSuggestions("data-bucket", "logs/", objects, "ar")).toEqual([
-      "data-bucket/logs/archive/",
-      "data-bucket/logs/artifacts/"
-    ]);
-  });
-});
-
-describe("buildBrowseListItems", () => {
+describe("listS3PathOptions", () => {
   const bucketNames = ["data-bucket", "logs-bucket", "archive-data"];
   const objects = [
     { key: "logs/", kind: "folder" as const },
     { key: "lost/", kind: "folder" as const },
     { key: "data/", kind: "folder" as const },
-    { key: "logs/archive/", kind: "folder" as const }
+    { key: "logs/archive/", kind: "folder" as const },
+    { key: "logs/artifacts/", kind: "folder" as const },
+    { key: "logs/archive/2024/", kind: "folder" as const }
   ];
 
-  it("filters matching buckets while typing", () => {
-    expect(buildBrowseListItems({ mode: "bucket", needle: "data" }, bucketNames, [])).toEqual([
+  it("returns bucket options with prefix matching only", () => {
+    expect(listS3PathOptions({ mode: "bucket", needle: "data" }, bucketNames, [])).toEqual([
       {
         type: "bucket",
         name: "data-bucket",
@@ -128,30 +93,54 @@ describe("buildBrowseListItems", () => {
         label: "data-bucket/"
       }
     ]);
+    expect(listS3PathOptions({ mode: "bucket", needle: "logs" }, bucketNames, []).map((option) => option.pathInput)).toEqual([
+      "logs-bucket/"
+    ]);
+    expect(listS3PathOptions({ mode: "bucket", needle: "bucket" }, bucketNames, [])).toEqual([]);
   });
 
-  it("filters matching folders at the next level while typing", () => {
+  it("lists only the next level under the current prefix", () => {
     expect(
-      buildBrowseListItems(
-        { mode: "folder", bucket: "data-bucket", parentPrefix: "", needle: "lo" },
+      listS3PathOptions({ mode: "folder", bucket: "data-bucket", parentPrefix: "", needle: "" }, bucketNames, objects).map(
+        (option) => option.pathInput
+      )
+    ).toEqual(["data-bucket/data/", "data-bucket/logs/", "data-bucket/lost/"]);
+    expect(
+      listS3PathOptions(
+        { mode: "folder", bucket: "data-bucket", parentPrefix: "logs/", needle: "" },
         bucketNames,
         objects
+      ).map((option) => option.pathInput)
+    ).toEqual(["data-bucket/logs/archive/", "data-bucket/logs/artifacts/"]);
+  });
+
+  it("filters the next level by prefix only", () => {
+    expect(
+      listS3PathOptions({ mode: "folder", bucket: "data-bucket", parentPrefix: "", needle: "lo" }, bucketNames, objects).map(
+        (option) => option.pathInput
       )
-    ).toEqual([
-      {
-        type: "folder",
-        bucket: "data-bucket",
-        key: "logs/",
-        pathInput: "data-bucket/logs/",
-        label: "logs/"
-      },
-      {
-        type: "folder",
-        bucket: "data-bucket",
-        key: "lost/",
-        pathInput: "data-bucket/lost/",
-        label: "lost/"
-      }
-    ]);
+    ).toEqual(["data-bucket/logs/", "data-bucket/lost/"]);
+    expect(
+      listS3PathOptions(
+        { mode: "folder", bucket: "data-bucket", parentPrefix: "logs/", needle: "ar" },
+        bucketNames,
+        objects
+      ).map((option) => option.pathInput)
+    ).toEqual(["data-bucket/logs/archive/", "data-bucket/logs/artifacts/"]);
+  });
+});
+
+describe("listS3PathSuggestions", () => {
+  it("limits dropdown suggestions while keeping browse options complete", () => {
+    const options = listS3PathOptions({ mode: "bucket", needle: "" }, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"], []);
+    expect(listS3PathSuggestions(options, 12)).toHaveLength(12);
+    expect(options).toHaveLength(13);
+  });
+});
+
+describe("formatCompactS3Path", () => {
+  it("collapses long prefixes for display", () => {
+    expect(formatCompactS3Path("bucket", "a/b/c/d/")).toBe("s3://bucket/.../c/d/");
+    expect(formatCompactS3Path(undefined, "a/")).toBe("s3://");
   });
 });

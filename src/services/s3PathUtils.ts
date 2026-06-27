@@ -2,6 +2,13 @@ export function formatS3Path(bucket: string | undefined, prefix: string) {
   return bucket ? `s3://${bucket}/${prefix}` : "";
 }
 
+export function formatCompactS3Path(bucket: string | undefined, prefix: string) {
+  if (!bucket) return "s3://";
+  const parts = prefix.split("/").filter(Boolean);
+  if (parts.length <= 2) return formatS3Path(bucket, prefix);
+  return `s3://${bucket}/.../${parts.slice(-2).join("/")}/`;
+}
+
 export function formatPathInput(bucket: string | undefined, prefix: string) {
   return bucket ? `${bucket}/${prefix}` : "";
 }
@@ -15,15 +22,6 @@ export function parseS3PathInput(value: string) {
   return {
     bucket: match[1],
     prefix: prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix
-  };
-}
-
-export function parseS3Uri(value: string) {
-  const parsed = parseS3PathInput(value);
-  if (!parsed) return undefined;
-  return {
-    bucket: parsed.bucket,
-    prefix: parsed.prefix
   };
 }
 
@@ -44,6 +42,12 @@ export function displayObjectName(key: string, prefix: string, kind: "folder" | 
 export type S3PathSuggestionContext =
   | { mode: "bucket"; needle: string }
   | { mode: "folder"; bucket: string; parentPrefix: string; needle: string };
+
+export type S3PathOption =
+  | { type: "bucket"; name: string; pathInput: string; label: string }
+  | { type: "folder"; bucket: string; key: string; pathInput: string; label: string };
+
+export const S3_PATH_SUGGESTION_LIMIT = 12;
 
 export function stripS3Scheme(value: string) {
   const trimmed = value.trim();
@@ -94,56 +98,11 @@ export function parsePathInputForSuggestions(value: string): S3PathSuggestionCon
   return { mode: "folder", bucket, parentPrefix, needle: needle.toLowerCase() };
 }
 
-export function buildBucketSuggestions(bucketNames: string[], needle: string, limit = 12) {
-  const options = bucketNames.map((name) => `${name}/`);
-  if (!needle) return options.slice(0, limit);
-  return options.filter((option) => option.toLowerCase().startsWith(needle)).slice(0, limit);
-}
-
-export function buildFolderSuggestions(
-  bucket: string,
-  parentPrefix: string,
-  objects: Array<{ key: string; kind: "folder" | "file" }>,
-  needle: string,
-  limit = 12
-) {
-  const nextLevelFolders = new Set<string>();
-
-  for (const object of objects) {
-    if (object.kind !== "folder") continue;
-    if (parentPrefix && !object.key.startsWith(parentPrefix)) continue;
-    const relative = object.key.startsWith(parentPrefix) ? object.key.slice(parentPrefix.length) : object.key;
-    const nextSegment = relative.split("/").filter(Boolean)[0];
-    if (nextSegment) {
-      nextLevelFolders.add(nextSegment);
-    }
-  }
-
-  let options = [...nextLevelFolders]
-    .sort()
-    .map((folder) => `${bucket}/${parentPrefix}${folder}/`);
-
-  if (needle) {
-    options = options.filter((option) => {
-      const pathAfterBucket = option.slice(bucket.length + 1);
-      const relativeToParent = parentPrefix ? pathAfterBucket.slice(parentPrefix.length) : pathAfterBucket;
-      const nextSegment = relativeToParent.split("/").filter(Boolean)[0] ?? "";
-      return nextSegment.toLowerCase().startsWith(needle);
-    });
-  }
-
-  return options.slice(0, limit);
-}
-
-export type S3BrowseListItem =
-  | { type: "bucket"; name: string; pathInput: string; label: string }
-  | { type: "folder"; bucket: string; key: string; pathInput: string; label: string };
-
-export function buildBrowseListItems(
+export function listS3PathOptions(
   context: S3PathSuggestionContext,
   bucketNames: string[],
   objects: Array<{ key: string; kind: "folder" | "file" }>
-): S3BrowseListItem[] {
+): S3PathOption[] {
   if (context.mode === "bucket") {
     return bucketNames
       .filter((name) => !context.needle || name.toLowerCase().startsWith(context.needle))
@@ -157,7 +116,7 @@ export function buildBrowseListItems(
   }
 
   const seen = new Set<string>();
-  const items: S3BrowseListItem[] = [];
+  const items: S3PathOption[] = [];
 
   for (const object of objects) {
     if (object.kind !== "folder") continue;
@@ -180,4 +139,8 @@ export function buildBrowseListItems(
   }
 
   return items.sort((left, right) => left.label.localeCompare(right.label));
+}
+
+export function listS3PathSuggestions(options: S3PathOption[], limit = S3_PATH_SUGGESTION_LIMIT) {
+  return options.slice(0, limit).map((option) => option.pathInput);
 }
