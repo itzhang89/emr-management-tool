@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeSql, containsDdl, validateSqlForRun } from "./sqlLint";
+import { analyzeSql, containsDdl, validateSqlForRun, analyzeDdlSyntax } from "./sqlLint";
 
 describe("sqlLint", () => {
   it("flags empty sql as an error", () => {
@@ -8,11 +8,19 @@ describe("sqlLint", () => {
     expect(result.messages[0]).toMatch(/empty/i);
   });
 
-  it("blocks ddl statements from running", () => {
+  it("allows valid ddl statements", () => {
     expect(containsDdl("DROP TABLE IF EXISTS orders")).toBe(true);
-    const result = validateSqlForRun("CREATE TABLE demo (id string)");
-    expect(result.ok).toBe(false);
-    expect(result.messages[0]).toMatch(/DDL/i);
+    expect(validateSqlForRun("DROP TABLE IF EXISTS orders").ok).toBe(true);
+    expect(validateSqlForRun("CREATE TABLE demo (id string)").ok).toBe(true);
+    expect(validateSqlForRun("ALTER TABLE demo ADD COLUMNS (tier string)").ok).toBe(true);
+    expect(validateSqlForRun("MSCK REPAIR TABLE demo").ok).toBe(true);
+  });
+
+  it("blocks ddl statements with invalid syntax", () => {
+    expect(validateSqlForRun("DROP TABLE").ok).toBe(false);
+    expect(validateSqlForRun("CREATE TABLE").ok).toBe(false);
+    expect(validateSqlForRun("ALTER TABLE").ok).toBe(false);
+    expect(analyzeDdlSyntax("DROP TABLE")[0]?.message).toMatch(/DROP TABLE/i);
   });
 
   it("allows select statements", () => {
