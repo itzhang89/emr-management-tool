@@ -1,29 +1,33 @@
-import { FileText, Play, RefreshCw, Search, Skull } from "lucide-react";
+import { FileText, Play, Search, Skull } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { JobAutoRefreshToggle } from "@/components/emr/JobAutoRefreshToggle";
 import { JobDetailAction } from "@/components/emr/JobDetailAction";
-import { useCancelJobRun, useJobRuns, useStartJobRun, useSubmissionHistory, useVirtualClusters } from "@/hooks/useEmr";
-import { cn } from "@/lib/utils";
+import {
+  useCancelJobRun,
+  useJobRuns,
+  useStartJobRun,
+  useSubmissionHistory,
+  useVirtualClusters,
+  type JobRunsQuery
+} from "@/hooks/useEmr";
+import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
+import { isLikelyEmrJobRunId } from "@/services/emrJobId";
 import { emrService } from "@/services/emrService";
 import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
+import { JOB_HISTORY_PAGE_SIZE, SUBMISSION_HISTORY_LIMIT, JOB_HISTORY_REFRESH_INTERVAL_SECONDS } from "@/services/jobHistoryConstants";
 import { formatJobRunDuration } from "@/services/jobRunDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobRunSummary } from "@/types/domain";
-
-const defaultPageSize = 10;
-const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
-const jobHistoryRefreshIntervalMs = 5_000;
-const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 export function JobRunsPanel({
   virtualClusterId,
   keyword,
   onOpenLogs,
-  maxItems,
   title,
   className,
   autoRefresh: autoRefreshProp,
@@ -32,12 +36,12 @@ export function JobRunsPanel({
   showFindInAws = false,
   searchedJobId,
   findInAwsSignal,
-  submittedOnly = false
+  submittedOnly = false,
+  clusterJobsQuery
 }: {
   virtualClusterId?: string;
   keyword?: string;
   onOpenLogs?: () => void;
-  maxItems?: number;
   title?: string;
   className?: string;
   autoRefresh?: boolean;
@@ -47,10 +51,9 @@ export function JobRunsPanel({
   searchedJobId?: string;
   findInAwsSignal?: number;
   submittedOnly?: boolean;
+  clusterJobsQuery?: JobRunsQuery;
 }) {
   const [detailJobId, setDetailJobId] = useState<string>();
-  const [internalAutoRefresh, setInternalAutoRefresh] = useState(() => readAutoRefreshPreference());
-  const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
   const [page, setPage] = useState(1);
   const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
   const [remoteLookupPending, setRemoteLookupPending] = useState(false);
@@ -59,37 +62,53 @@ export function JobRunsPanel({
   const startJob = useStartJobRun();
   const clusters = useVirtualClusters();
 
-  const autoRefresh = autoRefreshProp ?? internalAutoRefresh;
-  const setAutoRefresh = onAutoRefreshChange ?? setInternalAutoRefresh;
+  const panelAutoRefresh = useJobHistoryAutoRefresh({
+    enabled: showAutoRefreshControl,
+    persistPreference: showAutoRefreshControl
+  });
+  const autoRefresh = autoRefreshProp ?? panelAutoRefresh.autoRefresh;
+  const setAutoRefresh = onAutoRefreshChange ?? panelAutoRefresh.setAutoRefresh;
   const submittedKeyword = keyword?.trim() || undefined;
-  const clusterJobs = useJobRuns(virtualClusterId, autoRefresh, submittedKeyword);
-  const submissionJobs = useSubmissionHistory(virtualClusterId, autoRefresh);
-  const jobs = submittedOnly ? submissionJobs : clusterJobs;
+  const useExternalClusterQuery = Boolean(clusterJobsQuery && !submittedOnly);
+  const internalClusterJobs = useJobRuns(
+    virtualClusterId,
+    autoRefresh,
+    submittedKeyword,
+    !submittedOnly && !useExternalClusterQuery
+  );
+  const submissionJobs = useSubmissionHistory(virtualClusterId, autoRefresh, submittedOnly);
+  const jobs = submittedOnly ? submissionJobs : (clusterJobsQuery ?? internalClusterJobs);
+
+  useEffect(() => {
+    if (!showAutoRefreshControl || !autoRefresh) return;
+    panelAutoRefresh.setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
+  }, [autoRefresh, jobs.dataUpdatedAt, panelAutoRefresh.setRefreshCountdown, showAutoRefreshControl]);
+
   const isSyncingJobs = submittedOnly
     ? jobs.isLoading
     : jobs.isLoading || (clusters.isLoading && virtualClusterId === undefined);
 
   const allJobs = useMemo(() => {
     const localJobs = jobs.data ?? [];
-    if (!remoteJob || remoteJob.virtualClusterId !== virtualClusterId) return localJobs;
+    if (submittedOnly || !remoteJob || remoteJob.virtualClusterId !== virtualClusterId) return localJobs;
     if (!jobMatchesKeyword(remoteJob, submittedKeyword)) return localJobs;
     if (localJobs.some((job) => job.id === remoteJob.id)) return localJobs;
     return [remoteJob, ...localJobs];
-  }, [jobs.data, remoteJob, submittedKeyword, virtualClusterId]);
+  }, [jobs.data, remoteJob, submittedKeyword, submittedOnly, virtualClusterId]);
 
-  const filteredJobs = maxItems ? allJobs.slice(0, maxItems) : allJobs;
-  const pageSize = maxItems ?? defaultPageSize;
-  const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
-  const visibleJobs = maxItems ? filteredJobs : filteredJobs.slice((page - 1) * pageSize, page * pageSize);
+  const pageCount = Math.max(1, Math.ceil(allJobs.length / JOB_HISTORY_PAGE_SIZE));
+  const visibleJobs = submittedOnly
+    ? allJobs
+    : allJobs.slice((page - 1) * JOB_HISTORY_PAGE_SIZE, page * JOB_HISTORY_PAGE_SIZE);
   const canFindInAws = Boolean(
-    !submittedOnly && showFindInAws && searchedJobId && filteredJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId)
+    !submittedOnly && showFindInAws && searchedJobId && allJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId)
   );
 
   const findJobInAws = async () => {
-    if (!searchedJobId) return;
-    if (filteredJobs.length > 0) return;
-    if (!virtualClusterId) {
-      toast.error("Select a virtual cluster before looking up a job in AWS.");
+    if (!searchedJobId || allJobs.length > 0 || !virtualClusterId) {
+      if (!virtualClusterId) {
+        toast.error("Select a virtual cluster before looking up a job in AWS.");
+      }
       return;
     }
 
@@ -112,39 +131,13 @@ export function JobRunsPanel({
   };
 
   useEffect(() => {
-    if (!findInAwsSignal) return;
-    if (!canFindInAws) return;
+    if (!findInAwsSignal || !canFindInAws) return;
     void findJobInAws();
   }, [findInAwsSignal, canFindInAws, searchedJobId, virtualClusterId]);
 
   useEffect(() => {
-    if (onAutoRefreshChange) return;
-    writeAutoRefreshPreference(autoRefresh);
-  }, [autoRefresh, onAutoRefreshChange]);
-
-  useEffect(() => {
     setPage(1);
-  }, [keyword, virtualClusterId, maxItems]);
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-      return;
-    }
-
-    setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-    const timer = window.setInterval(() => {
-      setRefreshCountdown((current) => (current <= 1 ? jobHistoryRefreshIntervalSeconds : current - 1));
-    }, 1_000);
-
-    return () => window.clearInterval(timer);
-  }, [autoRefresh]);
-
-  useEffect(() => {
-    if (autoRefresh) {
-      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-    }
-  }, [autoRefresh, jobs.dataUpdatedAt]);
+  }, [keyword, virtualClusterId, submittedOnly]);
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-2", className)}>
@@ -153,37 +146,28 @@ export function JobRunsPanel({
           {title ? (
             <div>
               <h2 className="text-sm font-semibold">{title}</h2>
-              {maxItems ? (
+              {submittedOnly ? (
                 <p className="text-xs text-muted-foreground">
-                  Latest {maxItems} jobs submitted from this app for the selected virtual cluster.
+                  Latest {SUBMISSION_HISTORY_LIMIT} jobs submitted from this app for the selected virtual cluster.
                 </p>
               ) : null}
             </div>
           ) : (
-            <span className="text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
+            <span className="text-sm text-muted-foreground">{allJobs.length} jobs</span>
           )}
           {showAutoRefreshControl ? (
-            <div className="flex h-9 shrink-0 items-center gap-2 rounded-md border px-2">
-              <Switch
-                id={maxItems ? "submit-job-auto-refresh" : "job-history-auto-refresh-inline"}
-                checked={autoRefresh}
-                onCheckedChange={setAutoRefresh}
-                aria-label="Auto refresh job history"
-              />
-              <label
-                htmlFor={maxItems ? "submit-job-auto-refresh" : "job-history-auto-refresh-inline"}
-                className="flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
-              >
-                <RefreshCw className={cn("size-3.5", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
-                Auto refresh
-                {autoRefresh ? <span className="tabular-nums">{refreshCountdown}s</span> : null}
-              </label>
-            </div>
+            <JobAutoRefreshToggle
+              id="submit-job-auto-refresh"
+              autoRefresh={autoRefresh}
+              onAutoRefreshChange={setAutoRefresh}
+              isFetching={jobs.isFetching}
+              refreshCountdown={panelAutoRefresh.refreshCountdown}
+            />
           ) : null}
         </div>
       ) : null}
 
-      {jobs.isLoading && filteredJobs.length === 0 ? (
+      {jobs.isLoading && allJobs.length === 0 ? (
         <p className="shrink-0 text-sm text-muted-foreground">
           {submittedOnly ? "Loading recent submissions..." : "Loading job history..."}
         </p>
@@ -270,7 +254,7 @@ export function JobRunsPanel({
                   </TableCell>
                 </TableRow>
               ))}
-              {filteredJobs.length === 0 ? (
+              {allJobs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
                     <div className="flex flex-col items-center gap-3">
@@ -304,7 +288,7 @@ export function JobRunsPanel({
             </TableBody>
           </Table>
         </div>
-        {!maxItems ? (
+        {!submittedOnly ? (
           <div className="flex shrink-0 items-center justify-between border-t px-4 py-3">
             <p className="text-sm text-muted-foreground">
               Page {page} of {pageCount}
@@ -327,26 +311,6 @@ export function JobRunsPanel({
       </div>
     </div>
   );
-}
-
-export function readAutoRefreshPreference() {
-  if (typeof window === "undefined") return true;
-  try {
-    const stored = window.localStorage.getItem(autoRefreshStorageKey);
-    if (stored === null) return true;
-    return stored === "true";
-  } catch {
-    return true;
-  }
-}
-
-export function writeAutoRefreshPreference(enabled: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(autoRefreshStorageKey, String(enabled));
-  } catch {
-    // Local storage can be unavailable in hardened browser contexts.
-  }
 }
 
 function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: () => void }) {
@@ -381,11 +345,6 @@ function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterI
     return `Job ${jobId} was not found in AWS EMR for virtual cluster ${virtualClusterId}. Check the Job ID and selected Virtual Cluster.`;
   }
   return errorMessage(error);
-}
-
-function isLikelyEmrJobRunId(value: string) {
-  const trimmed = value.trim();
-  return /^job-[A-Za-z0-9-]+$/.test(trimmed) || /^[a-z0-9]{16,64}$/.test(trimmed);
 }
 
 function jobMatchesKeyword(job: JobRunSummary, keyword?: string) {

@@ -40,7 +40,6 @@ import {
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
 
-const RECENT_JOB_LIMIT = 20;
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
 
@@ -326,7 +325,6 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
 
         <JobRunsPanel
           virtualClusterId={virtualClusterId}
-          maxItems={RECENT_JOB_LIMIT}
           title="Recent Submissions"
           showAutoRefreshControl
           submittedOnly

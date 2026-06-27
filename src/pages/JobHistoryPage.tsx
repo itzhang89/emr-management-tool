@@ -1,24 +1,30 @@
-import { RefreshCw, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { JobRunsPanel, readAutoRefreshPreference, writeAutoRefreshPreference } from "@/components/emr/JobRunsPanel";
+import { JobAutoRefreshToggle } from "@/components/emr/JobAutoRefreshToggle";
+import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useJobRuns } from "@/hooks/useEmr";
-import { cn } from "@/lib/utils";
-
-const jobHistoryRefreshIntervalSeconds = 5;
+import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
+import { isLikelyEmrJobRunId } from "@/services/emrJobId";
+import { JOB_HISTORY_REFRESH_INTERVAL_SECONDS } from "@/services/jobHistoryConstants";
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
-  const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
-  const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [findInAwsSignal, setFindInAwsSignal] = useState(0);
   const submittedKeyword = submittedSearch.trim() || undefined;
+  const { autoRefresh, setAutoRefresh, refreshCountdown, setRefreshCountdown } = useJobHistoryAutoRefresh({
+    persistPreference: true
+  });
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
+  }, [autoRefresh, jobs.dataUpdatedAt, setRefreshCountdown]);
 
   const submitLocalSearch = () => {
     const trimmedSearch = searchInput.trim();
@@ -33,30 +39,6 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
     }
     setSubmittedSearch(trimmedSearch);
   };
-
-  useEffect(() => {
-    writeAutoRefreshPreference(autoRefresh);
-  }, [autoRefresh]);
-
-  useEffect(() => {
-    if (!autoRefresh) {
-      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-      return;
-    }
-
-    setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-    const timer = window.setInterval(() => {
-      setRefreshCountdown((current) => (current <= 1 ? jobHistoryRefreshIntervalSeconds : current - 1));
-    }, 1_000);
-
-    return () => window.clearInterval(timer);
-  }, [autoRefresh]);
-
-  useEffect(() => {
-    if (autoRefresh) {
-      setRefreshCountdown(jobHistoryRefreshIntervalSeconds);
-    }
-  }, [autoRefresh, jobs.dataUpdatedAt]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -79,22 +61,13 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 }}
               />
             </div>
-            <div className="flex h-9 shrink-0 items-center gap-2 rounded-md border px-2">
-              <Switch
-                id="job-history-auto-refresh"
-                checked={autoRefresh}
-                onCheckedChange={setAutoRefresh}
-                aria-label="Auto refresh job history"
-              />
-              <label
-                htmlFor="job-history-auto-refresh"
-                className="flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"
-              >
-                <RefreshCw className={cn("size-3.5", autoRefresh && jobs.isFetching ? "animate-spin" : undefined)} />
-                Auto refresh
-                {autoRefresh ? <span className="tabular-nums">{refreshCountdown}s</span> : null}
-              </label>
-            </div>
+            <JobAutoRefreshToggle
+              id="job-history-auto-refresh"
+              autoRefresh={autoRefresh}
+              onAutoRefreshChange={setAutoRefresh}
+              isFetching={jobs.isFetching}
+              refreshCountdown={refreshCountdown}
+            />
             <VirtualClusterSelect />
             <span className="shrink-0 text-sm text-muted-foreground">{(jobs.data ?? []).length} jobs</span>
           </div>
@@ -105,17 +78,12 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
         virtualClusterId={effectiveVirtualClusterId}
         keyword={submittedKeyword}
         autoRefresh={autoRefresh}
-        onAutoRefreshChange={setAutoRefresh}
         onOpenLogs={onOpenLogs}
         showFindInAws
         searchedJobId={submittedSearch.trim()}
         findInAwsSignal={findInAwsSignal}
+        clusterJobsQuery={jobs}
       />
     </div>
   );
-}
-
-function isLikelyEmrJobRunId(value: string) {
-  const trimmed = value.trim();
-  return /^job-[A-Za-z0-9-]+$/.test(trimmed) || /^[a-z0-9]{16,64}$/.test(trimmed);
 }

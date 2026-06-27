@@ -1,0 +1,8 @@
+/** Keep in sync with repository::SUBMISSION_HISTORY_LIMIT in src-tauri. */
+export const SUBMISSION_HISTORY_LIMIT = 20;
+
+export const JOB_HISTORY_PAGE_SIZE = 10;
+
+export const JOB_HISTORY_REFRESH_INTERVAL_MS = 5_000;
+
+export const JOB_HISTORY_REFRESH_INTERVAL_SECONDS = JOB_HISTORY_REFRESH_INTERVAL_MS / 1_000;
