@@ -166,6 +166,61 @@ pub async fn list_job_runs(
 }
 
 #[tauri::command]
+pub async fn list_submission_history(
+    app: AppHandle,
+    _request: JobRunRequest,
+) -> AppResult<Vec<JobRunSummary>> {
+    let request = _request;
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let pool = repository::pool().await?;
+    let virtual_cluster_id = normalized_virtual_cluster_id(request.virtual_cluster_id);
+    let mut jobs = repository::list_submission_history(
+        &pool,
+        Some(&runtime.account.id),
+        virtual_cluster_id.as_deref(),
+        repository::SUBMISSION_HISTORY_LIMIT,
+    )
+    .await?;
+
+    if virtual_cluster_id.is_some() {
+        let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
+        for job in jobs.iter_mut() {
+            if !is_active_job_state(&job.state) {
+                continue;
+            }
+            let response = client
+                .describe_job_run()
+                .id(&job.id)
+                .virtual_cluster_id(job.virtual_cluster_id.as_str())
+                .send()
+                .await;
+            let Ok(response) = response else {
+                continue;
+            };
+            let Some(job_run) = response.job_run() else {
+                continue;
+            };
+            let mut refreshed = map_job_run(
+                job_run,
+                Some(runtime.account.id.clone()),
+                Some(runtime.account.region.clone()),
+            );
+            refreshed.source_request = job.source_request.clone();
+            repository::upsert_job_history(&pool, &refreshed).await?;
+            *job = refreshed;
+        }
+    }
+
+    Ok(jobs)
+}
+
+#[tauri::command]
 pub async fn describe_job_run(app: AppHandle, request: JobRunRequest) -> AppResult<JobRunSummary> {
     let account_id = request.account_id.clone();
     let id = request
@@ -703,6 +758,10 @@ fn map_job_driver(
     }
 
     None
+}
+
+fn is_active_job_state(state: &str) -> bool {
+    matches!(state, "PENDING" | "SUBMITTED" | "RUNNING")
 }
 
 fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> {

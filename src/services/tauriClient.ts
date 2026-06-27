@@ -63,6 +63,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<ListVirtualClustersResponse>("list_virtual_clusters", request),
     listJobRuns: (request: { accountId?: string; virtualClusterId?: string; keyword?: string }) =>
       call<JobRunSummary[]>("list_job_runs", request),
+    listSubmissionHistory: (request: { accountId?: string; virtualClusterId?: string }) =>
+      call<JobRunSummary[]>("list_submission_history", request),
     describeJobRun: (request: { accountId?: string; id: string; virtualClusterId: string }) =>
       call<JobRunSummary>("describe_job_run", request),
     startJobRun: (request: StartJobRunRequest) => call<JobRunSummary>("start_job_run", request),

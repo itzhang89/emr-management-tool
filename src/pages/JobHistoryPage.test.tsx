@@ -35,6 +35,7 @@ vi.mock("@/services/emrService", () => ({
 
 vi.mock("@/hooks/useEmr", () => ({
   useJobRuns: (...args: unknown[]) => useJobRuns(...args),
+  useSubmissionHistory: () => ({ data: [], isLoading: false, error: null, isFetching: false }),
   useVirtualClusters: (...args: unknown[]) => useVirtualClusters(...args),
   useDescribeJobRun: (id?: string, virtualClusterId?: string) => {
     describeJob(id, virtualClusterId);

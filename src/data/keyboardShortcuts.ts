@@ -11,10 +11,12 @@ export const SHORTCUT_IDS = {
   S3_LIST_ENTER: "s3-list-enter",
   S3_FOCUS_EDITOR: "s3-focus-editor",
   S3_FOCUS_LIST: "s3-focus-list",
-  S3_GO_UP: "s3-go-up"
+  S3_GO_UP: "s3-go-up",
+  SUBMIT_JOB: "submit-job",
+  SUBMIT_PREVIEW_JSON: "submit-preview-json"
 } as const;
 
-export type ShortcutCategoryId = "global" | "glue" | "s3";
+export type ShortcutCategoryId = "global" | "glue" | "s3" | "submit";
 
 export interface ShortcutCategory {
   id: ShortcutCategoryId;
@@ -33,7 +35,8 @@ export interface KeyboardShortcutEntry {
 export const shortcutCategories: ShortcutCategory[] = [
   { id: "global", label: "Global", description: "Available from any page" },
   { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL" },
-  { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" }
+  { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
+  { id: "submit", label: "Submit Job", description: "Template-driven job submission" }
 ];
 
 export const keyboardShortcuts: KeyboardShortcutEntry[] = [
@@ -113,6 +116,20 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Go up",
     description: "Navigate to the parent prefix in the current bucket",
     keys: ["Esc"]
+  },
+  {
+    id: SHORTCUT_IDS.SUBMIT_JOB,
+    category: "submit",
+    label: "Submit job",
+    description: "Submit the current job configuration to EMR",
+    keys: [formatModShortcut("Enter")]
+  },
+  {
+    id: SHORTCUT_IDS.SUBMIT_PREVIEW_JSON,
+    category: "submit",
+    label: "Preview JSON",
+    description: "Open the resolved submit payload preview",
+    keys: [formatModShortcut("P", { shift: true })]
   }
 ];
 

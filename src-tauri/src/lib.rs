@@ -44,6 +44,7 @@ pub fn run() {
             commands::credentials::import_aws_cli_profile,
             commands::emr::list_virtual_clusters,
             commands::emr::list_job_runs,
+            commands::emr::list_submission_history,
             commands::emr::describe_job_run,
             commands::emr::start_job_run,
             commands::emr::cancel_job_run,

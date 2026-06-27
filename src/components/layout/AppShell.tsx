@@ -88,7 +88,7 @@ export function AppShell() {
       case "dashboard":
         return <DashboardPage />;
       case "submit":
-        return <SubmitJobPage />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} />;
       case "history":
         return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} />;
       case "logs":
@@ -104,7 +104,7 @@ export function AppShell() {
       case "settings":
         return <SettingsPage />;
       default:
-        return <SubmitJobPage />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} />;
     }
   }, [activePage, openLogsPage, openS3Page]);
 

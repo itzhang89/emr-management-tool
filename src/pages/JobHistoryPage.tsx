@@ -1,100 +1,34 @@
-import { Copy, Download, FileText, Play, RefreshCw, Search, Skull, ZoomIn } from "lucide-react";
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { RefreshCw, Search } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { JobRunsPanel, readAutoRefreshPreference, writeAutoRefreshPreference } from "@/components/emr/JobRunsPanel";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { useCancelJobRun, useDescribeJobRun, useJobRuns, useStartJobRun, useVirtualClusters } from "@/hooks/useEmr";
+import { useJobRuns } from "@/hooks/useEmr";
 import { cn } from "@/lib/utils";
-import { emrService } from "@/services/emrService";
-import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
-import { saveTextFile } from "@/services/fileDownload";
-import { useSessionStore } from "@/stores/sessionStore";
-import type { JobRunDescribeDetails, JobRunSummary } from "@/types/domain";
 
-const pageSize = 10;
-const autoRefreshStorageKey = "emr-eks:job-history-auto-refresh";
-const jobHistoryRefreshIntervalMs = 5_000;
-const jobHistoryRefreshIntervalSeconds = jobHistoryRefreshIntervalMs / 1_000;
-const jobDetailPopoverDefaultWidth = 520;
-const jobDetailPopoverMinWidth = 400;
-const jobDetailPopoverMaxWidth = 900;
+const jobHistoryRefreshIntervalSeconds = 5;
 
 export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
-  const [detailJobId, setDetailJobId] = useState<string>();
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const [autoRefresh, setAutoRefresh] = useState(() => readAutoRefreshPreference());
   const [refreshCountdown, setRefreshCountdown] = useState(jobHistoryRefreshIntervalSeconds);
-  const cancelJob = useCancelJobRun();
-  const startJob = useStartJobRun();
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
-  const [remoteLookupPending, setRemoteLookupPending] = useState(false);
-  const [remoteLookupError, setRemoteLookupError] = useState<string>();
+  const [findInAwsSignal, setFindInAwsSignal] = useState(0);
   const submittedKeyword = submittedSearch.trim() || undefined;
-  const clusters = useVirtualClusters();
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
-  const isSyncingJobs =
-    jobs.isLoading || (clusters.isLoading && effectiveVirtualClusterId === undefined);
-  const allJobs = useMemo(() => {
-    const localJobs = jobs.data ?? [];
-    if (!remoteJob || remoteJob.virtualClusterId !== effectiveVirtualClusterId) return localJobs;
-    if (!jobMatchesKeyword(remoteJob, submittedKeyword)) return localJobs;
-    if (localJobs.some((job) => job.id === remoteJob.id)) return localJobs;
-    return [remoteJob, ...localJobs];
-  }, [effectiveVirtualClusterId, jobs.data, remoteJob, submittedKeyword]);
-  const filteredJobs = allJobs;
-  const pageCount = Math.max(1, Math.ceil(filteredJobs.length / pageSize));
-  const visibleJobs = filteredJobs.slice((page - 1) * pageSize, page * pageSize);
-  const searchedJobId = submittedSearch.trim();
-  const exactLocalMatch = searchedJobId ? allJobs.find((job) => job.id === searchedJobId) : undefined;
-  const canFindInAws = Boolean(searchedJobId && filteredJobs.length === 0 && isLikelyEmrJobRunId(searchedJobId));
-
-  const findJobInAws = async () => {
-    if (!searchedJobId) return;
-    if (exactLocalMatch) {
-      setDetailJobId(exactLocalMatch.id);
-      return;
-    }
-    if (filteredJobs.length > 0) return;
-    if (!effectiveVirtualClusterId) {
-      toast.error("Select a virtual cluster before looking up a job in AWS.");
-      return;
-    }
-
-    setRemoteLookupPending(true);
-    setRemoteLookupError(undefined);
-    try {
-      const job = await emrService.describeJobRun(searchedJobId, effectiveVirtualClusterId);
-      setRemoteJob(job);
-      setSearchInput(job.id);
-      setSubmittedSearch(job.id);
-      setDetailJobId(job.id);
-      setPage(1);
-      void jobs.refetch?.();
-      toast.success(`Found ${job.name}`);
-    } catch (error) {
-      const message = remoteLookupErrorMessage(error, searchedJobId, effectiveVirtualClusterId);
-      setRemoteLookupError(message);
-      toast.error(message);
-    } finally {
-      setRemoteLookupPending(false);
-    }
-  };
 
   const submitLocalSearch = () => {
     const trimmedSearch = searchInput.trim();
-    setRemoteLookupError(undefined);
-    setPage(1);
-    if (trimmedSearch === submittedSearch.trim() && canFindInAws) {
-      void findJobInAws();
+    if (
+      trimmedSearch === submittedSearch.trim() &&
+      trimmedSearch &&
+      isLikelyEmrJobRunId(trimmedSearch) &&
+      (jobs.data ?? []).length === 0
+    ) {
+      setFindInAwsSignal((value) => value + 1);
       return;
     }
     setSubmittedSearch(trimmedSearch);
@@ -136,10 +70,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
                 className="h-9 pl-9"
                 placeholder="Search jobs by name, id, state, or keyword"
                 value={searchInput}
-                onChange={(event) => {
-                  setSearchInput(event.target.value);
-                  setRemoteLookupError(undefined);
-                }}
+                onChange={(event) => setSearchInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -165,443 +96,26 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               </label>
             </div>
             <VirtualClusterSelect />
-            <span className="shrink-0 text-sm text-muted-foreground">{filteredJobs.length} jobs</span>
+            <span className="shrink-0 text-sm text-muted-foreground">{(jobs.data ?? []).length} jobs</span>
           </div>
         }
       />
 
-      {jobs.isLoading && filteredJobs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Loading job history...</p>
-      ) : null}
-      {jobs.error ? (
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {formatJobHistoryError(jobs.error)}
-        </p>
-      ) : null}
-
-      <div className="rounded-md border">
-        <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Job Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Created Time</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="w-[360px] min-w-[360px] text-left">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleJobs.map((job) => (
-                <TableRow key={job.id}>
-                  <TableCell className="font-medium">{job.name}</TableCell>
-                  <TableCell>
-                    <Badge variant={job.state === "FAILED" ? "destructive" : job.state === "RUNNING" ? "default" : "secondary"}>
-                      {job.state}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
-                  <TableCell>{formatDuration(job)}</TableCell>
-                  <TableCell className="w-[360px] min-w-[360px]">
-                    <div className="flex justify-start gap-2">
-                      <JobDetailAction
-                        job={job}
-                        open={detailJobId === job.id}
-                        onOpenChange={(open) => setDetailJobId(open ? job.id : undefined)}
-                      />
-                      <JobLogActions job={job} onOpenLogs={onOpenLogs} />
-                      {job.state === "RUNNING" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={cancelJob.isPending}
-                        onClick={() =>
-                          cancelJob.mutate(
-                            { id: job.id, virtualClusterId: job.virtualClusterId },
-                            {
-                              onSuccess: () => toast.success("Kill requested."),
-                              onError: (error) => toast.error(errorMessage(error))
-                            }
-                          )
-                        }
-                      >
-                        <Skull data-icon="inline-start" />
-                        Kill
-                      </Button>
-                      ) : null}
-                      {job.state === "FAILED" ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={startJob.isPending}
-                        onClick={() => {
-                          if (!job.sourceRequest) {
-                            toast.error("This failed job has no locally saved submit configuration to rerun.");
-                            return;
-                          }
-                          startJob.mutate(job.sourceRequest, {
-                            onSuccess: () => toast.success("Rerun submitted."),
-                            onError: (error) => toast.error(errorMessage(error))
-                          });
-                        }}
-                      >
-                        <Play data-icon="inline-start" />
-                        Rerun
-                      </Button>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {filteredJobs.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-12 text-center text-muted-foreground">
-                    <div className="flex flex-col items-center gap-3">
-                      <span>{emptyJobsMessage({
-                        submittedKeyword,
-                        effectiveVirtualClusterId,
-                        isSyncingJobs,
-                        autoRefresh
-                      })}</span>
-                      {canFindInAws ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={remoteLookupPending}
-                          onClick={() => void findJobInAws()}
-                        >
-                          <Search data-icon="inline-start" />
-                          {remoteLookupPending ? "Finding..." : "Find in AWS"}
-                        </Button>
-                      ) : null}
-                      {remoteLookupError ? <span className="max-w-md text-sm text-destructive">{remoteLookupError}</span> : null}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        <div className="flex items-center justify-between border-t px-4 py-3">
-          <p className="text-sm text-muted-foreground">
-            Page {page} of {pageCount}
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page === pageCount}
-              onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: () => void }) {
-  const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
-
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={() => {
-        setSelectedJobForLogs(job.id, job.virtualClusterId);
-        onOpenLogs?.();
-      }}
-    >
-      <FileText data-icon="inline-start" />
-      Logs
-    </Button>
-  );
-}
-
-function JobDetailAction({
-  job,
-  open,
-  onOpenChange
-}: {
-  job: JobRunSummary;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" onClick={() => onOpenChange(true)}>
-          <ZoomIn data-icon="inline-start" />
-          Detail
-        </Button>
-      </PopoverTrigger>
-      {open ? <JobDetailPopoverContent job={job} onClose={() => onOpenChange(false)} /> : null}
-    </Popover>
-  );
-}
-
-function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
-  const [width, setWidth] = useState(jobDetailPopoverDefaultWidth);
-  const describedJob = useDescribeJobRun(job.id, job.virtualClusterId);
-  const detail = describedJob.data ?? job;
-  const describeDetails = detail.describeDetails;
-
-  const copyJobId = async () => {
-    await navigator.clipboard?.writeText(job.id);
-    toast.success("Job ID copied.");
-    onClose();
-  };
-
-  const downloadDescription = async () => {
-    try {
-      const savedPath = await saveTextFile(`${detail.id}-description.json`, JSON.stringify(detail, null, 2));
-      if (savedPath) {
-        toast.success(`Saved to ${savedPath}`);
-      }
-    } catch (error) {
-      toast.error(errorMessage(error));
-    }
-  };
-
-  const beginResize = (event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width;
-
-    const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
-      const nextWidth = Math.min(
-        jobDetailPopoverMaxWidth,
-        Math.max(jobDetailPopoverMinWidth, startWidth + (startX - moveEvent.clientX))
-      );
-      setWidth(nextWidth);
-    };
-
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  };
-
-  return (
-    <PopoverContent
-      side="left"
-      align="center"
-      sideOffset={8}
-      collisionPadding={16}
-      aria-label="Job run details"
-      style={{ width }}
-      className="relative flex max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-0"
-    >
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize job details panel"
-        className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none hover:bg-border/80"
-        onMouseDown={beginResize}
+      <JobRunsPanel
+        virtualClusterId={effectiveVirtualClusterId}
+        keyword={submittedKeyword}
+        autoRefresh={autoRefresh}
+        onAutoRefreshChange={setAutoRefresh}
+        onOpenLogs={onOpenLogs}
+        showFindInAws
+        searchedJobId={submittedSearch.trim()}
+        findInAwsSignal={findInAwsSignal}
       />
-      <div className="flex shrink-0 justify-end gap-1 border-b bg-popover px-3 py-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          aria-label="Download JSON"
-          onClick={() => void downloadDescription()}
-        >
-          <Download className="size-4" />
-        </Button>
-        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label="Copy Job ID" onClick={() => void copyJobId()}>
-          <Copy className="size-4" />
-        </Button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
-        {describedJob.error ? (
-          <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
-            {errorMessage(describedJob.error)}
-          </p>
-        ) : null}
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
-          <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
-          <Detail label="Release Label" value={describeDetails?.releaseLabel} />
-          <Detail
-            label="Retry Attempts"
-            value={
-              describeDetails?.retryMaxAttempts !== undefined || describeDetails?.retryCurrentAttemptCount !== undefined
-                ? `${describeDetails?.retryCurrentAttemptCount ?? "-"} / ${describeDetails?.retryMaxAttempts ?? "-"}`
-                : undefined
-            }
-          />
-          <Detail label="State Details" value={describeDetails?.stateDetails} span="full" />
-          <Detail label="Failure Reason" value={describeDetails?.failureReason} span="full" />
-          <Detail label="ARN" value={describeDetails?.arn} span="full" />
-          <Detail label="Execution Role" value={describeDetails?.executionRoleArn} span="full" />
-          <Detail label="Created By" value={describeDetails?.createdBy} />
-          <Detail label="Client Token" value={describeDetails?.clientToken} />
-          <Detail label="Job Driver" value={formatJobDriver(describeDetails)} span="full" multiline />
-          <Detail label="Tags" value={formatJson(describeDetails?.tags)} span="full" multiline />
-          <Detail
-            label="Configuration Overrides"
-            value={formatJson(describeDetails?.configurationOverrides)}
-            span="full"
-            multiline
-          />
-        </div>
-      </div>
-    </PopoverContent>
-  );
-}
-
-function formatDuration(job: JobRunSummary) {
-  const seconds = job.durationSeconds ?? durationFromTimestamps(job);
-  if (!seconds || seconds < 0) return "-";
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes === 0) return `${remainingSeconds}s`;
-  if (remainingSeconds === 0) return `${minutes}m`;
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-function durationFromTimestamps(job: JobRunSummary) {
-  const start = Date.parse(job.startedAt ?? job.createdAt);
-  const end = Date.parse(job.finishedAt ?? "");
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return undefined;
-  return Math.max(0, Math.round((end - start) / 1000));
-}
-
-function Detail({
-  label,
-  value,
-  multiline = false,
-  span = "half"
-}: {
-  label: string;
-  value?: string;
-  multiline?: boolean;
-  span?: "half" | "full";
-}) {
-  if (!value) return null;
-
-  return (
-    <div className={span === "full" ? "col-span-2" : undefined}>
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn(multiline ? "whitespace-pre-wrap break-all font-medium" : "break-all font-medium")}>{value}</p>
     </div>
   );
-}
-
-function formatTimestamp(value?: string) {
-  if (!value) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
-}
-
-function formatJobDriver(details?: JobRunDescribeDetails) {
-  const driver = details?.jobDriver;
-  if (!driver) return undefined;
-
-  if (driver.type === "sparkSubmit") {
-    const lines = [
-      driver.entryPoint ? `Entry Point: ${driver.entryPoint}` : undefined,
-      driver.entryPointArguments?.length ? `Arguments: ${driver.entryPointArguments.join(" ")}` : undefined,
-      driver.sparkSubmitParameters ? `Spark Submit: ${driver.sparkSubmitParameters}` : undefined
-    ].filter(Boolean);
-    return lines.length > 0 ? lines.join("\n") : undefined;
-  }
-
-  const lines = [
-    driver.entryPoint ? `Entry Point: ${driver.entryPoint}` : undefined,
-    driver.sparkSqlParameters ? `Spark SQL: ${driver.sparkSqlParameters}` : undefined
-  ].filter(Boolean);
-  return lines.length > 0 ? lines.join("\n") : undefined;
-}
-
-function formatJson(value?: Record<string, unknown> | Record<string, string> | object) {
-  if (!value || Object.keys(value).length === 0) return undefined;
-  return JSON.stringify(value, null, 2);
-}
-
-function errorMessage(error: unknown) {
-  return formatAppError(error, "Job operation failed.");
-}
-
-function remoteLookupErrorMessage(error: unknown, jobId: string, virtualClusterId: string) {
-  const appError = error as { kind?: string; message?: string; code?: string; service?: string };
-  const rawMessage = appError.message ?? "";
-  if (
-    appError.kind === "aws" &&
-    (/service error/i.test(rawMessage) || /not.?found/i.test(rawMessage) || /resource.*not.*found/i.test(rawMessage))
-  ) {
-    return `Job ${jobId} was not found in AWS EMR for virtual cluster ${virtualClusterId}. Check the Job ID and selected Virtual Cluster.`;
-  }
-  return errorMessage(error);
 }
 
 function isLikelyEmrJobRunId(value: string) {
   const trimmed = value.trim();
   return /^job-[A-Za-z0-9-]+$/.test(trimmed) || /^[a-z0-9]{16,64}$/.test(trimmed);
-}
-
-function jobMatchesKeyword(job: JobRunSummary, keyword?: string) {
-  const normalized = keyword?.trim().toLowerCase();
-  if (!normalized) return true;
-  return [job.name, job.id, job.state, JSON.stringify(job)].some((value) => value.toLowerCase().includes(normalized));
-}
-
-function emptyJobsMessage({
-  submittedKeyword,
-  effectiveVirtualClusterId,
-  isSyncingJobs,
-  autoRefresh
-}: {
-  submittedKeyword?: string;
-  effectiveVirtualClusterId?: string;
-  isSyncingJobs: boolean;
-  autoRefresh: boolean;
-}) {
-  if (submittedKeyword) {
-    return "No jobs match the current filters.";
-  }
-  if (isSyncingJobs) {
-    return autoRefresh
-      ? "Syncing job runs from AWS. Auto refresh is enabled."
-      : "Loading job runs from AWS...";
-  }
-  if (!effectiveVirtualClusterId) {
-    return "Select a virtual cluster to sync job runs from AWS.";
-  }
-  return autoRefresh
-    ? "No job runs found yet. Auto refresh will keep checking AWS."
-    : "No job runs found for the selected virtual cluster.";
-}
-
-function readAutoRefreshPreference() {
-  if (typeof window === "undefined") return true;
-  try {
-    const stored = window.localStorage.getItem(autoRefreshStorageKey);
-    if (stored === null) return true;
-    return stored === "true";
-  } catch {
-    return true;
-  }
-}
-
-function writeAutoRefreshPreference(enabled: boolean) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(autoRefreshStorageKey, String(enabled));
-  } catch {
-    // Local storage can be unavailable in hardened browser contexts.
-  }
 }

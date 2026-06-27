@@ -9,7 +9,7 @@ use sqlx::{Row, SqlitePool};
 use std::fs;
 
 pub const JOB_HISTORY_RETENTION_DAYS: i64 = 7;
-pub const SUBMISSION_HISTORY_LIMIT: i64 = 5;
+pub const SUBMISSION_HISTORY_LIMIT: i64 = 20;
 
 fn job_history_cutoff() -> String {
     (Utc::now() - Duration::days(JOB_HISTORY_RETENTION_DAYS)).to_rfc3339()
@@ -254,6 +254,49 @@ pub async fn list_job_history(
         .collect()
 }
 
+pub async fn list_submission_history(
+    pool: &SqlitePool,
+    account_id: Option<&str>,
+    virtual_cluster_id: Option<&str>,
+    limit: i64,
+) -> AppResult<Vec<JobRunSummary>> {
+    let cutoff = job_history_cutoff();
+    let rows = sqlx::query(
+        "select payload from job_history
+         where (?1 is null or account_id = ?1)
+           and (?2 is null or virtual_cluster_id = ?2)
+           and created_at >= ?3
+           and json_extract(payload, '$.sourceRequest') is not null
+         order by created_at desc
+         limit ?4",
+    )
+    .bind(account_id)
+    .bind(virtual_cluster_id)
+    .bind(cutoff)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    rows.into_iter()
+        .map(|row| from_payload(row.get::<String, _>("payload")))
+        .collect()
+}
+
+pub async fn get_job_history(
+    pool: &SqlitePool,
+    id: &str,
+) -> AppResult<Option<JobRunSummary>> {
+    let row = sqlx::query("select payload from job_history where id = ?1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    row.map(|row| from_payload(row.get::<String, _>("payload")))
+        .transpose()
+}
+
 pub async fn prune_job_history(pool: &SqlitePool, account_id: Option<&str>) -> AppResult<()> {
     let cutoff = job_history_cutoff();
     sqlx::query(
@@ -294,8 +337,14 @@ pub async fn prune_submission_history(
 }
 
 pub async fn upsert_job_history(pool: &SqlitePool, job: &JobRunSummary) -> AppResult<()> {
+    let mut job = job.clone();
+    if job.source_request.is_none() {
+        if let Some(existing) = get_job_history(pool, &job.id).await? {
+            job.source_request = existing.source_request;
+        }
+    }
     let payload =
-        serde_json::to_string(job).map_err(|error| AppError::storage(error.to_string()))?;
+        serde_json::to_string(&job).map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query(
         "insert into job_history (id, account_id, region, virtual_cluster_id, created_at, payload) values (?1, ?2, ?3, ?4, ?5, ?6)
          on conflict(id) do update set account_id = excluded.account_id, region = excluded.region, virtual_cluster_id = excluded.virtual_cluster_id, created_at = excluded.created_at, payload = excluded.payload",
@@ -524,7 +573,7 @@ fn from_payload<T: serde::de::DeserializeOwned>(payload: String) -> AppResult<T>
 
 #[cfg(test)]
 mod tests {
-    use super::{list_job_history, migrate, prune_submission_history, upsert_job_history};
+    use super::{list_job_history, list_submission_history, migrate, prune_submission_history, upsert_job_history};
     use crate::models::{
         JarApplicationConfig, JobDriverRequest, JobRunSummary, SparkResourceConfig,
         SparkSubmitJobDriverRequest, StartJobRunRequest,
@@ -657,8 +706,45 @@ mod tests {
             .map(|job| job.id.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(submitted, vec!["job-6", "job-5", "job-4", "job-3", "job-2"]);
+        assert_eq!(submitted, vec!["job-6", "job-5", "job-4", "job-3", "job-2", "job-1", "job-0"]);
         assert!(remaining.iter().any(|job| job.id == "job-synced"));
+    }
+
+    #[tokio::test]
+    async fn list_submission_history_returns_only_app_submitted_jobs() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+        migrate(&pool).await.expect("migrate schema");
+
+        upsert_job_history(
+            &pool,
+            &submitted_job("job-submitted", &Utc::now().to_rfc3339(), "acct-1", "vc-1"),
+        )
+        .await
+        .expect("insert submitted job");
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-synced",
+                "synced-etl",
+                "RUNNING",
+                "acct-1",
+                "vc-1",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
+        .await
+        .expect("insert synced job");
+
+        let submissions = list_submission_history(&pool, Some("acct-1"), Some("vc-1"), 20)
+            .await
+            .expect("list submissions");
+
+        assert_eq!(submissions.len(), 1);
+        assert_eq!(submissions[0].id, "job-submitted");
     }
 
     fn submitted_job(
