@@ -13,6 +13,7 @@ export interface SqlLintOptions {
 
 const DDL_PATTERN = /\b(CREATE|DROP|ALTER|TRUNCATE)\b|\bMSCK\s+REPAIR\b/i;
 const FROM_TABLE_PATTERN = /\bFROM\s+(?:(["'`])[\s\S]*?\1|[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)/gi;
+const TABLE_IDENT = '(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)*)';
 
 export function stripSqlComments(sql: string): string {
   let result = "";
@@ -78,6 +79,95 @@ function findQuotedStringEnd(value: string, quote: string): number {
 
 export function containsDdl(sql: string): boolean {
   return DDL_PATTERN.test(stripSqlComments(sql));
+}
+
+function firstStatement(sql: string): string {
+  return stripSqlComments(sql).trim().replace(/\s+/g, " ").replace(/;+\s*$/, "").split(";")[0]?.trim() ?? "";
+}
+
+function ddlIssue(sql: string, message: string): SqlLintIssue {
+  return {
+    from: 0,
+    to: sql.length,
+    severity: "error",
+    message
+  };
+}
+
+export function analyzeDdlSyntax(sql: string): SqlLintIssue[] {
+  if (!containsDdl(sql)) return [];
+
+  const statement = firstStatement(sql);
+  if (!statement) return [ddlIssue(sql, "DDL statement is empty.")];
+
+  if (/\bDROP\s+TABLE\b/i.test(statement)) {
+    if (!new RegExp(`^DROP\\s+TABLE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}\\s*$`, "i").test(statement)) {
+      return [ddlIssue(sql, "Invalid DROP TABLE syntax. Expected: DROP TABLE [IF EXISTS] table_name.")];
+    }
+    return [];
+  }
+
+  if (/\bCREATE\s+DATABASE\b/i.test(statement)) {
+    if (!new RegExp(`^CREATE\\s+DATABASE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}`, "i").test(statement)) {
+      return [ddlIssue(sql, "Invalid CREATE DATABASE syntax. Expected: CREATE DATABASE [IF NOT EXISTS] database_name.")];
+    }
+    return [];
+  }
+
+  if (/\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b/i.test(statement)) {
+    const headerMatch = statement.match(
+      new RegExp(`^CREATE\\s+(?:EXTERNAL\\s+)?TABLE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}`, "i")
+    );
+    if (!headerMatch) {
+      return [ddlIssue(sql, "Invalid CREATE TABLE syntax. Expected a table name after CREATE TABLE.")];
+    }
+
+    const remainder = statement.slice(headerMatch[0].length).trim();
+    if (!remainder) {
+      return [ddlIssue(sql, "Incomplete CREATE TABLE statement.")];
+    }
+
+    if (/^AS\b/i.test(remainder)) {
+      if (!/\bSELECT\b/i.test(remainder)) {
+        return [ddlIssue(sql, "CREATE TABLE AS requires a SELECT statement.")];
+      }
+      return [];
+    }
+
+    if (!remainder.startsWith("(")) {
+      return [ddlIssue(sql, "CREATE TABLE requires a column list in parentheses or AS SELECT.")];
+    }
+
+    return [];
+  }
+
+  if (/\bALTER\s+TABLE\b/i.test(statement)) {
+    if (!new RegExp(`^ALTER\\s+TABLE\\s+${TABLE_IDENT}\\s+[A-Za-z_]+`, "i").test(statement)) {
+      return [
+        ddlIssue(
+          sql,
+          "Invalid ALTER TABLE syntax. Expected: ALTER TABLE table_name ADD|DROP|SET|RENAME ..."
+        )
+      ];
+    }
+    return [];
+  }
+
+  if (/\bMSCK\s+REPAIR\s+TABLE\b/i.test(statement)) {
+    if (!new RegExp(`^MSCK\\s+REPAIR\\s+TABLE\\s+${TABLE_IDENT}\\s*$`, "i").test(statement)) {
+      return [ddlIssue(sql, "Invalid MSCK REPAIR TABLE syntax. Expected: MSCK REPAIR TABLE table_name.")];
+    }
+    return [];
+  }
+
+  if (/\bTRUNCATE\b/i.test(statement)) {
+    if (!new RegExp(`^TRUNCATE\\s+(?:TABLE\\s+)?${TABLE_IDENT}\\s*$`, "i").test(statement)) {
+      return [ddlIssue(sql, "Invalid TRUNCATE syntax. Expected: TRUNCATE [TABLE] table_name.")];
+    }
+    return [];
+  }
+
+  return [];
 }
 
 function findUnbalancedPairs(sql: string, open: string, close: string): number | undefined {
@@ -184,15 +274,7 @@ export function analyzeSql(sql: string, options: SqlLintOptions = {}): SqlLintIs
     });
   }
 
-  if (containsDdl(sql)) {
-    issues.push({
-      from: 0,
-      to: sql.length,
-      severity: "error",
-      message:
-        "DDL statements cannot be run from the query editor. Use Table Metadata for supported catalog changes."
-    });
-  }
+  issues.push(...analyzeDdlSyntax(sql));
 
   if (!options.selectedDatabase && hasUnqualifiedTableReference(sql)) {
     issues.push({
