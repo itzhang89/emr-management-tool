@@ -30,13 +30,20 @@ import {
   useAthenaQueryExecution,
   useExportAthenaQueryCsv,
   useStartAthenaQuery,
-  useStopAthenaQuery
+  useStopAthenaQuery,
+  useAthenaWorkgroups
 } from "@/hooks/useAthena";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useGlueTable, useUpdateGlueTable } from "@/hooks/useGlue";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
 import { mergeAthenaPreferences, readAthenaPreferences } from "@/services/athenaPreferencesStorage";
-import { resolveAthenaOutputLocation } from "@/services/athenaOutputPath";
+import {
+  displayAthenaResultsPath,
+  isAthenaManagedResultsWorkgroup,
+  isAthenaOutputPathRequired,
+  resolveAthenaOutputLocation,
+  resolveAthenaQueryOutputLocation
+} from "@/services/athenaOutputPath";
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
 import { buildDropTableSql, buildSelectSql, SQL_DDL_TEMPLATES } from "@/services/glueSqlTemplates";
@@ -88,11 +95,34 @@ export function GlueCatalogPage() {
   const startQuery = useStartAthenaQuery();
   const stopQuery = useStopAthenaQuery();
   const exportCsv = useExportAthenaQueryCsv();
+  const workgroups = useAthenaWorkgroups();
   const execution = useAthenaQueryExecution(queryExecutionId, Boolean(queryExecutionId));
 
   const effectiveOutputLocation = useMemo(
     () => resolveAthenaOutputLocation(outputBasePath, submitUser, appendSubmitUser),
     [appendSubmitUser, outputBasePath, submitUser]
+  );
+
+  const selectedWorkgroup = useMemo(
+    () => workgroups.data?.find((entry) => entry.name === workgroup),
+    [workgroups.data, workgroup]
+  );
+
+  const managedResultsEnabled = isAthenaManagedResultsWorkgroup(selectedWorkgroup);
+
+  const outputPathRequired = useMemo(
+    () => isAthenaOutputPathRequired(selectedWorkgroup, effectiveOutputLocation),
+    [effectiveOutputLocation, selectedWorkgroup]
+  );
+
+  const queryOutputLocation = useMemo(
+    () => resolveAthenaQueryOutputLocation(effectiveOutputLocation),
+    [effectiveOutputLocation]
+  );
+
+  const displayResultsPath = useMemo(
+    () => displayAthenaResultsPath(selectedWorkgroup, effectiveOutputLocation),
+    [effectiveOutputLocation, selectedWorkgroup]
   );
 
   const handleRefreshCatalog = useCallback(() => {
@@ -174,7 +204,13 @@ export function GlueCatalogPage() {
 
   const handleRunQuery = async () => {
     if (!accountId) return;
-    if (!effectiveOutputLocation) {
+    if (selectedWorkgroup?.sparkEnabled) {
+      toast.error(
+        "The selected workgroup is Spark-enabled. Choose an Athena SQL workgroup to run queries here."
+      );
+      return;
+    }
+    if (outputPathRequired) {
       toast.error("Set an Athena results S3 path before running a query.");
       return;
     }
@@ -183,7 +219,7 @@ export function GlueCatalogPage() {
       const started = await startQuery.mutateAsync({
         sql,
         workgroup,
-        outputLocation: effectiveOutputLocation,
+        outputLocation: queryOutputLocation,
         database: selectedDatabase
       });
       setQueryExecutionId(started.queryExecutionId);
@@ -241,7 +277,7 @@ export function GlueCatalogPage() {
       const started = await startQuery.mutateAsync({
         sql: dropSql,
         workgroup,
-        outputLocation: effectiveOutputLocation,
+        outputLocation: queryOutputLocation,
         database: selectedDatabase
       });
       setQueryExecutionId(started.queryExecutionId);
@@ -352,7 +388,9 @@ export function GlueCatalogPage() {
                 appendSubmitUser={appendSubmitUser}
                 onAppendSubmitUserChange={setAppendSubmitUser}
                 submitUser={submitUser}
-                effectiveOutputLocation={effectiveOutputLocation}
+                displayResultsPath={displayResultsPath}
+                managedResultsEnabled={managedResultsEnabled}
+                outputPathRequired={outputPathRequired}
               />
 
               <div className="flex flex-wrap gap-2">

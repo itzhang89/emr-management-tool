@@ -456,13 +456,18 @@ export interface AthenaWorkgroup {
   name: string;
   description?: string;
   state?: string;
+  managedResultsEnabled?: boolean;
+  enforceConfiguration?: boolean;
+  outputLocation?: string;
+  sparkEnabled?: boolean;
+  effectiveEngineVersion?: string;
 }
 
 export interface StartAthenaQueryRequest extends AwsCommandContext {
   sql: string;
   database?: string;
   workgroup: string;
-  outputLocation: string;
+  outputLocation?: string;
   catalog?: string;
 }
 
