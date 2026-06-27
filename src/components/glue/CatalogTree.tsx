@@ -1,11 +1,12 @@
 import { ArrowLeft, Database, PanelLeftClose, RefreshCw, Search, Table2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useGlueDatabases, useGlueTables } from "@/hooks/useGlue";
 
 export function CatalogTree({
+  viewDatabase,
   selectedDatabase,
   selectedTable,
   onFocusDatabase,
@@ -14,6 +15,7 @@ export function CatalogTree({
   onRefresh,
   onCollapse
 }: {
+  viewDatabase?: string;
   selectedDatabase?: string;
   selectedTable?: string;
   onFocusDatabase: (databaseName: string) => void;
@@ -23,17 +25,10 @@ export function CatalogTree({
   onCollapse?: () => void;
 }) {
   const databases = useGlueDatabases();
-  const [viewDatabase, setViewDatabase] = useState<string | undefined>();
   const [filter, setFilter] = useState("");
 
-  const activeDatabase = viewDatabase ?? (selectedTable ? selectedDatabase : undefined);
+  const activeDatabase = viewDatabase;
   const tables = useGlueTables(activeDatabase);
-
-  useEffect(() => {
-    if (selectedTable && selectedDatabase) {
-      setViewDatabase(selectedDatabase);
-    }
-  }, [selectedDatabase, selectedTable]);
 
   const filteredDatabases = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -50,13 +45,11 @@ export function CatalogTree({
   }, [tables.data, filter]);
 
   const enterDatabase = (databaseName: string) => {
-    setViewDatabase(databaseName);
     setFilter("");
     onFocusDatabase(databaseName);
   };
 
   const exitDatabase = () => {
-    setViewDatabase(undefined);
     setFilter("");
     onExitDatabase();
   };

@@ -57,6 +57,13 @@ export function useAthenaAccountPreferences(accountId?: string) {
     [updatePreferences]
   );
 
+  const setLastDatabase = useCallback(
+    (lastDatabase: string) => {
+      updatePreferences({ lastDatabase });
+    },
+    [updatePreferences]
+  );
+
   return {
     ready,
     preferences,
@@ -64,10 +71,12 @@ export function useAthenaAccountPreferences(accountId?: string) {
     appendSubmitUser: preferences.appendSubmitUser ?? true,
     workgroup: preferences.lastWorkgroup ?? "primary",
     catalogCollapsed: preferences.catalogCollapsed ?? false,
+    lastDatabase: preferences.lastDatabase,
     setOutputBasePath,
     setAppendSubmitUser,
     setWorkgroup,
     setCatalogCollapsed,
+    setLastDatabase,
     updatePreferences
   };
 }
