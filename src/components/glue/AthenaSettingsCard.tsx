@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { S3PathPicker } from "@/components/s3/S3PathPicker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAthenaWorkgroups } from "@/hooks/useAthena";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -66,15 +66,16 @@ export function AthenaSettingsCard() {
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="settings-athena-output">Default results S3 path</Label>
-          <Input
+        <div className="space-y-2 md:col-span-2">
+          <S3PathPicker
             id="settings-athena-output"
+            label="Default results S3 path"
             value={outputBasePath}
-            onChange={(event) => setOutputBasePath(event.target.value)}
-            onBlur={() => persist({ outputBasePath })}
+            onChange={(path) => {
+              setOutputBasePath(path);
+              persist({ outputBasePath: path });
+            }}
             placeholder="s3://bucket/athena-results/"
-            className="font-mono text-sm"
           />
         </div>
       </CardContent>
