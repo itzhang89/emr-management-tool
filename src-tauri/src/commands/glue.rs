@@ -2,7 +2,8 @@ use crate::aws::runtime::runtime_for_context;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, GlueColumn, GlueDatabase, GlueGetTableRequest, GlueListDatabasesResponse,
-    GlueListRequest, GlueListTablesResponse, GlueTableDetail, GlueTableSummary, GlueUpdateTableRequest,
+    GlueListRequest, GlueListTablesResponse, GlueTableDetail, GlueTableSummary,
+    GlueUpdateTableRequest,
 };
 use aws_sdk_glue::types::{Column, SerDeInfo, StorageDescriptor, TableInput};
 use std::collections::HashMap;
@@ -216,14 +217,18 @@ fn table_detail_from_glue(table: &aws_sdk_glue::types::Table) -> GlueTableDetail
             .iter()
             .map(column_from_glue)
             .collect(),
-        location: storage.and_then(|descriptor| descriptor.location()).map(str::to_string),
+        location: storage
+            .and_then(|descriptor| descriptor.location())
+            .map(str::to_string),
         input_format: storage
             .and_then(|descriptor| descriptor.input_format())
             .map(str::to_string),
         output_format: storage
             .and_then(|descriptor| descriptor.output_format())
             .map(str::to_string),
-        serde_library: serde.and_then(|info| info.serialization_library()).map(str::to_string),
+        serde_library: serde
+            .and_then(|info| info.serialization_library())
+            .map(str::to_string),
         serde_parameters: serde
             .map(|info| hash_map_from_option(info.parameters()))
             .unwrap_or_default(),

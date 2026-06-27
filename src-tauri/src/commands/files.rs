@@ -17,18 +17,18 @@ pub async fn save_text_file(request: SaveTextFileRequest) -> AppResult<Option<St
         .await
         .map_err(|error| AppError::storage(format!("Failed to save file: {error}")))?;
 
-    Ok(Some(
-        path.path()
-            .to_string_lossy()
-            .into_owned(),
-    ))
+    Ok(Some(path.path().to_string_lossy().into_owned()))
 }
 
 fn sanitize_file_name(value: &str) -> String {
     let sanitized = value
         .chars()
         .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '.' || character == '-' || character == '_' {
+            if character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '-'
+                || character == '_'
+            {
                 character
             } else {
                 '-'
@@ -64,6 +64,9 @@ mod tests {
 
     #[test]
     fn sanitizes_download_file_names() {
-        assert_eq!(sanitize_file_name("job-1/driver stdout.log"), "job-1-driver-stdout.log");
+        assert_eq!(
+            sanitize_file_name("job-1/driver stdout.log"),
+            "job-1-driver-stdout.log"
+        );
     }
 }

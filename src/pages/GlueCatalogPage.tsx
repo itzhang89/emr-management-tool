@@ -54,7 +54,7 @@ import { athenaService } from "@/services/athenaService";
 import { glueService } from "@/services/glueService";
 import { buildDropTableSql, buildSelectSql } from "@/services/glueSqlTemplates";
 import { validateSqlForRun } from "@/services/sqlLint";
-import { formatModShortcut } from "@/lib/keyboardShortcut";
+import { getShortcutPrimaryKey, SHORTCUT_IDS } from "@/data/keyboardShortcuts";
 import {
   addSqlFavorite,
   addSqlHistory,
@@ -72,9 +72,9 @@ import { useQueryClient } from "@tanstack/react-query";
 
 const WORKSPACE_PANE_MIN_WIDTH = 220;
 const WORKSPACE_PANE_DEFAULT_WIDTH = 300;
-const CATALOG_TOGGLE_SHORTCUT = formatModShortcut("\\");
-const RUN_SHORTCUT = formatModShortcut("Enter");
-const RUN_NEW_TAB_SHORTCUT = formatModShortcut("Enter", { shift: true });
+const CATALOG_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_CATALOG_TOGGLE);
+const RUN_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_QUERY);
+const RUN_NEW_TAB_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_NEW_TAB);
 
 type TopTab = "query" | "metadata";
 

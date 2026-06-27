@@ -26,11 +26,10 @@ pub async fn list_s3_buckets(
     )
     .await?;
     let client = s3_client::default_client(&runtime);
-    let response = client
-        .list_buckets()
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
+    let response =
+        client.list_buckets().send().await.map_err(|error| {
+            AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error)
+        })?;
 
     Ok(response
         .buckets()
@@ -359,11 +358,7 @@ pub async fn download_s3_object_to_disk(
         .await
         .map_err(|error| AppError::storage(format!("Failed to save S3 object: {error}")))?;
 
-    Ok(Some(
-        path.path()
-            .to_string_lossy()
-            .into_owned(),
-    ))
+    Ok(Some(path.path().to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -427,10 +422,14 @@ pub async fn rename_s3_object(
         || request.source_key.trim().is_empty()
         || request.destination_key.trim().is_empty()
     {
-        return Err(AppError::validation("Bucket, source key, and destination key are required."));
+        return Err(AppError::validation(
+            "Bucket, source key, and destination key are required.",
+        ));
     }
     if request.source_key == request.destination_key {
-        return Err(AppError::validation("Source and destination keys must differ."));
+        return Err(AppError::validation(
+            "Source and destination keys must differ.",
+        ));
     }
 
     let runtime = runtime_for_context(
