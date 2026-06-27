@@ -110,7 +110,7 @@ export function SettingsPage() {
   const updateTooltip = `${releaseInfo.channelLabel} · ${releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}`;
 
   return (
-    <div className="flex max-w-5xl flex-col gap-6">
+    <div className="flex max-w-5xl flex-col gap-6 overflow-auto">
       <PageHeader
         pageId="settings"
         titleAddon={releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}

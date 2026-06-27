@@ -50,15 +50,24 @@ export function useAthenaAccountPreferences(accountId?: string) {
     [updatePreferences]
   );
 
+  const setCatalogCollapsed = useCallback(
+    (catalogCollapsed: boolean) => {
+      updatePreferences({ catalogCollapsed });
+    },
+    [updatePreferences]
+  );
+
   return {
     ready,
     preferences,
     outputBasePath: preferences.outputBasePath ?? "",
     appendSubmitUser: preferences.appendSubmitUser ?? true,
     workgroup: preferences.lastWorkgroup ?? "primary",
+    catalogCollapsed: preferences.catalogCollapsed ?? false,
     setOutputBasePath,
     setAppendSubmitUser,
     setWorkgroup,
+    setCatalogCollapsed,
     updatePreferences
   };
 }

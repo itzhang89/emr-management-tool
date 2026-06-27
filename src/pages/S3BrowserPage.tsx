@@ -357,7 +357,7 @@ export function S3BrowserPage() {
   };
 
   return (
-    <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-6">
+    <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-6 overflow-auto">
       <PageHeader
         pageId="s3"
         actions={

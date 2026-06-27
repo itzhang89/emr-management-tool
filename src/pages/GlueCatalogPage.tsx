@@ -1,16 +1,18 @@
 import {
   ChevronDown,
   History,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Square,
   Star,
   Trash2
 } from "lucide-react";
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
 import { AthenaQueryOptionsBar } from "@/components/glue/AthenaQueryOptionsBar";
-import { QueryResultsPanel } from "@/components/glue/QueryResultsPanel";
+import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
 import { TableMetadataPanel } from "@/components/glue/TableMetadataPanel";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
@@ -54,6 +56,11 @@ import {
   readSqlHistory,
   removeSqlFavorite
 } from "@/services/sqlQueryStorage";
+import {
+  buildResultTabTitle,
+  createQueryResultTab,
+  type QueryResultTab
+} from "@/services/queryResultTabs";
 import type { AthenaQueryResults, SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -61,6 +68,8 @@ const WORKSPACE_PANE_MIN_WIDTH = 220;
 const WORKSPACE_PANE_DEFAULT_WIDTH = 300;
 
 type TopTab = "query" | "metadata";
+
+const initialResultTab = createQueryResultTab(1);
 
 export function GlueCatalogPage() {
   const queryClient = useQueryClient();
@@ -77,15 +86,24 @@ export function GlueCatalogPage() {
   const outputBasePath = athenaPrefs.outputBasePath;
   const appendSubmitUser = athenaPrefs.appendSubmitUser;
   const workgroup = athenaPrefs.workgroup;
-  const [queryExecutionId, setQueryExecutionId] = useState<string>();
+  const catalogCollapsed = athenaPrefs.catalogCollapsed;
+  const [resultTabs, setResultTabs] = useState<QueryResultTab[]>([initialResultTab]);
+  const [activeResultTabId, setActiveResultTabId] = useState(initialResultTab.id);
   const [metadataEditMode, setMetadataEditMode] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(WORKSPACE_PANE_DEFAULT_WIDTH);
-  const [results, setResults] = useState<AthenaQueryResults>();
-  const [resultsLoading, setResultsLoading] = useState(false);
-  const [resultsError, setResultsError] = useState<unknown>();
   const [history, setHistory] = useState<SqlHistoryEntry[]>([]);
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   const [dropDialogOpen, setDropDialogOpen] = useState(false);
+  const loadedResultsRef = useRef<Set<string>>(new Set());
+
+  const activeResultTab = useMemo(
+    () => resultTabs.find((tab) => tab.id === activeResultTabId) ?? resultTabs[0],
+    [activeResultTabId, resultTabs]
+  );
+
+  const updateResultTab = useCallback((tabId: string, patch: Partial<QueryResultTab>) => {
+    setResultTabs((tabs) => tabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
+  }, []);
 
   const tableDetail = useGlueTable(
     selectedDatabase && selectedTable
@@ -97,7 +115,10 @@ export function GlueCatalogPage() {
   const stopQuery = useStopAthenaQuery();
   const exportCsv = useExportAthenaQueryCsv();
   const workgroups = useAthenaWorkgroups();
-  const execution = useAthenaQueryExecution(queryExecutionId, Boolean(queryExecutionId));
+  const execution = useAthenaQueryExecution(
+    activeResultTab?.queryExecutionId,
+    Boolean(activeResultTab?.queryExecutionId)
+  );
 
   const effectiveOutputLocation = useMemo(
     () => resolveAthenaOutputLocation(outputBasePath, submitUser, appendSubmitUser),
@@ -140,10 +161,9 @@ export function GlueCatalogPage() {
     setFavorites(readSqlFavorites(accountId));
   }, [accountId]);
 
-  const loadResultsPage = useCallback(
-    async (executionId: string, nextToken?: string) => {
-      setResultsLoading(true);
-      setResultsError(undefined);
+  const loadResultsForTab = useCallback(
+    async (tabId: string, executionId: string, nextToken?: string) => {
+      updateResultTab(tabId, { resultsLoading: true, resultsError: undefined });
       try {
         const page = await athenaService.getQueryResults({
           accountId,
@@ -151,23 +171,46 @@ export function GlueCatalogPage() {
           nextToken,
           maxResults: 1000
         });
-        setResults((current) => mergeResultPages(current, page, Boolean(nextToken)));
+        setResultTabs((tabs) =>
+          tabs.map((tab) => {
+            if (tab.id !== tabId) return tab;
+            return {
+              ...tab,
+              results: mergeResultPages(tab.results, page, Boolean(nextToken)),
+              resultsLoading: false
+            };
+          })
+        );
       } catch (error) {
-        setResultsError(error);
-      } finally {
-        setResultsLoading(false);
+        updateResultTab(tabId, { resultsLoading: false, resultsError: error });
       }
     },
-    [accountId]
+    [accountId, updateResultTab]
   );
 
   useEffect(() => {
-    if (execution.data?.state !== "SUCCEEDED" || !queryExecutionId) return;
-    void loadResultsPage(queryExecutionId);
-    if (isCatalogMutatingSql(sql)) {
+    if (!activeResultTabId || !execution.data) return;
+    updateResultTab(activeResultTabId, { execution: execution.data });
+  }, [activeResultTabId, execution.data, updateResultTab]);
+
+  useEffect(() => {
+    if (!activeResultTabId || execution.data?.state !== "SUCCEEDED") return;
+    const executionId = activeResultTab?.queryExecutionId;
+    if (!executionId) return;
+    if (loadedResultsRef.current.has(executionId)) return;
+    loadedResultsRef.current.add(executionId);
+    void loadResultsForTab(activeResultTabId, executionId);
+    if (isCatalogMutatingSql(activeResultTab?.sqlSnapshot ?? "")) {
       handleRefreshCatalog();
     }
-  }, [execution.data?.state, queryExecutionId, loadResultsPage, sql, handleRefreshCatalog]);
+  }, [
+    activeResultTab?.queryExecutionId,
+    activeResultTab?.sqlSnapshot,
+    activeResultTabId,
+    execution.data?.state,
+    loadResultsForTab,
+    handleRefreshCatalog
+  ]);
 
   useEffect(() => {
     setMetadataEditMode(false);
@@ -190,7 +233,7 @@ export function GlueCatalogPage() {
     setSelectedTable(undefined);
   };
 
-  const handleRunQuery = async () => {
+  const executeQueryOnTab = async (tabId: string, sqlToRun: string) => {
     if (!accountId) return;
     if (selectedWorkgroup?.sparkEnabled) {
       toast.error(
@@ -203,38 +246,63 @@ export function GlueCatalogPage() {
       return;
     }
 
+    updateResultTab(tabId, {
+      sqlSnapshot: sqlToRun,
+      title: buildResultTabTitle(sqlToRun, resultTabs.length),
+      results: undefined,
+      resultsError: undefined,
+      resultsLoading: false,
+      queryExecutionId: undefined,
+      execution: undefined
+    });
+
     try {
       const started = await startQuery.mutateAsync({
-        sql,
+        sql: sqlToRun,
         workgroup,
         outputLocation: queryOutputLocation,
         database: selectedDatabase
       });
-      setQueryExecutionId(started.queryExecutionId);
-      setResults(undefined);
-      setResultsError(undefined);
-      setHistory(addSqlHistory(accountId, sql));
+      updateResultTab(tabId, {
+        queryExecutionId: started.queryExecutionId,
+        execution: started
+      });
+      setHistory(addSqlHistory(accountId, sqlToRun));
       toast.success("Athena query started.");
     } catch (error) {
       toast.error(formatAppError(error, "Failed to start Athena query."));
     }
   };
 
+  const handleRunQuery = () => {
+    if (!activeResultTabId) return;
+    void executeQueryOnTab(activeResultTabId, sql);
+  };
+
+  const handleRunQueryInNewTab = () => {
+    const newTab = createQueryResultTab(resultTabs.length + 1);
+    setResultTabs((tabs) => [...tabs, newTab]);
+    setActiveResultTabId(newTab.id);
+    void executeQueryOnTab(newTab.id, sql);
+  };
+
   const handleStopQuery = async () => {
-    if (!queryExecutionId) return;
+    const executionId = activeResultTab?.queryExecutionId;
+    if (!executionId) return;
     try {
-      await stopQuery.mutateAsync({ queryExecutionId });
+      await stopQuery.mutateAsync({ queryExecutionId: executionId });
       toast.success("Athena query cancelled.");
     } catch (error) {
       toast.error(formatAppError(error, "Failed to stop Athena query."));
     }
   };
 
-  const handleExport = async () => {
-    if (!queryExecutionId) return;
+  const handleExport = async (tabId: string) => {
+    const tab = resultTabs.find((entry) => entry.id === tabId);
+    if (!tab?.queryExecutionId) return;
     try {
       const savedPath = await exportCsv.mutateAsync({
-        queryExecutionId,
+        queryExecutionId: tab.queryExecutionId,
         suggestedName: "athena-query-results.csv"
       });
       if (savedPath) {
@@ -243,6 +311,28 @@ export function GlueCatalogPage() {
     } catch (error) {
       toast.error(formatAppError(error, "Failed to export query results."));
     }
+  };
+
+  const closeResultTab = (tabId: string) => {
+    if (resultTabs.length <= 1) {
+      const fresh = createQueryResultTab(1);
+      setResultTabs([fresh]);
+      setActiveResultTabId(fresh.id);
+      return;
+    }
+    const nextTabs = resultTabs.filter((tab) => tab.id !== tabId);
+    setResultTabs(nextTabs);
+    if (activeResultTabId === tabId) {
+      setActiveResultTabId(nextTabs[0]?.id ?? "");
+    }
+  };
+
+  const cycleResultTab = (delta: number) => {
+    if (resultTabs.length <= 1) return;
+    const index = resultTabs.findIndex((tab) => tab.id === activeResultTabId);
+    if (index < 0) return;
+    const nextIndex = (index + delta + resultTabs.length) % resultTabs.length;
+    setActiveResultTabId(resultTabs[nextIndex].id);
   };
 
   const handleSaveMetadata = async (table: NonNullable<typeof tableDetail.data>) => {
@@ -268,7 +358,14 @@ export function GlueCatalogPage() {
         outputLocation: queryOutputLocation,
         database: selectedDatabase
       });
-      setQueryExecutionId(started.queryExecutionId);
+      updateResultTab(activeResultTabId, {
+        queryExecutionId: started.queryExecutionId,
+        sqlSnapshot: dropSql,
+        title: buildResultTabTitle(dropSql),
+        execution: started,
+        results: undefined,
+        resultsError: undefined
+      });
       if (accountId) {
         setHistory(addSqlHistory(accountId, dropSql));
       }
@@ -318,10 +415,42 @@ export function GlueCatalogPage() {
     toast.success("SQL saved to favorites.");
   };
 
-  const running = execution.data?.state === "QUEUED" || execution.data?.state === "RUNNING";
+  const running =
+    activeResultTab?.execution?.state === "QUEUED" || activeResultTab?.execution?.state === "RUNNING";
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          handleRunQueryInNewTab();
+        } else {
+          handleRunQuery();
+        }
+        return;
+      }
+
+      if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        cycleResultTab(1);
+        return;
+      }
+
+      if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        cycleResultTab(-1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   return (
-    <div className="flex max-h-[calc(100dvh-10rem)] min-h-0 flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <PageHeader
         pageId="glue"
         actions={
@@ -334,27 +463,60 @@ export function GlueCatalogPage() {
         }
       />
 
-      <div className="flex min-h-0 flex-1 gap-4">
-        <section className="min-h-0 shrink-0" style={{ width: catalogPaneWidth }}>
-          <CatalogTree
-            selectedDatabase={selectedDatabase}
-            selectedTable={selectedTable}
-            onFocusDatabase={handleFocusDatabase}
-            onExitDatabase={handleExitDatabase}
-            onSelectTable={handleSelectTable}
-            onRefresh={handleRefreshCatalog}
-          />
-        </section>
+      <div className="flex min-h-0 flex-1 gap-2">
+        {catalogCollapsed ? (
+          <div className="flex shrink-0 flex-col items-center">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-8"
+              aria-label="Expand catalog panel"
+              title="Show catalog"
+              onClick={() => athenaPrefs.setCatalogCollapsed(false)}
+            >
+              <PanelLeftOpen className="size-4" />
+            </Button>
+          </div>
+        ) : (
+          <>
+            <section className="flex min-h-0 shrink-0 flex-col gap-2" style={{ width: catalogPaneWidth }}>
+              <div className="flex shrink-0 justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  aria-label="Collapse catalog panel"
+                  title="Hide catalog"
+                  onClick={() => athenaPrefs.setCatalogCollapsed(true)}
+                >
+                  <PanelLeftClose className="size-4" />
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1">
+                <CatalogTree
+                  selectedDatabase={selectedDatabase}
+                  selectedTable={selectedTable}
+                  onFocusDatabase={handleFocusDatabase}
+                  onExitDatabase={handleExitDatabase}
+                  onSelectTable={handleSelectTable}
+                  onRefresh={handleRefreshCatalog}
+                />
+              </div>
+            </section>
 
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-valuenow={catalogPaneWidth}
-          className="group relative w-2 shrink-0 cursor-col-resize touch-none"
-          onMouseDown={beginCatalogPaneResize}
-        >
-          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border group-hover:bg-primary/50" />
-        </div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-valuenow={catalogPaneWidth}
+              className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+              onMouseDown={beginCatalogPaneResize}
+            >
+              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border group-hover:bg-primary/50" />
+            </div>
+          </>
+        )}
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Tabs
@@ -418,7 +580,24 @@ export function GlueCatalogPage() {
                       <Square data-icon="inline-start" />
                       Stop
                     </Button>
-                    <Button type="button" size="sm" disabled={startQuery.isPending || running} onClick={handleRunQuery}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={startQuery.isPending || running}
+                      onClick={handleRunQueryInNewTab}
+                      title="Run in new tab (Ctrl/Cmd+Shift+Enter)"
+                    >
+                      <Play data-icon="inline-start" />
+                      New tab
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={startQuery.isPending || running}
+                      onClick={handleRunQuery}
+                      title="Run (Ctrl/Cmd+Enter)"
+                    >
                       <Play data-icon="inline-start" />
                       Run
                     </Button>
@@ -429,22 +608,29 @@ export function GlueCatalogPage() {
                   value={sql}
                   onChange={(event) => setSql(event.target.value)}
                   rows={8}
-                  className="min-h-[140px] rounded-lg border font-mono text-sm"
+                  className="min-h-[140px] shrink-0 rounded-lg border font-mono text-xs"
                   spellCheck={false}
                 />
 
-              <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-3">
-                <QueryResultsPanel
-                  execution={execution.data}
-                  results={results}
-                  loading={resultsLoading}
-                  error={resultsError}
-                  hasMore={Boolean(results?.nextToken)}
-                  onLoadMore={() => queryExecutionId && void loadResultsPage(queryExecutionId, results?.nextToken)}
-                  onExport={handleExport}
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <QueryResultTabsPanel
+                  tabs={resultTabs}
+                  activeTabId={activeResultTabId}
+                  onSelectTab={setActiveResultTabId}
+                  onCloseTab={closeResultTab}
+                  onLoadMore={(tabId) => {
+                    const tab = resultTabs.find((entry) => entry.id === tabId);
+                    if (tab?.queryExecutionId) {
+                      void loadResultsForTab(tabId, tab.queryExecutionId, tab.results?.nextToken);
+                    }
+                  }}
+                  onExport={(tabId) => void handleExport(tabId)}
                   exporting={exportCsv.isPending}
                 />
               </div>
+              <p className="shrink-0 text-[11px] text-muted-foreground">
+                Shortcuts: Run ⌘/Ctrl+Enter · New tab ⌘/Ctrl+Shift+Enter · Prev/Next result tab ⌘/Ctrl+Alt+←/→
+              </p>
             </TabsContent>
 
             <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-auto rounded-lg border p-3">

@@ -60,28 +60,42 @@ export function CatalogTree({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex items-center gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
+      <div className="flex items-center gap-1.5">
         {activeDatabase ? (
-          <Button type="button" variant="outline" size="icon" aria-label="Back to databases" onClick={exitDatabase}>
-            <ArrowLeft className="size-4" />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-7"
+            aria-label="Back to databases"
+            onClick={exitDatabase}
+          >
+            <ArrowLeft className="size-3.5" />
           </Button>
         ) : null}
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute top-2 left-2 size-3.5 text-muted-foreground" />
           <Input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder={activeDatabase ? "Filter tables" : "Filter databases"}
-            className="pl-8"
+            className="h-8 pl-7 text-xs"
           />
         </div>
-        <Button type="button" variant="outline" size="icon" onClick={onRefresh} aria-label="Refresh catalog">
-          <RefreshCw className={cn("size-4", databases.isFetching && "animate-spin")} />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          onClick={onRefresh}
+          aria-label="Refresh catalog"
+        >
+          <RefreshCw className={cn("size-3.5", databases.isFetching && "animate-spin")} />
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border">
+      <div className="min-h-0 flex-1 overflow-auto rounded-md border text-xs">
         {activeDatabase ? (
           <DatabaseTablesView
             databaseName={activeDatabase}
@@ -116,9 +130,9 @@ function DatabaseListView({
   error: unknown;
   onEnterDatabase: (name: string) => void;
 }) {
-  if (loading) return <p className="p-3 text-sm text-muted-foreground">Loading databases...</p>;
-  if (error) return <p className="p-3 text-sm text-destructive">Failed to load databases.</p>;
-  if (databases.length === 0) return <p className="p-3 text-sm text-muted-foreground">No databases found.</p>;
+  if (loading) return <p className="p-2 text-xs text-muted-foreground">Loading databases...</p>;
+  if (error) return <p className="p-2 text-xs text-destructive">Failed to load databases.</p>;
+  if (databases.length === 0) return <p className="p-2 text-xs text-muted-foreground">No databases found.</p>;
 
   return (
     <ul className="divide-y">
@@ -126,10 +140,10 @@ function DatabaseListView({
         <li key={database.name}>
           <button
             type="button"
-            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+            className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-accent"
             onClick={() => onEnterDatabase(database.name)}
           >
-            <Database className="size-4 shrink-0 text-muted-foreground" />
+            <Database className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate font-medium">{database.name}</span>
           </button>
         </li>
@@ -157,14 +171,14 @@ function DatabaseTablesView({
 }) {
   return (
     <div>
-      <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
-        <Database className="mr-1 inline size-3.5" />
+      <div className="border-b bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground">
+        <Database className="mr-1 inline size-3" />
         {databaseName}
       </div>
-      {loading ? <p className="p-3 text-sm text-muted-foreground">Loading tables...</p> : null}
-      {error ? <p className="p-3 text-sm text-destructive">Failed to load tables.</p> : null}
+      {loading ? <p className="p-2 text-xs text-muted-foreground">Loading tables...</p> : null}
+      {error ? <p className="p-2 text-xs text-destructive">Failed to load tables.</p> : null}
       {!loading && tables.length === 0 ? (
-        <p className="p-3 text-sm text-muted-foreground">No tables in this database.</p>
+        <p className="p-2 text-xs text-muted-foreground">No tables in this database.</p>
       ) : null}
       <ul className="divide-y">
         {tables.map((table) => {
@@ -174,12 +188,12 @@ function DatabaseTablesView({
               <button
                 type="button"
                 className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                  "flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-accent",
                   active && "bg-primary/10 text-primary"
                 )}
                 onClick={() => onSelectTable(databaseName, table.name)}
               >
-                <Table2 className="size-4 shrink-0" />
+                <Table2 className="size-3.5 shrink-0" />
                 <span className="truncate">{table.name}</span>
               </button>
             </li>

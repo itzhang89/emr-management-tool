@@ -128,8 +128,10 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="min-w-0 flex-1 overflow-auto p-6">
-          <Suspense fallback={<PageLoader />}>{activePageContent}</Suspense>
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
+          <Suspense fallback={<PageLoader />}>
+            <div className="flex min-h-0 flex-1 flex-col">{activePageContent}</div>
+          </Suspense>
         </main>
       </div>
       <Dialog open={accountDialogOpen} onOpenChange={setAccountDialogOpen}>
