@@ -1,8 +1,9 @@
 import {
-  ChevronDown,
   History,
+  LayoutTemplate,
   PanelLeftOpen,
   Play,
+  Plus,
   Square,
   Star,
   Trash2
@@ -24,9 +25,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAthenaQueryExecution,
   useExportAthenaQueryCsv,
@@ -48,6 +49,8 @@ import {
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
 import { buildDropTableSql, buildSelectSql, SQL_DDL_TEMPLATES } from "@/services/glueSqlTemplates";
+import { cn } from "@/lib/utils";
+import { formatModShortcut } from "@/lib/keyboardShortcut";
 import {
   addSqlFavorite,
   addSqlHistory,
@@ -65,6 +68,9 @@ import { useQueryClient } from "@tanstack/react-query";
 
 const WORKSPACE_PANE_MIN_WIDTH = 220;
 const WORKSPACE_PANE_DEFAULT_WIDTH = 300;
+const CATALOG_TOGGLE_SHORTCUT = formatModShortcut("\\");
+const RUN_SHORTCUT = formatModShortcut("Enter");
+const RUN_NEW_TAB_SHORTCUT = formatModShortcut("Enter", { shift: true });
 
 type TopTab = "query" | "metadata";
 
@@ -95,7 +101,7 @@ export function GlueCatalogPage() {
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   const [dropDialogOpen, setDropDialogOpen] = useState(false);
   const loadedResultsRef = useRef<Set<string>>(new Set());
-  const restoredCatalogAccountRef = useRef<string | undefined>();
+  const restoredCatalogAccountRef = useRef<string | undefined>(undefined);
 
   const activeResultTab = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultTabId) ?? resultTabs[0],
@@ -432,13 +438,18 @@ export function GlueCatalogPage() {
     document.body.style.userSelect = "none";
   };
 
-  const favoriteCurrentSql = () => {
+  const favoriteFromHistory = (entry: SqlHistoryEntry) => {
     if (!accountId) return;
     const name = window.prompt("Favorite name", "Saved query");
     if (!name) return;
-    setFavorites(addSqlFavorite(accountId, name, sql));
+    setFavorites(addSqlFavorite(accountId, name, entry.sql));
     toast.success("SQL saved to favorites.");
   };
+
+  const favoriteSqlSet = useMemo(
+    () => new Set(favorites.map((entry) => entry.sql.trim())),
+    [favorites]
+  );
 
   const running =
     activeResultTab?.execution?.state === "QUEUED" || activeResultTab?.execution?.state === "RUNNING";
@@ -446,6 +457,13 @@ export function GlueCatalogPage() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
+
+      if (mod && event.key === "\\") {
+        event.preventDefault();
+        athenaPrefs.setCatalogCollapsed(!catalogCollapsed);
+        return;
+      }
+
       if (!mod) return;
 
       if (event.key === "Enter") {
@@ -491,17 +509,21 @@ export function GlueCatalogPage() {
       <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
         {catalogCollapsed ? (
           <div className="flex shrink-0 flex-col items-center">
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="size-8"
-              aria-label="Expand catalog panel"
-              title="Show catalog"
-              onClick={() => athenaPrefs.setCatalogCollapsed(false)}
-            >
-              <PanelLeftOpen className="size-4" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-7"
+                  aria-label="Expand catalog panel"
+                  onClick={() => athenaPrefs.setCatalogCollapsed(false)}
+                >
+                  <PanelLeftOpen className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Show catalog · {CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
+            </Tooltip>
           </div>
         ) : (
           <>
@@ -518,6 +540,7 @@ export function GlueCatalogPage() {
                 onSelectTable={handleSelectTable}
                 onRefresh={handleRefreshCatalog}
                 onCollapse={() => athenaPrefs.setCatalogCollapsed(true)}
+                collapseShortcut={CATALOG_TOGGLE_SHORTCUT}
               />
             </section>
 
@@ -559,65 +582,70 @@ export function GlueCatalogPage() {
                 preferencesReady={athenaPrefs.ready}
               />
 
-              <div className="flex flex-wrap gap-2">
-                  <Select
-                    onValueChange={(value) => {
-                      const template = SQL_DDL_TEMPLATES.find((entry) => entry.label === value);
-                      if (template) setSql(template.sql);
-                    }}
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="SQL templates" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SQL_DDL_TEMPLATES.map((template) => (
-                        <SelectItem key={template.label} value={template.label}>
-                          {template.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <div className="flex shrink-0 items-center gap-1">
+                <SqlTemplatesButton onSelect={setSql} />
+                <HistoryMenu
+                  history={history}
+                  favoriteSqlSet={favoriteSqlSet}
+                  onSelect={loadHistoryEntry}
+                  onFavorite={favoriteFromHistory}
+                />
+                <FavoritesMenu
+                  favorites={favorites}
+                  onSelect={loadFavorite}
+                  onRemove={(favoriteId) => accountId && setFavorites(removeSqlFavorite(accountId, favoriteId))}
+                />
 
-                  <HistoryMenu history={history} onSelect={loadHistoryEntry} />
-                  <FavoritesMenu
-                    favorites={favorites}
-                    onSelect={loadFavorite}
-                    onRemove={(favoriteId) => accountId && setFavorites(removeSqlFavorite(accountId, favoriteId))}
-                  />
-
-                  <Button type="button" variant="outline" size="sm" onClick={favoriteCurrentSql}>
-                    <Star data-icon="inline-start" />
-                    Favorite SQL
-                  </Button>
-
-                  <div className="ml-auto flex gap-2">
-                    <Button type="button" variant="outline" size="sm" disabled={!running} onClick={handleStopQuery}>
-                      <Square data-icon="inline-start" />
-                      Stop
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={startQuery.isPending || running}
-                      onClick={handleRunQueryInNewTab}
-                      title="Run in new tab (Ctrl/Cmd+Shift+Enter)"
-                    >
-                      <Play data-icon="inline-start" />
-                      New tab
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={startQuery.isPending || running}
-                      onClick={handleRunQuery}
-                      title="Run (Ctrl/Cmd+Enter)"
-                    >
-                      <Play data-icon="inline-start" />
-                      Run
-                    </Button>
-                  </div>
+                <div className="ml-auto flex items-center gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-7"
+                        disabled={!running}
+                        aria-label="Stop query"
+                        onClick={handleStopQuery}
+                      >
+                        <Square className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Stop query</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-7"
+                        disabled={startQuery.isPending || running}
+                        aria-label="Run in new tab"
+                        onClick={handleRunQueryInNewTab}
+                      >
+                        <Plus className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Run in new tab · {RUN_NEW_TAB_SHORTCUT}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        className="size-7"
+                        disabled={startQuery.isPending || running}
+                        aria-label="Run query"
+                        onClick={handleRunQuery}
+                      >
+                        <Play className="size-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Run query · {RUN_SHORTCUT}</TooltipContent>
+                  </Tooltip>
                 </div>
+              </div>
 
                 <Textarea
                   value={sql}
@@ -643,9 +671,6 @@ export function GlueCatalogPage() {
                   exporting={exportCsv.isPending}
                 />
               </div>
-              <p className="shrink-0 text-[11px] text-muted-foreground">
-                Shortcuts: Run ⌘/Ctrl+Enter · New tab ⌘/Ctrl+Shift+Enter · Prev/Next result tab ⌘/Ctrl+Alt+←/→
-              </p>
             </TabsContent>
 
             <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-auto rounded-lg border p-3">
@@ -685,39 +710,102 @@ export function GlueCatalogPage() {
   );
 }
 
+function SqlTemplatesButton({ onSelect }: { onSelect: (sql: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="SQL templates">
+              <LayoutTemplate className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>SQL templates</TooltipContent>
+      </Tooltip>
+      <PopoverContent align="start" className="w-56 p-1">
+        <ul>
+          {SQL_DDL_TEMPLATES.map((template) => (
+            <li key={template.label}>
+              <button
+                type="button"
+                className="w-full rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent"
+                onClick={() => {
+                  onSelect(template.sql);
+                  setOpen(false);
+                }}
+              >
+                {template.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function HistoryMenu({
   history,
-  onSelect
+  favoriteSqlSet,
+  onSelect,
+  onFavorite
 }: {
   history: SqlHistoryEntry[];
+  favoriteSqlSet: Set<string>;
   onSelect: (entry: SqlHistoryEntry) => void;
+  onFavorite: (entry: SqlHistoryEntry) => void;
 }) {
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm">
-          <History data-icon="inline-start" />
-          History
-          <ChevronDown data-icon="inline-end" />
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="Query history">
+              <History className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Query history</TooltipContent>
+      </Tooltip>
       <PopoverContent align="start" className="w-[420px] p-0">
         {history.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">No recent queries yet.</p>
         ) : (
           <ul className="max-h-72 overflow-auto divide-y">
-            {history.map((entry) => (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  className="block w-full px-3 py-2 text-left hover:bg-accent"
-                  onClick={() => onSelect(entry)}
-                >
-                  <p className="truncate font-mono text-xs">{entry.sql}</p>
-                  <p className="text-[11px] text-muted-foreground">{new Date(entry.submittedAt).toLocaleString()}</p>
-                </button>
-              </li>
-            ))}
+            {history.map((entry) => {
+              const isFavorited = favoriteSqlSet.has(entry.sql.trim());
+              return (
+                <li key={entry.id} className="flex items-start gap-1">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 px-3 py-2 text-left hover:bg-accent"
+                    onClick={() => onSelect(entry)}
+                  >
+                    <p className="truncate font-mono text-xs">{entry.sql}</p>
+                    <p className="text-[11px] text-muted-foreground">{new Date(entry.submittedAt).toLocaleString()}</p>
+                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="mt-1 size-7 shrink-0"
+                        aria-label={isFavorited ? "Already in favorites" : "Add to favorites"}
+                        disabled={isFavorited}
+                        onClick={() => onFavorite(entry)}
+                      >
+                        <Star className={cn("size-3.5", isFavorited && "fill-current text-amber-500")} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{isFavorited ? "Already in favorites" : "Add to favorites"}</TooltipContent>
+                  </Tooltip>
+                </li>
+              );
+            })}
           </ul>
         )}
       </PopoverContent>
@@ -736,13 +824,16 @@ function FavoritesMenu({
 }) {
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm">
-          <Star data-icon="inline-start" />
-          Favorites
-          <ChevronDown data-icon="inline-end" />
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="Saved favorites">
+              <Star className="size-3.5" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Saved favorites</TooltipContent>
+      </Tooltip>
       <PopoverContent align="start" className="w-[420px] p-0">
         {favorites.length === 0 ? (
           <p className="p-3 text-sm text-muted-foreground">No favorite queries yet.</p>
@@ -754,8 +845,8 @@ function FavoritesMenu({
                   <p className="truncate text-sm font-medium">{entry.name}</p>
                   <p className="truncate font-mono text-xs text-muted-foreground">{entry.sql}</p>
                 </button>
-                <Button type="button" variant="ghost" size="icon" aria-label="Remove favorite" onClick={() => onRemove(entry.id)}>
-                  <Trash2 className="size-4" />
+                <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0" aria-label="Remove favorite" onClick={() => onRemove(entry.id)}>
+                  <Trash2 className="size-3.5" />
                 </Button>
               </li>
             ))}
