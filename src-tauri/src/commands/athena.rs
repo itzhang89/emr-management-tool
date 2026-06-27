@@ -11,6 +11,14 @@ use tauri::AppHandle;
 
 const DEFAULT_CATALOG: &str = "AwsDataCatalog";
 
+struct WorkgroupExecutionSettings {
+    managed_results_enabled: bool,
+    enforce_configuration: bool,
+    workgroup_output_location: Option<String>,
+    spark_enabled: bool,
+    effective_engine_version: Option<String>,
+}
+
 #[tauri::command]
 pub async fn list_athena_workgroups(
     app: AppHandle,
@@ -29,17 +37,37 @@ pub async fn list_athena_workgroups(
         let response = operation.send().await.map_err(|error| {
             AppError::aws_for_account_sdk("athena", runtime.account.id.clone(), error)
         })?;
-        workgroups.extend(
-            response
-                .work_groups()
-                .iter()
-                .filter_map(|entry| entry.name())
-                .map(|name| AthenaWorkgroup {
+        for entry in response.work_groups() {
+            if let Some(name) = entry.name() {
+                let details = load_workgroup_execution_settings(&client, name)
+                    .await
+                    .ok()
+                    .flatten();
+                workgroups.push(AthenaWorkgroup {
                     name: name.to_string(),
-                    description: None,
-                    state: None,
-                }),
-        );
+                    description: entry.description().map(str::to_string),
+                    state: entry.state().map(|state| state.as_str().to_string()),
+                    managed_results_enabled: details
+                        .as_ref()
+                        .map(|settings| settings.managed_results_enabled)
+                        .unwrap_or(false),
+                    enforce_configuration: details
+                        .as_ref()
+                        .map(|settings| settings.enforce_configuration)
+                        .unwrap_or(false),
+                    output_location: details
+                        .as_ref()
+                        .and_then(|settings| settings.workgroup_output_location.clone()),
+                    spark_enabled: details
+                        .as_ref()
+                        .map(|settings| settings.spark_enabled)
+                        .unwrap_or(false),
+                    effective_engine_version: details
+                        .as_ref()
+                        .and_then(|settings| settings.effective_engine_version.clone()),
+                });
+            }
+        }
         next_token = response.next_token().map(str::to_string);
         if next_token.is_none() {
             break;
@@ -60,8 +88,13 @@ pub async fn start_athena_query(
     if request.workgroup.trim().is_empty() {
         return Err(AppError::validation("Workgroup is required."));
     }
-    if request.output_location.trim().is_empty() {
-        return Err(AppError::validation("Athena output location is required."));
+
+    let sql = normalize_athena_sql(
+        &request.sql,
+        request.database.as_deref(),
+    );
+    if sql.is_empty() {
+        return Err(AppError::validation("SQL is required."));
     }
 
     let runtime = runtime_for_context(
@@ -72,6 +105,30 @@ pub async fn start_athena_query(
     )
     .await?;
     let client = aws_sdk_athena::Client::new(&runtime.config);
+    let workgroup_name = request.workgroup.trim();
+    let settings = load_workgroup_execution_settings(&client, workgroup_name)
+        .await?
+        .unwrap_or(WorkgroupExecutionSettings {
+            managed_results_enabled: false,
+            enforce_configuration: false,
+            workgroup_output_location: None,
+            spark_enabled: false,
+            effective_engine_version: None,
+        });
+
+    if settings.spark_enabled {
+        return Err(AppError::validation(
+            "The selected Athena workgroup is Spark-enabled and cannot run SQL queries from the query editor. Choose an Athena SQL workgroup.",
+        ));
+    }
+
+    let result_configuration = resolve_result_configuration(
+        &settings,
+        request.output_location.as_deref().unwrap_or("").trim(),
+    )?;
+
+    ensure_query_can_run(&settings, &result_configuration)?;
+
     let catalog = request
         .catalog
         .filter(|value| !value.trim().is_empty())
@@ -80,18 +137,22 @@ pub async fn start_athena_query(
     if let Some(database) = request.database.filter(|value| !value.trim().is_empty()) {
         context = context.database(database);
     }
-    let result_configuration = ResultConfiguration::builder()
-        .output_location(request.output_location.trim())
-        .build();
-    let response = client
+    let query_context = context.build();
+
+    let account_id = runtime.account.id.clone();
+    let mut operation = client
         .start_query_execution()
-        .query_string(request.sql.trim())
-        .work_group(request.workgroup.trim())
-        .query_execution_context(context.build())
-        .result_configuration(result_configuration)
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account_sdk("athena", runtime.account.id, error))?;
+        .query_string(&sql)
+        .work_group(workgroup_name)
+        .query_execution_context(query_context);
+
+    if let Some(configuration) = result_configuration {
+        operation = operation.result_configuration(configuration);
+    }
+
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account_sdk("athena", account_id.clone(), error)
+    })?;
 
     let query_execution_id = response
         .query_execution_id()
@@ -101,11 +162,149 @@ pub async fn start_athena_query(
     get_athena_query_execution(
         app,
         AthenaQueryExecutionRequest {
-            account_id: None,
+            account_id: Some(account_id),
             query_execution_id,
         },
     )
     .await
+}
+
+async fn load_workgroup_execution_settings(
+    client: &aws_sdk_athena::Client,
+    workgroup_name: &str,
+) -> AppResult<Option<WorkgroupExecutionSettings>> {
+    let response = client
+        .get_work_group()
+        .work_group(workgroup_name)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_sdk("athena", error))?;
+
+    let configuration = response
+        .work_group()
+        .and_then(|workgroup| workgroup.configuration());
+
+    Ok(configuration.map(|config| {
+        let managed_results_enabled = config
+            .managed_query_results_configuration()
+            .map(|managed| managed.enabled())
+            .unwrap_or(false);
+        let enforce_configuration = config.enforce_work_group_configuration().unwrap_or(false);
+        let workgroup_output_location = config
+            .result_configuration()
+            .and_then(|result| result.output_location())
+            .filter(|location| !location.is_empty())
+            .map(str::to_string);
+        let effective_engine_version = config
+            .engine_version()
+            .and_then(|version| version.effective_engine_version())
+            .filter(|version| !version.is_empty())
+            .map(str::to_string);
+        let spark_enabled = effective_engine_version
+            .as_deref()
+            .map(is_spark_engine_version)
+            .unwrap_or(false);
+
+        WorkgroupExecutionSettings {
+            managed_results_enabled,
+            enforce_configuration,
+            workgroup_output_location,
+            spark_enabled,
+            effective_engine_version,
+        }
+    }))
+}
+
+fn normalize_athena_sql(sql: &str, database: Option<&str>) -> String {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let without_trailing_semicolons = trimmed.trim_end_matches(';').trim();
+    let mut normalized = without_trailing_semicolons.replace('`', "\"");
+
+    if let Some(database) = database.filter(|value| !value.is_empty()) {
+        let quoted_prefix = format!("\"{database}\".");
+        normalized = normalized.replace(&quoted_prefix, "");
+        let plain_prefix = format!("{database}.");
+        normalized = normalized.replace(&plain_prefix, "");
+    }
+
+    normalized
+}
+
+fn is_spark_engine_version(version: &str) -> bool {
+    let lower = version.to_ascii_lowercase();
+    lower.contains("spark") || lower.contains("pyspark")
+}
+
+fn ensure_query_can_run(
+    settings: &WorkgroupExecutionSettings,
+    result_configuration: &Option<ResultConfiguration>,
+) -> AppResult<()> {
+    if settings.managed_results_enabled {
+        return Ok(());
+    }
+
+    if result_configuration.is_some() {
+        return Ok(());
+    }
+
+    if settings.workgroup_output_location.is_some() {
+        return Ok(());
+    }
+
+    Err(AppError::validation(
+        "Athena output location is required. Set a results S3 path in the query bar or Settings, or enable Athena managed query results on the workgroup.",
+    ))
+}
+
+fn resolve_result_configuration(
+    settings: &WorkgroupExecutionSettings,
+    client_output_location: &str,
+) -> AppResult<Option<ResultConfiguration>> {
+    let client_path = client_output_location.trim();
+
+    // Managed results: Athena stores output itself — never send ResultConfiguration.
+    if settings.managed_results_enabled {
+        return Ok(None);
+    }
+
+    // Workgroup enforces its own result settings — client cannot override.
+    if settings.enforce_configuration {
+        if settings.workgroup_output_location.is_some() {
+            return Ok(None);
+        }
+        if !client_path.is_empty() {
+            return Ok(Some(
+                ResultConfiguration::builder()
+                    .output_location(client_path)
+                    .build(),
+            ));
+        }
+        return Err(AppError::validation(
+            "The selected Athena workgroup enforces result settings but has no output location configured in AWS.",
+        ));
+    }
+
+    // Client S3 path (default UX).
+    if !client_path.is_empty() {
+        return Ok(Some(
+            ResultConfiguration::builder()
+                .output_location(client_path)
+                .build(),
+        ));
+    }
+
+    // Fall back to workgroup default output location.
+    if settings.workgroup_output_location.is_some() {
+        return Ok(None);
+    }
+
+    Err(AppError::validation(
+        "Athena output location is required. Set a results S3 path in the query bar or Settings.",
+    ))
 }
 
 #[tauri::command]
@@ -322,7 +521,10 @@ fn escape_csv(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_csv, is_header_row, rows_to_csv};
+    use super::{
+        ensure_query_can_run, escape_csv, is_header_row, is_spark_engine_version, normalize_athena_sql,
+        resolve_result_configuration, rows_to_csv, WorkgroupExecutionSettings,
+    };
 
     #[test]
     fn escapes_csv_values_with_commas() {
@@ -341,5 +543,77 @@ mod tests {
             &["id".to_string(), "name".to_string()],
             &["id".to_string(), "name".to_string()]
         ));
+    }
+
+    #[test]
+    fn skips_result_configuration_for_managed_results() {
+        let settings = WorkgroupExecutionSettings {
+            managed_results_enabled: true,
+            enforce_configuration: false,
+            workgroup_output_location: None,
+            spark_enabled: false,
+            effective_engine_version: None,
+        };
+        assert!(resolve_result_configuration(&settings, "s3://bucket/path/").unwrap().is_none());
+    }
+
+    #[test]
+    fn uses_client_output_when_not_managed() {
+        let settings = WorkgroupExecutionSettings {
+            managed_results_enabled: false,
+            enforce_configuration: false,
+            workgroup_output_location: None,
+            spark_enabled: false,
+            effective_engine_version: None,
+        };
+        let configuration = resolve_result_configuration(&settings, "s3://bucket/path/").unwrap();
+        assert!(configuration.is_some());
+    }
+
+    #[test]
+    fn strips_trailing_semicolons_from_sql() {
+        assert_eq!(normalize_athena_sql("SELECT 1;", None), "SELECT 1");
+        assert_eq!(
+            normalize_athena_sql("SELECT * FROM t LIMIT 100;", None),
+            "SELECT * FROM t LIMIT 100"
+        );
+    }
+
+    #[test]
+    fn converts_backticks_to_double_quotes() {
+        assert_eq!(
+            normalize_athena_sql("SELECT * FROM `shiji`.`ods__table` LIMIT 100", Some("shiji")),
+            r#"SELECT * FROM "ods__table" LIMIT 100"#
+        );
+    }
+
+    #[test]
+    fn detects_spark_engine_versions() {
+        assert!(is_spark_engine_version("PySpark engine version 3"));
+        assert!(!is_spark_engine_version("Athena engine version 3"));
+    }
+
+    #[test]
+    fn allows_managed_workgroup_without_result_configuration() {
+        let settings = WorkgroupExecutionSettings {
+            managed_results_enabled: true,
+            enforce_configuration: false,
+            workgroup_output_location: None,
+            spark_enabled: false,
+            effective_engine_version: None,
+        };
+        assert!(ensure_query_can_run(&settings, &None).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_managed_workgroup_without_any_output_location() {
+        let settings = WorkgroupExecutionSettings {
+            managed_results_enabled: false,
+            enforce_configuration: false,
+            workgroup_output_location: None,
+            spark_enabled: false,
+            effective_engine_version: None,
+        };
+        assert!(ensure_query_can_run(&settings, &None).is_err());
     }
 }

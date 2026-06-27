@@ -560,6 +560,11 @@ pub struct AthenaWorkgroup {
     pub name: String,
     pub description: Option<String>,
     pub state: Option<String>,
+    pub managed_results_enabled: bool,
+    pub enforce_configuration: bool,
+    pub output_location: Option<String>,
+    pub spark_enabled: bool,
+    pub effective_engine_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -569,7 +574,7 @@ pub struct StartAthenaQueryRequest {
     pub sql: String,
     pub database: Option<String>,
     pub workgroup: String,
-    pub output_location: String,
+    pub output_location: Option<String>,
     pub catalog: Option<String>,
 }
 

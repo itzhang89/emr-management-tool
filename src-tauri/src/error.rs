@@ -118,6 +118,11 @@ impl AppError {
 
 fn humanize_aws_error(service: &str, error: &(impl ProvideErrorMetadata + std::fmt::Display)) -> String {
     if let Some(message) = error.message().filter(|message| !message.is_empty()) {
+        if service == "athena" && message.contains("Queries of this type are not supported") {
+            return format!(
+                "{message} Hint: Athena engine v3 often returns this for malformed SQL, such as MySQL-style backticks (`). Use unquoted or double-quoted identifiers."
+            );
+        }
         return message.to_string();
     }
 
@@ -166,6 +171,14 @@ fn message_for_aws_code(service: &str, code: &str) -> Option<String> {
         ),
         "UnauthorizedOperation" => Some(
             "This AWS account is not authorized for this operation. Check IAM permissions in Settings."
+                .to_string(),
+        ),
+        "InvalidRequestException" if service == "athena" => Some(
+            "Athena rejected this query. Check SQL syntax (use double quotes, not backticks), workgroup type (SQL vs Spark), and result output settings."
+                .to_string(),
+        ),
+        "MALFORMED_QUERY" => Some(
+            "Athena could not parse this SQL. Replace MySQL-style backticks (`) with unquoted or double-quoted identifiers."
                 .to_string(),
         ),
         _ => None,

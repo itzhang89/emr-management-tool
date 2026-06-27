@@ -1,5 +1,6 @@
 import { FolderOpen, Layers3 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -16,7 +17,9 @@ export function AthenaQueryOptionsBar({
   appendSubmitUser,
   onAppendSubmitUserChange,
   submitUser,
-  effectiveOutputLocation
+  displayResultsPath,
+  managedResultsEnabled,
+  outputPathRequired
 }: {
   workgroup: string;
   onWorkgroupChange: (value: string) => void;
@@ -25,7 +28,9 @@ export function AthenaQueryOptionsBar({
   appendSubmitUser: boolean;
   onAppendSubmitUserChange: (value: boolean) => void;
   submitUser: string;
-  effectiveOutputLocation: string;
+  displayResultsPath: string;
+  managedResultsEnabled: boolean;
+  outputPathRequired: boolean;
 }) {
   const [s3DialogOpen, setS3DialogOpen] = useState(false);
 
@@ -33,14 +38,30 @@ export function AthenaQueryOptionsBar({
     <div className="flex items-center gap-2 rounded-lg border bg-muted/20 px-2 py-1.5">
       <WorkgroupButton value={workgroup} onChange={onWorkgroupChange} />
 
+      <Badge
+        variant={managedResultsEnabled ? "secondary" : "outline"}
+        className="shrink-0 font-normal"
+        title={
+          managedResultsEnabled
+            ? "This workgroup stores query results in Athena managed storage"
+            : "Query results are written to your S3 path"
+        }
+      >
+        {managedResultsEnabled ? "Managed" : "S3"}
+      </Badge>
+
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <Input
           id="athena-output-path"
           readOnly
-          value={effectiveOutputLocation}
-          placeholder="s3://bucket/athena-results/"
+          value={displayResultsPath}
+          placeholder={outputPathRequired ? "Set S3 results path (Browse)" : "s3://bucket/athena-results/"}
           className="h-8 min-w-0 flex-1 font-mono text-xs"
-          title={effectiveOutputLocation}
+          title={
+            managedResultsEnabled
+              ? "S3 path is optional here; this workgroup uses Athena managed results"
+              : displayResultsPath
+          }
           onClick={() => setS3DialogOpen(true)}
         />
         <Tooltip>
@@ -84,6 +105,11 @@ function WorkgroupButton({ value, onChange }: { value: string; onChange: (value:
     return Array.from(names).sort((left, right) => left.localeCompare(right));
   }, [value, workgroups.data]);
 
+  const workgroupByName = useMemo(
+    () => new Map((workgroups.data ?? []).map((entry) => [entry.name, entry])),
+    [workgroups.data]
+  );
+
   return (
     <Popover>
       <Tooltip>
@@ -99,7 +125,7 @@ function WorkgroupButton({ value, onChange }: { value: string; onChange: (value:
           <span className="font-mono"> · {value}</span>
         </TooltipContent>
       </Tooltip>
-      <PopoverContent align="start" className="w-56 p-3">
+      <PopoverContent align="start" className="w-72 p-3">
         <p className="mb-2 text-xs text-muted-foreground">Athena workgroup for query execution</p>
         <Select value={value} onValueChange={onChange}>
           <SelectTrigger id="athena-workgroup" className="h-8">
@@ -107,11 +133,15 @@ function WorkgroupButton({ value, onChange }: { value: string; onChange: (value:
           </SelectTrigger>
           <SelectContent>
             {workgroups.isLoading ? <SelectItem value={value}>{value}</SelectItem> : null}
-            {options.map((name) => (
-              <SelectItem key={name} value={name}>
-                {name}
-              </SelectItem>
-            ))}
+            {options.map((name) => {
+              const entry = workgroupByName.get(name);
+              const suffix = entry?.managedResultsEnabled ? " · Managed" : entry?.sparkEnabled ? " · Spark" : "";
+              return (
+                <SelectItem key={name} value={name}>
+                  {name}{suffix}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
       </PopoverContent>
