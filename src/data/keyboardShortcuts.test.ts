@@ -23,4 +23,9 @@ describe("keyboardShortcuts registry", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_QUERY)).toMatch(/Enter/);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.OPEN_SHORTCUTS_HELP)).toBeTruthy();
   });
+
+  it("exposes submit job shortcut labels", () => {
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB)).toMatch(/Enter/);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON)).toMatch(/P/i);
+  });
 });

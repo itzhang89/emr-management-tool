@@ -1,6 +1,7 @@
 import { Eye, Send } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { TemplateVariableFields } from "@/components/templates/TemplateVariableFields";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
 import {
@@ -21,6 +23,7 @@ import {
   useSubmitUser
 } from "@/hooks/useJobConfigTemplates";
 import { useTemplates } from "@/hooks/useTemplates";
+import { getShortcutPrimaryKey, SHORTCUT_IDS } from "@/data/keyboardShortcuts";
 import { applyResourceOverride } from "@/services/resourceOverride";
 import {
   getDefaultCustomVariableValues,
@@ -37,7 +40,11 @@ import {
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
 
-export function SubmitJobPage() {
+const RECENT_JOB_LIMIT = 20;
+const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
+const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
+
+export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
@@ -54,6 +61,8 @@ export function SubmitJobPage() {
   const [customVariables, setCustomVariables] = useState<Record<string, string | number | boolean | string[]>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [cloneRequest, setCloneRequest] = useState<StartJobRunRequest>();
+  const previewOpenRef = useRef(previewOpen);
+  previewOpenRef.current = previewOpen;
 
   const templates = jobConfigTemplates.data ?? [];
   const resources = resourceTemplates.data?.resourceTemplates ?? [];
@@ -123,7 +132,7 @@ export function SubmitJobPage() {
     return applyResourceOverride(resolvedPayload, selectedResources);
   }, [cloneRequest, resolvedPayload, selectedResources]);
 
-  const submit = async () => {
+  const submit = useCallback(async () => {
     try {
       const request = buildSubmitRequest({
         cloneRequest,
@@ -142,9 +151,9 @@ export function SubmitJobPage() {
     } catch (error) {
       toast.error(errorMessage(error, "Failed to submit job."));
     }
-  };
+  }, [cloneRequest, customVariables, resolvedPayload, selectedResources, selectedTemplate, startJobRun]);
 
-  const validateAndSubmit = () => {
+  const validateAndSubmit = useCallback(() => {
     if (cloneRequest) {
       void submit();
       return;
@@ -166,50 +175,87 @@ export function SubmitJobPage() {
       return;
     }
     void submit();
-  };
+  }, [cloneRequest, customVariables, resolvedPayload, selectedResources, selectedTemplate, submit]);
+
+  const openPreview = useCallback(() => {
+    if (!previewPayload) return;
+    setPreviewOpen(true);
+  }, [previewPayload]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (previewOpenRef.current) return;
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+
+      if (event.shiftKey && (event.key === "P" || event.key === "p")) {
+        event.preventDefault();
+        openPreview();
+        return;
+      }
+
+      if (!event.shiftKey && event.key === "Enter") {
+        event.preventDefault();
+        validateAndSubmit();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [openPreview, validateAndSubmit]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
       <PageHeader
         pageId="submit"
         actions={
           <>
-            <Button type="button" variant="outline" disabled={!previewPayload} onClick={() => setPreviewOpen(true)}>
-              <Eye data-icon="inline-start" />
-              Preview JSON
-            </Button>
-            <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
-              <Send data-icon="inline-start" />
-              {startJobRun.isPending ? "Submitting..." : "Submit"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="outline" disabled={!previewPayload} onClick={openPreview}>
+                  <Eye data-icon="inline-start" />
+                  Preview JSON
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Preview JSON · {PREVIEW_JSON_SHORTCUT}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
+                  <Send data-icon="inline-start" />
+                  {startJobRun.isPending ? "Submitting..." : "Submit"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Submit job · {SUBMIT_SHORTCUT}</TooltipContent>
+            </Tooltip>
           </>
         }
       />
 
-      {cloneRequest ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Cloned Job Configuration</CardTitle>
-            <CardDescription>
-              Submitting a cloned request from Job History. Clear it by choosing a template again.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" onClick={() => setCloneRequest(undefined)}>
-              Use Template Instead
-            </Button>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid grid-cols-[1fr_320px] gap-6">
-        <div className="flex flex-col gap-6">
-          <Card>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+        {cloneRequest ? (
+          <Card className="shrink-0">
             <CardHeader>
+              <CardTitle>Cloned Job Configuration</CardTitle>
+              <CardDescription>
+                Submitting a cloned request from Job History. Clear it by choosing a template again.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" onClick={() => setCloneRequest(undefined)}>
+                Use Template Instead
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <div className="grid max-h-[min(48vh,520px)] shrink-0 grid-cols-[1fr_320px] gap-4 overflow-hidden">
+          <Card className="flex min-h-0 flex-col overflow-hidden">
+            <CardHeader className="shrink-0">
               <CardTitle>Job Config Template</CardTitle>
               <CardDescription>Select the application JSON template and fill custom variables.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="min-h-0 flex-1 space-y-4 overflow-auto">
               <Field label="Template">
                 <Select
                   value={selectedTemplateId}
@@ -242,41 +288,51 @@ export function SubmitJobPage() {
               ) : null}
             </CardContent>
           </Card>
+
+          <Card className="flex min-h-0 flex-col overflow-hidden">
+            <CardHeader className="shrink-0">
+              <CardTitle>Runtime Selection</CardTitle>
+              <CardDescription>Choose where the job runs and which resource preset to apply.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
+              <Field label="Virtual Cluster">
+                <VirtualClusterSelect className="w-full" />
+              </Field>
+              <Field label="Resource Template">
+                <Select value={resourceTemplateId} onValueChange={setResourceTemplateId} disabled={Boolean(cloneRequest)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select resources" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {resources.map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          {template.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className="rounded-lg border p-3 text-sm text-muted-foreground">
+                Driver {selectedResources.driverCores}c / {selectedResources.driverMemory}
+                <br />
+                Executors {selectedResources.executorInstances} x {selectedResources.executorCores}c /{" "}
+                {selectedResources.executorMemory}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle>Runtime Selection</CardTitle>
-            <CardDescription>Choose where the job runs and which resource preset to apply.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <Field label="Virtual Cluster">
-              <VirtualClusterSelect className="w-full" />
-            </Field>
-            <Field label="Resource Template">
-              <Select value={resourceTemplateId} onValueChange={setResourceTemplateId} disabled={Boolean(cloneRequest)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select resources" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {resources.map((template) => (
-                      <SelectItem key={template.id} value={template.id}>
-                        {template.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-            <div className="rounded-lg border p-3 text-sm text-muted-foreground">
-              Driver {selectedResources.driverCores}c / {selectedResources.driverMemory}
-              <br />
-              Executors {selectedResources.executorInstances} x {selectedResources.executorCores}c /{" "}
-              {selectedResources.executorMemory}
-            </div>
-          </CardContent>
-        </Card>
+        <JobRunsPanel
+          virtualClusterId={virtualClusterId}
+          maxItems={RECENT_JOB_LIMIT}
+          title="Recent Submissions"
+          showAutoRefreshControl
+          submittedOnly
+          onOpenLogs={onOpenLogs}
+          className="min-h-0 flex-1"
+        />
       </div>
 
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} payload={previewPayload} />

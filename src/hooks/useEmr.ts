@@ -35,6 +35,19 @@ export function useJobRuns(virtualClusterId?: string, autoRefresh = false, keywo
   });
 }
 
+export function useSubmissionHistory(virtualClusterId?: string, autoRefresh = false) {
+  const accountId = useActiveAccountId();
+  const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
+  return useQuery({
+    queryKey: ["submission-history", accountId, normalizedVirtualClusterId],
+    queryFn: () => emrService.listSubmissionHistory(normalizedVirtualClusterId, accountId),
+    enabled: Boolean(accountId && normalizedVirtualClusterId),
+    staleTime: autoRefresh ? 0 : undefined,
+    structuralSharing: !autoRefresh,
+    refetchInterval: autoRefresh ? jobHistoryRefreshIntervalMs : false
+  });
+}
+
 export function useDescribeJobRun(id?: string, virtualClusterId?: string) {
   const accountId = useActiveAccountId();
 
@@ -53,7 +66,10 @@ export function useStartJobRun() {
   return useMutation({
     mutationFn: (request: StartJobRunRequest) =>
       emrService.startJobRun({ ...request, accountId: request.accountId ?? accountId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs", accountId] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["job-runs", accountId] });
+      queryClient.invalidateQueries({ queryKey: ["submission-history", accountId] });
+    }
   });
 }
 
@@ -64,6 +80,9 @@ export function useCancelJobRun() {
   return useMutation({
     mutationFn: ({ id, virtualClusterId }: { id: string; virtualClusterId: string }) =>
       emrService.cancelJobRun(id, virtualClusterId, accountId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["job-runs", accountId] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["job-runs", accountId] });
+      queryClient.invalidateQueries({ queryKey: ["submission-history", accountId] });
+    }
   });
 }
