@@ -360,17 +360,19 @@ export function GlueCatalogPage() {
     }
   };
 
-  const handleRunQuery = () => {
-    if (!activeResultTabId || !assertSqlRunnable(sql)) return;
-    void executeQueryOnTab(activeResultTabId, sql);
+  const handleRunQuery = (sqlOverride?: string) => {
+    const sqlToRun = sqlOverride ?? sql;
+    if (!activeResultTabId || !assertSqlRunnable(sqlToRun)) return;
+    void executeQueryOnTab(activeResultTabId, sqlToRun);
   };
 
-  const handleRunQueryInNewTab = () => {
-    if (!assertSqlRunnable(sql)) return;
+  const handleRunQueryInNewTab = (sqlOverride?: string) => {
+    const sqlToRun = sqlOverride ?? sql;
+    if (!assertSqlRunnable(sqlToRun)) return;
     const newTab = createQueryResultTab(resultTabs.length + 1);
     setResultTabs((tabs) => [...tabs, newTab]);
     setActiveResultTabId(newTab.id);
-    void executeQueryOnTab(newTab.id, sql);
+    void executeQueryOnTab(newTab.id, sqlToRun);
   };
 
   const handleStopQuery = async () => {
@@ -673,7 +675,7 @@ export function GlueCatalogPage() {
                         className="size-7"
                         disabled={startQuery.isPending || running}
                         aria-label="Run in new tab"
-                        onClick={handleRunQueryInNewTab}
+                        onClick={() => handleRunQueryInNewTab()}
                       >
                         <Plus className="size-3.5" />
                       </Button>
@@ -688,7 +690,7 @@ export function GlueCatalogPage() {
                         className="size-7"
                         disabled={startQuery.isPending || running}
                         aria-label="Run query"
-                        onClick={handleRunQuery}
+                        onClick={() => handleRunQuery()}
                       >
                         <Play className="size-3.5" />
                       </Button>

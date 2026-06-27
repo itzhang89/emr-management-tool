@@ -1,4 +1,4 @@
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -152,8 +152,8 @@ export function AthenaSqlEditor({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onRun?: () => void;
-  onRunNewTab?: () => void;
+  onRun?: (sql: string) => void;
+  onRunNewTab?: (sql: string) => void;
   selectedDatabase?: string;
   catalogContext: SqlCatalogContext;
   executionError?: { message?: string; sql?: string };
@@ -189,22 +189,28 @@ export function AthenaSqlEditor({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const runKeymap = keymap.of([
-      {
-        key: "Mod-Enter",
-        run: () => {
-          onRunRef.current?.();
-          return true;
-        }
-      },
-      {
-        key: "Mod-Shift-Enter",
-        run: () => {
-          onRunNewTabRef.current?.();
-          return true;
-        }
+    const runQuery = (view: EditorView, openNewTab: boolean) => {
+      const sql = view.state.doc.toString();
+      if (openNewTab) {
+        onRunNewTabRef.current?.(sql);
+      } else {
+        onRunRef.current?.(sql);
       }
-    ]);
+      return true;
+    };
+
+    const runKeymap = Prec.highest(
+      keymap.of([
+        {
+          key: "Mod-Shift-Enter",
+          run: (view) => runQuery(view, true)
+        },
+        {
+          key: "Mod-Enter",
+          run: (view) => runQuery(view, false)
+        }
+      ])
+    );
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
