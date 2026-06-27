@@ -12,9 +12,10 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { S3ObjectEditor, type S3ObjectEditorHandle } from "@/components/s3/S3ObjectEditor";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { cn } from "@/lib/utils";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
   useDeleteS3Object,
@@ -45,7 +46,7 @@ export function S3BrowserPage() {
   const [prefix, setPrefix] = useState("");
   const skipPathPersistRef = useRef(false);
   const objectListRef = useRef<HTMLElement>(null);
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<S3ObjectEditorHandle>(null);
   const selectedBucket = bucket ?? selectedS3Bucket ?? (buckets.isSuccess ? buckets.data?.[0]?.name : undefined);
   const currentS3Path = formatS3Path(selectedBucket, prefix);
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
@@ -122,8 +123,12 @@ export function S3BrowserPage() {
   useEffect(() => {
     if (textObject.data?.content !== undefined) {
       setContent(textObject.data.content);
+      return;
     }
-  }, [textObject.data?.content]);
+    if (selectedKey && selectedObject?.kind === "file" && !textObject.isLoading) {
+      setContent("");
+    }
+  }, [textObject.data?.content, textObject.isLoading, selectedKey, selectedObject?.kind]);
 
   const save = async () => {
     if (!textObject.data || !editability?.editable) return;
@@ -480,7 +485,11 @@ export function S3BrowserPage() {
                 return (
                   <button
                     key={object.key}
-                    className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left font-mono text-xs leading-tight hover:bg-accent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                    className={cn(
+                      "flex min-w-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-accent",
+                      object.kind === "file" && "font-mono",
+                      object.key === selectedKey && "bg-primary/10 text-primary"
+                    )}
                     type="button"
                     data-active={object.key === selectedKey}
                     title={objectName}
@@ -563,6 +572,14 @@ export function S3BrowserPage() {
             <ObjectProperties object={selectedObject} />
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+            {textObject.error ? (
+              <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                {formatS3BrowserError(textObject.error, "getObject", selectedObjectPath)}
+              </p>
+            ) : null}
+            {textObject.isLoading && selectedObject?.kind === "file" ? (
+              <p className="shrink-0 text-xs text-muted-foreground">Loading object content...</p>
+            ) : null}
             <div className="relative min-h-0 flex-1">
               {!editability?.editable && selectedObject?.kind === "file" ? (
                 <Tooltip>
@@ -577,32 +594,16 @@ export function S3BrowserPage() {
                   <TooltipContent>{editability?.reason ?? "Object is read-only."}</TooltipContent>
                 </Tooltip>
               ) : null}
-              <Textarea
+              <S3ObjectEditor
                 ref={editorRef}
-                className="h-full min-h-[240px] resize-none font-mono"
+                className="h-full"
                 value={content}
+                fileKey={selectedKey}
                 readOnly={!editability?.editable}
-                onChange={(event) => setContent(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft") {
-                    event.preventDefault();
-                    objectListRef.current?.focus();
-                    return;
-                  }
-                  if (event.key === "Enter" && editability?.editable) {
-                    event.preventDefault();
-                    void save();
-                    return;
-                  }
-                  if (editability?.editable || selectedObject?.kind !== "file") return;
-                  event.preventDefault();
-                  notifyReadOnlyEditAttempt();
-                }}
-                onPaste={(event) => {
-                  if (editability?.editable || selectedObject?.kind !== "file") return;
-                  event.preventDefault();
-                  notifyReadOnlyEditAttempt();
-                }}
+                onChange={setContent}
+                onSave={() => void save()}
+                onFocusList={() => objectListRef.current?.focus()}
+                onReadOnlyInput={notifyReadOnlyEditAttempt}
               />
             </div>
             <div className="flex shrink-0 justify-end gap-2">
@@ -652,8 +653,7 @@ export function S3BrowserPage() {
 function displayObjectName(key: string, prefix: string, kind: "folder" | "file") {
   const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
   if (kind === "folder") {
-    const folderName = relative.split("/").filter(Boolean)[0] ?? relative;
-    return `${folderName}/`;
+    return relative.split("/").filter(Boolean)[0] ?? relative;
   }
   return relative.split("/").filter(Boolean).at(-1) ?? relative;
 }
