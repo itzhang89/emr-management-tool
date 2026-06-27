@@ -32,3 +32,12 @@ export function isShortcutsHelpKey(
 
   return event.key === "/" || event.code === "Slash" || event.key === "?" || event.key === "¿";
 }
+
+export function isSidebarToggleKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">
+) {
+  const mod = event.metaKey || event.ctrlKey;
+  if (!mod || event.shiftKey || event.altKey) return false;
+
+  return event.key === "/" || event.code === "Slash";
+}
