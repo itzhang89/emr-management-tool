@@ -1,7 +1,6 @@
 import {
   ChevronDown,
   History,
-  PanelLeftClose,
   PanelLeftOpen,
   Play,
   Square,
@@ -450,7 +449,7 @@ export function GlueCatalogPage() {
   });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4">
+    <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
       <PageHeader
         pageId="glue"
         actions={
@@ -463,7 +462,7 @@ export function GlueCatalogPage() {
         }
       />
 
-      <div className="flex min-h-0 flex-1 gap-2">
+      <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
         {catalogCollapsed ? (
           <div className="flex shrink-0 flex-col items-center">
             <Button
@@ -480,30 +479,19 @@ export function GlueCatalogPage() {
           </div>
         ) : (
           <>
-            <section className="flex min-h-0 shrink-0 flex-col gap-2" style={{ width: catalogPaneWidth }}>
-              <div className="flex shrink-0 justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  aria-label="Collapse catalog panel"
-                  title="Hide catalog"
-                  onClick={() => athenaPrefs.setCatalogCollapsed(true)}
-                >
-                  <PanelLeftClose className="size-4" />
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1">
-                <CatalogTree
-                  selectedDatabase={selectedDatabase}
-                  selectedTable={selectedTable}
-                  onFocusDatabase={handleFocusDatabase}
-                  onExitDatabase={handleExitDatabase}
-                  onSelectTable={handleSelectTable}
-                  onRefresh={handleRefreshCatalog}
-                />
-              </div>
+            <section
+              className="flex min-h-0 shrink-0 flex-col overflow-hidden"
+              style={{ width: catalogPaneWidth }}
+            >
+              <CatalogTree
+                selectedDatabase={selectedDatabase}
+                selectedTable={selectedTable}
+                onFocusDatabase={handleFocusDatabase}
+                onExitDatabase={handleExitDatabase}
+                onSelectTable={handleSelectTable}
+                onRefresh={handleRefreshCatalog}
+                onCollapse={() => athenaPrefs.setCatalogCollapsed(true)}
+              />
             </section>
 
             <div
@@ -518,7 +506,7 @@ export function GlueCatalogPage() {
           </>
         )}
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <Tabs
             value={topTab}
             onValueChange={(value) => setTopTab(value as TopTab)}
@@ -529,7 +517,7 @@ export function GlueCatalogPage() {
               <TabsTrigger value="metadata">Table Metadata</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3">
+            <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
               <AthenaQueryOptionsBar
                 workgroup={workgroup}
                 onWorkgroupChange={athenaPrefs.setWorkgroup}
@@ -608,7 +596,7 @@ export function GlueCatalogPage() {
                   value={sql}
                   onChange={(event) => setSql(event.target.value)}
                   rows={8}
-                  className="min-h-[140px] shrink-0 rounded-lg border font-mono text-xs"
+                  className="min-h-[140px] shrink-0 rounded-lg border font-mono text-[11px] leading-snug"
                   spellCheck={false}
                 />
 
