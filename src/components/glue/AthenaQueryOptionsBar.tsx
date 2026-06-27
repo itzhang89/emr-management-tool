@@ -2,7 +2,6 @@ import { FolderOpen, Layers3 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -53,18 +52,9 @@ export function AthenaQueryOptionsBar({
       </Badge>
 
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <Input
+        <p
           id="athena-output-path"
-          readOnly
-          value={preferencesReady ? displayResultsPath : ""}
-          placeholder={
-            preferencesReady
-              ? outputPathRequired
-                ? "Set S3 results path (Browse)"
-                : "s3://bucket/athena-results/"
-              : "Loading saved S3 path..."
-          }
-          className="h-8 min-w-0 flex-1 font-mono text-xs"
+          className="h-8 min-w-0 flex-1 truncate rounded-md border border-input bg-muted/40 px-2 font-mono text-xs leading-8 text-muted-foreground"
           title={
             preferencesReady
               ? managedResultsEnabled
@@ -72,8 +62,12 @@ export function AthenaQueryOptionsBar({
                 : displayResultsPath
               : "Loading saved S3 path..."
           }
-          onClick={() => setS3DialogOpen(true)}
-        />
+        >
+          {preferencesReady
+            ? displayResultsPath ||
+              (outputPathRequired ? "Set S3 results path (Browse)" : "s3://bucket/athena-results/")
+            : "Loading saved S3 path..."}
+        </p>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

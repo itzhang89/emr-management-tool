@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AthenaQueryExecution, AthenaQueryResults } from "@/types/domain";
 
 function formatBytes(value?: number) {
@@ -30,15 +31,15 @@ export function QueryResultsPanel({
   exporting: boolean;
 }) {
   if (!execution) {
-    return <p className="text-xs text-muted-foreground">Run a query to see results.</p>;
+    return <p className="text-[10px] text-muted-foreground">Run a query to see results.</p>;
   }
 
   const dataRows = skipHeaderRow(results);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5">
+        <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
           <span>Status: {execution.state}</span>
           <span>Scanned: {formatBytes(execution.dataScannedBytes)}</span>
           <span>
@@ -48,27 +49,39 @@ export function QueryResultsPanel({
           <span>Rows: {dataRows.length}</span>
         </div>
         {execution.state === "SUCCEEDED" ? (
-          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={onExport}>
-            <Download data-icon="inline-start" />
-            Export CSV
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-7"
+                disabled={exporting}
+                aria-label="Export CSV"
+                onClick={onExport}
+              >
+                <Download className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export CSV</TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
 
       {execution.state === "FAILED" ? (
-        <p className="shrink-0 text-xs text-destructive">{execution.stateChangeReason ?? "Query failed."}</p>
+        <p className="shrink-0 text-[10px] text-destructive">{execution.stateChangeReason ?? "Query failed."}</p>
       ) : null}
 
-      {loading ? <p className="shrink-0 text-xs text-muted-foreground">Loading results...</p> : null}
-      {error ? <p className="shrink-0 text-xs text-destructive">Failed to load query results.</p> : null}
+      {loading ? <p className="shrink-0 text-[10px] text-muted-foreground">Loading results...</p> : null}
+      {error ? <p className="shrink-0 text-[10px] text-destructive">Failed to load query results.</p> : null}
 
       {execution.state === "SUCCEEDED" && results ? (
         <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-          <table className="min-w-full text-[11px]">
-            <thead className="sticky top-0 z-10 bg-muted/80 text-left text-[11px] text-muted-foreground">
+          <table className="min-w-full text-[10px]">
+            <thead className="sticky top-0 z-10 bg-muted/80 text-left text-[10px] text-muted-foreground">
               <tr>
                 {results.columnNames.map((column) => (
-                  <th key={column} className="px-3 py-2 font-medium">
+                  <th key={column} className="px-2 py-1 font-medium">
                     {column}
                   </th>
                 ))}
@@ -77,7 +90,7 @@ export function QueryResultsPanel({
             <tbody>
               {dataRows.length === 0 ? (
                 <tr>
-                  <td colSpan={Math.max(results.columnNames.length, 1)} className="px-3 py-4 text-muted-foreground">
+                  <td colSpan={Math.max(results.columnNames.length, 1)} className="px-2 py-3 text-muted-foreground">
                     Query returned no rows.
                   </td>
                 </tr>
@@ -85,7 +98,7 @@ export function QueryResultsPanel({
                 dataRows.map((row, rowIndex) => (
                   <tr key={rowIndex} className="border-t">
                     {row.map((cell, cellIndex) => (
-                      <td key={cellIndex} className="max-w-xs truncate px-3 py-1.5 font-mono text-[11px]">
+                      <td key={cellIndex} className="max-w-xs truncate px-2 py-1 font-mono text-[10px]">
                         {cell}
                       </td>
                     ))}
@@ -98,7 +111,7 @@ export function QueryResultsPanel({
       ) : null}
 
       {hasMore ? (
-        <Button type="button" variant="outline" size="sm" className="shrink-0 self-start" onClick={onLoadMore}>
+        <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 self-start text-[10px]" onClick={onLoadMore}>
           Load more rows
         </Button>
       ) : null}

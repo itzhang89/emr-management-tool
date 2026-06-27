@@ -2,6 +2,7 @@ import { ArrowLeft, Database, PanelLeftClose, RefreshCw, Search, Table2 } from "
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useGlueDatabases, useGlueTables } from "@/hooks/useGlue";
 
@@ -13,7 +14,8 @@ export function CatalogTree({
   onExitDatabase,
   onSelectTable,
   onRefresh,
-  onCollapse
+  onCollapse,
+  collapseShortcut
 }: {
   viewDatabase?: string;
   selectedDatabase?: string;
@@ -23,6 +25,7 @@ export function CatalogTree({
   onSelectTable: (databaseName: string, tableName: string) => void;
   onRefresh: () => void;
   onCollapse?: () => void;
+  collapseShortcut?: string;
 }) {
   const databases = useGlueDatabases();
   const [filter, setFilter] = useState("");
@@ -89,17 +92,23 @@ export function CatalogTree({
           <RefreshCw className={cn("size-3.5", databases.isFetching && "animate-spin")} />
         </Button>
         {onCollapse ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-7"
-            aria-label="Collapse catalog panel"
-            title="Hide catalog"
-            onClick={onCollapse}
-          >
-            <PanelLeftClose className="size-3.5" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-7"
+                aria-label="Collapse catalog panel"
+                onClick={onCollapse}
+              >
+                <PanelLeftClose className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Hide catalog{collapseShortcut ? ` · ${collapseShortcut}` : ""}
+            </TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
 
