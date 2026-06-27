@@ -78,6 +78,7 @@ export function GlueCatalogPage() {
   const submitUser = submitUserQuery.data ?? "user";
 
   const [topTab, setTopTab] = useState<TopTab>("query");
+  const [catalogViewDatabase, setCatalogViewDatabase] = useState<string | undefined>();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
@@ -94,6 +95,7 @@ export function GlueCatalogPage() {
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   const [dropDialogOpen, setDropDialogOpen] = useState(false);
   const loadedResultsRef = useRef<Set<string>>(new Set());
+  const restoredCatalogAccountRef = useRef<string | undefined>();
 
   const activeResultTab = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultTabId) ?? resultTabs[0],
@@ -155,10 +157,28 @@ export function GlueCatalogPage() {
   }, [accountId, queryClient, selectedDatabase, selectedTable]);
 
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountId) {
+      restoredCatalogAccountRef.current = undefined;
+      setCatalogViewDatabase(undefined);
+      setSelectedDatabase(undefined);
+      setSelectedTable(undefined);
+      return;
+    }
     setHistory(readSqlHistory(accountId));
     setFavorites(readSqlFavorites(accountId));
   }, [accountId]);
+
+  useEffect(() => {
+    if (!athenaPrefs.ready || !accountId) return;
+    if (restoredCatalogAccountRef.current === accountId) return;
+    restoredCatalogAccountRef.current = accountId;
+
+    const restored = athenaPrefs.lastDatabase;
+    if (restored) {
+      setCatalogViewDatabase(restored);
+      setSelectedDatabase(restored);
+    }
+  }, [athenaPrefs.ready, accountId, athenaPrefs.lastDatabase]);
 
   const loadResultsForTab = useCallback(
     async (tabId: string, executionId: string, nextToken?: string) => {
@@ -216,19 +236,25 @@ export function GlueCatalogPage() {
   }, [selectedDatabase, selectedTable]);
 
   const handleSelectTable = (databaseName: string, tableName: string) => {
+    setCatalogViewDatabase(databaseName);
     setSelectedDatabase(databaseName);
     setSelectedTable(tableName);
+    athenaPrefs.setLastDatabase(databaseName);
     if (topTab === "query") {
       setSql(buildSelectSql(databaseName, tableName));
     }
   };
 
   const handleFocusDatabase = (databaseName: string) => {
+    setCatalogViewDatabase(databaseName);
     setSelectedDatabase(databaseName);
     setSelectedTable(undefined);
+    athenaPrefs.setLastDatabase(databaseName);
   };
 
   const handleExitDatabase = () => {
+    setCatalogViewDatabase(undefined);
+    setSelectedDatabase(undefined);
     setSelectedTable(undefined);
   };
 
@@ -484,6 +510,7 @@ export function GlueCatalogPage() {
               style={{ width: catalogPaneWidth }}
             >
               <CatalogTree
+                viewDatabase={catalogViewDatabase}
                 selectedDatabase={selectedDatabase}
                 selectedTable={selectedTable}
                 onFocusDatabase={handleFocusDatabase}
