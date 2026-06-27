@@ -205,8 +205,7 @@ describe("LogsPage", () => {
 
     renderLogsPage();
 
-    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual");
-    await user.click(screen.getByRole("button", { name: /View Logs/i }));
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual{Enter}");
 
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
@@ -226,8 +225,7 @@ describe("LogsPage", () => {
 
     expect(screen.getByTestId("virtual-cluster-select")).toBeInTheDocument();
     await user.clear(screen.getByPlaceholderText(/Enter job id/i));
-    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual");
-    await user.click(screen.getByRole("button", { name: /View Logs/i }));
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual{Enter}");
 
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("current-vc");
