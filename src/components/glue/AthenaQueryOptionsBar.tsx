@@ -19,7 +19,8 @@ export function AthenaQueryOptionsBar({
   submitUser,
   displayResultsPath,
   managedResultsEnabled,
-  outputPathRequired
+  outputPathRequired,
+  preferencesReady
 }: {
   workgroup: string;
   onWorkgroupChange: (value: string) => void;
@@ -31,6 +32,7 @@ export function AthenaQueryOptionsBar({
   displayResultsPath: string;
   managedResultsEnabled: boolean;
   outputPathRequired: boolean;
+  preferencesReady: boolean;
 }) {
   const [s3DialogOpen, setS3DialogOpen] = useState(false);
 
@@ -54,13 +56,21 @@ export function AthenaQueryOptionsBar({
         <Input
           id="athena-output-path"
           readOnly
-          value={displayResultsPath}
-          placeholder={outputPathRequired ? "Set S3 results path (Browse)" : "s3://bucket/athena-results/"}
+          value={preferencesReady ? displayResultsPath : ""}
+          placeholder={
+            preferencesReady
+              ? outputPathRequired
+                ? "Set S3 results path (Browse)"
+                : "s3://bucket/athena-results/"
+              : "Loading saved S3 path..."
+          }
           className="h-8 min-w-0 flex-1 font-mono text-xs"
           title={
-            managedResultsEnabled
-              ? "S3 path is optional here; this workgroup uses Athena managed results"
-              : displayResultsPath
+            preferencesReady
+              ? managedResultsEnabled
+                ? "S3 path is optional here; this workgroup uses Athena managed results"
+                : displayResultsPath
+              : "Loading saved S3 path..."
           }
           onClick={() => setS3DialogOpen(true)}
         />
