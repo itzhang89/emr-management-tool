@@ -13,6 +13,19 @@ export function formatPathInput(bucket: string | undefined, prefix: string) {
   return bucket ? `${bucket}/${prefix}` : "";
 }
 
+export function validateS3FolderName(name: string) {
+  const trimmed = name.trim();
+  if (!trimmed) return "Folder name is required.";
+  if (trimmed.includes("/")) return "Folder name cannot contain '/'.";
+  if (trimmed.includes("\\")) return "Folder name cannot contain '\\'.";
+  return undefined;
+}
+
+export function buildFolderKey(parentPrefix: string, folderName: string) {
+  const normalizedParent = parentPrefix && !parentPrefix.endsWith("/") ? `${parentPrefix}/` : parentPrefix;
+  return `${normalizedParent}${folderName.trim()}/`;
+}
+
 export function parseS3PathInput(value: string) {
   const trimmed = value.trim();
   const withoutScheme = trimmed.startsWith("s3://") ? trimmed.slice("s3://".length) : trimmed;

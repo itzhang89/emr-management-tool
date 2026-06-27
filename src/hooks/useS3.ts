@@ -88,6 +88,40 @@ export function useDeleteS3Object() {
   });
 }
 
+export function useCreateS3Folder() {
+  const accountId = useActiveAccountId();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      bucket,
+      parentPrefix,
+      folderName
+    }: {
+      bucket: string;
+      parentPrefix?: string;
+      folderName: string;
+    }) => s3Service.createFolder(accountId!, bucket, parentPrefix, folderName),
+    onSuccess: (object) => {
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects", accountId, object.bucket] });
+    }
+  });
+}
+
+export function useDeleteS3Prefix() {
+  const accountId = useActiveAccountId();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ bucket, key }: { bucket: string; key: string }) =>
+      s3Service.deletePrefix(accountId!, bucket, key),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["s3-objects", accountId, variables.bucket] });
+      queryClient.removeQueries({ queryKey: ["s3-text-object", accountId, variables.bucket] });
+    }
+  });
+}
+
 export function useRenameS3Object() {
   const accountId = useActiveAccountId();
   const queryClient = useQueryClient();
