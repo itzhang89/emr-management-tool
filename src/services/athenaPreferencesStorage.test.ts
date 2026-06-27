@@ -22,6 +22,14 @@ describe("athenaPreferencesStorage", () => {
     expect(readAthenaPreferences("aws-profile-b").outputBasePath).toBe("s3://bucket-b/athena/");
   });
 
+  it("stores last database per account", () => {
+    mergeAthenaPreferences("aws-profile-a", { lastDatabase: "shiji" });
+    mergeAthenaPreferences("aws-profile-b", { lastDatabase: "analytics" });
+
+    expect(readAthenaPreferences("aws-profile-a").lastDatabase).toBe("shiji");
+    expect(readAthenaPreferences("aws-profile-b").lastDatabase).toBe("analytics");
+  });
+
   it("merges partial updates without dropping other fields", () => {
     writeAthenaPreferences("aws-profile-a", {
       outputBasePath: "s3://bucket/athena/",
