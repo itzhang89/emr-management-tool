@@ -260,13 +260,13 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", true, undefined);
+    expect(useJobRuns).toHaveBeenCalledWith("vc-1", true, undefined);
     expect(screen.getByText("5s")).toBeInTheDocument();
     expect(screen.queryByText("Auto refresh (5s)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
 
-    expect(useJobRuns).toHaveBeenLastCalledWith("vc-1", false, undefined);
+    expect(useJobRuns).toHaveBeenCalledWith("vc-1", false, undefined);
     expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("false");
   });
 

@@ -190,31 +190,14 @@ pub async fn list_submission_history(
 
     if virtual_cluster_id.is_some() {
         let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-        for job in jobs.iter_mut() {
-            if !is_active_job_state(&job.state) {
-                continue;
-            }
-            let response = client
-                .describe_job_run()
-                .id(&job.id)
-                .virtual_cluster_id(job.virtual_cluster_id.as_str())
-                .send()
-                .await;
-            let Ok(response) = response else {
-                continue;
-            };
-            let Some(job_run) = response.job_run() else {
-                continue;
-            };
-            let mut refreshed = map_job_run(
-                job_run,
-                Some(runtime.account.id.clone()),
-                Some(runtime.account.region.clone()),
-            );
-            refreshed.source_request = job.source_request.clone();
-            repository::upsert_job_history(&pool, &refreshed).await?;
-            *job = refreshed;
-        }
+        refresh_active_submission_jobs(
+            &client,
+            &pool,
+            &runtime.account.id,
+            &runtime.account.region,
+            &mut jobs,
+        )
+        .await?;
     }
 
     Ok(jobs)
@@ -762,6 +745,74 @@ fn map_job_driver(
 
 fn is_active_job_state(state: &str) -> bool {
     matches!(state, "PENDING" | "SUBMITTED" | "RUNNING")
+}
+
+async fn refresh_job_run_from_aws(
+    client: &aws_sdk_emrcontainers::Client,
+    id: &str,
+    virtual_cluster_id: &str,
+    account_id: &str,
+    region: &str,
+    source_request: Option<StartJobRunRequest>,
+) -> Option<JobRunSummary> {
+    let response = client
+        .describe_job_run()
+        .id(id)
+        .virtual_cluster_id(virtual_cluster_id)
+        .send()
+        .await
+        .ok()?;
+    let job_run = response.job_run()?;
+    let mut refreshed = map_job_run(
+        job_run,
+        Some(account_id.to_string()),
+        Some(region.to_string()),
+    );
+    refreshed.source_request = source_request;
+    Some(refreshed)
+}
+
+async fn refresh_active_submission_jobs(
+    client: &aws_sdk_emrcontainers::Client,
+    pool: &sqlx::SqlitePool,
+    account_id: &str,
+    region: &str,
+    jobs: &mut [JobRunSummary],
+) -> AppResult<()> {
+    let mut join_set = tokio::task::JoinSet::new();
+    for (index, job) in jobs.iter().enumerate() {
+        if !is_active_job_state(&job.state) {
+            continue;
+        }
+        let client = client.clone();
+        let id = job.id.clone();
+        let virtual_cluster_id = job.virtual_cluster_id.clone();
+        let source_request = job.source_request.clone();
+        let account_id = account_id.to_string();
+        let region = region.to_string();
+        join_set.spawn(async move {
+            let refreshed = refresh_job_run_from_aws(
+                &client,
+                &id,
+                &virtual_cluster_id,
+                &account_id,
+                &region,
+                source_request,
+            )
+            .await;
+            (index, refreshed)
+        });
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        let Ok((index, Some(refreshed))) = result else {
+            continue;
+        };
+        repository::upsert_job_history(pool, &refreshed).await?;
+        jobs[index] = refreshed;
+    }
+
+    Ok(())
 }
 
 fn duration_seconds(started_at: &str, finished_at: Option<&str>) -> Option<i64> {
