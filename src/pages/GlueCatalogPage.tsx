@@ -9,6 +9,7 @@ import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, us
 import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
 import { AthenaQueryOptionsBar } from "@/components/glue/AthenaQueryOptionsBar";
+import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
 import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
 import {
   FavoriteNameDialog,
@@ -28,7 +29,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAthenaQueryExecution,
@@ -38,7 +38,7 @@ import {
   useAthenaWorkgroups
 } from "@/hooks/useAthena";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import { useGlueTable, useUpdateGlueTable } from "@/hooks/useGlue";
+import { useGlueDatabases, useGlueTable, useGlueTables, useUpdateGlueTable } from "@/hooks/useGlue";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
 import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import {
@@ -50,7 +50,9 @@ import {
 } from "@/services/athenaOutputPath";
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
+import { glueService } from "@/services/glueService";
 import { buildDropTableSql, buildSelectSql } from "@/services/glueSqlTemplates";
+import { validateSqlForRun } from "@/services/sqlLint";
 import { formatModShortcut } from "@/lib/keyboardShortcut";
 import {
   addSqlFavorite,
@@ -120,6 +122,8 @@ export function GlueCatalogPage() {
       ? { databaseName: selectedDatabase, tableName: selectedTable }
       : undefined
   );
+  const glueDatabases = useGlueDatabases();
+  const glueTables = useGlueTables(selectedDatabase);
   const updateTable = useUpdateGlueTable();
   const startQuery = useStartAthenaQuery();
   const stopQuery = useStopAthenaQuery();
@@ -155,6 +159,48 @@ export function GlueCatalogPage() {
   const displayResultsPath = useMemo(
     () => displayAthenaResultsPath(selectedWorkgroup, effectiveOutputLocation),
     [effectiveOutputLocation, selectedWorkgroup]
+  );
+
+  const sqlCatalogContext = useMemo(
+    () => ({
+      databases: glueDatabases.data?.map((database) => database.name) ?? [],
+      tables: glueTables.data?.map((table) => table.name) ?? [],
+      selectedDatabase,
+      resolveColumns: async (database: string, table: string) => {
+        if (!accountId) return [];
+        const detail = await glueService.getTable({
+          accountId,
+          databaseName: database,
+          tableName: table
+        });
+        return detail.columns.map((column) => column.name);
+      }
+    }),
+    [accountId, glueDatabases.data, glueTables.data, selectedDatabase]
+  );
+
+  const sqlExecutionError = useMemo(() => {
+    if (activeResultTab?.execution?.state !== "FAILED") return undefined;
+    return {
+      message: activeResultTab.execution.stateChangeReason,
+      sql: activeResultTab.sqlSnapshot
+    };
+  }, [
+    activeResultTab?.execution?.state,
+    activeResultTab?.execution?.stateChangeReason,
+    activeResultTab?.sqlSnapshot
+  ]);
+
+  const assertSqlRunnable = useCallback(
+    (sqlToRun: string) => {
+      const validation = validateSqlForRun(sqlToRun, { selectedDatabase });
+      if (!validation.ok) {
+        toast.error(validation.messages[0] ?? "Fix SQL errors before running.");
+        return false;
+      }
+      return true;
+    },
+    [selectedDatabase]
   );
 
   const handleRefreshCatalog = useCallback(() => {
@@ -315,11 +361,12 @@ export function GlueCatalogPage() {
   };
 
   const handleRunQuery = () => {
-    if (!activeResultTabId) return;
+    if (!activeResultTabId || !assertSqlRunnable(sql)) return;
     void executeQueryOnTab(activeResultTabId, sql);
   };
 
   const handleRunQueryInNewTab = () => {
+    if (!assertSqlRunnable(sql)) return;
     const newTab = createQueryResultTab(resultTabs.length + 1);
     setResultTabs((tabs) => [...tabs, newTab]);
     setActiveResultTabId(newTab.id);
@@ -479,16 +526,6 @@ export function GlueCatalogPage() {
       }
 
       if (!mod) return;
-
-      if (event.key === "Enter") {
-        event.preventDefault();
-        if (event.shiftKey) {
-          handleRunQueryInNewTab();
-        } else {
-          handleRunQuery();
-        }
-        return;
-      }
 
       if (event.altKey && event.key === "ArrowRight") {
         event.preventDefault();
@@ -661,12 +698,14 @@ export function GlueCatalogPage() {
                 </div>
               </div>
 
-                <Textarea
+                <AthenaSqlEditor
                   value={sql}
-                  onChange={(event) => setSql(event.target.value)}
-                  rows={8}
-                  className="min-h-[140px] shrink-0 rounded-lg border font-mono text-[11px] leading-snug"
-                  spellCheck={false}
+                  onChange={setSql}
+                  onRun={handleRunQuery}
+                  onRunNewTab={handleRunQueryInNewTab}
+                  selectedDatabase={selectedDatabase}
+                  catalogContext={sqlCatalogContext}
+                  executionError={sqlExecutionError}
                 />
 
               <div className="min-h-0 flex-1 overflow-hidden">

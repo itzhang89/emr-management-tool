@@ -32,8 +32,13 @@ function parseTableToken(token: string): string | undefined {
   return name;
 }
 
+export function formatResultTabTableName(name: string, maxLength = 22): string {
+  if (name.length <= maxLength) return name;
+  return `…${name.slice(name.length - (maxLength - 1))}`;
+}
+
 const TABLE_IDENTIFIER =
-  /(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\w]*)(?:\.(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\w]*))?/;
+  /(?:(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\w]*)\.)*(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\w]*)/;
 
 export function extractPrimaryTableName(sql: string): string | undefined {
   const normalized = sql.trim().replace(/\s+/g, " ");
@@ -67,7 +72,7 @@ export function extractPrimaryTableName(sql: string): string | undefined {
 
 export function buildResultTabTitle(sql: string, fallbackIndex = 1): string {
   const tableName = extractPrimaryTableName(sql);
-  if (tableName) return tableName;
+  if (tableName) return formatResultTabTableName(tableName);
   return `Result ${fallbackIndex}`;
 }
 
