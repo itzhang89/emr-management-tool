@@ -1,9 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import type { JobRunSummary, ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { emrService } from "@/services/emrService";
-
-const jobHistoryRefreshIntervalMs = 5_000;
+import { JOB_HISTORY_REFRESH_INTERVAL_MS } from "@/services/jobHistoryConstants";
 
 function useActiveAccountId() {
   const activeAccount = useActiveAwsAccount();
@@ -22,29 +21,34 @@ export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
   });
 }
 
-export function useJobRuns(virtualClusterId?: string, autoRefresh = false, keyword?: string) {
+export function useJobRuns(
+  virtualClusterId?: string,
+  autoRefresh = false,
+  keyword?: string,
+  enabled = true
+) {
   const accountId = useActiveAccountId();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
   return useQuery({
     queryKey: ["job-runs", accountId, normalizedVirtualClusterId, keyword],
     queryFn: () => emrService.listJobRuns(normalizedVirtualClusterId, accountId, keyword),
-    enabled: Boolean(accountId),
+    enabled: enabled && Boolean(accountId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh,
-    refetchInterval: autoRefresh ? jobHistoryRefreshIntervalMs : false
+    refetchInterval: autoRefresh && enabled ? JOB_HISTORY_REFRESH_INTERVAL_MS : false
   });
 }
 
-export function useSubmissionHistory(virtualClusterId?: string, autoRefresh = false) {
+export function useSubmissionHistory(virtualClusterId?: string, autoRefresh = false, enabled = true) {
   const accountId = useActiveAccountId();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
   return useQuery({
     queryKey: ["submission-history", accountId, normalizedVirtualClusterId],
     queryFn: () => emrService.listSubmissionHistory(normalizedVirtualClusterId, accountId),
-    enabled: Boolean(accountId && normalizedVirtualClusterId),
+    enabled: enabled && Boolean(accountId && normalizedVirtualClusterId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh,
-    refetchInterval: autoRefresh ? jobHistoryRefreshIntervalMs : false
+    refetchInterval: autoRefresh && enabled ? JOB_HISTORY_REFRESH_INTERVAL_MS : false
   });
 }
 
@@ -86,3 +90,5 @@ export function useCancelJobRun() {
     }
   });
 }
+
+export type JobRunsQuery = UseQueryResult<JobRunSummary[]>;
