@@ -1,10 +1,13 @@
-import { Pencil, Save, X } from "lucide-react";
+import { Copy, Pencil, Save, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueTableDetail } from "@/hooks/useGlue";
+import { buildCreateTableDdl } from "@/services/glueTableDdl";
+import { formatAppError } from "@/services/appErrorMessage";
 import type { GlueTableDetail } from "@/types/domain";
 
 export function TableMetadataPanel({
@@ -52,6 +55,23 @@ export function TableMetadataPanel({
           <p className="text-xs text-muted-foreground">Read-only by default. Enable edit mode to update Glue metadata.</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!table}
+            onClick={async () => {
+              try {
+                await navigator.clipboard?.writeText(buildCreateTableDdl(table));
+                toast.success("CREATE TABLE DDL copied.");
+              } catch (error) {
+                toast.error(formatAppError(error, "Failed to copy DDL."));
+              }
+            }}
+          >
+            <Copy data-icon="inline-start" />
+            Copy DDL
+          </Button>
           {editMode ? (
             <>
               <Button

@@ -1,41 +1,78 @@
-import { ChevronDown, ChevronRight, Database, RefreshCw, Search, Table2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ArrowLeft, Database, RefreshCw, Search, Table2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useGlueDatabases, useGlueTables } from "@/hooks/useGlue";
-import type { GlueDatabase } from "@/types/domain";
 
 export function CatalogTree({
   selectedDatabase,
   selectedTable,
+  onFocusDatabase,
+  onExitDatabase,
   onSelectTable,
   onRefresh
 }: {
   selectedDatabase?: string;
   selectedTable?: string;
+  onFocusDatabase: (databaseName: string) => void;
+  onExitDatabase: () => void;
   onSelectTable: (databaseName: string, tableName: string) => void;
   onRefresh: () => void;
 }) {
   const databases = useGlueDatabases();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [viewDatabase, setViewDatabase] = useState<string | undefined>();
   const [filter, setFilter] = useState("");
+
+  const activeDatabase = viewDatabase ?? (selectedTable ? selectedDatabase : undefined);
+  const tables = useGlueTables(activeDatabase);
+
+  useEffect(() => {
+    if (selectedTable && selectedDatabase) {
+      setViewDatabase(selectedDatabase);
+    }
+  }, [selectedDatabase, selectedTable]);
 
   const filteredDatabases = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    if (!needle) return databases.data ?? [];
-    return (databases.data ?? []).filter((database) => database.name.toLowerCase().includes(needle));
+    const list = databases.data ?? [];
+    if (!needle) return list;
+    return list.filter((database) => database.name.toLowerCase().includes(needle));
   }, [databases.data, filter]);
+
+  const filteredTables = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    const list = tables.data ?? [];
+    if (!needle) return list;
+    return list.filter((table) => table.name.toLowerCase().includes(needle));
+  }, [tables.data, filter]);
+
+  const enterDatabase = (databaseName: string) => {
+    setViewDatabase(databaseName);
+    setFilter("");
+    onFocusDatabase(databaseName);
+  };
+
+  const exitDatabase = () => {
+    setViewDatabase(undefined);
+    setFilter("");
+    onExitDatabase();
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-center gap-2">
+        {activeDatabase ? (
+          <Button type="button" variant="outline" size="icon" aria-label="Back to databases" onClick={exitDatabase}>
+            <ArrowLeft className="size-4" />
+          </Button>
+        ) : null}
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
           <Input
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter databases"
+            placeholder={activeDatabase ? "Filter tables" : "Filter databases"}
             className="pl-8"
           />
         </div>
@@ -45,84 +82,110 @@ export function CatalogTree({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-        {databases.isLoading ? <p className="p-3 text-sm text-muted-foreground">Loading databases...</p> : null}
-        {databases.error ? <p className="p-3 text-sm text-destructive">Failed to load databases.</p> : null}
-        {!databases.isLoading && filteredDatabases.length === 0 ? (
-          <p className="p-3 text-sm text-muted-foreground">No databases found.</p>
-        ) : null}
-        <ul className="divide-y">
-          {filteredDatabases.map((database) => (
-            <DatabaseNode
-              key={database.name}
-              database={database}
-              expanded={expanded[database.name] ?? false}
-              selectedDatabase={selectedDatabase}
-              selectedTable={selectedTable}
-              onToggle={() => setExpanded((current) => ({ ...current, [database.name]: !current[database.name] }))}
-              onSelectTable={onSelectTable}
-            />
-          ))}
-        </ul>
+        {activeDatabase ? (
+          <DatabaseTablesView
+            databaseName={activeDatabase}
+            tables={filteredTables}
+            loading={tables.isLoading}
+            error={tables.error}
+            selectedDatabase={selectedDatabase}
+            selectedTable={selectedTable}
+            onSelectTable={onSelectTable}
+          />
+        ) : (
+          <DatabaseListView
+            databases={filteredDatabases}
+            loading={databases.isLoading}
+            error={databases.error}
+            onEnterDatabase={enterDatabase}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function DatabaseNode({
-  database,
-  expanded,
-  selectedDatabase,
-  selectedTable,
-  onToggle,
-  onSelectTable
+function DatabaseListView({
+  databases,
+  loading,
+  error,
+  onEnterDatabase
 }: {
-  database: GlueDatabase;
-  expanded: boolean;
-  selectedDatabase?: string;
-  selectedTable?: string;
-  onToggle: () => void;
-  onSelectTable: (databaseName: string, tableName: string) => void;
+  databases: Array<{ name: string }>;
+  loading: boolean;
+  error: unknown;
+  onEnterDatabase: (name: string) => void;
 }) {
-  const tables = useGlueTables(expanded ? database.name : undefined);
+  if (loading) return <p className="p-3 text-sm text-muted-foreground">Loading databases...</p>;
+  if (error) return <p className="p-3 text-sm text-destructive">Failed to load databases.</p>;
+  if (databases.length === 0) return <p className="p-3 text-sm text-muted-foreground">No databases found.</p>;
 
   return (
-    <li>
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-        onClick={onToggle}
-      >
-        {expanded ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
-        <Database className="size-4 shrink-0 text-muted-foreground" />
-        <span className="truncate font-medium">{database.name}</span>
-      </button>
-      {expanded ? (
-        <ul className="border-t bg-muted/20">
-          {tables.isLoading ? <li className="px-8 py-2 text-xs text-muted-foreground">Loading tables...</li> : null}
-          {tables.error ? <li className="px-8 py-2 text-xs text-destructive">Failed to load tables.</li> : null}
-          {(tables.data ?? []).map((table) => {
-            const active = selectedDatabase === database.name && selectedTable === table.name;
-            return (
-              <li key={table.name}>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex w-full items-center gap-2 py-2 pr-3 pl-8 text-left text-sm hover:bg-accent",
-                    active && "bg-primary/10 text-primary"
-                  )}
-                  onClick={() => onSelectTable(database.name, table.name)}
-                >
-                  <Table2 className="size-4 shrink-0" />
-                  <span className="truncate">{table.name}</span>
-                </button>
-              </li>
-            );
-          })}
-          {!tables.isLoading && (tables.data?.length ?? 0) === 0 ? (
-            <li className="px-8 py-2 text-xs text-muted-foreground">No tables in this database.</li>
-          ) : null}
-        </ul>
+    <ul className="divide-y">
+      {databases.map((database) => (
+        <li key={database.name}>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+            onClick={() => onEnterDatabase(database.name)}
+          >
+            <Database className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{database.name}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DatabaseTablesView({
+  databaseName,
+  tables,
+  loading,
+  error,
+  selectedDatabase,
+  selectedTable,
+  onSelectTable
+}: {
+  databaseName: string;
+  tables: Array<{ name: string }>;
+  loading: boolean;
+  error: unknown;
+  selectedDatabase?: string;
+  selectedTable?: string;
+  onSelectTable: (databaseName: string, tableName: string) => void;
+}) {
+  return (
+    <div>
+      <div className="border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
+        <Database className="mr-1 inline size-3.5" />
+        {databaseName}
+      </div>
+      {loading ? <p className="p-3 text-sm text-muted-foreground">Loading tables...</p> : null}
+      {error ? <p className="p-3 text-sm text-destructive">Failed to load tables.</p> : null}
+      {!loading && tables.length === 0 ? (
+        <p className="p-3 text-sm text-muted-foreground">No tables in this database.</p>
       ) : null}
-    </li>
+      <ul className="divide-y">
+        {tables.map((table) => {
+          const active = selectedDatabase === databaseName && selectedTable === table.name;
+          return (
+            <li key={table.name}>
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent",
+                  active && "bg-primary/10 text-primary"
+                )}
+                onClick={() => onSelectTable(databaseName, table.name)}
+              >
+                <Table2 className="size-4 shrink-0" />
+                <span className="truncate">{table.name}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

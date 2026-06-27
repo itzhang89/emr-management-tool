@@ -9,6 +9,7 @@ import {
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
+import { AthenaQueryOptionsBar } from "@/components/glue/AthenaQueryOptionsBar";
 import { QueryResultsPanel } from "@/components/glue/QueryResultsPanel";
 import { TableMetadataPanel } from "@/components/glue/TableMetadataPanel";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -21,16 +22,12 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAthenaQueryExecution,
-  useAthenaWorkgroups,
   useExportAthenaQueryCsv,
   useStartAthenaQuery,
   useStopAthenaQuery
@@ -56,6 +53,8 @@ import { useQueryClient } from "@tanstack/react-query";
 const WORKSPACE_PANE_MIN_WIDTH = 220;
 const WORKSPACE_PANE_DEFAULT_WIDTH = 300;
 
+type TopTab = "query" | "metadata";
+
 export function GlueCatalogPage() {
   const queryClient = useQueryClient();
   const activeAccount = useActiveAwsAccount();
@@ -63,6 +62,7 @@ export function GlueCatalogPage() {
   const submitUserQuery = useSubmitUser();
   const submitUser = submitUserQuery.data ?? "user";
 
+  const [topTab, setTopTab] = useState<TopTab>("query");
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
@@ -70,7 +70,6 @@ export function GlueCatalogPage() {
   const [outputBasePath, setOutputBasePath] = useState("");
   const [appendSubmitUser, setAppendSubmitUser] = useState(true);
   const [queryExecutionId, setQueryExecutionId] = useState<string>();
-  const [bottomTab, setBottomTab] = useState<"results" | "metadata">("results");
   const [metadataEditMode, setMetadataEditMode] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(WORKSPACE_PANE_DEFAULT_WIDTH);
   const [results, setResults] = useState<AthenaQueryResults>();
@@ -95,6 +94,14 @@ export function GlueCatalogPage() {
     () => resolveAthenaOutputLocation(outputBasePath, submitUser, appendSubmitUser),
     [appendSubmitUser, outputBasePath, submitUser]
   );
+
+  const handleRefreshCatalog = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["glue-databases", accountId] });
+    void queryClient.invalidateQueries({ queryKey: ["glue-tables", accountId] });
+    if (selectedDatabase) {
+      void queryClient.invalidateQueries({ queryKey: ["glue-table", accountId, selectedDatabase, selectedTable] });
+    }
+  }, [accountId, queryClient, selectedDatabase, selectedTable]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -142,7 +149,7 @@ export function GlueCatalogPage() {
     if (isCatalogMutatingSql(sql)) {
       handleRefreshCatalog();
     }
-  }, [execution.data?.state, queryExecutionId, loadResultsPage, sql]);
+  }, [execution.data?.state, queryExecutionId, loadResultsPage, sql, handleRefreshCatalog]);
 
   useEffect(() => {
     setMetadataEditMode(false);
@@ -151,16 +158,18 @@ export function GlueCatalogPage() {
   const handleSelectTable = (databaseName: string, tableName: string) => {
     setSelectedDatabase(databaseName);
     setSelectedTable(tableName);
-    setSql(buildSelectSql(databaseName, tableName));
-    setBottomTab("metadata");
+    if (topTab === "query") {
+      setSql(buildSelectSql(databaseName, tableName));
+    }
   };
 
-  const handleRefreshCatalog = () => {
-    void queryClient.invalidateQueries({ queryKey: ["glue-databases", accountId] });
-    void queryClient.invalidateQueries({ queryKey: ["glue-tables", accountId] });
-    if (selectedDatabase) {
-      void queryClient.invalidateQueries({ queryKey: ["glue-table", accountId, selectedDatabase, selectedTable] });
-    }
+  const handleFocusDatabase = (databaseName: string) => {
+    setSelectedDatabase(databaseName);
+    setSelectedTable(undefined);
+  };
+
+  const handleExitDatabase = () => {
+    setSelectedTable(undefined);
   };
 
   const handleRunQuery = async () => {
@@ -180,7 +189,6 @@ export function GlueCatalogPage() {
       setQueryExecutionId(started.queryExecutionId);
       setResults(undefined);
       setResultsError(undefined);
-      setBottomTab("results");
       setHistory(addSqlHistory(accountId, sql));
       toast.success("Athena query started.");
     } catch (error) {
@@ -228,7 +236,7 @@ export function GlueCatalogPage() {
     const dropSql = buildDropTableSql(selectedDatabase, selectedTable);
     setSql(dropSql);
     setDropDialogOpen(false);
-    setBottomTab("results");
+    setTopTab("query");
     try {
       const started = await startQuery.mutateAsync({
         sql: dropSql,
@@ -240,6 +248,7 @@ export function GlueCatalogPage() {
       if (accountId) {
         setHistory(addSqlHistory(accountId, dropSql));
       }
+      setSelectedTable(undefined);
       toast.success("Drop table query started.");
       handleRefreshCatalog();
     } catch (error) {
@@ -247,8 +256,14 @@ export function GlueCatalogPage() {
     }
   };
 
-  const loadFavorite = (entry: SqlFavoriteEntry) => setSql(entry.sql);
-  const loadHistoryEntry = (entry: SqlHistoryEntry) => setSql(entry.sql);
+  const loadFavorite = (entry: SqlFavoriteEntry) => {
+    setSql(entry.sql);
+    setTopTab("query");
+  };
+  const loadHistoryEntry = (entry: SqlHistoryEntry) => {
+    setSql(entry.sql);
+    setTopTab("query");
+  };
 
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -286,7 +301,7 @@ export function GlueCatalogPage() {
       <PageHeader
         pageId="glue"
         actions={
-          selectedDatabase && selectedTable ? (
+          topTab === "metadata" && selectedDatabase && selectedTable ? (
             <Button type="button" variant="destructive" size="sm" onClick={() => setDropDialogOpen(true)}>
               <Trash2 data-icon="inline-start" />
               Drop table
@@ -300,6 +315,8 @@ export function GlueCatalogPage() {
           <CatalogTree
             selectedDatabase={selectedDatabase}
             selectedTable={selectedTable}
+            onFocusDatabase={handleFocusDatabase}
+            onExitDatabase={handleExitDatabase}
             onSelectTable={handleSelectTable}
             onRefresh={handleRefreshCatalog}
           />
@@ -315,104 +332,95 @@ export function GlueCatalogPage() {
           <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border group-hover:bg-primary/50" />
         </div>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-          <div className="space-y-3 rounded-lg border p-3">
-            <div className="grid gap-3 lg:grid-cols-[220px_1fr]">
-              <div className="space-y-1.5">
-                <Label htmlFor="athena-workgroup">Workgroup</Label>
-                <WorkgroupSelect value={workgroup} onChange={setWorkgroup} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="athena-output-path">Results S3 path</Label>
-                <Input
-                  id="athena-output-path"
-                  value={outputBasePath}
-                  onChange={(event) => setOutputBasePath(event.target.value)}
-                  placeholder="s3://bucket/athena-results/"
-                  className="font-mono text-sm"
-                />
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={appendSubmitUser} onCheckedChange={(checked) => setAppendSubmitUser(checked === true)} />
-                Append submitUser ({submitUser})
-              </label>
-              <p className="text-xs text-muted-foreground">
-                Effective path: <span className="font-mono">{effectiveOutputLocation || "—"}</span>
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Select
-                onValueChange={(value) => {
-                  const template = SQL_DDL_TEMPLATES.find((entry) => entry.label === value);
-                  if (template) setSql(template.sql);
-                }}
-              >
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="SQL templates" />
-                </SelectTrigger>
-                <SelectContent>
-                  {SQL_DDL_TEMPLATES.map((template) => (
-                    <SelectItem key={template.label} value={template.label}>
-                      {template.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <HistoryMenu history={history} onSelect={loadHistoryEntry} />
-              <FavoritesMenu
-                favorites={favorites}
-                onSelect={loadFavorite}
-                onRemove={(favoriteId) => accountId && setFavorites(removeSqlFavorite(accountId, favoriteId))}
-              />
-
-              <Button type="button" variant="outline" size="sm" onClick={favoriteCurrentSql}>
-                <Star data-icon="inline-start" />
-                Favorite SQL
-              </Button>
-
-              <div className="ml-auto flex gap-2">
-                <Button type="button" variant="outline" size="sm" disabled={!running} onClick={handleStopQuery}>
-                  <Square data-icon="inline-start" />
-                  Stop
-                </Button>
-                <Button type="button" size="sm" disabled={startQuery.isPending || running} onClick={handleRunQuery}>
-                  <Play data-icon="inline-start" />
-                  Run
-                </Button>
-              </div>
-            </div>
-
-            <Textarea
-              value={sql}
-              onChange={(event) => setSql(event.target.value)}
-              rows={8}
-              className="min-h-[160px] font-mono text-sm"
-              spellCheck={false}
-            />
-          </div>
-
-          <Tabs value={bottomTab} onValueChange={(value) => setBottomTab(value as "results" | "metadata")} className="min-h-0 flex-1">
-            <TabsList>
-              <TabsTrigger value="results">Results</TabsTrigger>
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <Tabs
+            value={topTab}
+            onValueChange={(value) => setTopTab(value as TopTab)}
+            className="flex min-h-0 flex-1 flex-col gap-3"
+          >
+            <TabsList className="shrink-0 self-start">
+              <TabsTrigger value="query">Query</TabsTrigger>
               <TabsTrigger value="metadata">Table Metadata</TabsTrigger>
             </TabsList>
-            <TabsContent value="results" className="min-h-0 flex-1 overflow-auto rounded-lg border p-3">
-              <QueryResultsPanel
-                execution={execution.data}
-                results={results}
-                loading={resultsLoading}
-                error={resultsError}
-                hasMore={Boolean(results?.nextToken)}
-                onLoadMore={() => queryExecutionId && void loadResultsPage(queryExecutionId, results?.nextToken)}
-                onExport={handleExport}
-                exporting={exportCsv.isPending}
+
+            <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3">
+              <AthenaQueryOptionsBar
+                workgroup={workgroup}
+                onWorkgroupChange={setWorkgroup}
+                outputBasePath={outputBasePath}
+                onOutputBasePathChange={setOutputBasePath}
+                appendSubmitUser={appendSubmitUser}
+                onAppendSubmitUserChange={setAppendSubmitUser}
+                submitUser={submitUser}
+                effectiveOutputLocation={effectiveOutputLocation}
               />
+
+              <div className="flex flex-wrap gap-2">
+                  <Select
+                    onValueChange={(value) => {
+                      const template = SQL_DDL_TEMPLATES.find((entry) => entry.label === value);
+                      if (template) setSql(template.sql);
+                    }}
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="SQL templates" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SQL_DDL_TEMPLATES.map((template) => (
+                        <SelectItem key={template.label} value={template.label}>
+                          {template.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <HistoryMenu history={history} onSelect={loadHistoryEntry} />
+                  <FavoritesMenu
+                    favorites={favorites}
+                    onSelect={loadFavorite}
+                    onRemove={(favoriteId) => accountId && setFavorites(removeSqlFavorite(accountId, favoriteId))}
+                  />
+
+                  <Button type="button" variant="outline" size="sm" onClick={favoriteCurrentSql}>
+                    <Star data-icon="inline-start" />
+                    Favorite SQL
+                  </Button>
+
+                  <div className="ml-auto flex gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={!running} onClick={handleStopQuery}>
+                      <Square data-icon="inline-start" />
+                      Stop
+                    </Button>
+                    <Button type="button" size="sm" disabled={startQuery.isPending || running} onClick={handleRunQuery}>
+                      <Play data-icon="inline-start" />
+                      Run
+                    </Button>
+                  </div>
+                </div>
+
+                <Textarea
+                  value={sql}
+                  onChange={(event) => setSql(event.target.value)}
+                  rows={8}
+                  className="min-h-[140px] rounded-lg border font-mono text-sm"
+                  spellCheck={false}
+                />
+
+              <div className="min-h-0 flex-1 overflow-auto rounded-lg border p-3">
+                <QueryResultsPanel
+                  execution={execution.data}
+                  results={results}
+                  loading={resultsLoading}
+                  error={resultsError}
+                  hasMore={Boolean(results?.nextToken)}
+                  onLoadMore={() => queryExecutionId && void loadResultsPage(queryExecutionId, results?.nextToken)}
+                  onExport={handleExport}
+                  exporting={exportCsv.isPending}
+                />
+              </div>
             </TabsContent>
-            <TabsContent value="metadata" className="min-h-0 flex-1 overflow-auto rounded-lg border p-3">
+
+            <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-auto rounded-lg border p-3">
               <TableMetadataPanel
                 table={tableDetail.data}
                 loading={tableDetail.isLoading}
@@ -446,31 +454,6 @@ export function GlueCatalogPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function WorkgroupSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const workgroups = useAthenaWorkgroups();
-  const options = useMemo(() => {
-    const names = new Set((workgroups.data ?? []).map((entry) => entry.name));
-    names.add(value);
-    return Array.from(names).sort((left, right) => left.localeCompare(right));
-  }, [value, workgroups.data]);
-
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger id="athena-workgroup">
-        <SelectValue placeholder="Workgroup" />
-      </SelectTrigger>
-      <SelectContent>
-        {workgroups.isLoading ? <SelectItem value={value}>{value}</SelectItem> : null}
-        {options.map((name) => (
-          <SelectItem key={name} value={name}>
-            {name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 
