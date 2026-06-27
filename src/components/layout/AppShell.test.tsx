@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -265,5 +265,44 @@ describe("AppShell", () => {
     await user.keyboard("{Meta>}/{/Meta}");
 
     expect(await screen.findByRole("button", { name: /Collapse navigation/i })).toBeInTheDocument();
+  });
+
+  it("opens the account dialog with the global shortcut", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.keyboard("{Meta>}e{/Meta}");
+
+    expect(await screen.findByRole("dialog", { name: /Switch AWS Account/i })).toBeInTheDocument();
+  });
+
+  it("navigates pages with number shortcuts", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.keyboard("{Meta>}2{/Meta}");
+
+    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}5{/Meta}");
+
+    expect(await screen.findByRole("heading", { name: "Data Catalog" })).toBeInTheDocument();
+  });
+
+  it("cycles pages with bracket shortcuts", async () => {
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "]", code: "BracketRight", metaKey: true });
+
+    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "[", code: "BracketLeft", metaKey: true });
+
+    expect(await screen.findByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
   });
 });

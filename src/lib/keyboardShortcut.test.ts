@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatShortcutsHelpLabel, isShortcutsHelpKey, isSidebarToggleKey } from "./keyboardShortcut";
+import { formatShortcutsHelpLabel, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey, getPageNavigationIndex } from "./keyboardShortcut";
 
 describe("formatShortcutsHelpLabel", () => {
   it("returns platform-specific help shortcut label", () => {
@@ -76,5 +76,70 @@ describe("isSidebarToggleKey", () => {
         altKey: false
       })
     ).toBe(false);
+  });
+});
+
+describe("isAccountSwitchKey", () => {
+  it("matches modifier plus E", () => {
+    expect(
+      isAccountSwitchKey({
+        key: "e",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
+  });
+});
+
+describe("getPageNavigationIndex", () => {
+  it("matches modifier plus number keys", () => {
+    expect(
+      getPageNavigationIndex({
+        key: "2",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(2);
+  });
+
+  it("ignores unmodified number keys", () => {
+    expect(
+      getPageNavigationIndex({
+        key: "2",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBeNull();
+  });
+});
+
+describe("page cycle keys", () => {
+  it("matches modifier plus bracket keys", () => {
+    expect(
+      isPageCyclePreviousKey({
+        key: "[",
+        code: "BracketLeft",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
+    expect(
+      isPageCycleNextKey({
+        key: "]",
+        code: "BracketRight",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
   });
 });

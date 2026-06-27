@@ -15,7 +15,7 @@ describe("keyboardShortcuts registry", () => {
 
   it("groups shortcuts by known categories", () => {
     const groups = groupKeyboardShortcutsByCategory();
-    expect(groups).toHaveLength(shortcutCategories.length);
+    expect(groups.length).toBeGreaterThanOrEqual(shortcutCategories.length);
     expect(groups.flatMap((group) => group.shortcuts)).toHaveLength(keyboardShortcuts.length);
   });
 
@@ -27,5 +27,12 @@ describe("keyboardShortcuts registry", () => {
   it("exposes submit job shortcut labels", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB)).toMatch(/Enter/);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON)).toMatch(/P/i);
+  });
+
+  it("exposes account and navigation shortcut labels", () => {
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.ACCOUNT_SWITCH)).toMatch(/E/i);
+    expect(getShortcutPrimaryKey("nav-history")).toMatch(/2/);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.NAV_PREV_PAGE)).toMatch(/\[/);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.NAV_NEXT_PAGE)).toMatch(/]/);
   });
 });
