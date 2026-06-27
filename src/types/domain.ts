@@ -518,7 +518,6 @@ export interface SqlFavoriteEntry {
 }
 
 export interface AthenaAccountPreferences {
-  defaultWorkgroup?: string;
   outputBasePath?: string;
   appendSubmitUser?: boolean;
   lastWorkgroup?: string;

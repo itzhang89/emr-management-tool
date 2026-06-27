@@ -55,8 +55,7 @@ export function useAthenaAccountPreferences(accountId?: string) {
     preferences,
     outputBasePath: preferences.outputBasePath ?? "",
     appendSubmitUser: preferences.appendSubmitUser ?? true,
-    workgroup:
-      preferences.lastWorkgroup ?? preferences.defaultWorkgroup ?? "primary",
+    workgroup: preferences.lastWorkgroup ?? "primary",
     setOutputBasePath,
     setAppendSubmitUser,
     setWorkgroup,
