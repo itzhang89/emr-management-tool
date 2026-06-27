@@ -8,7 +8,8 @@ import { writeSubmitJobFormCache, writeSubmitJobLastTemplate } from "@/services/
 
 const mocks = vi.hoisted(() => ({
   startJobRun: vi.fn(),
-  toastError: vi.fn()
+  toastError: vi.fn(),
+  useSubmissionHistory: vi.fn()
 }));
 
 vi.mock("sonner", () => ({
@@ -31,7 +32,7 @@ vi.mock("@/hooks/useEmr", () => ({
   useStartJobRun: () => ({ mutateAsync: mocks.startJobRun, isPending: false, mutate: vi.fn() }),
   useCancelJobRun: () => ({ mutate: vi.fn(), isPending: false }),
   useJobRuns: () => ({ data: [], isLoading: false, error: null, isFetching: false }),
-  useSubmissionHistory: () => ({ data: [], isLoading: false, error: null, isFetching: false })
+  useSubmissionHistory: (...args: unknown[]) => mocks.useSubmissionHistory(...args)
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
@@ -99,6 +100,20 @@ describe("SubmitJobPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mocks.useSubmissionHistory.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: Date.now()
+    });
+    mocks.startJobRun.mockResolvedValue({
+      id: "job-new",
+      name: "daily-tester",
+      state: "SUBMITTED",
+      virtualClusterId: "vc-1",
+      createdAt: new Date().toISOString()
+    });
   });
 
   it("renders template-driven submit controls without legacy save template action", () => {
@@ -154,6 +169,29 @@ describe("SubmitJobPage", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("staging")).toBeInTheDocument();
     });
+  });
+
+  it("keeps submit job auto refresh off by default and enables it after a successful submit", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("emr-eks:job-history-auto-refresh", "false");
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <SubmitJobPage />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    expect(mocks.useSubmissionHistory).toHaveBeenCalledWith("vc-1", false, true);
+    expect(screen.getByRole("switch", { name: /Auto refresh job history/i })).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /^Submit$/i }));
+
+    await waitFor(() => {
+      expect(mocks.useSubmissionHistory).toHaveBeenCalledWith("vc-1", true, true);
+    });
+    expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("false");
   });
 
   it("shows structured Tauri submit errors instead of a generic fallback", async () => {

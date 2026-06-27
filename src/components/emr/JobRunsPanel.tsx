@@ -13,11 +13,10 @@ import {
   useVirtualClusters,
   type JobRunsQuery
 } from "@/hooks/useEmr";
-import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
 import { isLikelyEmrJobRunId } from "@/services/emrJobId";
 import { emrService } from "@/services/emrService";
 import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
-import { JOB_HISTORY_PAGE_SIZE, SUBMISSION_HISTORY_LIMIT, JOB_HISTORY_REFRESH_INTERVAL_SECONDS } from "@/services/jobHistoryConstants";
+import { JOB_HISTORY_PAGE_SIZE, SUBMISSION_HISTORY_LIMIT } from "@/services/jobHistoryConstants";
 import { formatJobRunDuration } from "@/services/jobRunDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobRunSummary } from "@/types/domain";
@@ -30,14 +29,17 @@ export function JobRunsPanel({
   onOpenLogs,
   title,
   className,
-  autoRefresh: autoRefreshProp,
+  autoRefresh = false,
   onAutoRefreshChange,
+  refreshCountdown = 0,
   showAutoRefreshControl = false,
   showFindInAws = false,
   searchedJobId,
   findInAwsSignal,
   submittedOnly = false,
-  clusterJobsQuery
+  clusterJobsQuery,
+  submissionJobsQuery,
+  onSubmissionStarted
 }: {
   virtualClusterId?: string;
   keyword?: string;
@@ -46,12 +48,15 @@ export function JobRunsPanel({
   className?: string;
   autoRefresh?: boolean;
   onAutoRefreshChange?: (enabled: boolean) => void;
+  refreshCountdown?: number;
   showAutoRefreshControl?: boolean;
   showFindInAws?: boolean;
   searchedJobId?: string;
   findInAwsSignal?: number;
   submittedOnly?: boolean;
   clusterJobsQuery?: JobRunsQuery;
+  submissionJobsQuery?: JobRunsQuery;
+  onSubmissionStarted?: () => void;
 }) {
   const [detailJobId, setDetailJobId] = useState<string>();
   const [page, setPage] = useState(1);
@@ -62,27 +67,23 @@ export function JobRunsPanel({
   const startJob = useStartJobRun();
   const clusters = useVirtualClusters();
 
-  const panelAutoRefresh = useJobHistoryAutoRefresh({
-    enabled: showAutoRefreshControl,
-    persistPreference: showAutoRefreshControl
-  });
-  const autoRefresh = autoRefreshProp ?? panelAutoRefresh.autoRefresh;
-  const setAutoRefresh = onAutoRefreshChange ?? panelAutoRefresh.setAutoRefresh;
   const submittedKeyword = keyword?.trim() || undefined;
   const useExternalClusterQuery = Boolean(clusterJobsQuery && !submittedOnly);
+  const useExternalSubmissionQuery = Boolean(submissionJobsQuery && submittedOnly);
   const internalClusterJobs = useJobRuns(
     virtualClusterId,
     autoRefresh,
     submittedKeyword,
     !submittedOnly && !useExternalClusterQuery
   );
-  const submissionJobs = useSubmissionHistory(virtualClusterId, autoRefresh, submittedOnly);
-  const jobs = submittedOnly ? submissionJobs : (clusterJobsQuery ?? internalClusterJobs);
-
-  useEffect(() => {
-    if (!showAutoRefreshControl || !autoRefresh) return;
-    panelAutoRefresh.setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
-  }, [autoRefresh, jobs.dataUpdatedAt, panelAutoRefresh.setRefreshCountdown, showAutoRefreshControl]);
+  const internalSubmissionJobs = useSubmissionHistory(
+    virtualClusterId,
+    autoRefresh,
+    submittedOnly && !useExternalSubmissionQuery
+  );
+  const jobs = submittedOnly
+    ? (submissionJobsQuery ?? internalSubmissionJobs)
+    : (clusterJobsQuery ?? internalClusterJobs);
 
   const isSyncingJobs = submittedOnly
     ? jobs.isLoading
@@ -155,13 +156,13 @@ export function JobRunsPanel({
           ) : (
             <span className="text-sm text-muted-foreground">{allJobs.length} jobs</span>
           )}
-          {showAutoRefreshControl ? (
+          {showAutoRefreshControl && onAutoRefreshChange ? (
             <JobAutoRefreshToggle
               id="submit-job-auto-refresh"
               autoRefresh={autoRefresh}
-              onAutoRefreshChange={setAutoRefresh}
+              onAutoRefreshChange={onAutoRefreshChange}
               isFetching={jobs.isFetching}
-              refreshCountdown={panelAutoRefresh.refreshCountdown}
+              refreshCountdown={refreshCountdown}
             />
           ) : null}
         </div>
@@ -241,7 +242,10 @@ export function JobRunsPanel({
                               return;
                             }
                             startJob.mutate(job.sourceRequest, {
-                              onSuccess: () => toast.success("Rerun submitted."),
+                              onSuccess: () => {
+                                toast.success("Rerun submitted.");
+                                onSubmissionStarted?.();
+                              },
                               onError: (error) => toast.error(errorMessage(error))
                             });
                           }}
