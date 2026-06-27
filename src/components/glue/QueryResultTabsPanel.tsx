@@ -66,7 +66,7 @@ export function QueryResultTabsPanel({
         })}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border p-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border p-3">
         {activeTab ? (
           <QueryResultsPanel
             execution={activeTab.execution}

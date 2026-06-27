@@ -36,8 +36,8 @@ export function QueryResultsPanel({
   const dataRows = skipHeaderRow(results);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
           <span>Status: {execution.state}</span>
           <span>Scanned: {formatBytes(execution.dataScannedBytes)}</span>
@@ -56,16 +56,16 @@ export function QueryResultsPanel({
       </div>
 
       {execution.state === "FAILED" ? (
-        <p className="text-sm text-destructive">{execution.stateChangeReason ?? "Query failed."}</p>
+        <p className="shrink-0 text-xs text-destructive">{execution.stateChangeReason ?? "Query failed."}</p>
       ) : null}
 
-      {loading ? <p className="text-sm text-muted-foreground">Loading results...</p> : null}
-      {error ? <p className="text-sm text-destructive">Failed to load query results.</p> : null}
+      {loading ? <p className="shrink-0 text-xs text-muted-foreground">Loading results...</p> : null}
+      {error ? <p className="shrink-0 text-xs text-destructive">Failed to load query results.</p> : null}
 
       {execution.state === "SUCCEEDED" && results ? (
         <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-          <table className="min-w-full text-xs">
-            <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground">
+          <table className="min-w-full text-[11px]">
+            <thead className="sticky top-0 z-10 bg-muted/80 text-left text-[11px] text-muted-foreground">
               <tr>
                 {results.columnNames.map((column) => (
                   <th key={column} className="px-3 py-2 font-medium">
@@ -85,7 +85,7 @@ export function QueryResultsPanel({
                 dataRows.map((row, rowIndex) => (
                   <tr key={rowIndex} className="border-t">
                     {row.map((cell, cellIndex) => (
-                      <td key={cellIndex} className="max-w-xs truncate px-3 py-2 font-mono text-xs">
+                      <td key={cellIndex} className="max-w-xs truncate px-3 py-1.5 font-mono text-[11px]">
                         {cell}
                       </td>
                     ))}
@@ -98,7 +98,7 @@ export function QueryResultsPanel({
       ) : null}
 
       {hasMore ? (
-        <Button type="button" variant="outline" size="sm" className="self-start" onClick={onLoadMore}>
+        <Button type="button" variant="outline" size="sm" className="shrink-0 self-start" onClick={onLoadMore}>
           Load more rows
         </Button>
       ) : null}
