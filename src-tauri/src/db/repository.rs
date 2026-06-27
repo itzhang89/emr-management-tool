@@ -1,6 +1,8 @@
 use crate::db::app_data_dir;
 use crate::error::{AppError, AppResult};
-use crate::models::{ApplicationTemplate, AwsAccount, JobConfigTemplate, JobRunSummary, ResourceTemplate};
+use crate::models::{
+    ApplicationTemplate, AwsAccount, JobConfigTemplate, JobRunSummary, ResourceTemplate,
+};
 use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
@@ -94,13 +96,12 @@ pub async fn list_job_config_templates(
     pool: &SqlitePool,
     account_id: &str,
 ) -> AppResult<Vec<JobConfigTemplate>> {
-    let rows = sqlx::query(
-        "select payload from job_config_templates where account_id = ?1 order by name",
-    )
-    .bind(account_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
+    let rows =
+        sqlx::query("select payload from job_config_templates where account_id = ?1 order by name")
+            .bind(account_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.into_iter()
         .map(|row| from_payload(row.get::<String, _>("payload")))
@@ -203,7 +204,10 @@ pub async fn delete_template(
             } else {
                 Vec::new()
             };
-            if templates.iter().any(|template| template.id == id && template.built_in) {
+            if templates
+                .iter()
+                .any(|template| template.id == id && template.built_in)
+            {
                 return Err(AppError::validation(
                     "Built-in job config templates cannot be deleted.",
                 ));
@@ -549,8 +553,8 @@ mod tests {
                 &Utc::now().to_rfc3339(),
             ),
         )
-            .await
-            .expect("insert running job");
+        .await
+        .expect("insert running job");
         upsert_job_history(
             &pool,
             &job(
@@ -562,8 +566,8 @@ mod tests {
                 &Utc::now().to_rfc3339(),
             ),
         )
-            .await
-            .expect("insert failed job");
+        .await
+        .expect("insert failed job");
         upsert_job_history(
             &pool,
             &job(
@@ -575,8 +579,8 @@ mod tests {
                 &Utc::now().to_rfc3339(),
             ),
         )
-            .await
-            .expect("insert other cluster job");
+        .await
+        .expect("insert other cluster job");
 
         let by_state = list_job_history(&pool, Some("acct-1"), Some("vc-1"), Some("failed"))
             .await
@@ -588,9 +592,24 @@ mod tests {
             .await
             .expect("search by id");
 
-        assert_eq!(by_state.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-failed"]);
-        assert_eq!(by_name.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-running"]);
-        assert_eq!(by_id.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(), vec!["job-running"]);
+        assert_eq!(
+            by_state
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["job-failed"]
+        );
+        assert_eq!(
+            by_name
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["job-running"]
+        );
+        assert_eq!(
+            by_id.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            vec!["job-running"]
+        );
     }
 
     #[tokio::test]
@@ -622,8 +641,8 @@ mod tests {
                 &Utc::now().to_rfc3339(),
             ),
         )
-            .await
-            .expect("insert synced job");
+        .await
+        .expect("insert synced job");
 
         prune_submission_history(&pool, Some("acct-1"))
             .await
@@ -642,7 +661,12 @@ mod tests {
         assert!(remaining.iter().any(|job| job.id == "job-synced"));
     }
 
-    fn submitted_job(id: &str, created_at: &str, account_id: &str, virtual_cluster_id: &str) -> JobRunSummary {
+    fn submitted_job(
+        id: &str,
+        created_at: &str,
+        account_id: &str,
+        virtual_cluster_id: &str,
+    ) -> JobRunSummary {
         JobRunSummary {
             id: id.to_string(),
             name: id.to_string(),

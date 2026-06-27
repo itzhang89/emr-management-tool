@@ -12,7 +12,10 @@ pub fn default_client(runtime: &AwsRuntime) -> aws_sdk_s3::Client {
     aws_sdk_s3::Client::new(&runtime.config)
 }
 
-pub async fn client_for_bucket(runtime: &AwsRuntime, bucket: &str) -> AppResult<aws_sdk_s3::Client> {
+pub async fn client_for_bucket(
+    runtime: &AwsRuntime,
+    bucket: &str,
+) -> AppResult<aws_sdk_s3::Client> {
     let region = resolve_bucket_region(runtime, bucket).await?;
     Ok(client_for_region(runtime, &region))
 }

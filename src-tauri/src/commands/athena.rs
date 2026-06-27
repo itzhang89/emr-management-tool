@@ -2,9 +2,9 @@ use crate::aws::runtime::runtime_for_context;
 use crate::commands::files::save_text_file;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AthenaQueryExecution, AthenaQueryExecutionRequest, AthenaQueryResults, AthenaQueryResultsRequest,
-    AthenaWorkgroup, AwsCommandContext, ExportAthenaQueryCsvRequest, SaveTextFileRequest,
-    StartAthenaQueryRequest,
+    AthenaQueryExecution, AthenaQueryExecutionRequest, AthenaQueryResults,
+    AthenaQueryResultsRequest, AthenaWorkgroup, AwsCommandContext, ExportAthenaQueryCsvRequest,
+    SaveTextFileRequest, StartAthenaQueryRequest,
 };
 use aws_sdk_athena::types::{QueryExecutionContext, QueryExecutionState, ResultConfiguration};
 use tauri::AppHandle;
@@ -89,10 +89,7 @@ pub async fn start_athena_query(
         return Err(AppError::validation("Workgroup is required."));
     }
 
-    let sql = normalize_athena_sql(
-        &request.sql,
-        request.database.as_deref(),
-    );
+    let sql = normalize_athena_sql(&request.sql, request.database.as_deref());
     if sql.is_empty() {
         return Err(AppError::validation("SQL is required."));
     }
@@ -150,9 +147,10 @@ pub async fn start_athena_query(
         operation = operation.result_configuration(configuration);
     }
 
-    let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account_sdk("athena", account_id.clone(), error)
-    })?;
+    let response = operation
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("athena", account_id.clone(), error))?;
 
     let query_execution_id = response
         .query_execution_id()
@@ -353,7 +351,8 @@ pub async fn get_athena_query_execution(
             .and_then(|value| value.completion_date_time())
             .map(|value| value.to_string()),
         data_scanned_bytes: statistics.and_then(|value| value.data_scanned_in_bytes()),
-        engine_execution_time_ms: statistics.and_then(|value| value.engine_execution_time_in_millis()),
+        engine_execution_time_ms: statistics
+            .and_then(|value| value.engine_execution_time_in_millis()),
     })
 }
 
@@ -378,9 +377,10 @@ pub async fn get_athena_query_results(
         operation = operation.next_token(token);
     }
 
-    let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account_sdk("athena", runtime.account.id, error)
-    })?;
+    let response = operation
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("athena", runtime.account.id, error))?;
     let result_set = response
         .result_set()
         .ok_or_else(|| AppError::validation("Athena query results were not found."))?;
@@ -499,14 +499,29 @@ fn query_state_as_str(state: &QueryExecutionState) -> &'static str {
 }
 
 fn is_header_row(row: &[String], column_names: &[String]) -> bool {
-    row.len() == column_names.len() && row.iter().zip(column_names.iter()).all(|(left, right)| left == right)
+    row.len() == column_names.len()
+        && row
+            .iter()
+            .zip(column_names.iter())
+            .all(|(left, right)| left == right)
 }
 
 fn rows_to_csv(column_names: &[String], rows: &[Vec<String>]) -> String {
     let mut lines = Vec::with_capacity(rows.len() + 1);
-    lines.push(column_names.iter().map(|value| escape_csv(value)).collect::<Vec<_>>().join(","));
+    lines.push(
+        column_names
+            .iter()
+            .map(|value| escape_csv(value))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
     for row in rows {
-        lines.push(row.iter().map(|value| escape_csv(value)).collect::<Vec<_>>().join(","));
+        lines.push(
+            row.iter()
+                .map(|value| escape_csv(value))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
     lines.join("\n")
 }
@@ -522,8 +537,9 @@ fn escape_csv(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_query_can_run, escape_csv, is_header_row, is_spark_engine_version, normalize_athena_sql,
-        resolve_result_configuration, rows_to_csv, WorkgroupExecutionSettings,
+        ensure_query_can_run, escape_csv, is_header_row, is_spark_engine_version,
+        normalize_athena_sql, resolve_result_configuration, rows_to_csv,
+        WorkgroupExecutionSettings,
     };
 
     #[test]
@@ -533,7 +549,10 @@ mod tests {
 
     #[test]
     fn builds_csv_with_header() {
-        let csv = rows_to_csv(&["id".to_string(), "name".to_string()], &[vec!["1".to_string(), "alpha".to_string()]]);
+        let csv = rows_to_csv(
+            &["id".to_string(), "name".to_string()],
+            &[vec!["1".to_string(), "alpha".to_string()]],
+        );
         assert_eq!(csv, "id,name\n1,alpha");
     }
 
@@ -554,7 +573,9 @@ mod tests {
             spark_enabled: false,
             effective_engine_version: None,
         };
-        assert!(resolve_result_configuration(&settings, "s3://bucket/path/").unwrap().is_none());
+        assert!(resolve_result_configuration(&settings, "s3://bucket/path/")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -582,7 +603,10 @@ mod tests {
     #[test]
     fn converts_backticks_to_double_quotes() {
         assert_eq!(
-            normalize_athena_sql("SELECT * FROM `shiji`.`ods__table` LIMIT 100", Some("shiji")),
+            normalize_athena_sql(
+                "SELECT * FROM `shiji`.`ods__table` LIMIT 100",
+                Some("shiji")
+            ),
             r#"SELECT * FROM "ods__table" LIMIT 100"#
         );
     }

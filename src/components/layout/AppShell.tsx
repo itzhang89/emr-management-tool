@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useState, useTransition } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { CheckCircle2, Cloud, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -10,12 +10,17 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { AboutDialog } from "@/components/help/AboutDialog";
+import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { isShortcutsHelpKey } from "@/lib/keyboardShortcut";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { navigationItems, type PageId } from "@/pages/pageMeta";
 import { PageLoader } from "@/components/layout/PageLoader";
+import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
 
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const JobHistoryPage = lazy(() => import("@/pages/JobHistoryPage").then((module) => ({ default: module.JobHistoryPage })));
@@ -34,6 +39,8 @@ export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [, startPageTransition] = useTransition();
   const accounts = useAwsAccounts();
   const activeAccount = accounts.data?.find((account) => account.isActive);
@@ -46,6 +53,34 @@ export function AppShell() {
   }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
+  }, []);
+
+  useEffect(() => {
+    let unbindMenuEvents = () => {};
+
+    void bindHelpMenuEvents({
+      onShowShortcuts: () => setShortcutsDialogOpen(true),
+      onShowAbout: () => setAboutDialogOpen(true)
+    }).then((unbind) => {
+      unbindMenuEvents = unbind;
+    });
+
+    return () => {
+      unbindMenuEvents();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isTauriRuntime()) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isShortcutsHelpKey(event)) return;
+      event.preventDefault();
+      setShortcutsDialogOpen(true);
+    };
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, []);
 
   const activePageContent = useMemo(() => {
@@ -184,6 +219,8 @@ export function AppShell() {
           </div>
         </DialogContent>
       </Dialog>
+      <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
+      <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
     </div>
   );
 }

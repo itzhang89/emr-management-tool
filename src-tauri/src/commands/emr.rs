@@ -54,11 +54,8 @@ pub async fn list_virtual_clusters(
         }
 
         let response = operation.send().await.map_err(|error| {
-            let app_error = AppError::aws_for_account_sdk(
-                "emr-containers",
-                runtime.account.id.clone(),
-                error,
-            );
+            let app_error =
+                AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
             diagnostics::log_aws_failure(
                 "emr-containers",
                 "ListVirtualClusters",
@@ -68,12 +65,7 @@ pub async fn list_virtual_clusters(
             app_error
         })?;
 
-        clusters.extend(
-            response
-                .virtual_clusters()
-                .iter()
-                .map(map_virtual_cluster),
-        );
+        clusters.extend(response.virtual_clusters().iter().map(map_virtual_cluster));
         next_token = normalize_pagination_token(response.next_token());
         if !should_continue_pagination(&next_token, &request_token) {
             break;
@@ -130,11 +122,8 @@ pub async fn list_job_runs(
     }
 
     let response = operation.send().await.map_err(|error| {
-        let app_error = AppError::aws_for_account_sdk(
-            "emr-containers",
-            runtime.account.id.clone(),
-            error,
-        );
+        let app_error =
+            AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
         diagnostics::log_aws_failure(
             "emr-containers",
             "ListJobRuns",
@@ -167,8 +156,13 @@ pub async fn list_job_runs(
         ),
     );
 
-    repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id), None)
-        .await
+    repository::list_job_history(
+        &pool,
+        Some(&runtime.account.id),
+        Some(&virtual_cluster_id),
+        None,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -302,26 +296,30 @@ pub async fn cancel_job_run(app: AppHandle, request: JobRunRequest) -> AppResult
         })?;
 
     let pool = repository::pool().await?;
-    let mut job =
-        repository::list_job_history(&pool, Some(&runtime.account.id), Some(&virtual_cluster_id), None)
-            .await?
-            .into_iter()
-            .find(|job| job.id == id)
-            .unwrap_or_else(|| JobRunSummary {
-                id: id.clone(),
-                name: id.clone(),
-                state: "CANCELLED".to_string(),
-                account_id: Some(runtime.account.id.clone()),
-                region: Some(runtime.account.region.clone()),
-                virtual_cluster_id: virtual_cluster_id.clone(),
-                virtual_cluster_name: None,
-                created_at: Utc::now().to_rfc3339(),
-                started_at: None,
-                finished_at: None,
-                duration_seconds: None,
-                source_request: None,
-                describe_details: None,
-            });
+    let mut job = repository::list_job_history(
+        &pool,
+        Some(&runtime.account.id),
+        Some(&virtual_cluster_id),
+        None,
+    )
+    .await?
+    .into_iter()
+    .find(|job| job.id == id)
+    .unwrap_or_else(|| JobRunSummary {
+        id: id.clone(),
+        name: id.clone(),
+        state: "CANCELLED".to_string(),
+        account_id: Some(runtime.account.id.clone()),
+        region: Some(runtime.account.region.clone()),
+        virtual_cluster_id: virtual_cluster_id.clone(),
+        virtual_cluster_name: None,
+        created_at: Utc::now().to_rfc3339(),
+        started_at: None,
+        finished_at: None,
+        duration_seconds: None,
+        source_request: None,
+        describe_details: None,
+    });
     job.state = "CANCELLED".to_string();
     job.finished_at = Some(Utc::now().to_rfc3339());
     job.duration_seconds = duration_seconds(
@@ -400,9 +398,8 @@ fn validate_start_job_request(request: &StartJobRunRequest) -> AppResult<()> {
 }
 
 fn is_valid_emr_job_name(name: &str) -> bool {
-    name.chars().all(|value| {
-        value.is_ascii_alphanumeric() || matches!(value, '.' | '-' | '_' | '/' | '#')
-    })
+    name.chars()
+        .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '-' | '_' | '/' | '#'))
 }
 
 fn build_configuration_overrides(
@@ -522,10 +519,7 @@ fn normalize_pagination_token(token: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn should_continue_pagination(
-    next_token: &Option<String>,
-    request_token: &Option<String>,
-) -> bool {
+fn should_continue_pagination(next_token: &Option<String>, request_token: &Option<String>) -> bool {
     match next_token {
         None => false,
         Some(token) if Some(token) == request_token.as_ref() => false,

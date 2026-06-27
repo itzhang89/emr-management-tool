@@ -10,11 +10,23 @@ use state::AppState;
 
 #[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+#[cfg(desktop)]
+use tauri::Emitter;
+#[cfg(desktop)]
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const SHORTCUTS_HELP_ACCELERATOR: &str = "CmdOrCtrl+Shift+/";
+
+#[cfg(desktop)]
+fn emit_to_frontend(app: &tauri::AppHandle, event: &str) {
+    let _ = app.emit(event, ());
+}
 
 pub fn run() {
     diagnostics::install_panic_hook();
 
     let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
@@ -95,13 +107,35 @@ pub fn run() {
                     &[&undo, &redo, &separator, &cut, &copy, &paste, &select_all],
                 )?;
                 let view_logs =
-                    MenuItem::with_id(app, "view_logs", "查看日志", true, None::<&str>)?;
-                let help = Submenu::with_items(app, "帮助", true, &[&view_logs])?;
+                    MenuItem::with_id(app, "view_logs", "View Logs", true, None::<&str>)?;
+                let show_shortcuts = MenuItem::with_id(
+                    app,
+                    "show_shortcuts",
+                    "Keyboard Shortcuts",
+                    true,
+                    None::<&str>,
+                )?;
+                let help_separator = PredefinedMenuItem::separator(app)?;
+                let show_about =
+                    MenuItem::with_id(app, "show_about", "About EMR on EKS", true, None::<&str>)?;
+                let help = Submenu::with_items(
+                    app,
+                    "Help",
+                    true,
+                    &[&show_shortcuts, &view_logs, &help_separator, &show_about],
+                )?;
                 let menu = Menu::with_items(app, &[&edit, &help])?;
                 app.set_menu(menu)?;
+
+                app.global_shortcut().on_shortcut(SHORTCUTS_HELP_ACCELERATOR, |app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        emit_to_frontend(app, "help:show-shortcuts");
+                    }
+                })?;
+
                 Ok(())
             })
-            .on_menu_event(|_app, event| {
+            .on_menu_event(|app, event| {
                 if event.id() == "view_logs" {
                     if let Err(error) = diagnostics::open_app_log() {
                         diagnostics::append_log_line(
@@ -109,6 +143,10 @@ pub fn run() {
                             &format!("Failed to open app log from menu: {error}"),
                         );
                     }
+                } else if event.id() == "show_shortcuts" {
+                    emit_to_frontend(app, "help:show-shortcuts");
+                } else if event.id() == "show_about" {
+                    emit_to_frontend(app, "help:show-about");
                 }
             });
     }

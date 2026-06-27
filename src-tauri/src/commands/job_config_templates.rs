@@ -1,6 +1,8 @@
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
-use crate::models::{JobConfigTemplate, JobConfigTemplateMutationRequest, JobConfigTemplatesResponse};
+use crate::models::{
+    JobConfigTemplate, JobConfigTemplateMutationRequest, JobConfigTemplatesResponse,
+};
 use crate::state::default_job_config_templates;
 use tauri::AppHandle;
 

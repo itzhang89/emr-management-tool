@@ -251,4 +251,19 @@ describe("AppShell", () => {
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });
+
+  it("opens the shortcuts dialog with the global shortcut in browser mode", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppShell />
+      </QueryClientProvider>
+    );
+
+    await user.keyboard("{Meta>}{Shift>}/{/Shift}{/Meta}");
+
+    expect(await screen.findByRole("dialog", { name: /Keyboard shortcuts/i })).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: /Keyboard shortcuts/i })).getByText("Run query")).toBeInTheDocument();
+  });
 });

@@ -39,7 +39,10 @@ impl AppError {
         }
     }
 
-    pub fn aws_sdk(service: &'static str, error: impl ProvideErrorMetadata + std::fmt::Display) -> Self {
+    pub fn aws_sdk(
+        service: &'static str,
+        error: impl ProvideErrorMetadata + std::fmt::Display,
+    ) -> Self {
         Self::from_aws_metadata(service, None, &error)
     }
 
@@ -116,7 +119,10 @@ impl AppError {
     }
 }
 
-fn humanize_aws_error(service: &str, error: &(impl ProvideErrorMetadata + std::fmt::Display)) -> String {
+fn humanize_aws_error(
+    service: &str,
+    error: &(impl ProvideErrorMetadata + std::fmt::Display),
+) -> String {
     if let Some(message) = error.message().filter(|message| !message.is_empty()) {
         if service == "athena" && message.contains("Queries of this type are not supported") {
             return format!(

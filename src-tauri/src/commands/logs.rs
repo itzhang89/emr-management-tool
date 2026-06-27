@@ -42,10 +42,9 @@ pub async fn list_job_log_streams(
         operation = operation.next_token(token);
     }
 
-    let response = operation
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error))?;
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error)
+    })?;
     let streams = response
         .log_streams()
         .iter()
@@ -117,10 +116,9 @@ pub async fn get_job_logs(app: AppHandle, request: JobLogsRequest) -> AppResult<
         operation = operation.filter_pattern(pattern);
     }
 
-    let response = operation
-        .send()
-        .await
-        .map_err(|error| AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error))?;
+    let response = operation.send().await.map_err(|error| {
+        AppError::aws_for_account_sdk("cloudwatchlogs", runtime.account.id, error)
+    })?;
 
     let entries = response
         .events()
