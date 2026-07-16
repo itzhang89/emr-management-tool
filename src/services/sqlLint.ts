@@ -111,6 +111,16 @@ export function analyzeDdlSyntax(sql: string): SqlLintIssue[] {
     if (!new RegExp(`^CREATE\\s+DATABASE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}`, "i").test(statement)) {
       return [ddlIssue(sql, "Invalid CREATE DATABASE syntax. Expected: CREATE DATABASE [IF NOT EXISTS] database_name.")];
     }
+    if (!/\bLOCATION\s+'[^']*'/i.test(statement)) {
+      return [
+        {
+          from: 0,
+          to: sql.length,
+          severity: "warning",
+          message: "CREATE DATABASE should include a LOCATION clause (for example LOCATION 's3://bucket/path/database.db/')."
+        }
+      ];
+    }
     return [];
   }
 

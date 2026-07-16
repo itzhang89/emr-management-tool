@@ -20,9 +20,9 @@ import { lineNumberToPosition, parseAthenaErrorLine } from "@/services/athenaSql
 import { createSqlCompletion, type SqlCatalogContext } from "@/services/athenaSqlCompletion";
 import { analyzeSql, type SqlLintOptions } from "@/services/sqlLint";
 
-const athenaDialect = SQLDialect.define({
+const hiveDialect = SQLDialect.define({
   keywords:
-    "select from where group by order having limit join left right inner outer cross on as and or not in is null distinct create drop alter table database view insert update delete truncate msck repair"
+    "select from where group by order having limit join left right inner outer cross on as and or not in is null distinct create external drop alter table database view insert update delete truncate msck repair describe extended formatted show stored partitioned location serde tblproperties comment orc parquet"
 });
 
 const sqlHighlightStyle = HighlightStyle.define([
@@ -222,7 +222,7 @@ export function AthenaSqlEditor({
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       runKeymap,
-      sql({ dialect: athenaDialect, upperCaseKeywords: true }),
+      sql({ dialect: hiveDialect, upperCaseKeywords: true }),
       syntaxHighlighting(sqlHighlightStyle),
       tooltips({ parent: document.body }),
       editorTheme,
@@ -237,7 +237,7 @@ export function AthenaSqlEditor({
       ),
       compartments.readOnly.of(EditorState.readOnly.of(false)),
       updateListener,
-      placeholderExt("Write Athena SQL here…")
+      placeholderExt("Write Hive / Spark SQL here…")
     ];
 
     const view = new EditorView({

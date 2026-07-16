@@ -220,9 +220,11 @@ fn normalize_athena_sql(sql: &str, database: Option<&str>) -> String {
     }
 
     let without_trailing_semicolons = trimmed.trim_end_matches(';').trim();
-    let mut normalized = without_trailing_semicolons.replace('`', "\"");
+    let mut normalized = without_trailing_semicolons.to_string();
 
     if let Some(database) = database.filter(|value| !value.is_empty()) {
+        let backtick_prefix = format!("`{database}`.");
+        normalized = normalized.replace(&backtick_prefix, "");
         let quoted_prefix = format!("\"{database}\".");
         normalized = normalized.replace(&quoted_prefix, "");
         let plain_prefix = format!("{database}.");
@@ -601,13 +603,24 @@ mod tests {
     }
 
     #[test]
-    fn converts_backticks_to_double_quotes() {
+    fn preserves_hive_backticks_and_strips_database_prefix() {
         assert_eq!(
             normalize_athena_sql(
                 "SELECT * FROM `shiji`.`ods__table` LIMIT 100",
                 Some("shiji")
             ),
-            r#"SELECT * FROM "ods__table" LIMIT 100"#
+            "SELECT * FROM `ods__table` LIMIT 100"
+        );
+    }
+
+    #[test]
+    fn preserves_create_external_table_syntax() {
+        assert_eq!(
+            normalize_athena_sql(
+                "CREATE EXTERNAL TABLE `bdbstaging`.`game_result` (id bigint) STORED AS ORC LOCATION 's3://bucket/path';",
+                None
+            ),
+            "CREATE EXTERNAL TABLE `bdbstaging`.`game_result` (id bigint) STORED AS ORC LOCATION 's3://bucket/path'"
         );
     }
 
