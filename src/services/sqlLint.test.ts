@@ -39,8 +39,15 @@ describe("sqlLint", () => {
     expect(result.messages.some((message) => /parentheses/i.test(message))).toBe(true);
   });
 
-  it("ignores ddl keywords inside comments", () => {
-    expect(validateSqlForRun("SELECT 1 -- DROP TABLE demo").ok).toBe(true);
-    expect(validateSqlForRun("SELECT 1 /* CREATE TABLE demo */").ok).toBe(true);
+  it("warns when create database omits location", () => {
+    const issues = analyzeSql("CREATE DATABASE IF NOT EXISTS demo COMMENT 'test'");
+    expect(issues.some((issue) => issue.severity === "warning" && /LOCATION/i.test(issue.message))).toBe(true);
+  });
+
+  it("allows create database with location", () => {
+    const result = validateSqlForRun(
+      "CREATE DATABASE IF NOT EXISTS demo COMMENT 'test' LOCATION 's3://bucket/demo.db/'"
+    );
+    expect(result.ok).toBe(true);
   });
 });

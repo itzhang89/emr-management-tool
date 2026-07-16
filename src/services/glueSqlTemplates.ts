@@ -1,23 +1,47 @@
-import { quoteAthenaIdentifier, sanitizeAthenaSql } from "./athenaSql";
+import { qualifyHiveTable, quoteHiveIdentifier, sanitizeHiveSql } from "./hiveSql";
 
 export const SQL_DDL_TEMPLATES = [
   {
     label: "SELECT sample",
-    sql: "SELECT * FROM table_name LIMIT 100"
+    sql: "SELECT * FROM database_name.table_name LIMIT 100"
   },
   {
     label: "CREATE DATABASE",
-    sql: "CREATE DATABASE IF NOT EXISTS my_database\nCOMMENT 'Database description'"
+    sql: `CREATE DATABASE IF NOT EXISTS my_database
+COMMENT 'Database description'
+LOCATION 's3://bucket/path/my_database.db/'`
+  },
+  {
+    label: "DESCRIBE DATABASE",
+    sql: "DESCRIBE DATABASE EXTENDED my_database"
+  },
+  {
+    label: "CREATE ORC table",
+    sql: `CREATE EXTERNAL TABLE IF NOT EXISTS database_name.table_name (
+  id bigint,
+  value string
+)
+PARTITIONED BY (year string, month string, day string)
+STORED AS ORC
+LOCATION 's3://bucket/path/table_name'`
   },
   {
     label: "CREATE Parquet table",
-    sql: `CREATE EXTERNAL TABLE IF NOT EXISTS table_name (
+    sql: `CREATE EXTERNAL TABLE IF NOT EXISTS database_name.table_name (
   id string,
   value string
 )
 PARTITIONED BY (dt string)
 STORED AS PARQUET
 LOCATION 's3://bucket/path/'`
+  },
+  {
+    label: "DESCRIBE TABLE",
+    sql: "DESCRIBE EXTENDED database_name.table_name"
+  },
+  {
+    label: "SHOW CREATE TABLE",
+    sql: "SHOW CREATE TABLE database_name.table_name"
   },
   {
     label: "ALTER ADD COLUMNS",
@@ -34,13 +58,19 @@ LOCATION 's3://bucket/path/'`
 ] as const;
 
 export function buildSelectSql(databaseName: string, tableName: string) {
-  void databaseName;
-  return `SELECT * FROM ${quoteAthenaIdentifier(tableName)} LIMIT 100`;
+  return `SELECT * FROM ${qualifyHiveTable(databaseName, tableName)} LIMIT 100`;
 }
 
 export function buildDropTableSql(databaseName: string, tableName: string) {
-  void databaseName;
-  return `DROP TABLE IF EXISTS ${quoteAthenaIdentifier(tableName)}`;
+  return `DROP TABLE IF EXISTS ${qualifyHiveTable(databaseName, tableName)}`;
 }
 
-export { sanitizeAthenaSql };
+export function buildDescribeDatabaseSql(databaseName: string) {
+  return `DESCRIBE DATABASE EXTENDED ${quoteHiveIdentifier(databaseName)}`;
+}
+
+export function buildDescribeTableSql(databaseName: string, tableName: string) {
+  return `DESCRIBE EXTENDED ${qualifyHiveTable(databaseName, tableName)}`;
+}
+
+export { sanitizeHiveSql as sanitizeAthenaSql };
