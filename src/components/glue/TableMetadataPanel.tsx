@@ -4,11 +4,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueTableDetail } from "@/hooks/useGlue";
+import { columnTypeOptions } from "@/services/glueColumnTypes";
 import { buildCreateTableDdl } from "@/services/glueTableDdl";
+import { isSystemTableParameterKey, partitionTableParameters } from "@/services/glueTableParameters";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { GlueColumn, GlueTableDetail } from "@/types/domain";
+import { cn } from "@/lib/utils";
 
 export function TableMetadataPanel({
   table,
@@ -28,10 +32,16 @@ export function TableMetadataPanel({
   saving: boolean;
 }) {
   const [draft, setDraft] = useState<GlueTableDetail | undefined>();
+  const [descriptionEditing, setDescriptionEditing] = useState(false);
 
   useEffect(() => {
     setDraft(table ? cloneGlueTableDetail(table) : undefined);
+    setDescriptionEditing(false);
   }, [table]);
+
+  useEffect(() => {
+    if (!editMode) setDescriptionEditing(false);
+  }, [editMode]);
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading table metadata...</p>;
@@ -44,6 +54,12 @@ export function TableMetadataPanel({
   if (!table || !draft) {
     return <p className="text-sm text-muted-foreground">Select a table to view metadata.</p>;
   }
+
+  const exitEditMode = () => {
+    setDraft(cloneGlueTableDetail(table));
+    setDescriptionEditing(false);
+    onEditModeChange(false);
+  };
 
   return (
     <div className="space-y-4">
@@ -74,19 +90,19 @@ export function TableMetadataPanel({
           </Button>
           {editMode ? (
             <>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setDraft(cloneGlueTableDetail(table));
-                  onEditModeChange(false);
-                }}
-              >
+              <Button type="button" variant="outline" size="sm" onClick={exitEditMode}>
                 <X data-icon="inline-start" />
                 Cancel
               </Button>
-              <Button type="button" size="sm" disabled={saving} onClick={() => onSave(draft)}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={saving}
+                onClick={() => {
+                  setDescriptionEditing(false);
+                  onSave(draft);
+                }}
+              >
                 <Save data-icon="inline-start" />
                 Save
               </Button>
@@ -100,15 +116,28 @@ export function TableMetadataPanel({
         </div>
       </div>
 
-      <MetadataField label="Description" readOnly={!editMode}>
-        {editMode ? (
+      <MetadataField
+        label="Description"
+        readOnly={!editMode || !descriptionEditing}
+        hint={editMode && !descriptionEditing ? "Double-click to edit" : undefined}
+      >
+        {editMode && descriptionEditing ? (
           <Textarea
             value={draft.description ?? ""}
             onChange={(event) => setDraft({ ...draft, description: event.target.value })}
             rows={2}
+            autoFocus
           />
         ) : (
-          <p className="text-sm">{table.description || "—"}</p>
+          <p
+            className={cn("text-sm", editMode && "cursor-text rounded-md px-1 py-0.5 hover:bg-muted/60")}
+            title={editMode ? "Double-click to edit description" : undefined}
+            onDoubleClick={() => {
+              if (editMode) setDescriptionEditing(true);
+            }}
+          >
+            {(editMode ? draft.description : table.description) || "—"}
+          </p>
         )}
       </MetadataField>
 
@@ -120,15 +149,8 @@ export function TableMetadataPanel({
             <p className="text-sm">{table.owner || "—"}</p>
           )}
         </MetadataField>
-        <MetadataField label="Table type" readOnly={!editMode}>
-          {editMode ? (
-            <Input
-              value={draft.tableType ?? ""}
-              onChange={(event) => setDraft({ ...draft, tableType: event.target.value })}
-            />
-          ) : (
-            <p className="text-sm">{table.tableType || "—"}</p>
-          )}
+        <MetadataField label="Table type" readOnly>
+          <p className="text-sm">{table.tableType || "—"}</p>
         </MetadataField>
       </div>
 
@@ -178,10 +200,12 @@ export function TableMetadataPanel({
 function MetadataField({
   label,
   readOnly,
+  hint,
   children
 }: {
   label: string;
   readOnly?: boolean;
+  hint?: string;
   children: ReactNode;
 }) {
   return (
@@ -189,6 +213,7 @@ function MetadataField({
       <Label className="text-xs text-muted-foreground">
         {label}
         {readOnly ? " (read-only)" : ""}
+        {hint ? <span className="ml-1 font-normal text-muted-foreground/80">· {hint}</span> : null}
       </Label>
       {children}
     </div>
@@ -197,6 +222,30 @@ function MetadataField({
 
 function emptyColumn(): GlueColumn {
   return { name: "", type: "string", comment: "" };
+}
+
+function ColumnTypeSelect({
+  value,
+  onChange
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const options = columnTypeOptions(value);
+  return (
+    <Select value={value || "string"} onValueChange={onChange}>
+      <SelectTrigger className="h-9 min-w-[9rem]">
+        <SelectValue placeholder="Type" />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((type) => (
+          <SelectItem key={type} value={type}>
+            {type}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 function ColumnSection({
@@ -251,11 +300,11 @@ function ColumnSection({
                   </td>
                   <td className="px-3 py-2">
                     {editMode ? (
-                      <Input
+                      <ColumnTypeSelect
                         value={column.type}
-                        onChange={(event) => {
+                        onChange={(type) => {
                           const next = [...columns];
-                          next[index] = { ...column, type: event.target.value };
+                          next[index] = { ...column, type };
                           onChange(next);
                         }}
                       />
@@ -318,21 +367,31 @@ function KeyValueSection({
   editMode: boolean;
   onChange: (values: Record<string, string>) => void;
 }) {
-  const [entries, setEntries] = useState<Array<{ key: string; value: string }>>(() =>
-    Object.entries(values).map(([key, value]) => ({ key, value }))
-  );
+  const { user: systemAwareUser, system } = partitionTableParameters(values);
+  const [entries, setEntries] = useState<Array<{ key: string; value: string; locked?: boolean }>>(() => [
+    ...systemAwareUser.map(([key, value]) => ({ key, value, locked: false })),
+    ...system.map(([key, value]) => ({ key, value, locked: true }))
+  ]);
+
+  const syncFromValues = () => {
+    const partitioned = partitionTableParameters(values);
+    setEntries([
+      ...partitioned.user.map(([key, value]) => ({ key, value, locked: false })),
+      ...partitioned.system.map(([key, value]) => ({ key, value, locked: true }))
+    ]);
+  };
 
   useEffect(() => {
     if (editMode) return;
-    setEntries(Object.entries(values).map(([key, value]) => ({ key, value })));
+    syncFromValues();
   }, [editMode, values]);
 
   useEffect(() => {
     if (!editMode) return;
-    setEntries(Object.entries(values).map(([key, value]) => ({ key, value })));
+    syncFromValues();
   }, [editMode]);
 
-  const toRecord = (next: Array<{ key: string; value: string }>) => {
+  const toRecord = (next: Array<{ key: string; value: string; locked?: boolean }>) => {
     const record: Record<string, string> = {};
     for (const entry of next) {
       const key = entry.key.trim();
@@ -342,7 +401,7 @@ function KeyValueSection({
     return record;
   };
 
-  const commitEntries = (next: Array<{ key: string; value: string }>) => {
+  const commitEntries = (next: Array<{ key: string; value: string; locked?: boolean }>) => {
     setEntries(next);
     onChange(toRecord(next));
   };
@@ -367,53 +426,61 @@ function KeyValueSection({
                 </td>
               </tr>
             ) : (
-              entries.map((entry, index) => (
-                <tr key={`param-${index}`} className="border-t">
-                  <td className="px-3 py-2">
-                    {editMode ? (
-                      <Input
-                        value={entry.key}
-                        className="font-mono text-xs"
-                        onChange={(event) => {
-                          const next = [...entries];
-                          next[index] = { ...entry, key: event.target.value };
-                          commitEntries(next);
-                        }}
-                      />
-                    ) : (
-                      <span className="font-mono text-xs">{entry.key}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {editMode ? (
-                      <Input
-                        value={entry.value}
-                        onChange={(event) => {
-                          const next = [...entries];
-                          next[index] = { ...entry, value: event.target.value };
-                          commitEntries(next);
-                        }}
-                      />
-                    ) : (
-                      entry.value
-                    )}
-                  </td>
-                  {editMode ? (
+              entries.map((entry, index) => {
+                const locked = entry.locked || isSystemTableParameterKey(entry.key);
+                return (
+                  <tr key={`param-${index}`} className="border-t">
                     <td className="px-3 py-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        aria-label={`Remove parameter ${entry.key || index + 1}`}
-                        onClick={() => commitEntries(entries.filter((_, entryIndex) => entryIndex !== index))}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      {editMode && !locked ? (
+                        <Input
+                          value={entry.key}
+                          className="font-mono text-xs"
+                          onChange={(event) => {
+                            const next = [...entries];
+                            next[index] = { ...entry, key: event.target.value };
+                            commitEntries(next);
+                          }}
+                        />
+                      ) : (
+                        <span className="font-mono text-xs">
+                          {entry.key}
+                          {locked ? <span className="ml-1 text-muted-foreground">(system)</span> : null}
+                        </span>
+                      )}
                     </td>
-                  ) : null}
-                </tr>
-              ))
+                    <td className="px-3 py-2">
+                      {editMode && !locked ? (
+                        <Input
+                          value={entry.value}
+                          onChange={(event) => {
+                            const next = [...entries];
+                            next[index] = { ...entry, value: event.target.value };
+                            commitEntries(next);
+                          }}
+                        />
+                      ) : (
+                        entry.value
+                      )}
+                    </td>
+                    {editMode ? (
+                      <td className="px-3 py-2">
+                        {locked ? null : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7"
+                            aria-label={`Remove parameter ${entry.key || index + 1}`}
+                            onClick={() => commitEntries(entries.filter((_, entryIndex) => entryIndex !== index))}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -423,7 +490,7 @@ function KeyValueSection({
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => setEntries([...entries, { key: "", value: "" }])}
+          onClick={() => setEntries([...entries, { key: "", value: "", locked: false }])}
         >
           <Plus data-icon="inline-start" />
           Add parameter
