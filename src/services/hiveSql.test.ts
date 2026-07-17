@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSelectSql, buildDescribeDatabaseSql } from "./glueSqlTemplates";
+import { buildSelectSql, SQL_DDL_TEMPLATES } from "./glueSqlTemplates";
 import { quoteHiveIdentifier, qualifyHiveTable, sanitizeHiveSql } from "./hiveSql";
 
 describe("hiveSql", () => {
@@ -31,7 +31,11 @@ describe("hiveSql", () => {
     );
   });
 
-  it("builds describe database extended sql", () => {
-    expect(buildDescribeDatabaseSql("bdbstaging")).toBe("DESCRIBE DATABASE EXTENDED bdbstaging");
+  it("uses Athena CREATE DATABASE template without DESCRIBE DATABASE", () => {
+    const createDb = SQL_DDL_TEMPLATES.find((template) => template.label === "CREATE DATABASE");
+    expect(createDb?.sql).toContain("CREATE DATABASE IF NOT EXISTS");
+    expect(createDb?.sql).toContain("LOCATION");
+    expect(createDb?.sql).toContain("WITH DBPROPERTIES");
+    expect(SQL_DDL_TEMPLATES.map((template) => template.label)).not.toContain("DESCRIBE DATABASE");
   });
 });

@@ -1,11 +1,11 @@
 use crate::aws::runtime::runtime_for_context;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsCommandContext, GlueColumn, GlueDatabase, GlueGetTableRequest, GlueListDatabasesResponse,
-    GlueListRequest, GlueListTablesResponse, GlueTableDetail, GlueTableSummary,
-    GlueUpdateTableRequest,
+    AwsCommandContext, GlueColumn, GlueDatabase, GlueDatabaseDetail, GlueGetDatabaseRequest,
+    GlueGetTableRequest, GlueListDatabasesResponse, GlueListRequest, GlueListTablesResponse,
+    GlueTableDetail, GlueTableSummary, GlueUpdateDatabaseRequest, GlueUpdateTableRequest,
 };
-use aws_sdk_glue::types::{Column, SerDeInfo, StorageDescriptor, TableInput};
+use aws_sdk_glue::types::{Column, DatabaseInput, SerDeInfo, StorageDescriptor, TableInput};
 use std::collections::HashMap;
 use tauri::AppHandle;
 
@@ -104,6 +104,76 @@ pub async fn list_glue_tables(
 }
 
 #[tauri::command]
+pub async fn get_glue_database(
+    app: AppHandle,
+    request: GlueGetDatabaseRequest,
+) -> AppResult<GlueDatabaseDetail> {
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id,
+        },
+    )
+    .await?;
+    let client = aws_sdk_glue::Client::new(&runtime.config);
+    let catalog = optional_catalog_id(request.catalog_id);
+    let mut operation = client.get_database().name(&request.database_name);
+    if let Some(catalog) = catalog.as_deref() {
+        operation = operation.catalog_id(catalog);
+    }
+    let response = operation
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("glue", runtime.account.id, error))?;
+
+    response
+        .database()
+        .map(database_detail_from_glue)
+        .ok_or_else(|| AppError::validation("Glue database was not found."))
+}
+
+#[tauri::command]
+pub async fn update_glue_database(
+    app: AppHandle,
+    request: GlueUpdateDatabaseRequest,
+) -> AppResult<GlueDatabaseDetail> {
+    let account_id = request.account_id.clone();
+    let database_name = request.database.name.clone();
+    let catalog_id = optional_catalog_id(request.catalog_id.clone());
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id,
+        },
+    )
+    .await?;
+    let client = aws_sdk_glue::Client::new(&runtime.config);
+    let database_input = database_input_from_detail(&request.database)?;
+
+    let mut operation = client
+        .update_database()
+        .name(&database_name)
+        .database_input(database_input);
+    if let Some(catalog) = catalog_id.as_deref() {
+        operation = operation.catalog_id(catalog);
+    }
+    operation
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("glue", runtime.account.id, error))?;
+
+    get_glue_database(
+        app,
+        GlueGetDatabaseRequest {
+            account_id,
+            catalog_id,
+            database_name,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn get_glue_table(
     app: AppHandle,
     request: GlueGetTableRequest,
@@ -187,6 +257,27 @@ fn hash_map_from_option(value: Option<&HashMap<String, String>>) -> HashMap<Stri
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn database_detail_from_glue(database: &aws_sdk_glue::types::Database) -> GlueDatabaseDetail {
+    GlueDatabaseDetail {
+        name: database.name().to_string(),
+        catalog_id: database.catalog_id().unwrap_or_default().to_string(),
+        description: database.description().map(str::to_string),
+        location_uri: database.location_uri().map(str::to_string),
+        create_time: database.create_time().map(|value| value.to_string()),
+        parameters: hash_map_from_option(database.parameters()),
+    }
+}
+
+fn database_input_from_detail(detail: &GlueDatabaseDetail) -> AppResult<DatabaseInput> {
+    DatabaseInput::builder()
+        .name(&detail.name)
+        .set_description(detail.description.clone())
+        .set_location_uri(detail.location_uri.clone())
+        .set_parameters(Some(detail.parameters.clone()))
+        .build()
+        .map_err(|error| AppError::validation(format!("Invalid Glue database input: {error}")))
 }
 
 fn table_detail_from_glue(table: &aws_sdk_glue::types::Table) -> GlueTableDetail {

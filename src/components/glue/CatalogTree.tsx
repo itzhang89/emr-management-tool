@@ -1,4 +1,4 @@
-import { ArrowLeft, Database, PanelLeftClose, RefreshCw, Search, Table2 } from "lucide-react";
+import { ArrowLeft, Database, Info, PanelLeftClose, RefreshCw, Search, Table2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ export function CatalogTree({
   onFocusDatabase,
   onExitDatabase,
   onSelectTable,
+  onShowDatabaseMetadata,
   onRefresh,
   onCollapse,
   collapseShortcut
@@ -23,6 +24,7 @@ export function CatalogTree({
   onFocusDatabase: (databaseName: string) => void;
   onExitDatabase: () => void;
   onSelectTable: (databaseName: string, tableName: string) => void;
+  onShowDatabaseMetadata: (databaseName: string) => void;
   onRefresh: () => void;
   onCollapse?: () => void;
   collapseShortcut?: string;
@@ -122,6 +124,7 @@ export function CatalogTree({
             selectedDatabase={selectedDatabase}
             selectedTable={selectedTable}
             onSelectTable={onSelectTable}
+            onShowDatabaseMetadata={onShowDatabaseMetadata}
           />
         ) : (
           <DatabaseListView
@@ -129,6 +132,7 @@ export function CatalogTree({
             loading={databases.isLoading}
             error={databases.error}
             onEnterDatabase={enterDatabase}
+            onShowDatabaseMetadata={onShowDatabaseMetadata}
           />
         )}
       </div>
@@ -140,12 +144,14 @@ function DatabaseListView({
   databases,
   loading,
   error,
-  onEnterDatabase
+  onEnterDatabase,
+  onShowDatabaseMetadata
 }: {
   databases: Array<{ name: string }>;
   loading: boolean;
   error: unknown;
   onEnterDatabase: (name: string) => void;
+  onShowDatabaseMetadata: (name: string) => void;
 }) {
   if (loading) return <p className="p-2 text-xs text-muted-foreground">Loading databases...</p>;
   if (error) return <p className="p-2 text-xs text-destructive">Failed to load databases.</p>;
@@ -155,14 +161,34 @@ function DatabaseListView({
     <ul className="divide-y">
       {databases.map((database) => (
         <li key={database.name}>
-          <button
-            type="button"
-            className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-accent"
-            onClick={() => onEnterDatabase(database.name)}
-          >
-            <Database className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate font-medium">{database.name}</span>
-          </button>
+          <div className="group flex w-full items-center gap-1 px-1.5 py-0.5 hover:bg-accent">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1 text-left text-xs"
+              onClick={() => onEnterDatabase(database.name)}
+            >
+              <Database className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate font-medium">{database.name}</span>
+            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                  aria-label={`Show details for ${database.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onShowDatabaseMetadata(database.name);
+                  }}
+                >
+                  <Info className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Database details</TooltipContent>
+            </Tooltip>
+          </div>
         </li>
       ))}
     </ul>
@@ -176,7 +202,8 @@ function DatabaseTablesView({
   error,
   selectedDatabase,
   selectedTable,
-  onSelectTable
+  onSelectTable,
+  onShowDatabaseMetadata
 }: {
   databaseName: string;
   tables: Array<{ name: string }>;
@@ -185,12 +212,30 @@ function DatabaseTablesView({
   selectedDatabase?: string;
   selectedTable?: string;
   onSelectTable: (databaseName: string, tableName: string) => void;
+  onShowDatabaseMetadata: (databaseName: string) => void;
 }) {
   return (
     <div>
-      <div className="border-b bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground">
-        <Database className="mr-1 inline size-3" />
-        {databaseName}
+      <div className="group flex items-center gap-1 border-b bg-muted/30 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
+        <div className="min-w-0 flex-1 truncate px-1">
+          <Database className="mr-1 inline size-3" />
+          {databaseName}
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              aria-label={`Show details for ${databaseName}`}
+              onClick={() => onShowDatabaseMetadata(databaseName)}
+            >
+              <Info className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Database details</TooltipContent>
+        </Tooltip>
       </div>
       {loading ? <p className="p-2 text-xs text-muted-foreground">Loading tables...</p> : null}
       {error ? <p className="p-2 text-xs text-destructive">Failed to load tables.</p> : null}

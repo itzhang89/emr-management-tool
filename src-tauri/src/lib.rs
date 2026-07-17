@@ -81,6 +81,8 @@ pub fn run() {
             commands::s3::delete_s3_prefix,
             commands::glue::list_glue_databases,
             commands::glue::list_glue_tables,
+            commands::glue::get_glue_database,
+            commands::glue::update_glue_database,
             commands::glue::get_glue_table,
             commands::glue::update_glue_table,
             commands::athena::list_athena_workgroups,

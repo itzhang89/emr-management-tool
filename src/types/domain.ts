@@ -425,6 +425,25 @@ export interface GlueDatabase {
   locationUri?: string;
 }
 
+export interface GlueDatabaseDetail {
+  name: string;
+  catalogId: string;
+  description?: string;
+  locationUri?: string;
+  createTime?: string;
+  parameters: Record<string, string>;
+}
+
+export interface GlueGetDatabaseRequest extends AwsCommandContext {
+  catalogId?: string;
+  databaseName: string;
+}
+
+export interface GlueUpdateDatabaseRequest extends AwsCommandContext {
+  catalogId?: string;
+  database: GlueDatabaseDetail;
+}
+
 export interface GlueListDatabasesResponse {
   databases: GlueDatabase[];
   nextToken?: string;
@@ -550,4 +569,5 @@ export interface AthenaAccountPreferences {
   catalogCollapsed?: boolean;
   lastDatabase?: string;
   querySettingsIntroSeen?: boolean;
+  skipCreateLocationReminder?: boolean;
 }

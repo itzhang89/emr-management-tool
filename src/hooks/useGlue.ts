@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { GlueGetTableRequest, GlueListRequest, GlueTableDetail, GlueUpdateTableRequest } from "@/types/domain";
+import type {
+  GlueDatabaseDetail,
+  GlueGetDatabaseRequest,
+  GlueGetTableRequest,
+  GlueListRequest,
+  GlueTableDetail,
+  GlueUpdateDatabaseRequest,
+  GlueUpdateTableRequest
+} from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { glueService } from "@/services/glueService";
 
@@ -51,6 +59,34 @@ export function useGlueTables(databaseName?: string) {
   });
 }
 
+export function useGlueDatabase(request?: GlueGetDatabaseRequest) {
+  const accountId = useActiveAccountId();
+
+  return useQuery({
+    queryKey: ["glue-database", accountId, request?.databaseName],
+    queryFn: () =>
+      glueService.getDatabase({
+        accountId,
+        databaseName: request!.databaseName
+      }),
+    enabled: Boolean(accountId && request?.databaseName)
+  });
+}
+
+export function useUpdateGlueDatabase() {
+  const accountId = useActiveAccountId();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (request: GlueUpdateDatabaseRequest) =>
+      glueService.updateDatabase({ ...request, accountId }),
+    onSuccess: (database) => {
+      queryClient.setQueryData(["glue-database", accountId, database.name], database);
+      void queryClient.invalidateQueries({ queryKey: ["glue-databases", accountId] });
+    }
+  });
+}
+
 export function useGlueTable(request?: GlueGetTableRequest) {
   const accountId = useActiveAccountId();
 
@@ -86,6 +122,13 @@ export function cloneGlueTableDetail(table: GlueTableDetail): GlueTableDetail {
     columns: table.columns.map((column) => ({ ...column })),
     partitionKeys: table.partitionKeys.map((column) => ({ ...column })),
     serdeParameters: { ...table.serdeParameters }
+  };
+}
+
+export function cloneGlueDatabaseDetail(database: GlueDatabaseDetail): GlueDatabaseDetail {
+  return {
+    ...database,
+    parameters: { ...database.parameters }
   };
 }
 

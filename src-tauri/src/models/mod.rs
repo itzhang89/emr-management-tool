@@ -536,6 +536,33 @@ pub struct GlueDatabase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GlueDatabaseDetail {
+    pub name: String,
+    pub catalog_id: String,
+    pub description: Option<String>,
+    pub location_uri: Option<String>,
+    pub create_time: Option<String>,
+    pub parameters: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueGetDatabaseRequest {
+    pub account_id: Option<String>,
+    pub catalog_id: Option<String>,
+    pub database_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlueUpdateDatabaseRequest {
+    pub account_id: Option<String>,
+    pub catalog_id: Option<String>,
+    pub database: GlueDatabaseDetail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GlueListDatabasesResponse {
     pub databases: Vec<GlueDatabase>,
     pub next_token: Option<String>,

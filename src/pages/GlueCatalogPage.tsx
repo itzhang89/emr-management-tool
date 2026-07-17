@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
 import { AthenaQuerySettingsButton, AthenaQuerySettingsDialog, type AthenaQuerySettingsMode } from "@/components/glue/AthenaQuerySettingsDialog";
 import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
+import { DatabaseMetadataPanel } from "@/components/glue/DatabaseMetadataPanel";
 import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
 import {
   FavoriteNameDialog,
@@ -28,6 +29,8 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -38,7 +41,14 @@ import {
   useAthenaWorkgroups
 } from "@/hooks/useAthena";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import { useGlueDatabases, useGlueTable, useGlueTables, useUpdateGlueTable } from "@/hooks/useGlue";
+import {
+  useGlueDatabase,
+  useGlueDatabases,
+  useGlueTable,
+  useGlueTables,
+  useUpdateGlueDatabase,
+  useUpdateGlueTable
+} from "@/hooks/useGlue";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
 import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import {
@@ -53,6 +63,10 @@ import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
 import { glueService } from "@/services/glueService";
 import { buildDropTableSql, buildSelectSql } from "@/services/glueSqlTemplates";
+import {
+  createLocationReminderKind,
+  createStatementMissingLocation
+} from "@/services/createLocationReminder";
 import { validateSqlForRun } from "@/services/sqlLint";
 import { getShortcutPrimaryKey, SHORTCUT_IDS } from "@/data/keyboardShortcuts";
 import {
@@ -77,6 +91,7 @@ const RUN_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_QUERY);
 const RUN_NEW_TAB_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_NEW_TAB);
 
 type TopTab = "query" | "metadata";
+type MetadataKind = "table" | "database";
 
 const initialResultTab = createQueryResultTab(1);
 
@@ -88,6 +103,7 @@ export function GlueCatalogPage() {
   const submitUser = submitUserQuery.data ?? "user";
 
   const [topTab, setTopTab] = useState<TopTab>("query");
+  const [metadataKind, setMetadataKind] = useState<MetadataKind>("table");
   const [catalogViewDatabase, setCatalogViewDatabase] = useState<string | undefined>();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
@@ -97,6 +113,7 @@ export function GlueCatalogPage() {
   const appendSubmitUser = athenaPrefs.appendSubmitUser;
   const workgroup = athenaPrefs.workgroup;
   const catalogCollapsed = athenaPrefs.catalogCollapsed;
+  const skipCreateLocationReminder = athenaPrefs.skipCreateLocationReminder;
   const [resultTabs, setResultTabs] = useState<QueryResultTab[]>([initialResultTab]);
   const [activeResultTabId, setActiveResultTabId] = useState(initialResultTab.id);
   const [metadataEditMode, setMetadataEditMode] = useState(false);
@@ -104,6 +121,11 @@ export function GlueCatalogPage() {
   const [history, setHistory] = useState<SqlHistoryEntry[]>([]);
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   const [dropDialogOpen, setDropDialogOpen] = useState(false);
+  const [locationReminderOpen, setLocationReminderOpen] = useState(false);
+  const [locationReminderDontAsk, setLocationReminderDontAsk] = useState(false);
+  const [pendingLocationRun, setPendingLocationRun] = useState<
+    { sql: string; mode: "active" | "new-tab" } | null
+  >(null);
   const [favoriteDialogOpen, setFavoriteDialogOpen] = useState(false);
   const [pendingFavoriteEntry, setPendingFavoriteEntry] = useState<SqlHistoryEntry | null>(null);
   const [querySettingsOpen, setQuerySettingsOpen] = useState(false);
@@ -124,13 +146,17 @@ export function GlueCatalogPage() {
   }, []);
 
   const tableDetail = useGlueTable(
-    selectedDatabase && selectedTable
+    selectedDatabase && selectedTable && metadataKind === "table"
       ? { databaseName: selectedDatabase, tableName: selectedTable }
       : undefined
+  );
+  const databaseDetail = useGlueDatabase(
+    selectedDatabase && metadataKind === "database" ? { databaseName: selectedDatabase } : undefined
   );
   const glueDatabases = useGlueDatabases();
   const glueTables = useGlueTables(selectedDatabase);
   const updateTable = useUpdateGlueTable();
+  const updateDatabase = useUpdateGlueDatabase();
   const startQuery = useStartAthenaQuery();
   const stopQuery = useStopAthenaQuery();
   const exportCsv = useExportAthenaQueryCsv();
@@ -226,6 +252,7 @@ export function GlueCatalogPage() {
   const handleRefreshCatalog = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["glue-databases", accountId] });
     void queryClient.invalidateQueries({ queryKey: ["glue-tables", accountId] });
+    void queryClient.invalidateQueries({ queryKey: ["glue-database", accountId] });
     if (selectedDatabase) {
       void queryClient.invalidateQueries({ queryKey: ["glue-table", accountId, selectedDatabase, selectedTable] });
     }
@@ -341,15 +368,19 @@ export function GlueCatalogPage() {
 
   useEffect(() => {
     setMetadataEditMode(false);
-  }, [selectedDatabase, selectedTable]);
+  }, [selectedDatabase, selectedTable, metadataKind]);
 
   const handleSelectTable = (databaseName: string, tableName: string) => {
     setCatalogViewDatabase(databaseName);
     setSelectedDatabase(databaseName);
     setSelectedTable(tableName);
+    setMetadataKind("table");
+    setMetadataEditMode(false);
     athenaPrefs.setLastDatabase(databaseName);
     if (topTab === "query") {
       setSql(buildSelectSql(databaseName, tableName));
+    } else {
+      setTopTab("metadata");
     }
   };
 
@@ -357,6 +388,15 @@ export function GlueCatalogPage() {
     setCatalogViewDatabase(databaseName);
     setSelectedDatabase(databaseName);
     setSelectedTable(undefined);
+    athenaPrefs.setLastDatabase(databaseName);
+  };
+
+  const handleShowDatabaseMetadata = (databaseName: string) => {
+    setSelectedDatabase(databaseName);
+    setSelectedTable(undefined);
+    setMetadataKind("database");
+    setMetadataEditMode(false);
+    setTopTab("metadata");
     athenaPrefs.setLastDatabase(databaseName);
   };
 
@@ -418,19 +458,50 @@ export function GlueCatalogPage() {
     }
   };
 
-  const handleRunQuery = (sqlOverride?: string) => {
-    const sqlToRun = sqlOverride ?? sql;
-    if (!activeResultTabId || !assertSqlRunnable(sqlToRun)) return;
+  const beginQueryRun = (sqlToRun: string, mode: "active" | "new-tab") => {
+    if (!assertSqlRunnable(sqlToRun)) return;
+    if (!skipCreateLocationReminder && createStatementMissingLocation(sqlToRun)) {
+      setPendingLocationRun({ sql: sqlToRun, mode });
+      setLocationReminderDontAsk(false);
+      setLocationReminderOpen(true);
+      return;
+    }
+    if (mode === "new-tab") {
+      const newTab = createQueryResultTab(resultTabs.length + 1);
+      setResultTabs((tabs) => [...tabs, newTab]);
+      setActiveResultTabId(newTab.id);
+      void executeQueryOnTab(newTab.id, sqlToRun);
+      return;
+    }
+    if (!activeResultTabId) return;
     void executeQueryOnTab(activeResultTabId, sqlToRun);
   };
 
+  const handleRunQuery = (sqlOverride?: string) => {
+    beginQueryRun(sqlOverride ?? sql, "active");
+  };
+
   const handleRunQueryInNewTab = (sqlOverride?: string) => {
-    const sqlToRun = sqlOverride ?? sql;
-    if (!assertSqlRunnable(sqlToRun)) return;
-    const newTab = createQueryResultTab(resultTabs.length + 1);
-    setResultTabs((tabs) => [...tabs, newTab]);
-    setActiveResultTabId(newTab.id);
-    void executeQueryOnTab(newTab.id, sqlToRun);
+    beginQueryRun(sqlOverride ?? sql, "new-tab");
+  };
+
+  const confirmLocationReminder = () => {
+    if (locationReminderDontAsk) {
+      athenaPrefs.setSkipCreateLocationReminder(true);
+    }
+    const pending = pendingLocationRun;
+    setLocationReminderOpen(false);
+    setPendingLocationRun(null);
+    if (!pending) return;
+    if (pending.mode === "new-tab") {
+      const newTab = createQueryResultTab(resultTabs.length + 1);
+      setResultTabs((tabs) => [...tabs, newTab]);
+      setActiveResultTabId(newTab.id);
+      void executeQueryOnTab(newTab.id, pending.sql);
+      return;
+    }
+    if (!activeResultTabId) return;
+    void executeQueryOnTab(activeResultTabId, pending.sql);
   };
 
   const handleStopQuery = async () => {
@@ -489,6 +560,16 @@ export function GlueCatalogPage() {
       toast.success("Table metadata updated.");
     } catch (error) {
       toast.error(formatAppError(error, "Failed to update table metadata."));
+    }
+  };
+
+  const handleSaveDatabaseMetadata = async (database: NonNullable<typeof databaseDetail.data>) => {
+    try {
+      await updateDatabase.mutateAsync({ database });
+      setMetadataEditMode(false);
+      toast.success("Database metadata updated.");
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to update database metadata."));
     }
   };
 
@@ -608,7 +689,7 @@ export function GlueCatalogPage() {
       <PageHeader
         pageId="glue"
         actions={
-          topTab === "metadata" && selectedDatabase && selectedTable ? (
+          topTab === "metadata" && metadataKind === "table" && selectedDatabase && selectedTable ? (
             <Button type="button" variant="destructive" size="sm" onClick={() => setDropDialogOpen(true)}>
               <Trash2 data-icon="inline-start" />
               Drop table
@@ -649,6 +730,7 @@ export function GlueCatalogPage() {
                 onFocusDatabase={handleFocusDatabase}
                 onExitDatabase={handleExitDatabase}
                 onSelectTable={handleSelectTable}
+                onShowDatabaseMetadata={handleShowDatabaseMetadata}
                 onRefresh={handleRefreshCatalog}
                 onCollapse={() => athenaPrefs.setCatalogCollapsed(true)}
                 collapseShortcut={CATALOG_TOGGLE_SHORTCUT}
@@ -676,7 +758,9 @@ export function GlueCatalogPage() {
             <div className="flex shrink-0 items-center justify-between gap-2">
               <TabsList className="self-start">
                 <TabsTrigger value="query">Query</TabsTrigger>
-                <TabsTrigger value="metadata">Table Metadata</TabsTrigger>
+                <TabsTrigger value="metadata">
+                  {metadataKind === "database" ? "Database Metadata" : "Table Metadata"}
+                </TabsTrigger>
               </TabsList>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -788,15 +872,27 @@ export function GlueCatalogPage() {
             </TabsContent>
 
             <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-auto rounded-lg border p-3">
-              <TableMetadataPanel
-                table={tableDetail.data}
-                loading={tableDetail.isLoading}
-                error={tableDetail.error}
-                editMode={metadataEditMode}
-                onEditModeChange={setMetadataEditMode}
-                onSave={handleSaveMetadata}
-                saving={updateTable.isPending}
-              />
+              {metadataKind === "database" ? (
+                <DatabaseMetadataPanel
+                  database={databaseDetail.data}
+                  loading={databaseDetail.isLoading}
+                  error={databaseDetail.error}
+                  editMode={metadataEditMode}
+                  onEditModeChange={setMetadataEditMode}
+                  onSave={handleSaveDatabaseMetadata}
+                  saving={updateDatabase.isPending}
+                />
+              ) : (
+                <TableMetadataPanel
+                  table={tableDetail.data}
+                  loading={tableDetail.isLoading}
+                  error={tableDetail.error}
+                  editMode={metadataEditMode}
+                  onEditModeChange={setMetadataEditMode}
+                  onSave={handleSaveMetadata}
+                  saving={updateTable.isPending}
+                />
+              )}
             </TabsContent>
           </Tabs>
         </section>
@@ -844,6 +940,51 @@ export function GlueCatalogPage() {
             </Button>
             <Button type="button" variant="destructive" onClick={handleDropTable}>
               Drop table
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={locationReminderOpen}
+        onOpenChange={(open) => {
+          setLocationReminderOpen(open);
+          if (!open) setPendingLocationRun(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Missing LOCATION clause</DialogTitle>
+            <DialogDescription>
+              {createLocationReminderKind(pendingLocationRun?.sql ?? "") === "database"
+                ? "This CREATE DATABASE statement does not include LOCATION. Athena allows it, but databases without an S3 location can be harder to manage later."
+                : "This CREATE TABLE statement does not include LOCATION. Athena allows it for some cases, but external tables usually need an S3 path."}{" "}
+              Continue anyway?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 py-2">
+            <Checkbox
+              id="skip-location-reminder"
+              checked={locationReminderDontAsk}
+              onCheckedChange={(checked) => setLocationReminderDontAsk(checked === true)}
+            />
+            <Label htmlFor="skip-location-reminder" className="text-sm font-normal">
+              Don&apos;t remind me again for this account
+            </Label>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setLocationReminderOpen(false);
+                setPendingLocationRun(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={confirmLocationReminder}>
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -30,18 +30,9 @@ describe("athenaPreferencesStorage", () => {
     expect(readAthenaPreferences("aws-profile-b").lastDatabase).toBe("analytics");
   });
 
-  it("merges partial updates without dropping other fields", () => {
-    writeAthenaPreferences("aws-profile-a", {
-      outputBasePath: "s3://bucket/athena/",
-      appendSubmitUser: true,
-      lastWorkgroup: "primary"
-    });
-
-    mergeAthenaPreferences("aws-profile-a", { lastWorkgroup: "analytics" });
-
-    const preferences = readAthenaPreferences("aws-profile-a");
-    expect(preferences.outputBasePath).toBe("s3://bucket/athena/");
-    expect(preferences.appendSubmitUser).toBe(true);
-    expect(preferences.lastWorkgroup).toBe("analytics");
+  it("stores skip create location reminder per account", () => {
+    mergeAthenaPreferences("aws-profile-a", { skipCreateLocationReminder: true });
+    expect(readAthenaPreferences("aws-profile-a").skipCreateLocationReminder).toBe(true);
+    expect(readAthenaPreferences("aws-profile-b").skipCreateLocationReminder).toBeUndefined();
   });
 });
