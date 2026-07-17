@@ -1,4 +1,5 @@
 import type { GlueTableDetail } from "@/types/domain";
+import { filterUserTableParameters } from "./glueTableParameters";
 
 function escapeSqlString(value: string) {
   return value.replace(/'/g, "''");
@@ -18,11 +19,20 @@ function formatPartitionLine(column: GlueTableDetail["partitionKeys"][number]) {
   return `  ${quoteIdentifier(column.name)} ${column.type}${comment}`;
 }
 
+const DEFAULT_SERDE_PARAMETERS = new Set(["serialization.format"]);
+
 function formatTableProperties(parameters: Record<string, string>) {
-  const entries = Object.entries(parameters);
+  const entries = filterUserTableParameters(parameters);
   if (entries.length === 0) return "";
   const body = entries.map(([key, value]) => `  '${escapeSqlString(key)}'='${escapeSqlString(value)}'`).join(",\n");
   return `\nTBLPROPERTIES (\n${body}\n)`;
+}
+
+function formatSerdeParameters(parameters: Record<string, string>) {
+  const entries = Object.entries(parameters).filter(([key]) => !DEFAULT_SERDE_PARAMETERS.has(key.toLowerCase()));
+  if (entries.length === 0) return [];
+  const body = entries.map(([key, value]) => `'${escapeSqlString(key)}'='${escapeSqlString(value)}'`).join(",\n  ");
+  return ["WITH SERDEPROPERTIES (", `  ${body}`, ")"];
 }
 
 export function buildCreateTableDdl(table: GlueTableDetail) {
@@ -47,15 +57,7 @@ export function buildCreateTableDdl(table: GlueTableDetail) {
 
   if (table.serdeLibrary) {
     lines.push(`ROW FORMAT SERDE '${escapeSqlString(table.serdeLibrary)}'`);
-    const serdeParams = Object.entries(table.serdeParameters);
-    if (serdeParams.length > 0) {
-      const body = serdeParams
-        .map(([key, value]) => `'${escapeSqlString(key)}'='${escapeSqlString(value)}'`)
-        .join(",\n  ");
-      lines.push("WITH SERDEPROPERTIES (");
-      lines.push(`  ${body}`);
-      lines.push(")");
-    }
+    lines.push(...formatSerdeParameters(table.serdeParameters));
   }
 
   if (table.inputFormat && table.outputFormat) {
