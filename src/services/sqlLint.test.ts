@@ -61,4 +61,25 @@ describe("sqlLint", () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  it("allows create table with backtick-qualified database.table names", () => {
+    const sql = `CREATE EXTERNAL TABLE IF NOT EXISTS \`test\`.\`job_execution_history2\` (
+  \`job_id\` bigint,
+  \`job_name\` string
+)
+PARTITIONED BY (
+  \`year\` string,
+  \`month\` string,
+  \`day\` string
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+STORED AS INPUTFORMAT
+  'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat'
+OUTPUTFORMAT
+  'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
+LOCATION 's3://manila-bigdata-etl/spark-warehouse/test.db/job_execution_history'`;
+
+    expect(analyzeDdlSyntax(sql)).toEqual([]);
+    expect(validateSqlForRun(sql).ok).toBe(true);
+  });
 });
