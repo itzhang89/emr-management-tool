@@ -12,6 +12,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { S3ObjectEditor, type S3ObjectEditorHandle } from "@/components/s3/S3ObjectEditor";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -27,7 +28,7 @@ import {
   useS3TextObject,
   useSaveS3TextObject
 } from "@/hooks/useS3";
-import { downloadS3ObjectToDisk, uploadS3ObjectFromDisk } from "@/services/fileDownload";
+import { downloadS3ObjectToDisk, prepareS3UploadFromDisk, s3ObjectExists, uploadS3ObjectFromPath } from "@/services/fileDownload";
 import { formatAppError, formatS3BrowserError } from "@/services/appErrorMessage";
 import { s3Service } from "@/services/s3Service";
 import { readLastS3Path, writeLastS3Path } from "@/services/s3PathStorage";
@@ -42,8 +43,15 @@ import {
   validateS3FolderName
 } from "@/services/s3PathUtils";
 import { getS3ObjectEditability } from "@/services/s3Rules";
+import {
+  bindS3UploadProgress,
+  formatUploadBytes,
+  formatUploadPhase,
+  type S3UploadProgress
+} from "@/services/s3UploadProgress";
+import { isValidUploadFileName, nextConflictFileName } from "@/services/s3UploadConflict";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { S3ObjectEntry, S3PrefixDeletionSummary } from "@/types/domain";
+import type { S3ObjectEntry, S3PrefixDeletionSummary, S3UploadPrepareResult } from "@/types/domain";
 
 type DeleteTarget = {
   bucket: string;
@@ -93,9 +101,34 @@ export function S3BrowserPage() {
   const renameObject = useRenameS3Object();
   const [content, setContent] = useState("");
   const [transferPending, setTransferPending] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<S3UploadProgress | null>(null);
+  const [uploadConflict, setUploadConflict] = useState<S3UploadPrepareResult | null>(null);
+  const [conflictRenameValue, setConflictRenameValue] = useState("");
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const resolvingUploadConflictRef = useRef(false);
   const editability = selectedObject
     ? getS3ObjectEditability({ key: selectedObject.key, size: selectedObject.size })
     : undefined;
+
+  useEffect(() => {
+    let disposed = false;
+    let unbind: (() => void) | undefined;
+    void bindS3UploadProgress((progress) => {
+      if (!disposed) {
+        setUploadProgress(progress);
+      }
+    }).then((unsubscribe) => {
+      if (disposed) {
+        unsubscribe();
+        return;
+      }
+      unbind = unsubscribe;
+    });
+    return () => {
+      disposed = true;
+      unbind?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!accountId) return;
@@ -179,22 +212,110 @@ export function S3BrowserPage() {
     }
   };
 
-  const upload = async () => {
-    if (!selectedBucket) return;
+  const executeUpload = async (prepared: S3UploadPrepareResult, key: string) => {
+    resolvingUploadConflictRef.current = true;
+    setUploadConflict(null);
+    setConflictRenameValue("");
+    setConflictBusy(false);
     setTransferPending(true);
+    setUploadProgress({
+      fileName: key.split("/").at(-1) || prepared.fileName,
+      key,
+      phase: "preparing",
+      bytesUploaded: 0,
+      totalBytes: prepared.totalBytes,
+      percent: 0
+    });
     try {
-      const uploaded = await uploadS3ObjectFromDisk(selectedBucket, prefix);
-      if (!uploaded) {
-        toast.info("Upload canceled.");
-        return;
-      }
+      const uploaded = await uploadS3ObjectFromPath({
+        bucket: prepared.bucket,
+        key,
+        localPath: prepared.localPath
+      });
       await objects.refetch();
       setSelectedKey(uploaded.key);
       toast.success(`Uploaded ${uploaded.key}`);
     } catch (error) {
       toast.error(formatAppError(error, "Failed to upload object."));
     } finally {
+      resolvingUploadConflictRef.current = false;
       setTransferPending(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const closeUploadConflict = (options?: { canceled?: boolean }) => {
+    setUploadConflict(null);
+    setConflictRenameValue("");
+    setConflictBusy(false);
+    setTransferPending(false);
+    setUploadProgress(null);
+    if (options?.canceled) {
+      toast.info("Upload canceled.");
+    }
+  };
+
+  const upload = async () => {
+    if (!selectedBucket) return;
+    setTransferPending(true);
+    setUploadProgress({
+      fileName: "…",
+      key: "",
+      phase: "preparing",
+      bytesUploaded: 0,
+      totalBytes: 0,
+      percent: 0
+    });
+    try {
+      const prepared = await prepareS3UploadFromDisk(selectedBucket, prefix);
+      if (!prepared) {
+        toast.info("Upload canceled.");
+        setTransferPending(false);
+        setUploadProgress(null);
+        return;
+      }
+      if (prepared.exists) {
+        setUploadConflict(prepared);
+        setConflictRenameValue(prepared.suggestedFileName ?? nextConflictFileName(prepared.fileName));
+        setTransferPending(false);
+        setUploadProgress(null);
+        return;
+      }
+      await executeUpload(prepared, prepared.key);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to upload object."));
+      setTransferPending(false);
+      setUploadProgress(null);
+    }
+  };
+
+  const overwriteConflictUpload = () => {
+    if (!uploadConflict) return;
+    void executeUpload(uploadConflict, uploadConflict.key);
+  };
+
+  const renameConflictUpload = async () => {
+    if (!uploadConflict) return;
+    const renamed = conflictRenameValue.trim();
+    if (!isValidUploadFileName(renamed)) {
+      toast.error("Enter a valid file name without path separators.");
+      return;
+    }
+    const key = `${prefix}${renamed}`;
+    setConflictBusy(true);
+    try {
+      const exists = await s3ObjectExists(uploadConflict.bucket, key);
+      if (exists) {
+        const suggestion = nextConflictFileName(renamed);
+        setConflictRenameValue(suggestion);
+        toast.error(`s3://${uploadConflict.bucket}/${key} already exists. Try ${suggestion}.`);
+        return;
+      }
+      await executeUpload(uploadConflict, key);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to check existing object."));
+    } finally {
+      setConflictBusy(false);
     }
   };
 
@@ -486,7 +607,7 @@ export function S3BrowserPage() {
           <>
             <Button variant="outline" disabled={!selectedBucket || transferPending} onClick={upload}>
               <Upload data-icon="inline-start" />
-              Upload
+              {uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}
             </Button>
             <Button variant="outline" disabled={!selectedBucket || !selectedKey || transferPending} onClick={download}>
               <Download data-icon="inline-start" />
@@ -495,6 +616,26 @@ export function S3BrowserPage() {
           </>
         }
       />
+      {uploadProgress ? (
+        <Card className="shrink-0 border-primary/20 bg-primary/5 py-3">
+          <CardContent className="space-y-2 px-4 py-0">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <p className="min-w-0 truncate font-medium">
+                {formatUploadPhase(uploadProgress.phase)}
+                {uploadProgress.fileName && uploadProgress.fileName !== "…"
+                  ? ` · ${uploadProgress.fileName}`
+                  : ""}
+              </p>
+              <p className="shrink-0 tabular-nums text-muted-foreground">
+                {uploadProgress.totalBytes > 0
+                  ? `${formatUploadBytes(uploadProgress.bytesUploaded)} / ${formatUploadBytes(uploadProgress.totalBytes)} · ${uploadProgress.percent}%`
+                  : "Waiting for file…"}
+              </p>
+            </div>
+            <Progress value={uploadProgress.percent} aria-label="Upload progress" />
+          </CardContent>
+        </Card>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1">
         <Card className="flex shrink-0 flex-col overflow-hidden" style={{ width: browserPaneWidth }}>
           <CardHeader className="shrink-0 space-y-1.5 p-4">
@@ -780,6 +921,82 @@ export function S3BrowserPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(uploadConflict)}
+        onOpenChange={(open) => {
+          if (!open && !resolvingUploadConflictRef.current && !conflictBusy && !transferPending) {
+            closeUploadConflict({ canceled: true });
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Object already exists</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>An object already exists at this location:</p>
+                {uploadConflict ? (
+                  <p className="break-all font-mono text-foreground">
+                    s3://{uploadConflict.bucket}/{uploadConflict.key}
+                  </p>
+                ) : null}
+                <p>Overwrite it, upload under a new name, or cancel.</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <label htmlFor="upload-conflict-rename" className="text-sm font-medium">
+              Upload as
+            </label>
+            <Input
+              id="upload-conflict-rename"
+              autoFocus
+              value={conflictRenameValue}
+              className="font-mono text-sm"
+              disabled={conflictBusy || transferPending}
+              onChange={(event) => setConflictRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void renameConflictUpload();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={conflictBusy || transferPending}
+              onClick={() => closeUploadConflict({ canceled: true })}
+            >
+              Cancel
+            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={conflictBusy || transferPending || !uploadConflict}
+                onClick={overwriteConflictUpload}
+              >
+                Overwrite
+              </Button>
+              <Button
+                type="button"
+                disabled={
+                  conflictBusy ||
+                  transferPending ||
+                  !uploadConflict ||
+                  !isValidUploadFileName(conflictRenameValue)
+                }
+                onClick={() => void renameConflictUpload()}
+              >
+                {conflictBusy ? "Checking…" : "Rename & upload"}
+              </Button>
+            </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && closeDeleteDialog()}>

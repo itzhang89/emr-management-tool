@@ -18,7 +18,9 @@ const useRenameS3Object = vi.fn();
 const describePrefixDeletion = vi.fn();
 const deletePrefixMutateAsync = vi.fn();
 const createFolderMutateAsync = vi.fn();
-const uploadS3ObjectFromDisk = vi.fn();
+const prepareS3UploadFromDisk = vi.fn();
+const uploadS3ObjectFromPath = vi.fn();
+const s3ObjectExists = vi.fn();
 const downloadS3ObjectToDisk = vi.fn();
 const deleteMutateAsync = vi.fn();
 const renameMutateAsync = vi.fn();
@@ -37,7 +39,9 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/services/fileDownload", () => ({
-  uploadS3ObjectFromDisk: (...args: unknown[]) => uploadS3ObjectFromDisk(...args),
+  prepareS3UploadFromDisk: (...args: unknown[]) => prepareS3UploadFromDisk(...args),
+  uploadS3ObjectFromPath: (...args: unknown[]) => uploadS3ObjectFromPath(...args),
+  s3ObjectExists: (...args: unknown[]) => s3ObjectExists(...args),
   downloadS3ObjectToDisk: (...args: unknown[]) => downloadS3ObjectToDisk(...args)
 }));
 
@@ -200,7 +204,9 @@ describe("S3BrowserPage", () => {
       kind: "file",
       size: 10
     });
-    uploadS3ObjectFromDisk.mockResolvedValue(undefined);
+    uploadS3ObjectFromPath.mockResolvedValue(undefined);
+    prepareS3UploadFromDisk.mockResolvedValue(undefined);
+    s3ObjectExists.mockResolvedValue(false);
     downloadS3ObjectToDisk.mockResolvedValue(undefined);
   });
 
@@ -384,9 +390,17 @@ describe("S3BrowserPage", () => {
 
   it("uploads and downloads objects through native file dialogs", async () => {
     const user = userEvent.setup();
-    uploadS3ObjectFromDisk.mockResolvedValue({
+    prepareS3UploadFromDisk.mockResolvedValue({
+      localPath: "/tmp/upload.txt",
+      fileName: "upload.txt",
+      key: "upload.txt",
       bucket: "logs-bucket",
-      key: "logs/upload.txt",
+      totalBytes: 12,
+      exists: false
+    });
+    uploadS3ObjectFromPath.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "upload.txt",
       kind: "file",
       size: 12
     });
@@ -395,8 +409,14 @@ describe("S3BrowserPage", () => {
     renderS3BrowserPage();
 
     await user.click(screen.getByRole("button", { name: /^Upload$/i }));
-    expect(uploadS3ObjectFromDisk).toHaveBeenCalledWith("logs-bucket", "");
-    expect(toastSuccess).toHaveBeenCalledWith("Uploaded logs/upload.txt");
+    expect(prepareS3UploadFromDisk).toHaveBeenCalledWith("logs-bucket", "");
+    expect(uploadS3ObjectFromPath).toHaveBeenCalledWith({
+      bucket: "logs-bucket",
+      key: "upload.txt",
+      localPath: "/tmp/upload.txt"
+    });
+    expect(toastSuccess).toHaveBeenCalledWith("Uploaded upload.txt");
+    expect(screen.queryByRole("progressbar", { name: /Upload progress/i })).not.toBeInTheDocument();
 
     const browser = screen.getByRole("navigation", { name: /S3 objects/i });
     await user.click(within(browser).getByRole("button", { name: /readme\.txt/i }));
@@ -405,15 +425,150 @@ describe("S3BrowserPage", () => {
     expect(downloadS3ObjectToDisk).toHaveBeenCalledWith("logs-bucket", "readme.txt");
   });
 
+  it("shows upload progress while a large upload is in flight", async () => {
+    const user = userEvent.setup();
+    prepareS3UploadFromDisk.mockResolvedValue({
+      localPath: "/tmp/big.bin",
+      fileName: "big.bin",
+      key: "big.bin",
+      bucket: "logs-bucket",
+      totalBytes: 20_000_000,
+      exists: false
+    });
+    let resolveUpload: (value: unknown) => void = () => undefined;
+    uploadS3ObjectFromPath.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUpload = resolve;
+        })
+    );
+
+    renderS3BrowserPage();
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+
+    expect(await screen.findByRole("button", { name: /Uploading 0%/i })).toBeDisabled();
+    expect(screen.getByRole("progressbar", { name: /Upload progress/i })).toBeInTheDocument();
+
+    resolveUpload({
+      bucket: "logs-bucket",
+      key: "big.bin",
+      kind: "file",
+      size: 20_000_000
+    });
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith("Uploaded big.bin");
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("progressbar", { name: /Upload progress/i })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows a toast when upload is canceled", async () => {
     const user = userEvent.setup();
-    uploadS3ObjectFromDisk.mockResolvedValue(undefined);
+    prepareS3UploadFromDisk.mockResolvedValue(undefined);
 
     renderS3BrowserPage();
 
     await user.click(screen.getByRole("button", { name: /^Upload$/i }));
 
     expect(toastInfo).toHaveBeenCalledWith("Upload canceled.");
+    expect(uploadS3ObjectFromPath).not.toHaveBeenCalled();
+  });
+
+  it("prompts to overwrite or rename when the destination object already exists", async () => {
+    const user = userEvent.setup();
+    prepareS3UploadFromDisk.mockResolvedValue({
+      localPath: "/tmp/readme.txt",
+      fileName: "readme.txt",
+      key: "readme.txt",
+      bucket: "logs-bucket",
+      totalBytes: 20,
+      exists: true,
+      suggestedFileName: "readme (1).txt"
+    });
+    uploadS3ObjectFromPath.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "readme.txt",
+      kind: "file",
+      size: 20
+    });
+
+    renderS3BrowserPage();
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+
+    expect(await screen.findByRole("heading", { name: /Object already exists/i })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("readme (1).txt")).toBeInTheDocument();
+    expect(uploadS3ObjectFromPath).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^Overwrite$/i }));
+
+    await waitFor(() => {
+      expect(uploadS3ObjectFromPath).toHaveBeenCalledWith({
+        bucket: "logs-bucket",
+        key: "readme.txt",
+        localPath: "/tmp/readme.txt"
+      });
+    });
+    expect(toastSuccess).toHaveBeenCalledWith("Uploaded readme.txt");
+  });
+
+  it("cancels a conflicting upload without uploading", async () => {
+    const user = userEvent.setup();
+    prepareS3UploadFromDisk.mockResolvedValue({
+      localPath: "/tmp/readme.txt",
+      fileName: "readme.txt",
+      key: "readme.txt",
+      bucket: "logs-bucket",
+      totalBytes: 20,
+      exists: true,
+      suggestedFileName: "readme (1).txt"
+    });
+
+    renderS3BrowserPage();
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+    expect(await screen.findByRole("heading", { name: /Object already exists/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^Cancel$/i }));
+
+    expect(toastInfo).toHaveBeenCalledWith("Upload canceled.");
+    expect(uploadS3ObjectFromPath).not.toHaveBeenCalled();
+  });
+
+  it("renames a conflicting upload to the suggested file name", async () => {
+    const user = userEvent.setup();
+    prepareS3UploadFromDisk.mockResolvedValue({
+      localPath: "/tmp/readme.txt",
+      fileName: "readme.txt",
+      key: "readme.txt",
+      bucket: "logs-bucket",
+      totalBytes: 20,
+      exists: true,
+      suggestedFileName: "readme (1).txt"
+    });
+    s3ObjectExists.mockResolvedValue(false);
+    uploadS3ObjectFromPath.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "readme (1).txt",
+      kind: "file",
+      size: 20
+    });
+
+    renderS3BrowserPage();
+    await user.click(screen.getByRole("button", { name: /^Upload$/i }));
+    expect(await screen.findByDisplayValue("readme (1).txt")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Rename & upload/i }));
+
+    await waitFor(() => {
+      expect(s3ObjectExists).toHaveBeenCalledWith("logs-bucket", "readme (1).txt");
+      expect(uploadS3ObjectFromPath).toHaveBeenCalledWith({
+        bucket: "logs-bucket",
+        key: "readme (1).txt",
+        localPath: "/tmp/readme.txt"
+      });
+    });
+    expect(toastSuccess).toHaveBeenCalledWith("Uploaded readme (1).txt");
   });
 
   it("copies the selected object path from the preview header", async () => {
