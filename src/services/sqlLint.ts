@@ -13,7 +13,9 @@ export interface SqlLintOptions {
 
 const DDL_PATTERN = /\b(CREATE|DROP|ALTER|TRUNCATE)\b|\bMSCK\s+REPAIR\b/i;
 const FROM_TABLE_PATTERN = /\bFROM\s+(?:(["'`])[\s\S]*?\1|[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)/gi;
-const TABLE_IDENT = '(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\\w]*(?:\\.[A-Za-z_][\\w]*)*)';
+/** Unquoted, double-quoted, or backtick identifier, optionally database.table with each part quoted independently. */
+const IDENT_PART = '(?:"[^"]*(?:""[^"]*)*"|`[^`]+`|[A-Za-z_][\\w]*)';
+const TABLE_IDENT = `${IDENT_PART}(?:\\.${IDENT_PART})?`;
 
 export function stripSqlComments(sql: string): string {
   let result = "";
