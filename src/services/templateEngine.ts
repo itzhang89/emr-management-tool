@@ -40,15 +40,14 @@ export function buildVariableMap(
   context: TemplateResolveContext,
   now: Date
 ): Record<string, string> {
-  const variables: Record<string, string> = {
+  const builtins: Record<BuiltinTemplateVariable, string> = {
     template_name: context.templateName,
     virtualClusterId: context.virtualClusterId,
     submitUser: context.submitUser,
     date: formatWithPattern(now, defaultFormatForVariableType("date")),
     datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
   };
-  // Keys must match BUILTIN_TEMPLATE_VARIABLES.
-  void (0 as unknown as Record<BuiltinTemplateVariable, string> & typeof variables);
+  const variables: Record<string, string> = { ...builtins };
 
   for (const definition of template.customVariables) {
     const raw = context.customVariables[definition.name];

@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, CircleHelp, Copy, Download, Edit2, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -229,6 +229,14 @@ function JobConfigTemplateDialog({
   const [defaultResourceTemplateId, setDefaultResourceTemplateId] = useState<string>();
   const [resetSnapshot, setResetSnapshot] = useState<TemplateEditorSnapshot>(() => createEditorSnapshot());
   const [variableEditorKey, setVariableEditorKey] = useState(0);
+  const customVariableNamesKey = customVariables
+    .map((variable) => variable.name.trim())
+    .filter(Boolean)
+    .join("\0");
+  const knownVariables = useMemo(
+    () => buildKnownTemplateVariables(customVariableNamesKey ? customVariableNamesKey.split("\0") : []),
+    [customVariableNamesKey]
+  );
 
   useEffect(() => {
     const snapshot = createEditorSnapshot(template);
@@ -323,7 +331,7 @@ function JobConfigTemplateDialog({
           <JsonTemplateEditor
             value={payloadTemplate}
             onChange={setPayloadTemplate}
-            knownVariables={buildKnownTemplateVariables(customVariables.map((variable) => variable.name))}
+            knownVariables={knownVariables}
             className="min-h-[280px]"
           />
           <VariableEditor
