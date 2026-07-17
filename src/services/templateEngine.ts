@@ -10,7 +10,17 @@ import { applyResourceOverride } from "@/services/resourceOverride";
 import { formatBooleanValue, parseBooleanOutputStyle } from "@/services/booleanVariable";
 import { defaultFormatForVariableType, formatWithPattern } from "@/services/dateFormat";
 
-const VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
+export const BUILTIN_TEMPLATE_VARIABLES = [
+  "template_name",
+  "virtualClusterId",
+  "submitUser",
+  "date",
+  "datetime"
+] as const;
+
+export type BuiltinTemplateVariable = (typeof BUILTIN_TEMPLATE_VARIABLES)[number];
+
+export const TEMPLATE_VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
 const EMR_JOB_NAME_PATTERN = /^[.\-_/#A-Za-z0-9]+$/;
 const EMR_JOB_NAME_MESSAGE =
   "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
@@ -37,6 +47,8 @@ export function buildVariableMap(
     date: formatWithPattern(now, defaultFormatForVariableType("date")),
     datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
   };
+  // Keys must match BUILTIN_TEMPLATE_VARIABLES.
+  void (0 as unknown as Record<BuiltinTemplateVariable, string> & typeof variables);
 
   for (const definition of template.customVariables) {
     const raw = context.customVariables[definition.name];
@@ -57,7 +69,7 @@ export function replaceTemplateVariables(
   variables: Record<string, string>,
   now: Date
 ): string {
-  return input.replace(VARIABLE_PATTERN, (_match, key: string, pattern?: string) => {
+  return input.replace(TEMPLATE_VARIABLE_PATTERN, (_match, key: string, pattern?: string) => {
     if (key === "date" || key === "datetime") {
       return formatWithPattern(now, pattern ?? defaultFormatForVariableType(key === "date" ? "date" : "dateTime"));
     }

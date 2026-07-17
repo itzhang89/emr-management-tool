@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  BUILTIN_TEMPLATE_VARIABLES,
+  TEMPLATE_VARIABLE_PATTERN,
   buildVariableMap,
   replaceTemplateVariables,
   resolveTemplatePayload,
@@ -38,6 +40,18 @@ const template: JobConfigTemplate = {
 };
 
 describe("templateEngine", () => {
+  it("exports built-in template variables and a reusable scan pattern", () => {
+    expect([...BUILTIN_TEMPLATE_VARIABLES]).toEqual([
+      "template_name",
+      "virtualClusterId",
+      "submitUser",
+      "date",
+      "datetime"
+    ]);
+    TEMPLATE_VARIABLE_PATTERN.lastIndex = 0;
+    expect(TEMPLATE_VARIABLE_PATTERN.test("${ENV}")).toBe(true);
+  });
+
   it("replaces built-in and custom variables", () => {
     const resolved = resolveTemplatePayload(template, {
       templateName: "Daily ETL",
