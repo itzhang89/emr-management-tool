@@ -1,9 +1,9 @@
 import { stripSqlComments } from "./sqlLint";
 
 const LOCATION_CLAUSE = /\bLOCATION\s+('[^']*'|"[^"]*")/i;
-const CREATE_DATABASE = /\bCREATE\s+(?:DATABASE|SCHEMA)\b/i;
-const CREATE_TABLE = /\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b/i;
-const CREATE_TABLE_AS = /\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b[\s\S]*\bAS\b\s+SELECT\b/i;
+const CREATE_DATABASE = /^CREATE\s+(?:DATABASE|SCHEMA)\b/i;
+const CREATE_TABLE = /^CREATE\s+(?:EXTERNAL\s+)?TABLE\b/i;
+const CREATE_TABLE_AS = /^CREATE\s+(?:EXTERNAL\s+)?TABLE\b[\s\S]*\bAS\b\s+SELECT\b/i;
 
 function firstStatement(sql: string): string {
   return stripSqlComments(sql).trim().replace(/;+\s*$/, "").split(";")[0]?.trim() ?? "";

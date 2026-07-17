@@ -37,5 +37,6 @@ describe("hiveSql", () => {
     expect(createDb?.sql).toContain("LOCATION");
     expect(createDb?.sql).toContain("WITH DBPROPERTIES");
     expect(SQL_DDL_TEMPLATES.map((template) => template.label)).not.toContain("DESCRIBE DATABASE");
+    expect(SQL_DDL_TEMPLATES.map((template) => template.label)).toContain("SHOW CREATE VIEW");
   });
 });

@@ -1,10 +1,13 @@
-import { Info, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { Info, Copy, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueDatabaseDetail } from "@/hooks/useGlue";
+import { formatAppError } from "@/services/appErrorMessage";
+import { buildCreateDatabaseDdl } from "@/services/glueDatabaseDdl";
 import type { GlueDatabaseDetail } from "@/types/domain";
 
 export function DatabaseMetadataPanel({
@@ -74,6 +77,23 @@ export function DatabaseMetadataPanel({
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!database}
+            onClick={async () => {
+              try {
+                await navigator.clipboard?.writeText(buildCreateDatabaseDdl(database));
+                toast.success("CREATE DATABASE DDL copied.");
+              } catch (error) {
+                toast.error(formatAppError(error, "Failed to copy DDL."));
+              }
+            }}
+          >
+            <Copy data-icon="inline-start" />
+            Copy DDL
+          </Button>
           {editMode ? (
             <>
               <Button
