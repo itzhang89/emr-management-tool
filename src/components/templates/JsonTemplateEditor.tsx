@@ -19,11 +19,15 @@ const editorTheme = EditorView.theme({
     backgroundColor: "var(--color-background)",
     color: "var(--color-foreground)",
     height: "100%",
+    width: "100%",
+    maxWidth: "100%",
     minHeight: "140px"
   },
   ".cm-scroller": {
     overflow: "auto",
-    fontFamily: "inherit"
+    fontFamily: "inherit",
+    width: "100%",
+    maxWidth: "100%"
   },
   "&.cm-focused": {
     outline: "2px solid color-mix(in srgb, var(--color-ring) 35%, transparent)",
@@ -156,6 +160,7 @@ export function JsonTemplateEditor({
       highlightActiveLine(),
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
+      EditorView.lineWrapping,
       json(),
       linter(jsonParseLinter()),
       lintGutter(),
@@ -211,7 +216,10 @@ export function JsonTemplateEditor({
       role="textbox"
       aria-label="Payload JSON"
       aria-multiline="true"
-      className={cn("json-template-editor min-h-[140px] shrink-0 rounded-lg border bg-background", className)}
+      className={cn(
+        "json-template-editor min-h-[140px] w-full min-w-0 max-w-full overflow-hidden shrink-0 rounded-lg border bg-background",
+        className
+      )}
     />
   );
 }

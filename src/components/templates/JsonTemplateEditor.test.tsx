@@ -16,6 +16,7 @@ describe("JsonTemplateEditor", () => {
 
     const editor = screen.getByRole("textbox", { name: /payload json/i });
     expect(editor).toBeInTheDocument();
+    expect(editor).toHaveClass("max-w-full", "overflow-hidden", "min-w-0");
     expect(editor.querySelector(".cm-content")).toHaveTextContent('{"name":"${template_name}"}');
   });
 

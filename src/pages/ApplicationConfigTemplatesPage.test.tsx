@@ -161,6 +161,23 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect((await screen.findAllByText("Used in job arguments")).length).toBeGreaterThan(0);
   });
 
+  it("keeps variable row controls inside the dialog width once the payload editor is contained", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+    await user.click(screen.getByRole("button", { name: /Add Variable/i }));
+
+    const payloadEditor = screen.getByRole("textbox", { name: /payload json/i });
+    const nameInput = screen.getByPlaceholderText("Variable name");
+    const nameRow = nameInput.closest("div.grid");
+
+    expect(payloadEditor).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
+    expect(nameRow).toHaveClass("grid-cols-[2.75rem_minmax(0,1fr)_9.5rem_minmax(0,1fr)_auto]");
+    expect(screen.getByRole("button", { name: /Remove VAR_1/i })).toHaveClass("size-8");
+    expect(screen.getByText("Required").closest("label")?.parentElement).toHaveClass("shrink-0");
+  });
+
   it("shows boolean output format options for boolean variables", async () => {
     openTextFile.mockResolvedValue(
       JSON.stringify({
@@ -179,6 +196,7 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(
       screen.getByText('Default: unchecked → "0". Checked → "1"; unchecked → "0".')
     ).toBeInTheDocument();
+    expect(screen.getByText("1 / 0").closest("button")).toHaveClass("w-[11rem]");
   });
 
   it("shows enum display format options for enum variables", async () => {

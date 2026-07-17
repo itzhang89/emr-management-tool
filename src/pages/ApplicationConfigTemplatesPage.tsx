@@ -47,6 +47,7 @@ import {
 } from "@/services/booleanVariable";
 import { ENUM_DISPLAY_OPTIONS, inferEnumDisplayFormat, parseEnumDisplayFormat } from "@/services/enumVariable";
 import type { JobConfigTemplate, TemplateVariableDefinition, TemplateVariableType } from "@/types/domain";
+import { cn } from "@/lib/utils";
 
 type Editing = { template?: JobConfigTemplate } | undefined;
 
@@ -257,12 +258,12 @@ function JobConfigTemplateDialog({
 
   return (
     <Dialog open={Boolean(editing)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{template ? "Edit" : "Create"} application config template</DialogTitle>
           <DialogDescription>Reset restores the editor to the state from when it was opened or first imported.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Name">
               <Input value={name} onChange={(event) => setName(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
@@ -340,7 +341,7 @@ function JobConfigTemplateDialog({
             onChange={setCustomVariables}
           />
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -392,7 +393,7 @@ function VariableEditor({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 max-w-full space-y-3">
       <div className="flex items-center justify-between">
         <Label>Custom Variables</Label>
         <Button
@@ -467,12 +468,13 @@ function VariableRow({
   }, [variable.editorId, variable.options]);
 
   return (
-    <div className="space-y-3 rounded-lg border p-3">
-      <div className="grid grid-cols-[44px_minmax(160px,1fr)_150px_minmax(180px,1fr)_110px_auto] items-center gap-2">
+    <div className="min-w-0 space-y-3 overflow-hidden rounded-lg border p-3">
+      <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_9.5rem_minmax(0,1fr)_auto] items-center gap-2">
         <div className="rounded-md bg-muted px-2 py-2 text-center text-sm font-medium text-muted-foreground">
           #{index + 1}
         </div>
         <Input
+          className="min-w-0"
           placeholder="Variable name"
           value={variable.name}
           onChange={(event) => onChange({ name: event.target.value })}
@@ -500,7 +502,7 @@ function VariableRow({
             });
           }}
         >
-          <SelectTrigger>
+          <SelectTrigger className="min-w-0 [&>span]:truncate">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -511,12 +513,17 @@ function VariableRow({
             ))}
           </SelectContent>
         </Select>
-        <DefaultValueField variable={variable} onChange={onChange} />
-        <label className="flex items-center justify-center gap-2 text-sm">
-          <Checkbox checked={Boolean(variable.required)} onCheckedChange={(checked) => onChange({ required: Boolean(checked) })} />
-          Required
-        </label>
-        <div className="flex justify-end gap-1">
+        <div className="min-w-0">
+          <DefaultValueField variable={variable} onChange={onChange} />
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
+            <Checkbox
+              checked={Boolean(variable.required)}
+              onCheckedChange={(checked) => onChange({ required: Boolean(checked) })}
+            />
+            Required
+          </label>
           <VariableDescriptionControl
             variableName={variable.name}
             description={variable.description}
@@ -526,30 +533,39 @@ function VariableRow({
             type="button"
             variant="ghost"
             size="icon"
+            className="size-8"
             aria-label={`Move ${variable.name} up`}
             disabled={index === 0}
             onClick={onMoveUp}
           >
-            <ArrowUp />
+            <ArrowUp className="size-4" />
           </Button>
           <Button
             type="button"
             variant="ghost"
             size="icon"
+            className="size-8"
             aria-label={`Move ${variable.name} down`}
             disabled={index === total - 1}
             onClick={onMoveDown}
           >
-            <ArrowDown />
+            <ArrowDown className="size-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${variable.name}`} onClick={onRemove}>
-            <Trash2 />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            aria-label={`Remove ${variable.name}`}
+            onClick={onRemove}
+          >
+            <Trash2 className="size-4" />
           </Button>
         </div>
       </div>
 
       {variable.type === "enum" && (
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <Select
             value={variable.format ?? inferEnumDisplayFormat(variable.options?.length ?? 0)}
             onValueChange={(value) => onChange({ format: value })}
@@ -585,6 +601,7 @@ function VariableRow({
 
       {variable.type === "multiEnum" && (
         <Input
+          className="min-w-0"
           placeholder="Options, comma-separated"
           value={optionsDraft}
           onChange={(event) => setOptionsDraft(event.target.value)}
@@ -602,6 +619,7 @@ function VariableRow({
 
       {(variable.type === "date" || variable.type === "dateTime") && (
         <Input
+          className="min-w-0 max-w-sm"
           placeholder="Format, e.g. YYYY-MM-DD"
           value={variable.format ?? defaultFormatForVariableType(variable.type)}
           onChange={(event) => onChange({ format: event.target.value })}
@@ -610,7 +628,7 @@ function VariableRow({
       )}
 
       {variable.type === "boolean" && (
-        <div className="grid items-start gap-2 sm:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start">
           <Select
             value={variable.format ?? defaultBooleanOutputStyle()}
             onValueChange={(value) =>
@@ -620,10 +638,10 @@ function VariableRow({
               })
             }
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-[11rem] shrink-0">
               <SelectValue placeholder="Output format" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="w-[var(--radix-select-trigger-width)]">
               {BOOLEAN_OUTPUT_OPTIONS.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
@@ -631,7 +649,7 @@ function VariableRow({
               ))}
             </SelectContent>
           </Select>
-          <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          <p className="min-w-0 max-w-md text-xs leading-relaxed text-muted-foreground sm:pt-2">
             {variable.description}
           </p>
         </div>
@@ -670,9 +688,9 @@ function VariableDescriptionControl({
               variant="ghost"
               size="icon"
               aria-label={`Edit ${variableName} description`}
-              className={description ? "text-primary" : undefined}
+              className={cn("size-8", description ? "text-primary" : undefined)}
             >
-              <CircleHelp />
+              <CircleHelp className="size-4" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -722,7 +740,7 @@ function DefaultValueField({
     const defaultOutput = formatBooleanValue(defaultValue, format);
 
     return (
-      <label className="flex h-10 items-center gap-2 rounded-md border px-3 text-sm">
+      <label className="flex h-10 min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md border px-3 text-sm">
         <Checkbox
           checked={defaultValue}
           onCheckedChange={(checked) =>
@@ -732,8 +750,8 @@ function DefaultValueField({
             })
           }
         />
-        <span className="text-muted-foreground">Default</span>
-        <span className="font-mono text-foreground">{defaultOutput}</span>
+        <span className="shrink-0 text-muted-foreground">Default</span>
+        <span className="min-w-0 truncate font-mono text-foreground">{defaultOutput}</span>
       </label>
     );
   }
@@ -741,6 +759,7 @@ function DefaultValueField({
   if (variable.type === "number") {
     return (
       <Input
+        className="min-w-0"
         type="number"
         placeholder="Default"
         value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
@@ -758,7 +777,7 @@ function DefaultValueField({
         value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
         onValueChange={(value) => onChange({ defaultValue: value })}
       >
-        <SelectTrigger>
+        <SelectTrigger className="min-w-0 [&>span]:truncate">
           <SelectValue placeholder="Default" />
         </SelectTrigger>
         <SelectContent>
@@ -775,6 +794,7 @@ function DefaultValueField({
   if (variable.type === "multiEnum") {
     return (
       <Input
+        className="min-w-0"
         placeholder="Default values"
         value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
         {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -792,6 +812,7 @@ function DefaultValueField({
 
   return (
     <Input
+      className="min-w-0"
       placeholder="Default"
       value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
       onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
