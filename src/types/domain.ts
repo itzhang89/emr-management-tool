@@ -354,6 +354,23 @@ export interface S3ObjectEntry {
   etag?: string;
 }
 
+export interface S3UploadPrepareResult {
+  localPath: string;
+  fileName: string;
+  key: string;
+  bucket: string;
+  totalBytes: number;
+  exists: boolean;
+  suggestedFileName?: string;
+}
+
+export interface S3UploadFromPathRequest {
+  accountId?: string;
+  bucket: string;
+  key: string;
+  localPath: string;
+}
+
 export interface S3TextObject {
   accountId?: string;
   bucket: string;

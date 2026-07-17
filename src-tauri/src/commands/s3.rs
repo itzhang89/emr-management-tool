@@ -4,16 +4,38 @@ use crate::aws::s3_rules::s3_object_editability;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, S3Bucket, S3CreateFolderRequest, S3JobLogObject, S3JobLogObjectsRequest,
-    S3JobLogObjectsResponse, S3ListObjectsRequest, S3ObjectEntry, S3ObjectRequest,
-    S3PrefixDeletionSummary, S3RenameObjectRequest, S3TextObject, S3UploadFromDiskRequest,
+    S3JobLogObjectsResponse, S3ListObjectsRequest, S3ObjectEntry, S3ObjectExistsRequest,
+    S3ObjectRequest, S3PrefixDeletionSummary, S3RenameObjectRequest, S3TextObject,
+    S3UploadFromDiskRequest, S3UploadFromPathRequest, S3UploadPrepareResult,
 };
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{Delete, ObjectIdentifier};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use chrono::Utc;
 use flate2::read::GzDecoder;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::io::Read;
-use tauri::AppHandle;
+use std::path::Path;
+use tauri::{AppHandle, Emitter};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+
+const S3_UPLOAD_PROGRESS_EVENT: &str = "s3:upload-progress";
+/// Use multipart upload once the file is larger than this threshold.
+const MULTIPART_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
+/// Multipart part size (must be >= 5 MiB except for the final part).
+const MULTIPART_PART_SIZE: usize = 8 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct S3UploadProgressEvent {
+    file_name: String,
+    key: String,
+    phase: String,
+    bytes_uploaded: u64,
+    total_bytes: u64,
+    percent: u8,
+}
 
 #[tauri::command]
 pub async fn list_s3_buckets(
@@ -364,10 +386,10 @@ pub async fn download_s3_object_to_disk(
 }
 
 #[tauri::command]
-pub async fn upload_s3_object_from_disk(
+pub async fn prepare_s3_upload_from_disk(
     app: AppHandle,
     request: S3UploadFromDiskRequest,
-) -> AppResult<Option<S3ObjectEntry>> {
+) -> AppResult<Option<S3UploadPrepareResult>> {
     if request.bucket.trim().is_empty() {
         return Err(AppError::validation("Bucket is required."));
     }
@@ -377,14 +399,16 @@ pub async fn upload_s3_object_from_disk(
         return Ok(None);
     };
 
-    let path = file.path();
+    let path = file.path().to_path_buf();
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::validation("Selected file has no name."))?;
-    let bytes = tokio::fs::read(path)
+        .ok_or_else(|| AppError::validation("Selected file has no name."))?
+        .to_string();
+    let metadata = tokio::fs::metadata(&path)
         .await
-        .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+        .map_err(|error| AppError::storage(format!("Failed to read selected file metadata: {error}")))?;
+    let total_bytes = metadata.len();
     let prefix = request.prefix.clone().unwrap_or_default();
     let key = format!("{prefix}{file_name}");
 
@@ -395,24 +419,448 @@ pub async fn upload_s3_object_from_disk(
         },
     )
     .await?;
+    let account_id = runtime.account.id.clone();
     let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+    let exists = s3_object_exists_on_client(&client, &request.bucket, &key, &account_id).await?;
+    let suggested_file_name = if exists {
+        Some(suggest_unique_file_name(&client, &request.bucket, &prefix, &file_name, &account_id).await?)
+    } else {
+        None
+    };
+
+    Ok(Some(S3UploadPrepareResult {
+        local_path: path.to_string_lossy().into_owned(),
+        file_name,
+        key,
+        bucket: request.bucket,
+        total_bytes,
+        exists,
+        suggested_file_name,
+    }))
+}
+
+#[tauri::command]
+pub async fn upload_s3_object_from_path(
+    app: AppHandle,
+    request: S3UploadFromPathRequest,
+) -> AppResult<S3ObjectEntry> {
+    if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
+        return Err(AppError::validation("Bucket and key are required."));
+    }
+    if request.local_path.trim().is_empty() {
+        return Err(AppError::validation("Local path is required."));
+    }
+    if request.key.contains("//") || request.key.ends_with('/') {
+        return Err(AppError::validation("Upload key must be a file object, not a folder."));
+    }
+
+    let path = Path::new(&request.local_path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .or_else(|| request.key.rsplit('/').next())
+        .ok_or_else(|| AppError::validation("Upload target has no file name."))?
+        .to_string();
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to read selected file metadata: {error}")))?;
+    let total_bytes = metadata.len();
+    let key = request.key.clone();
+
+    emit_upload_progress(&app, &file_name, &key, "preparing", 0, total_bytes);
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let account_id = runtime.account.id.clone();
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+
+    let uploaded = if total_bytes > MULTIPART_THRESHOLD_BYTES {
+        upload_file_multipart(
+            &app,
+            &client,
+            &account_id,
+            &request.bucket,
+            &key,
+            &file_name,
+            path,
+            total_bytes,
+        )
+        .await?
+    } else {
+        upload_file_single(
+            &app,
+            &client,
+            &account_id,
+            &request.bucket,
+            &key,
+            &file_name,
+            path,
+            total_bytes,
+        )
+        .await?
+    };
+
+    emit_upload_progress(&app, &file_name, &key, "completed", total_bytes, total_bytes);
+    Ok(uploaded)
+}
+
+#[tauri::command]
+pub async fn s3_object_exists(
+    app: AppHandle,
+    request: S3ObjectExistsRequest,
+) -> AppResult<bool> {
+    if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
+        return Err(AppError::validation("Bucket and key are required."));
+    }
+
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
+    let account_id = runtime.account.id.clone();
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+    s3_object_exists_on_client(&client, &request.bucket, &request.key, &account_id).await
+}
+
+/// Keep a thin wrapper so existing callers that still invoke the old command keep working.
+#[tauri::command]
+pub async fn upload_s3_object_from_disk(
+    app: AppHandle,
+    request: S3UploadFromDiskRequest,
+) -> AppResult<Option<S3ObjectEntry>> {
+    let prepared = prepare_s3_upload_from_disk(app.clone(), request.clone()).await?;
+    let Some(prepared) = prepared else {
+        return Ok(None);
+    };
+    if prepared.exists {
+        return Err(AppError::validation(format!(
+            "Object already exists at s3://{}/{} . Use prepare + conflict dialog to overwrite or rename.",
+            prepared.bucket, prepared.key
+        )));
+    }
+    let uploaded = upload_s3_object_from_path(
+        app,
+        S3UploadFromPathRequest {
+            account_id: request.account_id,
+            bucket: prepared.bucket,
+            key: prepared.key,
+            local_path: prepared.local_path,
+        },
+    )
+    .await?;
+    Ok(Some(uploaded))
+}
+
+async fn s3_object_exists_on_client(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    key: &str,
+    account_id: &str,
+) -> AppResult<bool> {
+    match client.head_object().bucket(bucket).key(key).send().await {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            if error
+                .as_service_error()
+                .is_some_and(|service_error| service_error.is_not_found())
+            {
+                return Ok(false);
+            }
+            Err(AppError::aws_for_account_sdk(
+                "s3",
+                account_id.to_string(),
+                error,
+            ))
+        }
+    }
+}
+
+async fn suggest_unique_file_name(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    prefix: &str,
+    file_name: &str,
+    account_id: &str,
+) -> AppResult<String> {
+    let mut candidate = next_conflict_file_name(file_name);
+    for _ in 0..1000 {
+        let key = format!("{prefix}{candidate}");
+        if !s3_object_exists_on_client(client, bucket, &key, account_id).await? {
+            return Ok(candidate);
+        }
+        candidate = next_conflict_file_name(&candidate);
+    }
+    Err(AppError::validation(
+        "Could not find an unused file name for this upload.",
+    ))
+}
+
+fn next_conflict_file_name(file_name: &str) -> String {
+    let (stem, extension) = split_file_name(file_name);
+    let next_index = match parse_trailing_conflict_index(stem) {
+        Some((base, index)) => (base.to_string(), index + 1),
+        None => (stem.to_string(), 1),
+    };
+    if extension.is_empty() {
+        format!("{} ({})", next_index.0, next_index.1)
+    } else {
+        format!("{} ({}).{}", next_index.0, next_index.1, extension)
+    }
+}
+
+fn split_file_name(file_name: &str) -> (&str, &str) {
+    match file_name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() && !extension.contains(' ') => {
+            (stem, extension)
+        }
+        _ => (file_name, ""),
+    }
+}
+
+fn parse_trailing_conflict_index(stem: &str) -> Option<(&str, u32)> {
+    let trimmed = stem.trim_end();
+    let (base, rest) = trimmed.rsplit_once(" (")?;
+    let index_text = rest.strip_suffix(')')?;
+    let index = index_text.parse::<u32>().ok()?;
+    if base.is_empty() || index == 0 {
+        return None;
+    }
+    Some((base, index))
+}
+
+fn emit_upload_progress(
+    app: &AppHandle,
+    file_name: &str,
+    key: &str,
+    phase: &str,
+    bytes_uploaded: u64,
+    total_bytes: u64,
+) {
+    let percent = if total_bytes == 0 {
+        100
+    } else {
+        ((bytes_uploaded.min(total_bytes) as f64 / total_bytes as f64) * 100.0).round() as u8
+    };
+    let _ = app.emit(
+        S3_UPLOAD_PROGRESS_EVENT,
+        S3UploadProgressEvent {
+            file_name: file_name.to_string(),
+            key: key.to_string(),
+            phase: phase.to_string(),
+            bytes_uploaded,
+            total_bytes,
+            percent: percent.min(100),
+        },
+    );
+}
+
+async fn upload_file_single(
+    app: &AppHandle,
+    client: &aws_sdk_s3::Client,
+    account_id: &str,
+    bucket: &str,
+    key: &str,
+    file_name: &str,
+    path: &Path,
+    total_bytes: u64,
+) -> AppResult<S3ObjectEntry> {
+    emit_upload_progress(app, file_name, key, "reading", 0, total_bytes);
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+    emit_upload_progress(app, file_name, key, "uploading", 0, total_bytes);
+
     let response = client
         .put_object()
-        .bucket(&request.bucket)
-        .key(&key)
+        .bucket(bucket)
+        .key(key)
         .body(ByteStream::from(bytes.clone()))
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
+        .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
 
-    Ok(Some(object(
-        &request.bucket,
-        key,
+    emit_upload_progress(app, file_name, key, "uploading", total_bytes, total_bytes);
+    Ok(object(
+        bucket,
+        key.to_string(),
         bytes.len() as i64,
         "file",
         Some(Utc::now().to_rfc3339()),
         response.e_tag().map(ToString::to_string),
-    )))
+    ))
+}
+
+async fn upload_file_multipart(
+    app: &AppHandle,
+    client: &aws_sdk_s3::Client,
+    account_id: &str,
+    bucket: &str,
+    key: &str,
+    file_name: &str,
+    path: &Path,
+    total_bytes: u64,
+) -> AppResult<S3ObjectEntry> {
+    emit_upload_progress(app, file_name, key, "uploading", 0, total_bytes);
+
+    let create = client
+        .create_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
+    let upload_id = create
+        .upload_id()
+        .ok_or_else(|| AppError::validation("S3 did not return a multipart upload id."))?
+        .to_string();
+
+    let upload_result = upload_multipart_parts(
+        app,
+        client,
+        account_id,
+        bucket,
+        key,
+        file_name,
+        path,
+        total_bytes,
+        &upload_id,
+    )
+    .await;
+
+    match upload_result {
+        Ok(entry) => Ok(entry),
+        Err(error) => {
+            let _ = client
+                .abort_multipart_upload()
+                .bucket(bucket)
+                .key(key)
+                .upload_id(&upload_id)
+                .send()
+                .await;
+            Err(error)
+        }
+    }
+}
+
+async fn upload_multipart_parts(
+    app: &AppHandle,
+    client: &aws_sdk_s3::Client,
+    account_id: &str,
+    bucket: &str,
+    key: &str,
+    file_name: &str,
+    path: &Path,
+    total_bytes: u64,
+    upload_id: &str,
+) -> AppResult<S3ObjectEntry> {
+    let mut file = File::open(path)
+        .await
+        .map_err(|error| AppError::storage(format!("Failed to open selected file: {error}")))?;
+    let mut buffer = vec![0_u8; MULTIPART_PART_SIZE];
+    let mut part_number: i32 = 1;
+    let mut bytes_uploaded: u64 = 0;
+    let mut completed_parts: Vec<CompletedPart> = Vec::new();
+
+    loop {
+        let mut filled = 0;
+        while filled < MULTIPART_PART_SIZE {
+            let read = file
+                .read(&mut buffer[filled..])
+                .await
+                .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        if filled == 0 {
+            break;
+        }
+
+        let body = ByteStream::from(buffer[..filled].to_vec());
+        let part = client
+            .upload_part()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .part_number(part_number)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
+        let etag = part
+            .e_tag()
+            .ok_or_else(|| AppError::validation(format!("S3 part {part_number} did not return an ETag.")))?
+            .to_string();
+        completed_parts.push(
+            CompletedPart::builder()
+                .e_tag(etag)
+                .part_number(part_number)
+                .build(),
+        );
+
+        bytes_uploaded = (bytes_uploaded + filled as u64).min(total_bytes);
+        emit_upload_progress(app, file_name, key, "uploading", bytes_uploaded, total_bytes);
+        part_number += 1;
+    }
+
+    if completed_parts.is_empty() {
+        // Empty file — fall back to a simple put.
+        let response = client
+            .put_object()
+            .bucket(bucket)
+            .key(key)
+            .body(ByteStream::from_static(b""))
+            .send()
+            .await
+            .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
+        let _ = client
+            .abort_multipart_upload()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .send()
+            .await;
+        return Ok(object(
+            bucket,
+            key.to_string(),
+            0,
+            "file",
+            Some(Utc::now().to_rfc3339()),
+            response.e_tag().map(ToString::to_string),
+        ));
+    }
+
+    emit_upload_progress(app, file_name, key, "completing", bytes_uploaded, total_bytes);
+    let completed = CompletedMultipartUpload::builder()
+        .set_parts(Some(completed_parts))
+        .build();
+    let response = client
+        .complete_multipart_upload()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .multipart_upload(completed)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
+
+    Ok(object(
+        bucket,
+        key.to_string(),
+        total_bytes as i64,
+        "file",
+        Some(Utc::now().to_rfc3339()),
+        response.e_tag().map(ToString::to_string),
+    ))
 }
 
 #[tauri::command]
@@ -898,7 +1346,9 @@ fn job_id_from_prefix(prefix: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_prefix_children, decode_s3_log_content, normalize_s3_prefix};
+    use super::{
+        count_prefix_children, decode_s3_log_content, next_conflict_file_name, normalize_s3_prefix,
+    };
 
     #[test]
     fn decodes_gzip_s3_log_archives_as_text() {
@@ -932,5 +1382,13 @@ mod tests {
         let (file_count, folder_count) = count_prefix_children(&keys, "logs/");
         assert_eq!(file_count, 3);
         assert_eq!(folder_count, 1);
+    }
+
+    #[test]
+    fn suggests_conflict_file_names_with_incrementing_suffix() {
+        assert_eq!(next_conflict_file_name("report.csv"), "report (1).csv");
+        assert_eq!(next_conflict_file_name("report (1).csv"), "report (2).csv");
+        assert_eq!(next_conflict_file_name("archive"), "archive (1)");
+        assert_eq!(next_conflict_file_name("archive (9)"), "archive (10)");
     }
 }

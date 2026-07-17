@@ -24,6 +24,8 @@ import type {
   S3JobLogObjectsRequest,
   S3JobLogObjectsResponse,
   S3ObjectEntry,
+  S3UploadFromPathRequest,
+  S3UploadPrepareResult,
   S3PrefixDeletionSummary,
   S3TextObject,
   StartJobRunRequest,
@@ -104,6 +106,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<S3TextObject>("download_s3_object", request),
     downloadS3ObjectToDisk: (request: { bucket: string; key: string }) =>
       call<string | undefined>("download_s3_object_to_disk", request),
+    prepareS3UploadFromDisk: (request: { bucket: string; prefix?: string }) =>
+      call<S3UploadPrepareResult | undefined>("prepare_s3_upload_from_disk", request),
+    uploadS3ObjectFromPath: (request: S3UploadFromPathRequest) =>
+      call<S3ObjectEntry>("upload_s3_object_from_path", request),
+    s3ObjectExists: (request: { bucket: string; key: string }) =>
+      call<boolean>("s3_object_exists", request),
     uploadS3ObjectFromDisk: (request: { bucket: string; prefix?: string }) =>
       call<S3ObjectEntry | undefined>("upload_s3_object_from_disk", request),
     renameS3Object: (request: { accountId?: string; bucket: string; sourceKey: string; destinationKey: string }) =>

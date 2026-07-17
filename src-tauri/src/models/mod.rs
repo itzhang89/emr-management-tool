@@ -460,6 +460,35 @@ pub struct S3UploadFromDiskRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct S3UploadPrepareResult {
+    pub local_path: String,
+    pub file_name: String,
+    pub key: String,
+    pub bucket: String,
+    pub total_bytes: u64,
+    pub exists: bool,
+    pub suggested_file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3UploadFromPathRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub key: String,
+    pub local_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3ObjectExistsRequest {
+    pub account_id: Option<String>,
+    pub bucket: String,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct S3RenameObjectRequest {
     pub account_id: Option<String>,
     pub bucket: String,
