@@ -9,11 +9,8 @@ export const SQL_DDL_TEMPLATES = [
     label: "CREATE DATABASE",
     sql: `CREATE DATABASE IF NOT EXISTS my_database
 COMMENT 'Database description'
-LOCATION 's3://bucket/path/my_database.db/'`
-  },
-  {
-    label: "DESCRIBE DATABASE",
-    sql: "DESCRIBE DATABASE EXTENDED my_database"
+LOCATION 's3://bucket/path/my_database.db/'
+WITH DBPROPERTIES ('creator' = 'example')`
   },
   {
     label: "CREATE ORC table",
@@ -65,12 +62,8 @@ export function buildDropTableSql(databaseName: string, tableName: string) {
   return `DROP TABLE IF EXISTS ${qualifyHiveTable(databaseName, tableName)}`;
 }
 
-export function buildDescribeDatabaseSql(databaseName: string) {
-  return `DESCRIBE DATABASE EXTENDED ${quoteHiveIdentifier(databaseName)}`;
-}
-
 export function buildDescribeTableSql(databaseName: string, tableName: string) {
   return `DESCRIBE EXTENDED ${qualifyHiveTable(databaseName, tableName)}`;
 }
 
-export { sanitizeHiveSql as sanitizeAthenaSql };
+export { sanitizeHiveSql as sanitizeAthenaSql, quoteHiveIdentifier };

@@ -64,6 +64,13 @@ export function useAthenaAccountPreferences(accountId?: string) {
     [updatePreferences]
   );
 
+  const setSkipCreateLocationReminder = useCallback(
+    (skipCreateLocationReminder: boolean) => {
+      updatePreferences({ skipCreateLocationReminder });
+    },
+    [updatePreferences]
+  );
+
   return {
     ready,
     preferences,
@@ -72,11 +79,13 @@ export function useAthenaAccountPreferences(accountId?: string) {
     workgroup: preferences.lastWorkgroup ?? "primary",
     catalogCollapsed: preferences.catalogCollapsed ?? false,
     lastDatabase: preferences.lastDatabase,
+    skipCreateLocationReminder: preferences.skipCreateLocationReminder ?? false,
     setOutputBasePath,
     setAppendSubmitUser,
     setWorkgroup,
     setCatalogCollapsed,
     setLastDatabase,
+    setSkipCreateLocationReminder,
     updatePreferences
   };
 }

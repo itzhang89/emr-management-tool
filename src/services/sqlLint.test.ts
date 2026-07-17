@@ -44,9 +44,14 @@ describe("sqlLint", () => {
     expect(issues.some((issue) => issue.severity === "warning" && /LOCATION/i.test(issue.message))).toBe(true);
   });
 
-  it("allows create database with location", () => {
+  it("warns when create table omits location", () => {
+    const issues = analyzeSql("CREATE EXTERNAL TABLE demo (id string) STORED AS PARQUET");
+    expect(issues.some((issue) => issue.severity === "warning" && /LOCATION/i.test(issue.message))).toBe(true);
+  });
+
+  it("allows create table with location", () => {
     const result = validateSqlForRun(
-      "CREATE DATABASE IF NOT EXISTS demo COMMENT 'test' LOCATION 's3://bucket/demo.db/'"
+      "CREATE EXTERNAL TABLE demo (id string) STORED AS PARQUET LOCATION 's3://bucket/demo/'"
     );
     expect(result.ok).toBe(true);
   });
