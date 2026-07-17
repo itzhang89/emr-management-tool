@@ -100,6 +100,15 @@ export function analyzeDdlSyntax(sql: string): SqlLintIssue[] {
   const statement = firstStatement(sql);
   if (!statement) return [ddlIssue(sql, "DDL statement is empty.")];
 
+  if (/\bSHOW\s+CREATE\s+(?:TABLE|VIEW)\b/i.test(statement)) {
+    if (!new RegExp(`^SHOW\\s+CREATE\\s+(?:TABLE|VIEW)\\s+${TABLE_IDENT}\\s*$`, "i").test(statement)) {
+      return [
+        ddlIssue(sql, "Invalid SHOW CREATE syntax. Expected: SHOW CREATE TABLE|VIEW [db_name.]name.")
+      ];
+    }
+    return [];
+  }
+
   if (/\bDROP\s+TABLE\b/i.test(statement)) {
     if (!new RegExp(`^DROP\\s+TABLE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}\\s*$`, "i").test(statement)) {
       return [ddlIssue(sql, "Invalid DROP TABLE syntax. Expected: DROP TABLE [IF EXISTS] table_name.")];
@@ -134,7 +143,7 @@ export function analyzeDdlSyntax(sql: string): SqlLintIssue[] {
     return [];
   }
 
-  if (/\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b/i.test(statement)) {
+  if (/\bCREATE\s+(?:EXTERNAL\s+)?TABLE\b/i.test(statement) && !/\bSHOW\s+CREATE\b/i.test(statement)) {
     const headerMatch = statement.match(
       new RegExp(`^CREATE\\s+(?:EXTERNAL\\s+)?TABLE\\s+(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?${TABLE_IDENT}`, "i")
     );

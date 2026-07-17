@@ -44,6 +44,12 @@ describe("sqlLint", () => {
     expect(issues.some((issue) => issue.severity === "warning" && /LOCATION/i.test(issue.message))).toBe(true);
   });
 
+  it("allows show create table and view", () => {
+    expect(validateSqlForRun("SHOW CREATE TABLE bdbstaging.xxx").ok).toBe(true);
+    expect(validateSqlForRun("SHOW CREATE VIEW analytics.orders_by_date").ok).toBe(true);
+    expect(analyzeDdlSyntax("SHOW CREATE TABLE bdbstaging.xxx")).toEqual([]);
+  });
+
   it("warns when create table omits location", () => {
     const issues = analyzeSql("CREATE EXTERNAL TABLE demo (id string) STORED AS PARQUET");
     expect(issues.some((issue) => issue.severity === "warning" && /LOCATION/i.test(issue.message))).toBe(true);

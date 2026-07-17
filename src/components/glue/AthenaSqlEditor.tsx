@@ -22,7 +22,7 @@ import { analyzeSql, type SqlLintOptions } from "@/services/sqlLint";
 
 const hiveDialect = SQLDialect.define({
   keywords:
-    "select from where group by order having limit join left right inner outer cross on as and or not in is null distinct create external drop alter table database view insert update delete truncate msck repair describe extended formatted show stored partitioned location serde tblproperties comment orc parquet"
+    "select from where group by order having limit join left right inner outer cross on as and or not in is null distinct create external drop alter table database schema view msck repair describe extended formatted show stored partitioned location serde tblproperties dbproperties comment orc parquet"
 });
 
 const sqlHighlightStyle = HighlightStyle.define([
@@ -237,7 +237,7 @@ export function AthenaSqlEditor({
       ),
       compartments.readOnly.of(EditorState.readOnly.of(false)),
       updateListener,
-      placeholderExt("Write Hive / Spark SQL here…")
+      placeholderExt("Write Athena SQL here…")
     ];
 
     const view = new EditorView({

@@ -33,4 +33,10 @@ describe("createLocationReminder", () => {
     expect(createStatementMissingLocation("SELECT 1")).toBe(false);
     expect(createLocationReminderKind("DROP TABLE demo")).toBeUndefined();
   });
+
+  it("ignores SHOW CREATE TABLE/VIEW", () => {
+    expect(createStatementMissingLocation("SHOW CREATE TABLE bdbstaging.xxx")).toBe(false);
+    expect(createStatementMissingLocation("SHOW CREATE VIEW analytics.orders_by_date")).toBe(false);
+    expect(createLocationReminderKind("SHOW CREATE TABLE bdbstaging.xxx")).toBeUndefined();
+  });
 });

@@ -1,5 +1,6 @@
 import { qualifyHiveTable, quoteHiveIdentifier, sanitizeHiveSql } from "./hiveSql";
 
+/** Athena-supported DDL/DML snippets only. */
 export const SQL_DDL_TEMPLATES = [
   {
     label: "SELECT sample",
@@ -39,6 +40,10 @@ LOCATION 's3://bucket/path/'`
   {
     label: "SHOW CREATE TABLE",
     sql: "SHOW CREATE TABLE database_name.table_name"
+  },
+  {
+    label: "SHOW CREATE VIEW",
+    sql: "SHOW CREATE VIEW database_name.view_name"
   },
   {
     label: "ALTER ADD COLUMNS",

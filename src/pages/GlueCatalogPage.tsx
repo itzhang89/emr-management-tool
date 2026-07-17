@@ -198,6 +198,25 @@ export function GlueCatalogPage() {
       databases: glueDatabases.data?.map((database) => database.name) ?? [],
       tables: glueTables.data?.map((table) => table.name) ?? [],
       selectedDatabase,
+      resolveTables: async (database: string) => {
+        if (!accountId || !database) return [];
+        if (database === selectedDatabase && glueTables.data) {
+          return glueTables.data.map((table) => table.name);
+        }
+        const tables = [];
+        let nextToken: string | undefined;
+        do {
+          const page = await glueService.listTables({
+            accountId,
+            databaseName: database,
+            nextToken,
+            maxResults: 100
+          });
+          tables.push(...page.tables.map((table) => table.name));
+          nextToken = page.nextToken;
+        } while (nextToken);
+        return tables;
+      },
       resolveColumns: async (database: string, table: string) => {
         if (!accountId) return [];
         const detail = await glueService.getTable({
