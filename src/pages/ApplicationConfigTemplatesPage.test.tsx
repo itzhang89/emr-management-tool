@@ -90,6 +90,15 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(variableNameInput).toHaveAttribute("spellcheck", "false");
   });
 
+  it("uses the JSON template editor for the payload field", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: /Template/i }));
+
+    expect(screen.getByRole("textbox", { name: "Payload JSON" })).toHaveClass("json-template-editor");
+  });
+
   it("numbers custom variables and lets users reorder them", async () => {
     const user = userEvent.setup();
     renderPage();

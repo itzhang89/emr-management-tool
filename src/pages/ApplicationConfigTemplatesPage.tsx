@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { JsonTemplateEditor } from "@/components/templates/JsonTemplateEditor";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import {
 } from "@/hooks/useJobConfigTemplates";
 import { useTemplates } from "@/hooks/useTemplates";
 import { defaultExamplePayload } from "@/services/jobConfigExamples";
+import { buildKnownTemplateVariables } from "@/services/jsonTemplateVariables";
 import {
   buildImportedJobConfigTemplate,
   parseImportedJobConfigTemplate,
@@ -318,11 +320,11 @@ function JobConfigTemplateDialog({
               </Button>
             </div>
           </div>
-          <Textarea
-            className="min-h-[280px] font-mono text-xs"
+          <JsonTemplateEditor
             value={payloadTemplate}
-            onChange={(event) => setPayloadTemplate(event.target.value)}
-            {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
+            onChange={setPayloadTemplate}
+            knownVariables={buildKnownTemplateVariables(customVariables.map((variable) => variable.name))}
+            className="min-h-[280px]"
           />
           <VariableEditor
             key={`${template?.id ?? "new-template"}-${variableEditorKey}`}
