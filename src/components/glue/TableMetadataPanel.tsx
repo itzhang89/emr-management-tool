@@ -1,4 +1,4 @@
-import { Copy, Pencil, Save, X } from "lucide-react";
+import { Copy, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueTableDetail } from "@/hooks/useGlue";
 import { buildCreateTableDdl } from "@/services/glueTableDdl";
 import { formatAppError } from "@/services/appErrorMessage";
-import type { GlueTableDetail } from "@/types/domain";
+import type { GlueColumn, GlueTableDetail } from "@/types/domain";
 
 export function TableMetadataPanel({
   table,
@@ -147,6 +147,7 @@ export function TableMetadataPanel({
         title="Columns"
         columns={editMode ? draft.columns : table.columns}
         editMode={editMode}
+        addLabel="Add column"
         onChange={(columns) => setDraft({ ...draft, columns })}
       />
 
@@ -154,6 +155,7 @@ export function TableMetadataPanel({
         title="Partition keys"
         columns={editMode ? draft.partitionKeys : table.partitionKeys}
         editMode={editMode}
+        addLabel="Add partition key"
         onChange={(partitionKeys) => setDraft({ ...draft, partitionKeys })}
       />
 
@@ -193,15 +195,21 @@ function MetadataField({
   );
 }
 
+function emptyColumn(): GlueColumn {
+  return { name: "", type: "string", comment: "" };
+}
+
 function ColumnSection({
   title,
   columns,
   editMode,
+  addLabel,
   onChange
 }: {
   title: string;
   columns: GlueTableDetail["columns"];
   editMode: boolean;
+  addLabel: string;
   onChange: (columns: GlueTableDetail["columns"]) => void;
 }) {
   return (
@@ -214,18 +222,19 @@ function ColumnSection({
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2">Type</th>
               <th className="px-3 py-2">Comment</th>
+              {editMode ? <th className="w-12 px-3 py-2" /> : null}
             </tr>
           </thead>
           <tbody>
             {columns.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-3 py-2 text-muted-foreground">
+                <td colSpan={editMode ? 4 : 3} className="px-3 py-2 text-muted-foreground">
                   No columns.
                 </td>
               </tr>
             ) : (
               columns.map((column, index) => (
-                <tr key={`${column.name}-${index}`} className="border-t">
+                <tr key={`column-${index}`} className="border-t">
                   <td className="px-3 py-2">
                     {editMode ? (
                       <Input
@@ -268,12 +277,32 @@ function ColumnSection({
                       column.comment || "—"
                     )}
                   </td>
+                  {editMode ? (
+                    <td className="px-3 py-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        aria-label={`Remove ${title.toLowerCase()} ${column.name || index + 1}`}
+                        onClick={() => onChange(columns.filter((_, entryIndex) => entryIndex !== index))}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </td>
+                  ) : null}
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+      {editMode ? (
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...columns, emptyColumn()])}>
+          <Plus data-icon="inline-start" />
+          {addLabel}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -289,7 +318,34 @@ function KeyValueSection({
   editMode: boolean;
   onChange: (values: Record<string, string>) => void;
 }) {
-  const entries = Object.entries(values);
+  const [entries, setEntries] = useState<Array<{ key: string; value: string }>>(() =>
+    Object.entries(values).map(([key, value]) => ({ key, value }))
+  );
+
+  useEffect(() => {
+    if (editMode) return;
+    setEntries(Object.entries(values).map(([key, value]) => ({ key, value })));
+  }, [editMode, values]);
+
+  useEffect(() => {
+    if (!editMode) return;
+    setEntries(Object.entries(values).map(([key, value]) => ({ key, value })));
+  }, [editMode]);
+
+  const toRecord = (next: Array<{ key: string; value: string }>) => {
+    const record: Record<string, string> = {};
+    for (const entry of next) {
+      const key = entry.key.trim();
+      if (!key) continue;
+      record[key] = entry.value;
+    }
+    return record;
+  };
+
+  const commitEntries = (next: Array<{ key: string; value: string }>) => {
+    setEntries(next);
+    onChange(toRecord(next));
+  };
 
   return (
     <div className="space-y-2">
@@ -300,35 +356,79 @@ function KeyValueSection({
             <tr>
               <th className="px-3 py-2">Key</th>
               <th className="px-3 py-2">Value</th>
+              {editMode ? <th className="w-12 px-3 py-2" /> : null}
             </tr>
           </thead>
           <tbody>
             {entries.length === 0 ? (
               <tr>
-                <td colSpan={2} className="px-3 py-2 text-muted-foreground">
+                <td colSpan={editMode ? 3 : 2} className="px-3 py-2 text-muted-foreground">
                   No parameters.
                 </td>
               </tr>
             ) : (
-              entries.map(([key, value]) => (
-                <tr key={key} className="border-t">
-                  <td className="px-3 py-2 font-mono text-xs">{key}</td>
+              entries.map((entry, index) => (
+                <tr key={`param-${index}`} className="border-t">
                   <td className="px-3 py-2">
                     {editMode ? (
                       <Input
-                        value={value}
-                        onChange={(event) => onChange({ ...values, [key]: event.target.value })}
+                        value={entry.key}
+                        className="font-mono text-xs"
+                        onChange={(event) => {
+                          const next = [...entries];
+                          next[index] = { ...entry, key: event.target.value };
+                          commitEntries(next);
+                        }}
                       />
                     ) : (
-                      value
+                      <span className="font-mono text-xs">{entry.key}</span>
                     )}
                   </td>
+                  <td className="px-3 py-2">
+                    {editMode ? (
+                      <Input
+                        value={entry.value}
+                        onChange={(event) => {
+                          const next = [...entries];
+                          next[index] = { ...entry, value: event.target.value };
+                          commitEntries(next);
+                        }}
+                      />
+                    ) : (
+                      entry.value
+                    )}
+                  </td>
+                  {editMode ? (
+                    <td className="px-3 py-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        aria-label={`Remove parameter ${entry.key || index + 1}`}
+                        onClick={() => commitEntries(entries.filter((_, entryIndex) => entryIndex !== index))}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </td>
+                  ) : null}
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+      {editMode ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setEntries([...entries, { key: "", value: "" }])}
+        >
+          <Plus data-icon="inline-start" />
+          Add parameter
+        </Button>
+      ) : null}
     </div>
   );
 }
