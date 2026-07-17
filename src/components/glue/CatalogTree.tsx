@@ -14,6 +14,7 @@ export function CatalogTree({
   onExitDatabase,
   onSelectTable,
   onShowDatabaseMetadata,
+  onShowTableMetadata,
   onRefresh,
   onCollapse,
   collapseShortcut
@@ -25,6 +26,7 @@ export function CatalogTree({
   onExitDatabase: () => void;
   onSelectTable: (databaseName: string, tableName: string) => void;
   onShowDatabaseMetadata: (databaseName: string) => void;
+  onShowTableMetadata: (databaseName: string, tableName: string) => void;
   onRefresh: () => void;
   onCollapse?: () => void;
   collapseShortcut?: string;
@@ -125,6 +127,7 @@ export function CatalogTree({
             selectedTable={selectedTable}
             onSelectTable={onSelectTable}
             onShowDatabaseMetadata={onShowDatabaseMetadata}
+            onShowTableMetadata={onShowTableMetadata}
           />
         ) : (
           <DatabaseListView
@@ -203,7 +206,8 @@ function DatabaseTablesView({
   selectedDatabase,
   selectedTable,
   onSelectTable,
-  onShowDatabaseMetadata
+  onShowDatabaseMetadata,
+  onShowTableMetadata
 }: {
   databaseName: string;
   tables: Array<{ name: string }>;
@@ -213,6 +217,7 @@ function DatabaseTablesView({
   selectedTable?: string;
   onSelectTable: (databaseName: string, tableName: string) => void;
   onShowDatabaseMetadata: (databaseName: string) => void;
+  onShowTableMetadata: (databaseName: string, tableName: string) => void;
 }) {
   return (
     <div>
@@ -247,17 +252,39 @@ function DatabaseTablesView({
           const active = selectedDatabase === databaseName && selectedTable === table.name;
           return (
             <li key={table.name}>
-              <button
-                type="button"
+              <div
                 className={cn(
-                  "flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-accent",
+                  "group flex w-full items-center gap-1 px-1.5 py-0.5 hover:bg-accent",
                   active && "bg-primary/10 text-primary"
                 )}
-                onClick={() => onSelectTable(databaseName, table.name)}
               >
-                <Table2 className="size-3.5 shrink-0" />
-                <span className="truncate">{table.name}</span>
-              </button>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-1 text-left text-xs"
+                  onClick={() => onSelectTable(databaseName, table.name)}
+                >
+                  <Table2 className="size-3.5 shrink-0" />
+                  <span className="truncate">{table.name}</span>
+                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                      aria-label={`Show details for ${table.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onShowTableMetadata(databaseName, table.name);
+                      }}
+                    >
+                      <Info className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Table details</TooltipContent>
+                </Tooltip>
+              </div>
             </li>
           );
         })}

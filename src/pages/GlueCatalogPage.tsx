@@ -400,6 +400,16 @@ export function GlueCatalogPage() {
     athenaPrefs.setLastDatabase(databaseName);
   };
 
+  const handleShowTableMetadata = (databaseName: string, tableName: string) => {
+    setCatalogViewDatabase(databaseName);
+    setSelectedDatabase(databaseName);
+    setSelectedTable(tableName);
+    setMetadataKind("table");
+    setMetadataEditMode(false);
+    setTopTab("metadata");
+    athenaPrefs.setLastDatabase(databaseName);
+  };
+
   const handleExitDatabase = () => {
     setCatalogViewDatabase(undefined);
     setSelectedDatabase(undefined);
@@ -731,6 +741,7 @@ export function GlueCatalogPage() {
                 onExitDatabase={handleExitDatabase}
                 onSelectTable={handleSelectTable}
                 onShowDatabaseMetadata={handleShowDatabaseMetadata}
+                onShowTableMetadata={handleShowTableMetadata}
                 onRefresh={handleRefreshCatalog}
                 onCollapse={() => athenaPrefs.setCatalogCollapsed(true)}
                 collapseShortcut={CATALOG_TOGGLE_SHORTCUT}
