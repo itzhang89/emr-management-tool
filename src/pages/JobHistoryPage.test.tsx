@@ -100,6 +100,41 @@ describe("JobHistoryPage", () => {
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
+    window.localStorage.removeItem("emr-eks:job-history-search-recent");
+  });
+
+  it("shows recent searches on focus and applies one immediately", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:job-history-search-recent",
+      JSON.stringify(["000000037tga8qam664", "failed"])
+    );
+    renderJobHistoryPage();
+    const input = screen.getByPlaceholderText(/Search jobs/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "000000037tga8qam664" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "000000037tga8qam664" }));
+    expect(useJobRuns).toHaveBeenCalledWith("vc-1", expect.any(Boolean), "000000037tga8qam664");
+  });
+
+  it("strips spark- before searching and looking up in AWS", async () => {
+    const user = userEvent.setup();
+    jobs = [];
+    useJobRuns.mockImplementation(() => ({
+      data: [],
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      dataUpdatedAt: Date.now(),
+      refetch: vi.fn()
+    }));
+    renderJobHistoryPage();
+    const input = screen.getByPlaceholderText(/Search jobs/i);
+    await user.type(input, "spark-000000037tga8qam664");
+    await user.keyboard("{Enter}");
+    expect(useJobRuns).toHaveBeenCalledWith("vc-1", expect.any(Boolean), "000000037tga8qam664");
+    await user.keyboard("{Enter}");
+    expect(describeJobRun).toHaveBeenCalledWith("000000037tga8qam664", "vc-1");
   });
 
   it("shows production actions, hides virtual cluster column, searches after submit, and paginates", async () => {
