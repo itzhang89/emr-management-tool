@@ -1,6 +1,8 @@
 import { check as checkTauriUpdate } from "@tauri-apps/plugin-updater";
 import { getReleaseInfo } from "./releaseInfo";
 
+export const UPDATE_CHECK_TIMEOUT_MS = 60_000;
+
 export interface UpdaterDependency {
   canUseAutoUpdater: boolean;
   check: () => Promise<UpdateHandle | null>;
@@ -17,7 +19,26 @@ export type UpdateCheckResult =
   | { status: "no-update" }
   | { status: "available"; version: string; notes?: string; install: () => Promise<void> };
 
+export type SilentUpdateResult = "skipped" | "no-update" | "installed" | "failed";
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Update check timed out")), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency) {
+  let silentUpdateAttempted = false;
+  let silentUpdateInFlight = false;
+
   return {
     async checkForUpdate(): Promise<UpdateCheckResult> {
       if (!canUseAutoUpdater) {
@@ -36,6 +57,26 @@ export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency
         notes: update.body,
         install: () => update.downloadAndInstall()
       };
+    },
+
+    async checkAndInstallSilently(options?: {
+      onInstalled?: (version: string) => void;
+    }): Promise<SilentUpdateResult> {
+      if (!canUseAutoUpdater) return "skipped";
+      if (silentUpdateAttempted || silentUpdateInFlight) return "skipped";
+      silentUpdateAttempted = true;
+      silentUpdateInFlight = true;
+      try {
+        const update = await withTimeout(check(), UPDATE_CHECK_TIMEOUT_MS);
+        if (!update) return "no-update";
+        await update.downloadAndInstall();
+        options?.onInstalled?.(update.version);
+        return "installed";
+      } catch {
+        return "failed";
+      } finally {
+        silentUpdateInFlight = false;
+      }
     }
   };
 }

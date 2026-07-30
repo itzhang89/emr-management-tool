@@ -20,6 +20,7 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { navigationItems, type PageId } from "@/pages/pageMeta";
 import { PageLoader } from "@/components/layout/PageLoader";
+import { appUpdater } from "@/services/appUpdater";
 import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
 import { getAdjacentPageId, getNavigationIndex, getPageIdByNavigationIndex } from "@/services/pageNavigation";
 
@@ -77,6 +78,14 @@ export function AppShell() {
     return () => {
       unbindMenuEvents();
     };
+  }, []);
+
+  useEffect(() => {
+    void appUpdater.checkAndInstallSilently({
+      onInstalled: () => {
+        toast.success("Update installed. Restart the app to use the new version.");
+      }
+    });
   }, []);
 
   useEffect(() => {
