@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppUpdater } from "./appUpdater";
 
 describe("createAppUpdater", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns unavailable when the current build should not use the automatic updater", async () => {
     const check = vi.fn();
     const updater = createAppUpdater({
@@ -48,5 +52,66 @@ describe("createAppUpdater", () => {
     await update.install();
 
     expect(downloadAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("silently skips when auto updater is unavailable", async () => {
+    const check = vi.fn();
+    const updater = createAppUpdater({
+      canUseAutoUpdater: false,
+      check
+    });
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("skipped");
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("times out only the check call after 60s and stays silent", async () => {
+    vi.useFakeTimers();
+    const check = vi.fn(() => new Promise(() => {}));
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check
+    });
+    const pending = updater.checkAndInstallSilently();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(pending).resolves.toBe("failed");
+  });
+
+  it("installs available updates and reports installed without toasting itself", async () => {
+    const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
+    const check = vi.fn().mockResolvedValue({
+      version: "0.2.0",
+      downloadAndInstall
+    });
+    const onInstalled = vi.fn();
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check
+    });
+    await expect(updater.checkAndInstallSilently({ onInstalled })).resolves.toBe("installed");
+    expect(downloadAndInstall).toHaveBeenCalledOnce();
+    expect(onInstalled).toHaveBeenCalledWith("0.2.0");
+  });
+
+  it("returns failed silently when install throws", async () => {
+    const check = vi.fn().mockResolvedValue({
+      version: "0.2.0",
+      downloadAndInstall: vi.fn().mockRejectedValue(new Error("network"))
+    });
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check
+    });
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("failed");
+  });
+
+  it("skips a second silent attempt in the same updater instance", async () => {
+    const check = vi.fn().mockResolvedValue(null);
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check
+    });
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("no-update");
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("skipped");
+    expect(check).toHaveBeenCalledOnce();
   });
 });

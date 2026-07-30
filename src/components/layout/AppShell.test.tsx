@@ -125,6 +125,13 @@ vi.mock("@/services/emrService", () => ({
   }
 }));
 
+vi.mock("@/services/appUpdater", () => ({
+  appUpdater: {
+    checkForUpdate: vi.fn(),
+    checkAndInstallSilently: vi.fn().mockResolvedValue("skipped")
+  }
+}));
+
 vi.mock("@/hooks/useLogs", () => ({
   useJobLogStreams: () => ({
     data: { jobId: "job-running", streams: [] },
