@@ -9,6 +9,7 @@ import {
   getLogFullPath
 } from "@/services/logPathDisplay";
 import { MAX_LOG_VIEW_CHARACTERS, truncateLogTextForDisplay } from "@/services/logDisplay";
+import { filterLogNoise } from "@/services/logNoiseFilter";
 import { buildSearchResult, formatSearchMatchLabel } from "@/services/logSearch";
 import type { CloudWatchLogDestination, S3LogDestination } from "@/services/jobLogDestinations";
 import type { JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
@@ -48,19 +49,30 @@ export function LogWorkspace({
   const [submittedRegexSearch, setSubmittedRegexSearch] = useState(false);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [displayFullLog, setDisplayFullLog] = useState(false);
+  const [focusNoiseFilter, setFocusNoiseFilter] = useState(true);
+
+  const focused = useMemo(() => {
+    if (!focusNoiseFilter) {
+      return { text: logText, hiddenCount: 0 };
+    }
+    return filterLogNoise(logText);
+  }, [focusNoiseFilter, logText]);
+
+  const viewText = focused.text;
+  const hiddenNoiseCount = focused.hiddenCount;
 
   const logDisplay = useMemo(() => {
     if (displayFullLog) {
       return {
-        text: logText,
-        truncated: logText.length > MAX_LOG_VIEW_CHARACTERS,
-        totalCharacters: logText.length,
+        text: viewText,
+        truncated: viewText.length > MAX_LOG_VIEW_CHARACTERS,
+        totalCharacters: viewText.length,
         showingFullContent: true
       };
     }
-    const truncated = truncateLogTextForDisplay(logText);
+    const truncated = truncateLogTextForDisplay(viewText);
     return { ...truncated, showingFullContent: false };
-  }, [displayFullLog, logText]);
+  }, [displayFullLog, viewText]);
 
   const deferredLogText = useDeferredValue(logDisplay.text);
   const searchResult = useMemo(
@@ -139,6 +151,9 @@ export function LogWorkspace({
         onCopyPath={() => {}}
         searchDisabled={isLoading || !selectedId}
         hasSelection={Boolean(selectedId)}
+        focusNoiseFilter={focusNoiseFilter}
+        onFocusNoiseFilterChange={setFocusNoiseFilter}
+        hiddenNoiseCount={hiddenNoiseCount}
       />
       {errorMessage ? (
         <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">

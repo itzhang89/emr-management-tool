@@ -30,7 +30,10 @@ export function LogCommandBar({
   onDownload,
   onCopyPath,
   searchDisabled,
-  hasSelection
+  hasSelection,
+  focusNoiseFilter,
+  onFocusNoiseFilterChange,
+  hiddenNoiseCount = 0
 }: {
   activeSource: "s3" | "cloudwatch";
   onSourceChange: (source: "s3" | "cloudwatch") => void;
@@ -53,6 +56,9 @@ export function LogCommandBar({
   onCopyPath: () => void;
   searchDisabled?: boolean;
   hasSelection: boolean;
+  focusNoiseFilter: boolean;
+  onFocusNoiseFilterChange: (checked: boolean) => void;
+  hiddenNoiseCount?: number;
 }) {
   const copyPath = async () => {
     if (!breadcrumbFullPath) return;
@@ -125,7 +131,7 @@ export function LogCommandBar({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:justify-end">
           <Input
             className="h-8 min-w-[12rem] flex-1"
-            placeholder="Search in current log"
+            placeholder="Search… (Enter)"
             aria-label="Search in current log"
             value={searchInput}
             disabled={searchDisabled}
@@ -148,9 +154,22 @@ export function LogCommandBar({
             />
             Regex
           </label>
-          <Button type="button" size="sm" aria-label="Search log" disabled={searchDisabled} onClick={onSubmitSearch}>
-            Search
-          </Button>
+          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="size-4"
+              aria-label="Hide noisy Spark log lines"
+              checked={focusNoiseFilter}
+              disabled={searchDisabled}
+              onChange={(event) => onFocusNoiseFilterChange(event.target.checked)}
+            />
+            Focus
+          </label>
+          {focusNoiseFilter && hiddenNoiseCount > 0 ? (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              Hidden {hiddenNoiseCount.toLocaleString("en-US")} lines
+            </span>
+          ) : null}
           <span className={cn("min-w-16 shrink-0 text-xs", searchError ? "text-destructive" : "text-muted-foreground")}>
             {submittedSearch ? activeMatchLabel : "No results yet"}
           </span>

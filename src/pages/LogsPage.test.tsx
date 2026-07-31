@@ -591,22 +591,23 @@ describe("LogsPage", () => {
     expect(screen.getByTestId("log-content").textContent).toBe("hello cloudwatch\n  indented cloudwatch\n");
   });
 
-  it("searches log content with a Search button and supports regex highlights with next and previous navigation", async () => {
+  it("searches log content on Enter and supports regex highlights with next and previous navigation", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
 
-    const searchInput = screen.getByPlaceholderText(/Search in current log/i);
-    expect(screen.getByRole("button", { name: /Search log/i })).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText(/Search… \(Enter\)/i);
+    expect(screen.queryByRole("button", { name: /Search log/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Hide noisy Spark log lines/i })).toBeChecked();
     expect(screen.getByText("No results yet")).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Regex/i }));
     await user.type(searchInput, "needle\\s+(one|two)");
     expect(screen.queryAllByTestId("log-search-match")).toHaveLength(0);
 
-    await user.click(screen.getByRole("button", { name: /Search log/i }));
+    await user.keyboard("{Enter}");
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getAllByTestId("log-search-match")).toHaveLength(2);
 
@@ -615,6 +616,52 @@ describe("LogsPage", () => {
 
     await user.click(screen.getByRole("button", { name: /Previous match/i }));
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
+  });
+
+  it("Focus hides Spark noise from the viewer and search, while download stays raw", async () => {
+    const user = userEvent.setup();
+    const rawLog = [
+      "26/07/31 11:30:32 INFO TaskSetManager: Starting task UNIQUE_NOISE_TOKEN",
+      "26/07/31 11:30:32 INFO ETLLogger: Executing job dct__demo"
+    ].join("\n");
+
+    useS3JobLogObject.mockReturnValue({
+      data: { bucket: "logs-bucket", key: "stdout.gz", content: rawLog },
+      isLoading: false,
+      error: null
+    });
+    getJobLogObject.mockResolvedValue({
+      bucket: "logs-bucket",
+      key: "stdout.gz",
+      content: rawLog
+    });
+
+    renderLogsPage();
+
+    await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("ETLLogger"));
+    expect(screen.getByTestId("log-content").textContent).not.toContain("UNIQUE_NOISE_TOKEN");
+    expect(screen.getByText("Hidden 1 lines")).toBeInTheDocument();
+
+    const searchInput = screen.getByPlaceholderText(/Search… \(Enter\)/i);
+    await user.type(searchInput, "UNIQUE_NOISE_TOKEN");
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("0 / 0")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /Hide noisy Spark log lines/i }));
+    expect(screen.getByTestId("log-content").textContent).toContain("UNIQUE_NOISE_TOKEN");
+
+    await user.clear(searchInput);
+    await user.type(searchInput, "UNIQUE_NOISE_TOKEN");
+    await user.keyboard("{Enter}");
+    expect(screen.getAllByTestId("log-search-match").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /Download selected log/i }));
+    await waitFor(() =>
+      expect(saveTextFile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining("UNIQUE_NOISE_TOKEN")
+      )
+    );
   });
 
   it("shows a readable truncation banner with load-full and download actions", async () => {
