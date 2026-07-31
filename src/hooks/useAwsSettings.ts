@@ -83,6 +83,22 @@ export function useSetActiveAwsAccount() {
   });
 }
 
+export function useRenameAwsAccount() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ accountId, name }: { accountId: string; name: string }) =>
+      awsCredentialsService.renameAccount(accountId, name),
+    onSuccess: (renamed) => {
+      queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
+        if (!accounts) return [renamed];
+        return accounts.map((account) => (account.id === renamed.id ? { ...account, ...renamed } : account));
+      });
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+    }
+  });
+}
+
 export function useDeleteAwsAccount() {
   const queryClient = useQueryClient();
 

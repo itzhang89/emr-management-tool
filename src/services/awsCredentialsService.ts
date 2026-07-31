@@ -6,6 +6,7 @@ export const awsCredentialsService = {
   listAccounts: () => tauriClient.listAwsAccounts(),
   listCliProfiles: () => tauriClient.listAwsCliProfiles(),
   createAccount: (account: AwsAccountCredentialsInput) => tauriClient.createAwsAccount(account),
+  renameAccount: (accountId: string, name: string) => tauriClient.renameAwsAccount({ accountId, name }),
   importCliProfile: (request: ImportAwsCliProfileRequest) => tauriClient.importAwsCliProfile(request),
   setActiveAccount: (accountId: string) => tauriClient.setActiveAwsAccount({ accountId }),
   deleteAccount: (accountId: string) => tauriClient.deleteAwsAccount({ accountId }),
