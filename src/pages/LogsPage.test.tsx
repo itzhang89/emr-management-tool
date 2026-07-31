@@ -230,11 +230,56 @@ describe("LogsPage", () => {
     renderLogsPage();
     const input = screen.getByPlaceholderText(/Enter job id/i);
     await user.click(input);
-    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "job-from-history" }));
+    const dropdown = await screen.findByRole("listbox", { name: /Recent job ids/i });
+    expect(within(dropdown).getByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    await user.click(within(dropdown).getByRole("button", { name: "job-from-history" }));
 
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-from-history"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
+  });
+
+  it("shows recently viewed jobs in the empty state and opens logs on click", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent",
+      JSON.stringify(["job-from-history", "job-other"])
+    );
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    expect(
+      screen.getByText(/Select a job from Job History or enter a job id to view logs/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText("Recently viewed")).toBeInTheDocument();
+    const recentList = screen.getByRole("list", { name: /Recently viewed job ids/i });
+    expect(within(recentList).getByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    expect(within(recentList).getByRole("button", { name: "job-other" })).toBeInTheDocument();
+
+    await user.click(within(recentList).getByRole("button", { name: "job-other" }));
+
+    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-other"));
+    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
+    expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
+  });
+
+  it("hides recently viewed section when history is empty", () => {
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    expect(
+      screen.getByText(/Select a job from Job History or enter a job id to view logs/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
   });
 
   it("reopens recent job ids when clicking an already focused input", async () => {
@@ -252,11 +297,11 @@ describe("LogsPage", () => {
     renderLogsPage();
     const input = screen.getByPlaceholderText(/Enter job id/i);
     await user.click(input);
-    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: /Recent job ids/i })).toBeInTheDocument();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("button", { name: "job-from-history" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: /Recent job ids/i })).not.toBeInTheDocument();
     await user.click(input);
-    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: /Recent job ids/i })).toBeInTheDocument();
   });
 
   it("strips spark- before opening logs for a job id", async () => {
@@ -295,7 +340,8 @@ describe("LogsPage", () => {
 
     const input = screen.getByPlaceholderText(/Enter job id/i);
     await user.click(input);
-    expect(await screen.findByRole("button", { name: "job-from-history-page" })).toBeInTheDocument();
+    const dropdown = await screen.findByRole("listbox", { name: /Recent job ids/i });
+    expect(within(dropdown).getByRole("button", { name: "job-from-history-page" })).toBeInTheDocument();
   });
 
   it("uses the effective virtual cluster for manual job entry submit", async () => {
