@@ -117,6 +117,22 @@ describe("JobHistoryPage", () => {
     expect(useJobRuns).toHaveBeenCalledWith("vc-1", expect.any(Boolean), "000000037tga8qam664");
   });
 
+  it("reopens recent searches when clicking an already focused search input", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:job-history-search-recent",
+      JSON.stringify(["000000037tga8qam664", "failed"])
+    );
+    renderJobHistoryPage();
+    const input = screen.getByPlaceholderText(/Search jobs/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "000000037tga8qam664" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "000000037tga8qam664" })).not.toBeInTheDocument();
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "000000037tga8qam664" })).toBeInTheDocument();
+  });
+
   it("strips spark- before searching and looking up in AWS", async () => {
     const user = userEvent.setup();
     jobs = [];
