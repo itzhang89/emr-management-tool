@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LogFindBar } from "@/components/logs/LogFindBar";
 import { MAX_LOG_VIEW_CHARACTERS } from "@/services/logDisplay";
 import { type SearchMatch } from "@/services/logSearch";
 import { renderSemanticLogContent } from "@/components/logs/renderSemanticLogContent";
@@ -22,7 +23,20 @@ export function LogContentPanel({
   matches,
   activeMatchIndex,
   hiddenNoiseCount = 0,
-  semanticHighlight = true
+  semanticHighlight = true,
+  findOpen,
+  searchInput,
+  onSearchInputChange,
+  regexSearch,
+  onRegexSearchChange,
+  onSubmitSearch,
+  onCloseFind,
+  resultLabel,
+  searchError,
+  onPreviousMatch,
+  onNextMatch,
+  searchDisabled,
+  findFocusRequestId
 }: {
   logDisplay: LogDisplayState;
   hasSelection: boolean;
@@ -35,6 +49,19 @@ export function LogContentPanel({
   hiddenNoiseCount?: number;
   /** When false (Focus unchecked), skip LEVEL/ETL/step coloring; search marks only. */
   semanticHighlight?: boolean;
+  findOpen: boolean;
+  searchInput: string;
+  onSearchInputChange: (value: string) => void;
+  regexSearch: boolean;
+  onRegexSearchChange: (checked: boolean) => void;
+  onSubmitSearch: () => void;
+  onCloseFind: () => void;
+  resultLabel: string;
+  searchError?: string;
+  onPreviousMatch: () => void;
+  onNextMatch: () => void;
+  searchDisabled?: boolean;
+  findFocusRequestId?: number;
 }) {
   const highlightedLogContent = useMemo((): ReactNode => {
     if (!hasSelection || !logDisplay.text) {
@@ -87,6 +114,22 @@ export function LogContentPanel({
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-slate-950">
+        <LogFindBar
+          open={findOpen}
+          searchInput={searchInput}
+          onSearchInputChange={onSearchInputChange}
+          regexSearch={regexSearch}
+          onRegexSearchChange={onRegexSearchChange}
+          onSubmitSearch={onSubmitSearch}
+          onClose={onCloseFind}
+          resultLabel={resultLabel}
+          searchError={searchError}
+          matchesCount={matches.length}
+          onPreviousMatch={onPreviousMatch}
+          onNextMatch={onNextMatch}
+          disabled={searchDisabled}
+          focusRequestId={findFocusRequestId}
+        />
         {hiddenNoiseCount > 0 ? (
           <span
             data-testid="hidden-noise-count"

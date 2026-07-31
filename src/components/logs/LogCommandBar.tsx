@@ -1,11 +1,8 @@
-import { Archive, ChevronLeft, ChevronRight, Cloud, Copy, Download } from "lucide-react";
+import { Archive, Cloud, Copy, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
-import { formatSearchMatchLabel } from "@/services/logSearch";
 import { LogDestinationPopover } from "@/components/logs/LogDestinationPopover";
 import { LogSelectionBreadcrumb } from "@/components/logs/LogSelectionBreadcrumb";
 
@@ -16,23 +13,12 @@ export function LogCommandBar({
   breadcrumbSections,
   breadcrumbFullPath,
   destinationItems,
-  searchInput,
-  onSearchInputChange,
-  regexSearch,
-  onRegexSearchChange,
-  onSubmitSearch,
-  submittedSearch,
-  activeMatchLabel,
-  searchError,
-  matchesCount,
-  onPreviousMatch,
-  onNextMatch,
   onDownload,
   onCopyPath,
-  searchDisabled,
   hasSelection,
   focusNoiseFilter,
-  onFocusNoiseFilterChange
+  onFocusNoiseFilterChange,
+  focusDisabled
 }: {
   activeSource: "s3" | "cloudwatch";
   onSourceChange: (source: "s3" | "cloudwatch") => void;
@@ -40,23 +26,12 @@ export function LogCommandBar({
   breadcrumbSections?: string[];
   breadcrumbFullPath?: string;
   destinationItems: Array<[string, string]>;
-  searchInput: string;
-  onSearchInputChange: (value: string) => void;
-  regexSearch: boolean;
-  onRegexSearchChange: (checked: boolean) => void;
-  onSubmitSearch: () => void;
-  submittedSearch: string;
-  activeMatchLabel: string;
-  searchError?: string;
-  matchesCount: number;
-  onPreviousMatch: () => void;
-  onNextMatch: () => void;
   onDownload: () => void;
   onCopyPath: () => void;
-  searchDisabled?: boolean;
   hasSelection: boolean;
   focusNoiseFilter: boolean;
   onFocusNoiseFilterChange: (checked: boolean) => void;
+  focusDisabled?: boolean;
 }) {
   const copyPath = async () => {
     if (!breadcrumbFullPath) return;
@@ -74,7 +49,7 @@ export function LogCommandBar({
       aria-label="Log viewer controls"
       className="sticky top-0 z-10 shrink-0 rounded-md border bg-card p-2"
     >
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Tabs
             value={activeSource}
@@ -126,69 +101,17 @@ export function LogCommandBar({
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 lg:justify-end">
-          <Input
-            className="h-8 min-w-[12rem] flex-1"
-            placeholder="Search… (Enter)"
-            aria-label="Search in current log"
-            value={searchInput}
-            disabled={searchDisabled}
-            onChange={(event) => onSearchInputChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                onSubmitSearch();
-              }
-            }}
+        <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-4"
+            aria-label="Hide noisy Spark log lines"
+            checked={focusNoiseFilter}
+            disabled={focusDisabled}
+            onChange={(event) => onFocusNoiseFilterChange(event.target.checked)}
           />
-          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              className="size-4"
-              aria-label="Regex"
-              checked={regexSearch}
-              disabled={searchDisabled}
-              onChange={(event) => onRegexSearchChange(event.target.checked)}
-            />
-            Regex
-          </label>
-          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              className="size-4"
-              aria-label="Hide noisy Spark log lines"
-              checked={focusNoiseFilter}
-              disabled={searchDisabled}
-              onChange={(event) => onFocusNoiseFilterChange(event.target.checked)}
-            />
-            Focus
-          </label>
-          <span className={cn("min-w-16 shrink-0 text-xs", searchError ? "text-destructive" : "text-muted-foreground")}>
-            {submittedSearch ? activeMatchLabel : "No results yet"}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-8"
-            aria-label="Previous match"
-            disabled={matchesCount === 0}
-            onClick={onPreviousMatch}
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-8"
-            aria-label="Next match"
-            disabled={matchesCount === 0}
-            onClick={onNextMatch}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
+          Focus
+        </label>
       </div>
     </div>
   );

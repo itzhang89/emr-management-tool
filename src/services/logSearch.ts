@@ -66,7 +66,7 @@ export function formatSearchMatchLabel(
   options?: { truncated?: boolean; error?: string }
 ) {
   if (options?.error) return options.error;
-  if (matchCount === 0) return "0 / 0";
+  if (matchCount === 0) return "0 results";
   const suffix = options?.truncated ? "+" : "";
   return `${activeMatchIndex + 1} / ${matchCount}${suffix}`;
 }

@@ -613,31 +613,45 @@ describe("LogsPage", () => {
     expect(screen.getByRole("button", { name: /Expand log files panel/i })).toBeInTheDocument();
   });
 
-  it("searches log content on Enter and supports regex highlights with next and previous navigation", async () => {
+  it("opens find with Cmd+F, defaults to regex, and supports Enter plus next/previous navigation", async () => {
     const user = userEvent.setup();
 
     renderLogsPage();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
 
-    const searchInput = screen.getByPlaceholderText(/Search… \(Enter\)/i);
-    expect(screen.queryByRole("button", { name: /Search log/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("log-find-bar")).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Hide noisy Spark log lines/i })).toBeChecked();
-    expect(screen.getByText("No results yet")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("checkbox", { name: /Regex/i }));
+    await user.keyboard("{Meta>}f{/Meta}");
+
+    const findBar = screen.getByTestId("log-find-bar");
+    expect(findBar).toBeInTheDocument();
+    const searchInput = within(findBar).getByRole("textbox", { name: /Find in current log/i });
+    expect(within(findBar).getByRole("checkbox", { name: /^Regex$/i })).toBeChecked();
+    expect(within(findBar).getByText("0 results")).toBeInTheDocument();
+
     await user.type(searchInput, "needle\\s+(one|two)");
     expect(screen.queryAllByTestId("log-search-match")).toHaveLength(0);
 
     await user.keyboard("{Enter}");
-    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(within(findBar).getByText("1 / 2")).toBeInTheDocument();
     expect(screen.getAllByTestId("log-search-match")).toHaveLength(2);
 
-    await user.click(screen.getByRole("button", { name: /Next match/i }));
-    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(within(findBar).getByText("2 / 2")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Previous match/i }));
-    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    await user.click(within(findBar).getByRole("button", { name: /Previous match/i }));
+    expect(within(findBar).getByText("1 / 2")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("log-find-bar")).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId("log-search-match")).toHaveLength(0);
+
+    await user.keyboard("{Meta>}f{/Meta}");
+    expect(screen.getByTestId("log-find-bar")).toBeInTheDocument();
+    await user.keyboard("{Meta>}f{/Meta}");
+    expect(screen.queryByTestId("log-find-bar")).not.toBeInTheDocument();
   });
 
   it("Focus hides Spark noise from the viewer and search, while download stays raw", async () => {
@@ -664,10 +678,12 @@ describe("LogsPage", () => {
     expect(screen.getByTestId("log-content").textContent).not.toContain("UNIQUE_NOISE_TOKEN");
     expect(screen.getByTestId("hidden-noise-count")).toHaveTextContent("Hidden 1 lines");
 
-    const searchInput = screen.getByPlaceholderText(/Search… \(Enter\)/i);
+    await user.keyboard("{Meta>}f{/Meta}");
+    const findBar = screen.getByTestId("log-find-bar");
+    const searchInput = within(findBar).getByRole("textbox", { name: /Find in current log/i });
     await user.type(searchInput, "UNIQUE_NOISE_TOKEN");
     await user.keyboard("{Enter}");
-    expect(screen.getByText("0 / 0")).toBeInTheDocument();
+    expect(within(findBar).getByText("0 results")).toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /Hide noisy Spark log lines/i }));
     expect(screen.getByTestId("log-content").textContent).toContain("UNIQUE_NOISE_TOKEN");
