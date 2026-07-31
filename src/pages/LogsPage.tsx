@@ -1,11 +1,10 @@
-import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { LogWorkspace } from "@/components/logs/LogWorkspace";
 import { LogsEmptyState } from "@/components/logs/LogsEmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Input } from "@/components/ui/input";
+import { RecentSearchInput } from "@/components/search/RecentSearchInput";
 import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
@@ -19,6 +18,11 @@ import {
   type CloudWatchLogDestination,
   type S3LogDestination
 } from "@/services/jobLogDestinations";
+import { normalizeEmrJobRunId } from "@/services/emrJobId";
+import {
+  readLogsJobIdSearchHistory,
+  rememberLogsJobIdSearch
+} from "@/services/logsJobIdSearchHistory";
 import { s3Service } from "@/services/s3Service";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream } from "@/types/domain";
@@ -31,6 +35,7 @@ export function LogsPage() {
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const clusters = useVirtualClusters();
   const [jobIdInput, setJobIdInput] = useState(selectedJobId ?? "");
+  const [recentJobIdSearches, setRecentJobIdSearches] = useState(() => readLogsJobIdSearchHistory());
   const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? effectiveVirtualClusterId);
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -79,10 +84,13 @@ export function LogsPage() {
     });
   }, [resolvedActiveSource]);
 
-  const submitJobId = () => {
-    const trimmedJobId = jobIdInput.trim();
-    if (!trimmedJobId || !effectiveVirtualClusterId) return;
-    setSelectedJobForLogs(trimmedJobId, effectiveVirtualClusterId);
+  const submitJobId = (rawQuery: string) => {
+    const original = rawQuery.trim();
+    if (!original || !effectiveVirtualClusterId) return;
+    setRecentJobIdSearches(rememberLogsJobIdSearch(original));
+    const normalizedJobId = normalizeEmrJobRunId(original);
+    setJobIdInput(normalizedJobId);
+    setSelectedJobForLogs(normalizedJobId, effectiveVirtualClusterId);
   };
 
   const sourceAvailability = {
@@ -98,22 +106,16 @@ export function LogsPage() {
         pageId="logs"
         actions={
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <div className="relative w-[16rem] min-w-[16rem]">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-9 pl-9 font-mono text-sm"
-                placeholder="Enter job id"
-                title={jobIdInput}
-                value={jobIdInput}
-                onChange={(event) => setJobIdInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    submitJobId();
-                  }
-                }}
-              />
-            </div>
+            <RecentSearchInput
+              value={jobIdInput}
+              onChange={setJobIdInput}
+              onSubmit={submitJobId}
+              recentSearches={recentJobIdSearches}
+              placeholder="Enter job id"
+              title={jobIdInput}
+              inputClassName="font-mono text-sm"
+              listLabel="Recent job ids"
+            />
             <VirtualClusterSelect />
           </div>
         }
