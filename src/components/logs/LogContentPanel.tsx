@@ -20,7 +20,8 @@ export function LogContentPanel({
   submittedSearch,
   deferredLogText,
   matches,
-  activeMatchIndex
+  activeMatchIndex,
+  hiddenNoiseCount = 0
 }: {
   logDisplay: LogDisplayState;
   hasSelection: boolean;
@@ -30,6 +31,7 @@ export function LogContentPanel({
   deferredLogText: string;
   matches: SearchMatch[];
   activeMatchIndex: number;
+  hiddenNoiseCount?: number;
 }) {
   const highlightedLogContent = useMemo(() => {
     if (!hasSelection || !logDisplay.text) {
@@ -71,10 +73,23 @@ export function LogContentPanel({
           Showing the full log ({logDisplay.totalCharacters.toLocaleString("en-US")} characters) in the viewer.
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 overflow-y-auto bg-slate-950 p-4">
-        <pre data-testid="log-content" className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100">
-          {highlightedLogContent}
-        </pre>
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-slate-950">
+        {hiddenNoiseCount > 0 ? (
+          <span
+            data-testid="hidden-noise-count"
+            className="pointer-events-none absolute right-3 top-2 z-10 text-[10px] leading-none text-slate-500"
+          >
+            Hidden {hiddenNoiseCount.toLocaleString("en-US")} lines
+          </span>
+        ) : null}
+        <div className="h-full overflow-y-auto p-4">
+          <pre
+            data-testid="log-content"
+            className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100"
+          >
+            {highlightedLogContent}
+          </pre>
+        </div>
       </div>
     </div>
   );

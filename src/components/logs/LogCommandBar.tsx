@@ -32,8 +32,7 @@ export function LogCommandBar({
   searchDisabled,
   hasSelection,
   focusNoiseFilter,
-  onFocusNoiseFilterChange,
-  hiddenNoiseCount = 0
+  onFocusNoiseFilterChange
 }: {
   activeSource: "s3" | "cloudwatch";
   onSourceChange: (source: "s3" | "cloudwatch") => void;
@@ -58,7 +57,6 @@ export function LogCommandBar({
   hasSelection: boolean;
   focusNoiseFilter: boolean;
   onFocusNoiseFilterChange: (checked: boolean) => void;
-  hiddenNoiseCount?: number;
 }) {
   const copyPath = async () => {
     if (!breadcrumbFullPath) return;
@@ -165,11 +163,6 @@ export function LogCommandBar({
             />
             Focus
           </label>
-          {focusNoiseFilter && hiddenNoiseCount > 0 ? (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              Hidden {hiddenNoiseCount.toLocaleString("en-US")} lines
-            </span>
-          ) : null}
           <span className={cn("min-w-16 shrink-0 text-xs", searchError ? "text-destructive" : "text-muted-foreground")}>
             {submittedSearch ? activeMatchLabel : "No results yet"}
           </span>

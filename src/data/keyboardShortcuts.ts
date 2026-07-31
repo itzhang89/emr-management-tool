@@ -12,6 +12,7 @@ export const SHORTCUT_IDS = {
   GLUE_RUN_NEW_TAB: "glue-run-new-tab",
   GLUE_CYCLE_RESULT_TAB_PREV: "glue-cycle-result-tab-prev",
   GLUE_CYCLE_RESULT_TAB_NEXT: "glue-cycle-result-tab-next",
+  LOGS_TREE_TOGGLE: "logs-tree-toggle",
   S3_LIST_MOVE: "s3-list-move",
   S3_LIST_ENTER: "s3-list-enter",
   S3_FOCUS_EDITOR: "s3-focus-editor",
@@ -25,7 +26,7 @@ export type NavigationShortcutId = `nav-${PageId}`;
 
 export type ShortcutId = (typeof SHORTCUT_IDS)[keyof typeof SHORTCUT_IDS] | NavigationShortcutId;
 
-export type ShortcutCategoryId = "global" | "navigation" | "account" | "glue" | "s3" | "submit";
+export type ShortcutCategoryId = "global" | "navigation" | "account" | "glue" | "logs" | "s3" | "submit";
 
 export interface ShortcutCategory {
   id: ShortcutCategoryId;
@@ -46,6 +47,7 @@ export const shortcutCategories: ShortcutCategory[] = [
   { id: "navigation", label: "Navigation", description: "Jump between primary pages" },
   { id: "account", label: "Account", description: "AWS account switching" },
   { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL" },
+  { id: "logs", label: "Job Logs", description: "Job log tree and viewer" },
   { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
   { id: "submit", label: "Submit Job", description: "Template-driven job submission" }
 ];
@@ -100,6 +102,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     category: "glue",
     label: "Toggle catalog panel",
     description: "Show or hide the Glue catalog sidebar",
+    keys: [formatModShortcut("\\")]
+  },
+  {
+    id: SHORTCUT_IDS.LOGS_TREE_TOGGLE,
+    category: "logs",
+    label: "Toggle log files panel",
+    description: "Collapse or expand the log files sidebar",
     keys: [formatModShortcut("\\")]
   },
   {

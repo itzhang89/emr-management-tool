@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LogsPage } from "./LogsPage";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { MAX_LOG_VIEW_CHARACTERS } from "@/services/logDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -591,6 +592,25 @@ describe("LogsPage", () => {
     expect(screen.getByTestId("log-content").textContent).toBe("hello cloudwatch\n  indented cloudwatch\n");
   });
 
+  it("collapses the log files panel by default and toggles with Cmd+\\", async () => {
+    const user = userEvent.setup();
+
+    renderLogsPage();
+
+    expect(screen.getByRole("button", { name: /Expand log files panel/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Collapse log files panel/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /driver stdout/i })).toBeInTheDocument();
+
+    await user.keyboard("{Meta>}\\{/Meta}");
+
+    expect(screen.getByRole("button", { name: /Collapse log files panel/i })).toBeInTheDocument();
+    expect(screen.getByText("Log files")).toBeInTheDocument();
+    expect(screen.getAllByText("stdout").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /Collapse log files panel/i }));
+    expect(screen.getByRole("button", { name: /Expand log files panel/i })).toBeInTheDocument();
+  });
+
   it("searches log content on Enter and supports regex highlights with next and previous navigation", async () => {
     const user = userEvent.setup();
 
@@ -640,7 +660,7 @@ describe("LogsPage", () => {
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("ETLLogger"));
     expect(screen.getByTestId("log-content").textContent).not.toContain("UNIQUE_NOISE_TOKEN");
-    expect(screen.getByText("Hidden 1 lines")).toBeInTheDocument();
+    expect(screen.getByTestId("hidden-noise-count")).toHaveTextContent("Hidden 1 lines");
 
     const searchInput = screen.getByPlaceholderText(/Search… \(Enter\)/i);
     await user.type(searchInput, "UNIQUE_NOISE_TOKEN");
@@ -695,7 +715,9 @@ async function openDestinationPopover(user: ReturnType<typeof userEvent.setup>) 
 function renderLogsPage() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <LogsPage />
+      <TooltipProvider>
+        <LogsPage />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }

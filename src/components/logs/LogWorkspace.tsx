@@ -11,8 +11,11 @@ import {
 import { MAX_LOG_VIEW_CHARACTERS, truncateLogTextForDisplay } from "@/services/logDisplay";
 import { filterLogNoise } from "@/services/logNoiseFilter";
 import { buildSearchResult, formatSearchMatchLabel } from "@/services/logSearch";
+import { getShortcutPrimaryKey, SHORTCUT_IDS } from "@/data/keyboardShortcuts";
 import type { CloudWatchLogDestination, S3LogDestination } from "@/services/jobLogDestinations";
 import type { JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
+
+const LOG_FILES_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_TREE_TOGGLE);
 
 export function LogWorkspace({
   activeSource,
@@ -50,6 +53,18 @@ export function LogWorkspace({
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [displayFullLog, setDisplayFullLog] = useState(false);
   const [focusNoiseFilter, setFocusNoiseFilter] = useState(true);
+  const [logFilesCollapsed, setLogFilesCollapsed] = useState(true);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod || event.key !== "\\") return;
+      event.preventDefault();
+      setLogFilesCollapsed((collapsed) => !collapsed);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const focused = useMemo(() => {
     if (!focusNoiseFilter) {
@@ -153,7 +168,6 @@ export function LogWorkspace({
         hasSelection={Boolean(selectedId)}
         focusNoiseFilter={focusNoiseFilter}
         onFocusNoiseFilterChange={setFocusNoiseFilter}
-        hiddenNoiseCount={hiddenNoiseCount}
       />
       {errorMessage ? (
         <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -162,7 +176,14 @@ export function LogWorkspace({
       ) : null}
       {isLoading ? <p className="shrink-0 text-sm text-muted-foreground">{loadingMessage}</p> : null}
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-md border bg-card">
-        <LogFileTree tree={tree} selectedId={selectedId} onSelect={onSelect} />
+        <LogFileTree
+          tree={tree}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          collapsed={logFilesCollapsed}
+          onToggleCollapsed={() => setLogFilesCollapsed((collapsed) => !collapsed)}
+          collapseShortcut={LOG_FILES_TOGGLE_SHORTCUT}
+        />
         <LogContentPanel
           logDisplay={logDisplay}
           hasSelection={Boolean(selectedId)}
@@ -172,6 +193,7 @@ export function LogWorkspace({
           deferredLogText={deferredLogText}
           matches={matches}
           activeMatchIndex={activeMatchIndex}
+          hiddenNoiseCount={hiddenNoiseCount}
         />
       </div>
     </div>
