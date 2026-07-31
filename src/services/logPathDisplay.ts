@@ -12,7 +12,9 @@ export function formatLogPodLabel(pod: string, type: JobLogType, indexInSection:
   if (type === "driver") {
     return pod.toLowerCase().includes("driver") ? "driver" : pod.split("/").pop() ?? pod;
   }
-  return `exec-${indexInSection}`;
+  const fromName = pod.match(/exec[_-]?(\d+)/i);
+  if (fromName?.[1]) return `exec-${fromName[1]}`;
+  return `exec-${indexInSection + 1}`;
 }
 
 export function buildPodLabelIndex(tree: JobLogTreeSection[]): Map<string, number> {

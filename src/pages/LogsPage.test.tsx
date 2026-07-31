@@ -599,6 +599,8 @@ describe("LogsPage", () => {
 
     expect(screen.getByRole("button", { name: /Expand log files panel/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Collapse log files panel/i })).not.toBeInTheDocument();
+    const logFilesNav = screen.getByRole("navigation", { name: "Log files" });
+    expect(within(logFilesNav).getByText("driver")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /driver stdout/i })).toBeInTheDocument();
 
     await user.keyboard("{Meta>}\\{/Meta}");
