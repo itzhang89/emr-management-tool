@@ -60,6 +60,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     clearAwsCredentials: () => call<AwsSettings>("clear_aws_credentials"),
     listAwsAccounts: () => call<AwsAccountSummary[]>("list_aws_accounts"),
     createAwsAccount: (request: AwsAccountCredentialsInput) => call<AwsAccount>("create_aws_account", request),
+    renameAwsAccount: (request: { accountId: string; name: string }) =>
+      call<AwsAccountSummary>("rename_aws_account", request),
     setActiveAwsAccount: (request: { accountId: string }) => call<AwsAccountSummary>("set_active_aws_account", request),
     deleteAwsAccount: (request: { accountId: string }) => call("delete_aws_account", request),
     listAwsCliProfiles: () => call<AwsCliProfileSummary[]>("list_aws_cli_profiles"),

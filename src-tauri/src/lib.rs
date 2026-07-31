@@ -37,6 +37,7 @@ pub fn run() {
             commands::credentials::clear_aws_credentials,
             commands::credentials::list_aws_accounts,
             commands::credentials::create_aws_account,
+            commands::credentials::rename_aws_account,
             commands::credentials::set_active_aws_account,
             commands::credentials::delete_aws_account,
             commands::credentials::clear_aws_account_credentials,

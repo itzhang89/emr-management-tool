@@ -8,7 +8,17 @@ const mocks = vi.hoisted(() => ({
   checkForUpdate: vi.fn(),
   toastInfo: vi.fn(),
   toastSuccess: vi.fn(),
-  toastError: vi.fn()
+  toastError: vi.fn(),
+  renameMutateAsync: vi.fn(),
+  accounts: [
+    {
+      id: "acct-1",
+      name: "prod",
+      region: "us-east-1",
+      accessKeyIdMasked: "AKIA****",
+      isActive: true
+    }
+  ]
 }));
 
 vi.mock("@/services/appUpdater", () => ({
@@ -24,19 +34,25 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/hooks/useAwsSettings", () => ({
-  useAwsAccounts: () => ({ data: [], isLoading: false, error: null }),
+  useAwsAccounts: () => ({ data: mocks.accounts, isLoading: false, error: null }),
   useAwsCliProfiles: () => ({ data: [], isLoading: false, error: null }),
   useCreateAwsAccount: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteAwsAccount: () => ({ mutate: vi.fn(), isPending: false }),
   useImportAwsCliProfile: () => ({ mutate: vi.fn(), isPending: false }),
+  useRenameAwsAccount: () => ({ mutateAsync: mocks.renameMutateAsync, isPending: false }),
   useSetActiveAwsAccount: () => ({ mutate: vi.fn(), isPending: false }),
   useTestAwsCredentials: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useActiveAwsAccount: () => ({ data: undefined, isLoading: false, error: null })
+  useActiveAwsAccount: () => ({ data: mocks.accounts[0], isLoading: false, error: null })
 }));
 
 describe("SettingsPage updates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.accounts[0].name = "prod";
+    mocks.renameMutateAsync.mockImplementation(async ({ name }: { name: string }) => {
+      mocks.accounts[0] = { ...mocks.accounts[0], name };
+      return mocks.accounts[0];
+    });
   });
 
   it("shows why automatic updates are unavailable for the current build", async () => {
@@ -102,6 +118,20 @@ describe("SettingsPage updates", () => {
 
     expect(install).toHaveBeenCalledOnce();
     expect(mocks.toastSuccess).toHaveBeenCalledWith("Update installed. Restart the app to use the new version.");
+  });
+
+  it("renames a configured account after double-clicking its name", async () => {
+    const user = userEvent.setup();
+
+    renderSettingsPage();
+
+    await user.dblClick(screen.getByRole("button", { name: "prod" }));
+    const input = screen.getByRole("textbox", { name: /Rename account/i });
+    await user.clear(input);
+    await user.type(input, "staging{Enter}");
+
+    expect(mocks.renameMutateAsync).toHaveBeenCalledWith({ accountId: "acct-1", name: "staging" });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Renamed to staging.");
   });
 });
 

@@ -17,9 +17,11 @@ import {
   useCreateAwsAccount,
   useDeleteAwsAccount,
   useImportAwsCliProfile,
+  useRenameAwsAccount,
   useSetActiveAwsAccount,
   useTestAwsCredentials
 } from "@/hooks/useAwsSettings";
+import { EditableAccountName } from "@/components/settings/EditableAccountName";
 import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
@@ -35,6 +37,7 @@ export function SettingsPage() {
   const createAccount = useCreateAwsAccount();
   const importCliProfile = useImportAwsCliProfile();
   const setActiveAccount = useSetActiveAwsAccount();
+  const renameAccount = useRenameAwsAccount();
   const deleteAccount = useDeleteAwsAccount();
   const testCredentials = useTestAwsCredentials();
   const form = useForm<CredentialFormValues>({
@@ -151,8 +154,8 @@ export function SettingsPage() {
         <CardHeader>
           <CardTitle>Configured Accounts</CardTitle>
           <CardDescription>
-            Region is fixed when the account is created. If Virtual Clusters is empty, confirm this region matches the
-            AWS Console region for your EMR virtual cluster.
+            Region is fixed when the account is created. Double-click an account name to rename it. If Virtual Clusters
+            is empty, confirm this region matches the AWS Console region for your EMR virtual cluster.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -166,8 +169,20 @@ export function SettingsPage() {
           {accounts.data?.map((account) => (
             <div key={account.id} className="flex items-center justify-between rounded-lg border p-4">
               <div className="min-w-0 space-y-1">
-                <div className="flex items-center gap-2">
-                  <p className="font-medium">{account.name}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <EditableAccountName
+                    name={account.name}
+                    disabled={renameAccount.isPending}
+                    onRename={async (nextName) => {
+                      try {
+                        await renameAccount.mutateAsync({ accountId: account.id, name: nextName });
+                        toast.success(`Renamed to ${nextName}.`);
+                      } catch (error) {
+                        toast.error(errorMessage(error, "Failed to rename account."));
+                        throw error;
+                      }
+                    }}
+                  />
                   {account.isActive ? <Badge>Active</Badge> : null}
                 </div>
                 <p className="text-sm text-muted-foreground">

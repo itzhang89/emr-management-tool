@@ -174,6 +174,29 @@ pub async fn set_active_aws_account(request: serde_json::Value) -> AppResult<Aws
 }
 
 #[tauri::command]
+pub async fn rename_aws_account(request: serde_json::Value) -> AppResult<AwsAccountSummary> {
+    let account_id = request
+        .get("accountId")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| AppError::validation("accountId is required."))?;
+    let name = request
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::validation("Account name is required."))?;
+
+    let pool = repository::pool().await?;
+    let mut account = repository::get_aws_account(&pool, account_id)
+        .await?
+        .ok_or_else(|| AppError::validation(format!("AWS account {account_id} was not found.")))?;
+    account.name = name.to_string();
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+    Ok(AwsAccountSummary::from(account))
+}
+
+#[tauri::command]
 pub async fn delete_aws_account(
     app: AppHandle,
     request: serde_json::Value,
