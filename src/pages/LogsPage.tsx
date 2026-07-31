@@ -123,7 +123,9 @@ export function LogsPage() {
         }
       />
 
-      {!selectedJobId ? <LogsEmptyState /> : null}
+      {!selectedJobId ? (
+        <LogsEmptyState recentJobIds={recentJobIdSearches} onSelectJobId={submitJobId} />
+      ) : null}
 
       {selectedJobId && describedJob.isLoading ? (
         <p className="shrink-0 text-sm text-muted-foreground">Loading job log configuration...</p>
