@@ -273,6 +273,30 @@ describe("LogsPage", () => {
     expect(useDescribeJobRun).toHaveBeenLastCalledWith("000000037tga8qam664", "vc-1");
   });
 
+  it("records job ids opened from Job History into logs search history", async () => {
+    const user = userEvent.setup();
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+    expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")).toBeNull();
+
+    useSessionStore.getState().setSelectedJobForLogs("job-from-history-page", "vc-1");
+
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")!)).toEqual([
+        "job-from-history-page"
+      ])
+    );
+
+    const input = screen.getByPlaceholderText(/Enter job id/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "job-from-history-page" })).toBeInTheDocument();
+  });
+
   it("uses the effective virtual cluster for manual job entry submit", async () => {
     const user = userEvent.setup();
     useEffectiveVirtualClusterId.mockReturnValue("current-vc");

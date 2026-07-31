@@ -56,6 +56,9 @@ export function LogsPage() {
 
   useEffect(() => {
     setJobIdInput(selectedJobId ?? "");
+    if (selectedJobId) {
+      setRecentJobIdSearches(rememberLogsJobIdSearch(selectedJobId));
+    }
   }, [selectedJobId]);
 
   useEffect(() => {
@@ -87,7 +90,6 @@ export function LogsPage() {
   const submitJobId = (rawQuery: string) => {
     const original = rawQuery.trim();
     if (!original || !effectiveVirtualClusterId) return;
-    setRecentJobIdSearches(rememberLogsJobIdSearch(original));
     const normalizedJobId = normalizeEmrJobRunId(original);
     setJobIdInput(normalizedJobId);
     setSelectedJobForLogs(normalizedJobId, effectiveVirtualClusterId);
