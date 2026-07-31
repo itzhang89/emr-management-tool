@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useMemo } from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { MAX_LOG_VIEW_CHARACTERS } from "@/services/logDisplay";
-import { selectRenderableMatches, type SearchMatch } from "@/services/logSearch";
+import { type SearchMatch } from "@/services/logSearch";
+import { renderSemanticLogContent } from "@/components/logs/renderSemanticLogContent";
 
 type LogDisplayState = {
   text: string;
@@ -21,7 +21,8 @@ export function LogContentPanel({
   deferredLogText,
   matches,
   activeMatchIndex,
-  hiddenNoiseCount = 0
+  hiddenNoiseCount = 0,
+  semanticHighlight = true
 }: {
   logDisplay: LogDisplayState;
   hasSelection: boolean;
@@ -32,14 +33,26 @@ export function LogContentPanel({
   matches: SearchMatch[];
   activeMatchIndex: number;
   hiddenNoiseCount?: number;
+  /** When false (Focus unchecked), skip LEVEL/ETL/step coloring; search marks only. */
+  semanticHighlight?: boolean;
 }) {
-  const highlightedLogContent = useMemo(() => {
+  const highlightedLogContent = useMemo((): ReactNode => {
     if (!hasSelection || !logDisplay.text) {
       return "Select a log file from the tree to view its content.";
     }
-    if (!submittedSearch) return deferredLogText;
-    return renderHighlightedLogText(deferredLogText, matches, activeMatchIndex);
-  }, [activeMatchIndex, deferredLogText, hasSelection, logDisplay.text, matches, submittedSearch]);
+    const text = submittedSearch ? deferredLogText : logDisplay.text;
+    return renderSemanticLogContent(text, submittedSearch ? matches : [], activeMatchIndex, {
+      semanticHighlight
+    });
+  }, [
+    activeMatchIndex,
+    deferredLogText,
+    hasSelection,
+    logDisplay.text,
+    matches,
+    semanticHighlight,
+    submittedSearch
+  ]);
 
   const showTruncationBanner = logDisplay.truncated && !logDisplay.showingFullContent;
 
@@ -85,7 +98,7 @@ export function LogContentPanel({
         <div className="h-full overflow-y-auto p-4">
           <pre
             data-testid="log-content"
-            className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-100"
+            className="whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-200"
           >
             {highlightedLogContent}
           </pre>
@@ -93,38 +106,4 @@ export function LogContentPanel({
       </div>
     </div>
   );
-}
-
-function renderHighlightedLogText(text: string, matches: SearchMatch[], activeMatchIndex: number) {
-  if (matches.length === 0) return text;
-
-  const { matches: visibleMatches, activeIndex } = selectRenderableMatches(matches, activeMatchIndex);
-  const parts: ReactNode[] = [];
-  let cursor = visibleMatches[0]?.start ?? 0;
-
-  if (cursor > 0) {
-    parts.push(text.slice(0, cursor));
-  }
-
-  visibleMatches.forEach((match, index) => {
-    if (match.start > cursor) {
-      parts.push(text.slice(cursor, match.start));
-    }
-    const isActive = index === activeIndex;
-    parts.push(
-      <mark
-        key={`${match.start}-${match.end}-${index}`}
-        data-testid="log-search-match"
-        data-active-log-search-match={isActive ? "true" : undefined}
-        className={cn(isActive ? "bg-yellow-300 text-slate-950" : "bg-yellow-500/50 text-slate-50")}
-      >
-        {text.slice(match.start, match.end)}
-      </mark>
-    );
-    cursor = match.end;
-  });
-  if (cursor < text.length) {
-    parts.push(text.slice(cursor));
-  }
-  return parts;
 }

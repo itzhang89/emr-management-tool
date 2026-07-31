@@ -194,6 +194,7 @@ export function LogWorkspace({
           matches={matches}
           activeMatchIndex={activeMatchIndex}
           hiddenNoiseCount={hiddenNoiseCount}
+          semanticHighlight={focusNoiseFilter}
         />
       </div>
     </div>
