@@ -31,57 +31,68 @@ export function LogFileTree({
     return (
       <nav
         aria-label="Log files"
-        className="flex min-h-0 w-14 shrink-0 flex-col items-center border-r bg-card py-2"
+        className="flex min-h-0 w-[4.75rem] shrink-0 flex-col border-r bg-card py-2"
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              className="mb-2 size-7"
-              aria-label="Expand log files panel"
-              onClick={onToggleCollapsed}
-            >
-              <PanelLeftOpen className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            Show log files{collapseShortcut ? ` · ${collapseShortcut}` : ""}
-          </TooltipContent>
-        </Tooltip>
-        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1">
-          {tree.flatMap((section) =>
-            section.groups.flatMap((group) => {
+        <div className="flex justify-center px-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="mb-2 size-7"
+                aria-label="Expand log files panel"
+                onClick={onToggleCollapsed}
+              >
+                <PanelLeftOpen className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              Show log files{collapseShortcut ? ` · ${collapseShortcut}` : ""}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <div className="flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto px-1">
+          {tree.map((section) =>
+            section.groups.map((group) => {
               const groupKey = `${section.type}:${group.label}`;
               const podIndex = podLabelIndex.get(groupKey) ?? 0;
               const podShort = formatLogPodLabel(group.label, section.type, podIndex);
-              return group.items.map((item) => {
-                const selectionId = getItemSelectionId(item);
-                const selected = selectionId === selectedId;
-                return (
-                  <Tooltip key={item.id}>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        aria-current={selected ? "true" : undefined}
-                        aria-label={`${podShort} ${item.stream}`}
-                        title={`${podShort} · ${item.stream}`}
-                        className={cn(
-                          "flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent",
-                          selected ? "bg-primary text-primary-foreground hover:bg-primary" : undefined
-                        )}
-                        onClick={() => onSelect(item)}
-                      >
-                        <StreamBadge stream={item.stream} selected={selected} compact />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      {podShort} · {item.stream}
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              });
+              return (
+                <div key={groupKey} className="flex flex-col items-center gap-0.5">
+                  <div
+                    className="w-full truncate px-0.5 text-center font-mono text-[9px] font-semibold leading-tight text-muted-foreground"
+                    title={group.label}
+                  >
+                    {podShort}
+                  </div>
+                  {group.items.map((item) => {
+                    const selectionId = getItemSelectionId(item);
+                    const selected = selectionId === selectedId;
+                    return (
+                      <Tooltip key={item.id}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-current={selected ? "true" : undefined}
+                            aria-label={`${podShort} ${item.stream}`}
+                            className={cn(
+                              "flex h-7 w-full items-center justify-center rounded-md hover:bg-accent",
+                              selected ? "bg-primary text-primary-foreground hover:bg-primary" : undefined
+                            )}
+                            onClick={() => onSelect(item)}
+                          >
+                            <StreamBadge stream={item.stream} selected={selected} compact />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          {podShort} · {item.stream}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
+                </div>
+              );
             })
           )}
         </div>

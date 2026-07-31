@@ -14,7 +14,9 @@ describe("logPathDisplay", () => {
     expect(formatLogPodLabel("spark-driver", "driver", 0)).toBe("driver");
     expect(formatLogPodLabel("custom-pod", "driver", 0)).toBe("custom-pod");
     expect(formatLogPodLabel("controller", "controller", 0)).toBe("controller");
-    expect(formatLogPodLabel("000000037lsld3h8l1d-xz7ms", "executor", 2)).toBe("exec-2");
+    expect(formatLogPodLabel("000000037lsld3h8l1d-xz7ms", "executor", 2)).toBe("exec-3");
+    expect(formatLogPodLabel("spark-app-ada7899fb639421b-exec-1", "executor", 0)).toBe("exec-1");
+    expect(formatLogPodLabel("spark-app-exec_2", "executor", 9)).toBe("exec-2");
   });
 
   it("builds breadcrumb sections from a log item", () => {
