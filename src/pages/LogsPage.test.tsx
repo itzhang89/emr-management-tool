@@ -75,6 +75,7 @@ describe("LogsPage", () => {
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
+    window.localStorage.removeItem("emr-eks:logs-job-id-search-recent");
     useDescribeJobRun.mockReturnValue({
       data: {
         id: "job-running",
@@ -210,6 +211,66 @@ describe("LogsPage", () => {
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
     expect(useDescribeJobRun).toHaveBeenLastCalledWith("job-manual", "vc-1");
+    expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")!)).toEqual(["job-manual"]);
+  });
+
+  it("shows recent job ids on click and applies one immediately", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent",
+      JSON.stringify(["job-from-history", "job-other"])
+    );
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+    const input = screen.getByPlaceholderText(/Enter job id/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "job-from-history" }));
+
+    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-from-history"));
+    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
+  });
+
+  it("reopens recent job ids when clicking an already focused input", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent",
+      JSON.stringify(["job-from-history"])
+    );
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+    const input = screen.getByPlaceholderText(/Enter job id/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "job-from-history" })).not.toBeInTheDocument();
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "job-from-history" })).toBeInTheDocument();
+  });
+
+  it("strips spark- before opening logs for a job id", async () => {
+    const user = userEvent.setup();
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "spark-000000037tga8qam664{Enter}");
+
+    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("000000037tga8qam664"));
+    expect(useDescribeJobRun).toHaveBeenLastCalledWith("000000037tga8qam664", "vc-1");
   });
 
   it("uses the effective virtual cluster for manual job entry submit", async () => {
