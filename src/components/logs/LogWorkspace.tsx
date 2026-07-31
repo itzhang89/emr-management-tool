@@ -46,10 +46,12 @@ export function LogWorkspace({
   onSelect: (item: JobLogStream | JobLogObject) => void;
   onDownload: () => void;
 }) {
+  const [findOpen, setFindOpen] = useState(false);
+  const [findFocusRequestId, setFindFocusRequestId] = useState(0);
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
-  const [regexSearch, setRegexSearch] = useState(false);
-  const [submittedRegexSearch, setSubmittedRegexSearch] = useState(false);
+  const [regexSearch, setRegexSearch] = useState(true);
+  const [submittedRegexSearch, setSubmittedRegexSearch] = useState(true);
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
   const [displayFullLog, setDisplayFullLog] = useState(false);
   const [focusNoiseFilter, setFocusNoiseFilter] = useState(true);
@@ -58,13 +60,51 @@ export function LogWorkspace({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
-      if (!mod || event.key !== "\\") return;
-      event.preventDefault();
-      setLogFilesCollapsed((collapsed) => !collapsed);
+      if (!mod) {
+        if (event.key === "Escape" && findOpen) {
+          event.preventDefault();
+          setFindOpen(false);
+          setSearchInput("");
+          setSubmittedSearch("");
+          setSubmittedRegexSearch(true);
+          setRegexSearch(true);
+          setActiveMatchIndex(0);
+        }
+        return;
+      }
+
+      if (event.key === "\\") {
+        event.preventDefault();
+        setLogFilesCollapsed((collapsed) => !collapsed);
+        return;
+      }
+
+      if (event.key === "f" || event.key === "F") {
+        const target = event.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        const inEditable =
+          tag === "input" || tag === "textarea" || target?.isContentEditable;
+        // Allow Cmd+F from the find input itself (toggle close); block only other fields.
+        const inFindInput = target?.closest?.('[data-testid="log-find-bar"]');
+        if (inEditable && !inFindInput) return;
+
+        event.preventDefault();
+        if (findOpen) {
+          setFindOpen(false);
+          setSearchInput("");
+          setSubmittedSearch("");
+          setSubmittedRegexSearch(true);
+          setRegexSearch(true);
+          setActiveMatchIndex(0);
+          return;
+        }
+        setFindOpen(true);
+        setFindFocusRequestId((id) => id + 1);
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [findOpen]);
 
   const focused = useMemo(() => {
     if (!focusNoiseFilter) {
@@ -110,10 +150,11 @@ export function LogWorkspace({
 
   useEffect(() => {
     setDisplayFullLog(false);
+    setFindOpen(false);
     setSearchInput("");
     setSubmittedSearch("");
-    setSubmittedRegexSearch(false);
-    setRegexSearch(false);
+    setSubmittedRegexSearch(true);
+    setRegexSearch(true);
     setActiveMatchIndex(0);
   }, [logText]);
 
@@ -132,6 +173,15 @@ export function LogWorkspace({
     setActiveMatchIndex(0);
   };
 
+  const closeFind = () => {
+    setFindOpen(false);
+    setSearchInput("");
+    setSubmittedSearch("");
+    setSubmittedRegexSearch(true);
+    setRegexSearch(true);
+    setActiveMatchIndex(0);
+  };
+
   const goToPreviousMatch = () => {
     if (matches.length === 0) return;
     setActiveMatchIndex((current) => (current === 0 ? matches.length - 1 : current - 1));
@@ -140,6 +190,18 @@ export function LogWorkspace({
   const goToNextMatch = () => {
     if (matches.length === 0) return;
     setActiveMatchIndex((current) => (current + 1) % matches.length);
+  };
+
+  const handleFindEnter = () => {
+    const query = searchInput.trim();
+    const queryChanged = query !== submittedSearch || regexSearch !== submittedRegexSearch;
+    if (queryChanged || !submittedSearch) {
+      submitLogSearch();
+      return;
+    }
+    if (matches.length > 0) {
+      goToNextMatch();
+    }
   };
 
   return (
@@ -151,20 +213,8 @@ export function LogWorkspace({
         breadcrumbSections={breadcrumb?.sections}
         breadcrumbFullPath={fullPath ?? breadcrumb?.fullPath}
         destinationItems={destinationItems}
-        searchInput={searchInput}
-        onSearchInputChange={setSearchInput}
-        regexSearch={regexSearch}
-        onRegexSearchChange={setRegexSearch}
-        onSubmitSearch={submitLogSearch}
-        submittedSearch={submittedSearch}
-        activeMatchLabel={activeMatchLabel}
-        searchError={searchResult.error}
-        matchesCount={matches.length}
-        onPreviousMatch={goToPreviousMatch}
-        onNextMatch={goToNextMatch}
         onDownload={onDownload}
         onCopyPath={() => {}}
-        searchDisabled={isLoading || !selectedId}
         hasSelection={Boolean(selectedId)}
         focusNoiseFilter={focusNoiseFilter}
         onFocusNoiseFilterChange={setFocusNoiseFilter}
@@ -195,6 +245,19 @@ export function LogWorkspace({
           activeMatchIndex={activeMatchIndex}
           hiddenNoiseCount={hiddenNoiseCount}
           semanticHighlight={focusNoiseFilter}
+          findOpen={findOpen}
+          searchInput={searchInput}
+          onSearchInputChange={setSearchInput}
+          regexSearch={regexSearch}
+          onRegexSearchChange={setRegexSearch}
+          onSubmitSearch={handleFindEnter}
+          onCloseFind={closeFind}
+          resultLabel={activeMatchLabel}
+          searchError={searchResult.error}
+          onPreviousMatch={goToPreviousMatch}
+          onNextMatch={goToNextMatch}
+          searchDisabled={isLoading || !selectedId}
+          findFocusRequestId={findFocusRequestId}
         />
       </div>
     </div>

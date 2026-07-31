@@ -13,6 +13,7 @@ export const SHORTCUT_IDS = {
   GLUE_CYCLE_RESULT_TAB_PREV: "glue-cycle-result-tab-prev",
   GLUE_CYCLE_RESULT_TAB_NEXT: "glue-cycle-result-tab-next",
   LOGS_TREE_TOGGLE: "logs-tree-toggle",
+  LOGS_FIND: "logs-find",
   S3_LIST_MOVE: "s3-list-move",
   S3_LIST_ENTER: "s3-list-enter",
   S3_FOCUS_EDITOR: "s3-focus-editor",
@@ -110,6 +111,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Toggle log files panel",
     description: "Collapse or expand the log files sidebar",
     keys: [formatModShortcut("\\")]
+  },
+  {
+    id: SHORTCUT_IDS.LOGS_FIND,
+    category: "logs",
+    label: "Find in log",
+    description: "Open or close the find bar in the log viewer",
+    keys: [formatModShortcut("F")]
   },
   {
     id: SHORTCUT_IDS.GLUE_RUN_QUERY,

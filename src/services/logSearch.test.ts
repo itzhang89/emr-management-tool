@@ -28,7 +28,7 @@ describe("logSearch", () => {
   });
 
   it("formats match labels with truncation and errors", () => {
-    expect(formatSearchMatchLabel(0, 0)).toBe("0 / 0");
+    expect(formatSearchMatchLabel(0, 0)).toBe("0 results");
     expect(formatSearchMatchLabel(5, 2)).toBe("3 / 5");
     expect(formatSearchMatchLabel(1000, 0, { truncated: true })).toBe("1 / 1000+");
     expect(formatSearchMatchLabel(0, 0, { error: "Invalid regex" })).toBe("Invalid regex");
