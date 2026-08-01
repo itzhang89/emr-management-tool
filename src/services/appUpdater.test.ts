@@ -66,7 +66,7 @@ describe("createAppUpdater", () => {
 
   it("times out only the check call after 60s and stays silent", async () => {
     vi.useFakeTimers();
-    const check = vi.fn(() => new Promise(() => {}));
+    const check = vi.fn((): Promise<null> => new Promise(() => {}));
     const updater = createAppUpdater({
       canUseAutoUpdater: true,
       check
