@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyRuntimeToSourcePayload,
   describeJobToStartJobPayload,
   formatSourceJobPayload,
   isSparkSubmitDescribe,
@@ -90,6 +91,23 @@ describe("startJobPayload", () => {
         })
       )
     ).toThrow(/sparkSubmit/i);
+  });
+
+  it("applyRuntimeToSourcePayload sets virtual cluster and resource overrides", () => {
+    const payload = describeJobToStartJobPayload(baseJob());
+    const next = applyRuntimeToSourcePayload(payload, "vc-new", {
+      driverCores: 4,
+      driverMemory: "8G",
+      executorCores: 2,
+      executorMemory: "4G",
+      executorInstances: 5
+    });
+    expect(next.virtualClusterId).toBe("vc-new");
+    expect(next.jobDriver.sparkSubmitJobDriver.sparkSubmitParameters).toContain("spark.driver.cores=4");
+    const sparkDefaults = next.configurationOverrides?.applicationConfiguration?.find(
+      (item) => (item as { classification?: string }).classification === "spark-defaults"
+    ) as { properties: Record<string, string> } | undefined;
+    expect(sparkDefaults?.properties["spark.executor.instances"]).toBe("5");
   });
 
   it("parses and formats source JSON", () => {

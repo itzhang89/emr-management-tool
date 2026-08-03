@@ -2,12 +2,15 @@ import { Eye, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
+import { JsonTemplateEditor } from "@/components/templates/JsonTemplateEditor";
 import { TemplateVariableFields } from "@/components/templates/TemplateVariableFields";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
@@ -15,6 +18,7 @@ import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
@@ -26,6 +30,11 @@ import {
 import { useTemplates } from "@/hooks/useTemplates";
 import { getShortcutPrimaryKey, SHORTCUT_IDS } from "@/data/keyboardShortcuts";
 import { applyResourceOverride } from "@/services/resourceOverride";
+import {
+  applyRuntimeToSourcePayload,
+  formatSourceJobPayload,
+  parseSourceJobPayload
+} from "@/services/startJobPayload";
 import {
   getDefaultCustomVariableValues,
   resolveTemplatePayload,
@@ -48,6 +57,8 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
+  const pendingSourceSubmit = useSessionStore((state) => state.pendingSourceSubmit);
+  const setPendingSourceSubmit = useSessionStore((state) => state.setPendingSourceSubmit);
   const virtualClusterId = useEffectiveVirtualClusterId();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -68,7 +79,12 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const [customVariables, setCustomVariables] = useState<Record<string, string | number | boolean | string[]>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [cloneRequest, setCloneRequest] = useState<StartJobRunRequest>();
+  const [mode, setMode] = useState<"template" | "source">("template");
+  const [sourceJson, setSourceJson] = useState("{}");
+  const [sourceOrigin, setSourceOrigin] = useState<"template" | "external">("external");
+  const [sourceSwitchConfirmOpen, setSourceSwitchConfirmOpen] = useState(false);
   const previewOpenRef = useRef(previewOpen);
+  const runtimeSyncRef = useRef<{ virtualClusterId: string; resourceTemplateId: string } | null>(null);
   previewOpenRef.current = previewOpen;
 
   const templates = jobConfigTemplates.data ?? [];
@@ -119,6 +135,50 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     toast.success("Cloned job configuration loaded.");
   }, [clonedJobRequest, setClonedJobRequest, setSelectedVirtualClusterId]);
 
+  useEffect(() => {
+    if (!pendingSourceSubmit) return;
+    setMode("source");
+    setSourceOrigin("external");
+    setSourceJson(formatSourceJobPayload(pendingSourceSubmit.payload));
+    setSelectedVirtualClusterId(pendingSourceSubmit.virtualClusterId);
+    runtimeSyncRef.current = {
+      virtualClusterId: pendingSourceSubmit.virtualClusterId,
+      resourceTemplateId
+    };
+    setPendingSourceSubmit(undefined);
+    toast.success("Loaded job configuration into Source submit.");
+  }, [pendingSourceSubmit, resourceTemplateId, setPendingSourceSubmit, setSelectedVirtualClusterId]);
+
+  useEffect(() => {
+    if (mode !== "source" || !virtualClusterId) return;
+
+    const previous = runtimeSyncRef.current;
+    if (!previous) {
+      runtimeSyncRef.current = { virtualClusterId, resourceTemplateId };
+      return;
+    }
+    if (previous.virtualClusterId === virtualClusterId && previous.resourceTemplateId === resourceTemplateId) {
+      return;
+    }
+    runtimeSyncRef.current = { virtualClusterId, resourceTemplateId };
+
+    setSourceJson((current) => {
+      const parsed = parseSourceJobPayload(current);
+      if (!parsed.ok) {
+        toast.error("Fix JSON before syncing Runtime selection.");
+        return current;
+      }
+      try {
+        const next = applyRuntimeToSourcePayload(parsed.payload, virtualClusterId, selectedResources);
+        const formatted = formatSourceJobPayload(next);
+        return formatted !== current ? formatted : current;
+      } catch {
+        toast.error("Could not apply resource template to source JSON.");
+        return current;
+      }
+    });
+  }, [mode, resourceTemplateId, selectedResources, virtualClusterId]);
+
   const resolvedPayload = useMemo(() => {
     if (cloneRequest || !selectedTemplate || !virtualClusterId) return undefined;
     try {
@@ -141,13 +201,24 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
 
   const submit = useCallback(async () => {
     try {
-      const request = buildSubmitRequest({
-        cloneRequest,
-        selectedTemplate,
-        resolvedPayload,
-        selectedResources,
-        customVariables
-      });
+      let request: StartJobRunRequest | undefined;
+      if (mode === "source") {
+        const parsed = parseSourceJobPayload(sourceJson);
+        if (!parsed.ok) {
+          toast.error(parsed.error);
+          return;
+        }
+        const overridden = applyResourceOverride(parsed.payload, selectedResources);
+        request = toStartJobRunRequest(overridden, selectedResources);
+      } else {
+        request = buildSubmitRequest({
+          cloneRequest,
+          selectedTemplate,
+          resolvedPayload,
+          selectedResources,
+          customVariables
+        });
+      }
       if (!request) {
         toast.error("Complete the template selections before submitting.");
         return;
@@ -159,9 +230,37 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     } catch (error) {
       toast.error(errorMessage(error, "Failed to submit job."));
     }
-  }, [cloneRequest, customVariables, enableAfterSubmit, resolvedPayload, selectedResources, selectedTemplate, startJobRun]);
+  }, [
+    cloneRequest,
+    customVariables,
+    enableAfterSubmit,
+    mode,
+    resolvedPayload,
+    selectedResources,
+    selectedTemplate,
+    sourceJson,
+    startJobRun
+  ]);
 
   const validateAndSubmit = useCallback(() => {
+    if (mode === "source") {
+      const parsed = parseSourceJobPayload(sourceJson);
+      if (!parsed.ok) {
+        toast.error(parsed.error);
+        return;
+      }
+      const overridden = applyResourceOverride(parsed.payload, selectedResources);
+      const validation = validateSubmitPayload(overridden);
+      if (!validation.ok) {
+        toast.error(validation.errors[0] ?? "Submit payload validation failed.");
+        if (validation.errors.length > 1) {
+          validation.errors.slice(1).forEach((error) => toast.error(error));
+        }
+        return;
+      }
+      void submit();
+      return;
+    }
     if (cloneRequest) {
       void submit();
       return;
@@ -183,7 +282,48 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
       return;
     }
     void submit();
-  }, [cloneRequest, customVariables, resolvedPayload, selectedResources, selectedTemplate, submit]);
+  }, [cloneRequest, customVariables, mode, resolvedPayload, selectedResources, selectedTemplate, sourceJson, submit]);
+
+  const enterSourceMode = useCallback(() => {
+    if (previewPayload) {
+      setSourceJson(formatSourceJobPayload(previewPayload));
+      setSourceOrigin(cloneRequest ? "external" : "template");
+    } else {
+      setSourceJson("{}");
+      setSourceOrigin("external");
+    }
+    runtimeSyncRef.current = virtualClusterId
+      ? { virtualClusterId, resourceTemplateId }
+      : null;
+    setMode("source");
+  }, [cloneRequest, previewPayload, resourceTemplateId, virtualClusterId]);
+
+  const enterTemplateMode = useCallback(() => {
+    if (sourceOrigin === "template") {
+      setMode("template");
+      return;
+    }
+    setSourceSwitchConfirmOpen(true);
+  }, [sourceOrigin]);
+
+  const handleModeChange = useCallback(
+    (nextMode: string) => {
+      if (nextMode === mode) return;
+      if (nextMode === "source") {
+        enterSourceMode();
+        return;
+      }
+      enterTemplateMode();
+    },
+    [enterSourceMode, enterTemplateMode, mode]
+  );
+
+  const discardSourceAndSwitchToTemplate = useCallback(() => {
+    setSourceSwitchConfirmOpen(false);
+    setSourceJson("{}");
+    setSourceOrigin("external");
+    setMode("template");
+  }, []);
 
   const openPreview = useCallback(() => {
     if (!previewPayload) return;
@@ -218,15 +358,17 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
         pageId="submit"
         actions={
           <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="outline" disabled={!previewPayload} onClick={openPreview}>
-                  <Eye data-icon="inline-start" />
-                  Preview JSON
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Preview JSON · {PREVIEW_JSON_SHORTCUT}</TooltipContent>
-            </Tooltip>
+            {mode === "template" ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="outline" disabled={!previewPayload} onClick={openPreview}>
+                    <Eye data-icon="inline-start" />
+                    Preview JSON
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Preview JSON · {PREVIEW_JSON_SHORTCUT}</TooltipContent>
+              </Tooltip>
+            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
@@ -260,40 +402,61 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
         <div className="grid max-h-[min(48vh,520px)] shrink-0 grid-cols-[1fr_320px] gap-4 overflow-hidden">
           <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardHeader className="shrink-0">
-              <CardTitle>Job Config Template</CardTitle>
-              <CardDescription>Select the application JSON template and fill custom variables.</CardDescription>
+              <CardTitle>Job Config</CardTitle>
+              <CardDescription>
+                {mode === "template"
+                  ? "Select the application JSON template and fill custom variables."
+                  : "Edit the StartJobRun JSON payload directly."}
+              </CardDescription>
             </CardHeader>
             <CardContent className="min-h-0 flex-1 space-y-4 overflow-auto">
-              <Field label="Template">
-                <Select
-                  value={selectedTemplateId}
-                  onValueChange={(value) => {
-                    setCloneRequest(undefined);
-                    setSelectedTemplateId(value);
-                  }}
-                  disabled={Boolean(cloneRequest)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select template" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {templates.map((template) => (
-                        <SelectItem key={template.id} value={template.id}>
-                          {template.name}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
-              {selectedTemplate ? (
-                <TemplateVariableFields
-                  variables={selectedTemplate.customVariables ?? []}
-                  values={customVariables}
-                  onChange={setCustomVariables}
+              <Tabs value={mode} onValueChange={handleModeChange}>
+                <TabsList>
+                  <TabsTrigger value="template">Template</TabsTrigger>
+                  <TabsTrigger value="source">Source</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {mode === "template" ? (
+                <>
+                  <Field label="Template">
+                    <Select
+                      value={selectedTemplateId}
+                      onValueChange={(value) => {
+                        setCloneRequest(undefined);
+                        setSelectedTemplateId(value);
+                      }}
+                      disabled={Boolean(cloneRequest)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select template" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {templates.map((template) => (
+                            <SelectItem key={template.id} value={template.id}>
+                              {template.name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  {selectedTemplate ? (
+                    <TemplateVariableFields
+                      variables={selectedTemplate.customVariables ?? []}
+                      values={customVariables}
+                      onChange={setCustomVariables}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <JsonTemplateEditor
+                  value={sourceJson}
+                  onChange={setSourceJson}
+                  enableTemplateVariables={false}
+                  className="min-h-[220px] flex-1"
                 />
-              ) : null}
+              )}
             </CardContent>
           </Card>
 
@@ -348,6 +511,28 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
       </div>
 
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} payload={previewPayload} />
+      <Dialog open={sourceSwitchConfirmOpen} onOpenChange={setSourceSwitchConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Switch to Template submit?</DialogTitle>
+            <DialogDescription>
+              Current source JSON was not loaded from a template. Switching discards the editor contents unless you
+              save it as a template.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setSourceSwitchConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="outline" disabled>
+              Create template and switch
+            </Button>
+            <Button type="button" onClick={discardSourceAndSwitchToTemplate}>
+              Discard and switch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

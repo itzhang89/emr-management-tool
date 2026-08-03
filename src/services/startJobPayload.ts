@@ -1,4 +1,5 @@
-import type { JobRunSummary, ResolvedJobPayload } from "@/types/domain";
+import { applyResourceOverride } from "@/services/resourceOverride";
+import type { JobRunSummary, ResolvedJobPayload, SparkResourceConfig } from "@/types/domain";
 
 export type StartJobPayloadJson = ResolvedJobPayload;
 
@@ -56,4 +57,13 @@ export function parseSourceJobPayload(
 
 export function formatSourceJobPayload(payload: StartJobPayloadJson): string {
   return JSON.stringify(payload, null, 2);
+}
+
+export function applyRuntimeToSourcePayload(
+  payload: StartJobPayloadJson,
+  virtualClusterId: string,
+  resources: SparkResourceConfig
+): StartJobPayloadJson {
+  const withCluster = { ...payload, virtualClusterId };
+  return applyResourceOverride(withCluster, resources);
 }
