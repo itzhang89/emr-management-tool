@@ -13,6 +13,7 @@ import {
   defaultHighlightStyle
 } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
+import { python } from "@codemirror/lang-python";
 import { sql } from "@codemirror/lang-sql";
 import { scala } from "@codemirror/legacy-modes/mode/clike";
 import { json } from "@codemirror/legacy-modes/mode/javascript";
@@ -80,6 +81,8 @@ function languageExtensionForKey(fileKey?: string): Extension {
   switch (extension) {
     case "sql":
       return sql();
+    case "py":
+      return python();
     case "scala":
     case "sc":
       return StreamLanguage.define(scala);
