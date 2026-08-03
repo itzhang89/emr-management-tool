@@ -9,6 +9,8 @@ export const emrService = {
     keyword?: string,
     createdAfterDays?: number
   ) => tauriClient.listJobRuns({ virtualClusterId, accountId, keyword, createdAfterDays }),
+  syncJobRuns: (virtualClusterId: string, accountId?: string, createdAfterDays?: number) =>
+    tauriClient.syncJobRuns({ virtualClusterId, accountId, createdAfterDays }),
   listSubmissionHistory: (virtualClusterId?: string, accountId?: string) =>
     tauriClient.listSubmissionHistory({ virtualClusterId, accountId }),
   describeJobRun: (id: string, virtualClusterId: string, accountId?: string) =>

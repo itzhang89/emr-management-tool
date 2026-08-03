@@ -108,6 +108,22 @@ describe("createTauriClient", () => {
     });
   });
 
+  it("invokes sync_job_runs for background AWS sync", async () => {
+    const invoke = vi.fn().mockResolvedValue(12);
+    const client = createTauriClient(invoke);
+
+    const synced = await client.syncJobRuns({
+      accountId: "acct-test",
+      virtualClusterId: "vc-1",
+      createdAfterDays: 15
+    });
+
+    expect(synced).toBe(12);
+    expect(invoke).toHaveBeenCalledWith("sync_job_runs", {
+      request: { accountId: "acct-test", virtualClusterId: "vc-1", createdAfterDays: 15 }
+    });
+  });
+
   it("loads a read-only S3 job log object without using the editable text object command", async () => {
     const invoke = vi.fn().mockResolvedValue({ bucket: "logs-bucket", key: "stderr.gz", content: "hello log\n" });
     const client = createTauriClient(invoke);

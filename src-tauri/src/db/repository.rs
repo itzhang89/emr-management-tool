@@ -253,6 +253,34 @@ pub async fn list_job_history(
         .collect()
 }
 
+
+/// Earliest `created_at` among jobs that are not COMPLETED/FAILED, within retention.
+/// Timestamps are stored/compared as RFC3339 (UTC offset preserved); callers should
+/// convert with timezone-aware parsers before talking to AWS.
+pub async fn earliest_non_terminal_created_at(
+    pool: &SqlitePool,
+    account_id: &str,
+    virtual_cluster_id: &str,
+) -> AppResult<Option<String>> {
+    let cutoff = job_history_cutoff();
+    let row = sqlx::query(
+        "select min(created_at) as earliest
+         from job_history
+         where account_id = ?1
+           and virtual_cluster_id = ?2
+           and created_at >= ?3
+           and lower(coalesce(json_extract(payload, '$.state'), '')) not in ('completed', 'failed')",
+    )
+    .bind(account_id)
+    .bind(virtual_cluster_id)
+    .bind(cutoff)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(row.and_then(|row| row.get::<Option<String>, _>("earliest")))
+}
+
 pub async fn list_submission_history(
     pool: &SqlitePool,
     account_id: Option<&str>,
@@ -572,7 +600,10 @@ fn from_payload<T: serde::de::DeserializeOwned>(payload: String) -> AppResult<T>
 
 #[cfg(test)]
 mod tests {
-    use super::{list_job_history, list_submission_history, migrate, prune_submission_history, upsert_job_history};
+    use super::{
+        earliest_non_terminal_created_at, list_job_history, list_submission_history, migrate,
+        prune_submission_history, upsert_job_history,
+    };
     use crate::models::{
         JarApplicationConfig, JobDriverRequest, JobRunSummary, SparkResourceConfig,
         SparkSubmitJobDriverRequest, StartJobRunRequest,
@@ -683,6 +714,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["job-running"]
         );
+    }
+
+
+    #[tokio::test]
+    async fn earliest_non_terminal_created_at_ignores_completed_and_failed() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create sqlite memory pool");
+        migrate(&pool).await.expect("migrate schema");
+
+        let oldest_running = (Utc::now() - Duration::days(5)).to_rfc3339();
+        let newer_pending = (Utc::now() - Duration::days(1)).to_rfc3339();
+        let old_failed = (Utc::now() - Duration::days(6)).to_rfc3339();
+
+        upsert_job_history(
+            &pool,
+            &job("job-failed", "batch", "FAILED", "acct-1", "vc-1", &old_failed),
+        )
+        .await
+        .expect("insert failed");
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-running",
+                "batch",
+                "RUNNING",
+                "acct-1",
+                "vc-1",
+                &oldest_running,
+            ),
+        )
+        .await
+        .expect("insert running");
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-pending",
+                "batch",
+                "PENDING",
+                "acct-1",
+                "vc-1",
+                &newer_pending,
+            ),
+        )
+        .await
+        .expect("insert pending");
+
+        let earliest = earliest_non_terminal_created_at(&pool, "acct-1", "vc-1")
+            .await
+            .expect("query earliest")
+            .expect("expected earliest non-terminal");
+        assert_eq!(earliest, oldest_running);
     }
 
     #[tokio::test]

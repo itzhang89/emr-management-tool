@@ -98,102 +98,68 @@ pub async fn list_job_runs(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let virtual_cluster_id = normalized_virtual_cluster_id(request.virtual_cluster_id);
+    // Local-first: never block the UI on AWS pagination. Callers trigger sync_job_runs separately.
+    repository::list_job_history(
+        &pool,
+        Some(&runtime.account.id),
+        virtual_cluster_id.as_deref(),
+        keyword,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn sync_job_runs(app: AppHandle, request: JobRunRequest) -> AppResult<usize> {
+    let runtime = runtime_for_context(
+        &app,
+        AwsCommandContext {
+            account_id: request.account_id.clone(),
+        },
+    )
+    .await?;
     let Some(virtual_cluster_id) = normalized_virtual_cluster_id(request.virtual_cluster_id) else {
-        return repository::list_job_history(&pool, Some(&runtime.account.id), None, keyword).await;
+        return Err(AppError::validation(
+            "virtualClusterId is required to sync job runs from AWS.",
+        ));
     };
-    if keyword.is_some() {
-        return repository::list_job_history(
-            &pool,
-            Some(&runtime.account.id),
-            Some(&virtual_cluster_id),
-            keyword,
-        )
-        .await;
+    if request
+        .keyword
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(0);
     }
 
-    let created_after_days = normalize_created_after_days(request.created_after_days);
-    let created_after = aws_smithy_types::DateTime::from_secs(
-        (Utc::now() - chrono::Duration::days(created_after_days as i64)).timestamp(),
-    );
+    let pool = repository::pool().await?;
+    let created_after = resolve_sync_created_after(
+        &pool,
+        &runtime.account.id,
+        &virtual_cluster_id,
+        request.created_after_days,
+    )
+    .await?;
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut synced_jobs = 0usize;
-    let mut next_token = request.next_token;
-    let mut pages = 0usize;
-
-    loop {
-        pages += 1;
-        if pages > MAX_EMR_PAGINATION_PAGES {
-            diagnostics::append_log_line(
-                "WARN",
-                &format!(
-                    "Stopped ListJobRuns pagination after reaching the page limit for virtual cluster {virtual_cluster_id}."
-                ),
-            );
-            break;
-        }
-
-        let request_token = next_token.clone();
-        let mut operation = client
-            .list_job_runs()
-            .virtual_cluster_id(&virtual_cluster_id)
-            .created_after(created_after);
-        if let Some(token) = request_token.as_deref() {
-            operation = operation.next_token(token);
-        }
-        if let Some(max_results) = request.max_results {
-            operation = operation.max_results(max_results);
-        }
-
-        let response = operation.send().await.map_err(|error| {
-            let app_error =
-                AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
-            diagnostics::log_aws_failure(
-                "emr-containers",
-                "ListJobRuns",
-                Some(&runtime.account.id),
-                &app_error.message,
-            );
-            app_error
-        })?;
-
-        let page_jobs: Vec<JobRunSummary> = response
-            .job_runs()
-            .iter()
-            .map(|job| {
-                map_job_run(
-                    job,
-                    Some(runtime.account.id.clone()),
-                    Some(runtime.account.region.clone()),
-                )
-            })
-            .collect();
-        synced_jobs += page_jobs.len();
-        for job in &page_jobs {
-            repository::upsert_job_history(&pool, job).await?;
-        }
-
-        next_token = normalize_pagination_token(response.next_token());
-        if !should_continue_pagination(&next_token, &request_token) {
-            break;
-        }
-    }
-
+    let synced_jobs = sync_job_runs_pages(
+        &client,
+        &pool,
+        &runtime.account.id,
+        &runtime.account.region,
+        &virtual_cluster_id,
+        created_after,
+        request.max_results,
+    )
+    .await?;
     repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
     diagnostics::append_log_line(
         "INFO",
         &format!(
-            "Synced {synced_jobs} job run(s) from AWS for virtual cluster {virtual_cluster_id} in region {} (createdAfterDays={created_after_days}).",
+            "Synced {synced_jobs} job run(s) from AWS for virtual cluster {virtual_cluster_id} in region {}.",
             runtime.account.region
         ),
     );
-
-    repository::list_job_history(
-        &pool,
-        Some(&runtime.account.id),
-        Some(&virtual_cluster_id),
-        None,
-    )
-    .await
+    Ok(synced_jobs)
 }
 
 #[tauri::command]
@@ -587,6 +553,117 @@ fn normalize_created_after_days(days: Option<i32>) -> i32 {
         Some(value) if value > 0 => value.min(30),
         _ => DEFAULT_JOB_RUN_SYNC_DAYS,
     }
+}
+
+async fn resolve_sync_created_after(
+    pool: &sqlx::SqlitePool,
+    account_id: &str,
+    virtual_cluster_id: &str,
+    created_after_days: Option<i32>,
+) -> AppResult<aws_smithy_types::DateTime> {
+    if created_after_days.is_some() {
+        let days = normalize_created_after_days(created_after_days);
+        return Ok(aws_smithy_types::DateTime::from_secs(
+            (Utc::now() - chrono::Duration::days(days as i64)).timestamp(),
+        ));
+    }
+
+    if let Some(earliest) =
+        repository::earliest_non_terminal_created_at(pool, account_id, virtual_cluster_id).await?
+    {
+        if let Some(datetime) = rfc3339_to_aws_datetime(&earliest) {
+            diagnostics::append_log_line(
+                "INFO",
+                &format!(
+                    "Adaptive job-run sync for {virtual_cluster_id}: createdAfter from earliest non-terminal job at {earliest}."
+                ),
+            );
+            return Ok(datetime);
+        }
+        diagnostics::append_log_line(
+            "WARN",
+            &format!(
+                "Could not parse earliest non-terminal created_at '{earliest}' for {virtual_cluster_id}; falling back to {DEFAULT_JOB_RUN_SYNC_DAYS}-day window."
+            ),
+        );
+    }
+
+    Ok(aws_smithy_types::DateTime::from_secs(
+        (Utc::now() - chrono::Duration::days(DEFAULT_JOB_RUN_SYNC_DAYS as i64)).timestamp(),
+    ))
+}
+
+fn rfc3339_to_aws_datetime(value: &str) -> Option<aws_smithy_types::DateTime> {
+    // Parse as offset-aware RFC3339, then use the absolute UTC instant for AWS.
+    let parsed = chrono::DateTime::parse_from_rfc3339(value.trim()).ok()?;
+    Some(aws_smithy_types::DateTime::from_secs(parsed.timestamp()))
+}
+
+async fn sync_job_runs_pages(
+    client: &aws_sdk_emrcontainers::Client,
+    pool: &sqlx::SqlitePool,
+    account_id: &str,
+    region: &str,
+    virtual_cluster_id: &str,
+    created_after: aws_smithy_types::DateTime,
+    max_results: Option<i32>,
+) -> AppResult<usize> {
+    let mut synced_jobs = 0usize;
+    let mut next_token: Option<String> = None;
+    let mut pages = 0usize;
+
+    loop {
+        pages += 1;
+        if pages > MAX_EMR_PAGINATION_PAGES {
+            diagnostics::append_log_line(
+                "WARN",
+                &format!(
+                    "Stopped ListJobRuns pagination after reaching the page limit for virtual cluster {virtual_cluster_id}."
+                ),
+            );
+            break;
+        }
+
+        let request_token = next_token.clone();
+        let mut operation = client
+            .list_job_runs()
+            .virtual_cluster_id(virtual_cluster_id)
+            .created_after(created_after);
+        if let Some(token) = request_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        if let Some(max_results) = max_results {
+            operation = operation.max_results(max_results);
+        }
+
+        let response = operation.send().await.map_err(|error| {
+            let app_error = AppError::aws_for_account_sdk("emr-containers", account_id.to_string(), error);
+            diagnostics::log_aws_failure(
+                "emr-containers",
+                "ListJobRuns",
+                Some(account_id),
+                &app_error.message,
+            );
+            app_error
+        })?;
+
+        let page_jobs: Vec<JobRunSummary> = response
+            .job_runs()
+            .iter()
+            .map(|job| map_job_run(job, Some(account_id.to_string()), Some(region.to_string())))
+            .collect();
+        synced_jobs += page_jobs.len();
+        for job in &page_jobs {
+            repository::upsert_job_history(pool, job).await?;
+        }
+
+        next_token = normalize_pagination_token(response.next_token());
+        if !should_continue_pagination(&next_token, &request_token) {
+            break;
+        }
+    }
+
+    Ok(synced_jobs)
 }
 
 fn normalize_pagination_token(token: Option<&str>) -> Option<String> {

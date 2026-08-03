@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { toast } from "sonner";
 import type { JobRunSummary, ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { formatAppError } from "@/services/appErrorMessage";
 import { emrService } from "@/services/emrService";
 import { JOB_HISTORY_REFRESH_INTERVAL_MS } from "@/services/jobHistoryConstants";
 
@@ -29,16 +32,76 @@ export function useJobRuns(
   createdAfterDays?: number
 ) {
   const accountId = useActiveAccountId();
+  const queryClient = useQueryClient();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
-  return useQuery({
-    queryKey: ["job-runs", accountId, normalizedVirtualClusterId, keyword, createdAfterDays],
+  const normalizedKeyword = keyword?.trim() || undefined;
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+
+  const query = useQuery({
+    queryKey: ["job-runs", accountId, normalizedVirtualClusterId, normalizedKeyword, createdAfterDays],
     queryFn: () =>
-      emrService.listJobRuns(normalizedVirtualClusterId, accountId, keyword, createdAfterDays),
+      emrService.listJobRuns(normalizedVirtualClusterId, accountId, normalizedKeyword, createdAfterDays),
     enabled: enabled && Boolean(accountId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh,
-    refetchInterval: autoRefresh && enabled ? JOB_HISTORY_REFRESH_INTERVAL_MS : false
+    // Local reads only; AWS sync runs in a separate effect so the table stays interactive.
+    refetchInterval: false
   });
+
+  useEffect(() => {
+    if (!enabled || !accountId || !normalizedVirtualClusterId || normalizedKeyword) {
+      setBackgroundSyncing(false);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+
+    const syncFromAws = async () => {
+      setBackgroundSyncing(true);
+      try {
+        await emrService.syncJobRuns(normalizedVirtualClusterId, accountId, createdAfterDays);
+        if (!cancelled) {
+          await queryClient.invalidateQueries({
+            queryKey: ["job-runs", accountId, normalizedVirtualClusterId]
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(formatAppError(error, "Failed to sync job runs from AWS."), {
+            id: `job-runs-sync:${accountId}:${normalizedVirtualClusterId}`
+          });
+        }
+      } finally {
+        if (!cancelled) setBackgroundSyncing(false);
+      }
+    };
+
+    void syncFromAws();
+    if (autoRefresh) {
+      intervalId = setInterval(() => {
+        void syncFromAws();
+      }, JOB_HISTORY_REFRESH_INTERVAL_MS);
+    }
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [
+    accountId,
+    autoRefresh,
+    createdAfterDays,
+    enabled,
+    normalizedKeyword,
+    normalizedVirtualClusterId,
+    queryClient
+  ]);
+
+  return {
+    ...query,
+    isFetching: query.isFetching || backgroundSyncing
+  };
 }
 
 export function useSubmissionHistory(virtualClusterId?: string, autoRefresh = false, enabled = true) {

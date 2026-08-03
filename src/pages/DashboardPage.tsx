@@ -40,7 +40,7 @@ export function DashboardPage() {
 
   useEffect(() => {
     if (!jobsQuery.error) return;
-    toast.error(formatAppError(jobsQuery.error, "Failed to sync job runs for dashboard stats."));
+    toast.error(formatAppError(jobsQuery.error, "Failed to load local job history for dashboard stats."));
   }, [jobsQuery.error]);
 
   const liveNow = useMemo(
