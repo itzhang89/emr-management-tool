@@ -25,13 +25,15 @@ export function useJobRuns(
   virtualClusterId?: string,
   autoRefresh = false,
   keyword?: string,
-  enabled = true
+  enabled = true,
+  createdAfterDays?: number
 ) {
   const accountId = useActiveAccountId();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
   return useQuery({
-    queryKey: ["job-runs", accountId, normalizedVirtualClusterId, keyword],
-    queryFn: () => emrService.listJobRuns(normalizedVirtualClusterId, accountId, keyword),
+    queryKey: ["job-runs", accountId, normalizedVirtualClusterId, keyword, createdAfterDays],
+    queryFn: () =>
+      emrService.listJobRuns(normalizedVirtualClusterId, accountId, keyword, createdAfterDays),
     enabled: enabled && Boolean(accountId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh,

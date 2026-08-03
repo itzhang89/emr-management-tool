@@ -8,7 +8,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use std::fs;
 
-pub const JOB_HISTORY_RETENTION_DAYS: i64 = 7;
+pub const JOB_HISTORY_RETENTION_DAYS: i64 = 30;
 pub const SUBMISSION_HISTORY_LIMIT: i64 = 20;
 
 fn job_history_cutoff() -> String {

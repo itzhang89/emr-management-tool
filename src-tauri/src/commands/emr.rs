@@ -15,6 +15,7 @@ use tauri::AppHandle;
 
 const MAX_CONFIGURATION_DEPTH: usize = 32;
 const MAX_EMR_PAGINATION_PAGES: usize = 100;
+const DEFAULT_JOB_RUN_SYNC_DAYS: i32 = 7;
 const EMR_JOB_NAME_MESSAGE: &str =
     "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
 
@@ -110,48 +111,78 @@ pub async fn list_job_runs(
         .await;
     }
 
+    let created_after_days = normalize_created_after_days(request.created_after_days);
+    let created_after = aws_smithy_types::DateTime::from_secs(
+        (Utc::now() - chrono::Duration::days(created_after_days as i64)).timestamp(),
+    );
     let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
-    let mut operation = client
-        .list_job_runs()
-        .virtual_cluster_id(&virtual_cluster_id);
-    if let Some(next_token) = request.next_token {
-        operation = operation.next_token(next_token);
-    }
-    if let Some(max_results) = request.max_results {
-        operation = operation.max_results(max_results);
+    let mut synced_jobs = 0usize;
+    let mut next_token = request.next_token;
+    let mut pages = 0usize;
+
+    loop {
+        pages += 1;
+        if pages > MAX_EMR_PAGINATION_PAGES {
+            diagnostics::append_log_line(
+                "WARN",
+                &format!(
+                    "Stopped ListJobRuns pagination after reaching the page limit for virtual cluster {virtual_cluster_id}."
+                ),
+            );
+            break;
+        }
+
+        let request_token = next_token.clone();
+        let mut operation = client
+            .list_job_runs()
+            .virtual_cluster_id(&virtual_cluster_id)
+            .created_after(created_after);
+        if let Some(token) = request_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        if let Some(max_results) = request.max_results {
+            operation = operation.max_results(max_results);
+        }
+
+        let response = operation.send().await.map_err(|error| {
+            let app_error =
+                AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
+            diagnostics::log_aws_failure(
+                "emr-containers",
+                "ListJobRuns",
+                Some(&runtime.account.id),
+                &app_error.message,
+            );
+            app_error
+        })?;
+
+        let page_jobs: Vec<JobRunSummary> = response
+            .job_runs()
+            .iter()
+            .map(|job| {
+                map_job_run(
+                    job,
+                    Some(runtime.account.id.clone()),
+                    Some(runtime.account.region.clone()),
+                )
+            })
+            .collect();
+        synced_jobs += page_jobs.len();
+        for job in &page_jobs {
+            repository::upsert_job_history(&pool, job).await?;
+        }
+
+        next_token = normalize_pagination_token(response.next_token());
+        if !should_continue_pagination(&next_token, &request_token) {
+            break;
+        }
     }
 
-    let response = operation.send().await.map_err(|error| {
-        let app_error =
-            AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
-        diagnostics::log_aws_failure(
-            "emr-containers",
-            "ListJobRuns",
-            Some(&runtime.account.id),
-            &app_error.message,
-        );
-        app_error
-    })?;
-    let jobs: Vec<JobRunSummary> = response
-        .job_runs()
-        .iter()
-        .map(|job| {
-            map_job_run(
-                job,
-                Some(runtime.account.id.clone()),
-                Some(runtime.account.region.clone()),
-            )
-        })
-        .collect();
-    let synced_jobs = jobs.len();
-    for job in &jobs {
-        repository::upsert_job_history(&pool, job).await?;
-    }
     repository::prune_job_history(&pool, Some(&runtime.account.id)).await?;
     diagnostics::append_log_line(
         "INFO",
         &format!(
-            "Synced {synced_jobs} job run(s) from AWS for virtual cluster {virtual_cluster_id} in region {}.",
+            "Synced {synced_jobs} job run(s) from AWS for virtual cluster {virtual_cluster_id} in region {} (createdAfterDays={created_after_days}).",
             runtime.account.region
         ),
     );
@@ -548,6 +579,14 @@ fn normalized_virtual_cluster_id(virtual_cluster_id: Option<String>) -> Option<S
             Some(trimmed)
         }
     })
+}
+
+fn normalize_created_after_days(days: Option<i32>) -> i32 {
+    match days {
+        Some(d @ (7 | 15 | 30)) => d,
+        Some(value) if value > 0 => value.min(30),
+        _ => DEFAULT_JOB_RUN_SYNC_DAYS,
+    }
 }
 
 fn normalize_pagination_token(token: Option<&str>) -> Option<String> {

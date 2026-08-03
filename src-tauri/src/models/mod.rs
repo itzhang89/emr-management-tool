@@ -199,6 +199,8 @@ pub struct JobRunRequest {
     pub keyword: Option<String>,
     pub next_token: Option<String>,
     pub max_results: Option<i32>,
+    /// AWS ListJobRuns createdAfter window in days. Defaults to 7 when omitted.
+    pub created_after_days: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

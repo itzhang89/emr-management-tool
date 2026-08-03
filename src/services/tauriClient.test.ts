@@ -93,14 +93,18 @@ describe("createTauriClient", () => {
     });
   });
 
-  it("passes job history keyword searches through the invoke boundary", async () => {
+  it("passes createdAfterDays through the invoke boundary", async () => {
     const invoke = vi.fn().mockResolvedValue([]);
     const client = createTauriClient(invoke);
 
-    await client.listJobRuns({ accountId: "acct-test", virtualClusterId: "vc-1", keyword: "failed" });
+    await client.listJobRuns({
+      accountId: "acct-test",
+      virtualClusterId: "vc-1",
+      createdAfterDays: 30
+    });
 
     expect(invoke).toHaveBeenCalledWith("list_job_runs", {
-      request: { accountId: "acct-test", virtualClusterId: "vc-1", keyword: "failed" }
+      request: { accountId: "acct-test", virtualClusterId: "vc-1", createdAfterDays: 30 }
     });
   });
 

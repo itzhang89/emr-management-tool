@@ -75,8 +75,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<AwsCliProfileCredentials>("load_aws_cli_profile", request),
     listVirtualClusters: (request: ListVirtualClustersRequest) =>
       call<ListVirtualClustersResponse>("list_virtual_clusters", request),
-    listJobRuns: (request: { accountId?: string; virtualClusterId?: string; keyword?: string }) =>
-      call<JobRunSummary[]>("list_job_runs", request),
+    listJobRuns: (request: {
+      accountId?: string;
+      virtualClusterId?: string;
+      keyword?: string;
+      createdAfterDays?: number;
+    }) => call<JobRunSummary[]>("list_job_runs", request),
     listSubmissionHistory: (request: { accountId?: string; virtualClusterId?: string }) =>
       call<JobRunSummary[]>("list_submission_history", request),
     describeJobRun: (request: { accountId?: string; id: string; virtualClusterId: string }) =>
