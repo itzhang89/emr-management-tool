@@ -1,74 +1,93 @@
 import { useState } from "react";
-import { CheckCircle2, Download, KeyRound, RefreshCw, Save, ShieldCheck, Trash2 } from "lucide-react";
-import { Controller, useForm } from "react-hook-form";
+import { CheckCircle2, Download, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { AwsRegionInput } from "@/components/aws/AwsRegionInput";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
+import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
 import {
   useAwsAccounts,
   useAwsCliProfiles,
-  useCreateAwsAccount,
   useDeleteAwsAccount,
   useImportAwsCliProfile,
-  useRenameAwsAccount,
-  useSetActiveAwsAccount,
-  useTestAwsCredentials
+  useLoadAwsCliProfile,
+  useSetActiveAwsAccount
 } from "@/hooks/useAwsSettings";
-import { EditableAccountName } from "@/components/settings/EditableAccountName";
-import { credentialSchema, type CredentialFormValues } from "@/services/credentialValidation";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
+import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
+import type { CredentialFormValues } from "@/services/credentialValidation";
 import { getReleaseInfo } from "@/services/releaseInfo";
-import type { AppError } from "@/types/domain";
+import type { AppError, AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
+
+type AccountDialogState =
+  | {
+      mode: "create";
+      createDefaults?: Partial<CredentialFormValues> & {
+        notice?: string;
+        title?: string;
+        description?: string;
+      };
+    }
+  | { mode: "edit"; account: AwsAccountSummary };
 
 export function SettingsPage() {
   const releaseInfo = getReleaseInfo();
   const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [accountDialog, setAccountDialog] = useState<AccountDialogState | null>(null);
+  const [accountPendingDelete, setAccountPendingDelete] = useState<AwsAccountSummary | null>(null);
   const accounts = useAwsAccounts();
   const cliProfiles = useAwsCliProfiles();
-  const createAccount = useCreateAwsAccount();
   const importCliProfile = useImportAwsCliProfile();
+  const loadCliProfile = useLoadAwsCliProfile();
   const setActiveAccount = useSetActiveAwsAccount();
-  const renameAccount = useRenameAwsAccount();
   const deleteAccount = useDeleteAwsAccount();
-  const testCredentials = useTestAwsCredentials();
-  const form = useForm<CredentialFormValues>({
-    resolver: zodResolver(credentialSchema),
-    defaultValues: {
-      name: "",
-      accessKeyId: "",
-      secretAccessKey: "",
-      region: "us-east-1",
-      makeActive: true
-    }
-  });
 
-  const testConnection = form.handleSubmit(async (values) => {
+  const openImportDialog = async (profile: AwsCliProfileSummary) => {
+    const notice = cliImportPromptReason(profile, accounts.data ?? []);
     try {
-      const identity = await testCredentials.mutateAsync(values);
-      toast.success(`Connected to AWS account ${identity.account}`);
+      const credentials = await loadCliProfile.mutateAsync(profile.profileName);
+      setAccountDialog({
+        mode: "create",
+        createDefaults: {
+          title: "Import AWS CLI Profile",
+          description: `Complete the account details for profile "${profile.profileName}", then save.`,
+          notice: notice ?? undefined,
+          name: credentials.profileName,
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          region: credentials.region?.trim() || "",
+          makeActive: true
+        }
+      });
     } catch (error) {
-      toast.error(errorMessage(error, "AWS connection test failed."));
+      toast.error(errorMessage(error, "Failed to load AWS CLI profile."));
     }
-  });
+  };
 
-  const save = form.handleSubmit(async (values) => {
-    try {
-      await createAccount.mutateAsync(values);
-      toast.success("AWS account saved.");
-      form.reset({ name: "", accessKeyId: "", secretAccessKey: "", region: values.region, makeActive: true });
-    } catch (error) {
-      toast.error(errorMessage(error, "Failed to save AWS account."));
+  const handleImportProfile = (profile: AwsCliProfileSummary) => {
+    if (shouldPromptCliImport(profile, accounts.data ?? [])) {
+      void openImportDialog(profile);
+      return;
     }
-  });
+
+    importCliProfile.mutate(
+      {
+        profileName: profile.profileName,
+        name: profile.profileName,
+        region: profile.region,
+        makeActive: true
+      },
+      {
+        onSuccess: () => toast.success(`${profile.profileName} imported.`),
+        onError: (error) => toast.error(errorMessage(error, "Failed to import AWS CLI profile."))
+      }
+    );
+  };
 
   const checkForUpdates = async () => {
     setCheckingUpdate(true);
@@ -112,6 +131,14 @@ export function SettingsPage() {
       : "Check for Updates";
   const updateTooltip = `${releaseInfo.channelLabel} · ${releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}`;
 
+  const activateAccount = (account: AwsAccountSummary) => {
+    if (account.isActive || setActiveAccount.isPending) return;
+    setActiveAccount.mutate(account.id, {
+      onSuccess: () => toast.success(`${account.name} is now active.`),
+      onError: (error) => toast.error(errorMessage(error, "Failed to set active account."))
+    });
+  };
+
   return (
     <div className="flex max-w-5xl flex-col gap-6 overflow-auto">
       <PageHeader
@@ -151,38 +178,47 @@ export function SettingsPage() {
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle>Configured Accounts</CardTitle>
-          <CardDescription>
-            Region is fixed when the account is created. Double-click an account name to rename it. If Virtual Clusters
-            is empty, confirm this region matches the AWS Console region for your EMR virtual cluster.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle>Configured Accounts</CardTitle>
+            <CardDescription>
+              Double-click an account to make it active. Use Edit to change the name or region. Access Key stays fixed;
+              unlock Secret only when rotating the secret for the same key.
+            </CardDescription>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="Add account"
+                onClick={() => setAccountDialog({ mode: "create" })}
+              >
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add account</TooltipContent>
+          </Tooltip>
         </CardHeader>
         <CardContent className="space-y-3">
           {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
           {accounts.error ? <DemoError error={accounts.error} /> : null}
           {accounts.data?.length === 0 ? (
             <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No AWS accounts are configured yet. Add one below to enable production commands.
+              No AWS accounts are configured yet. Click + to add one and enable production commands.
             </p>
           ) : null}
           {accounts.data?.map((account) => (
-            <div key={account.id} className="flex items-center justify-between rounded-lg border p-4">
+            <div
+              key={account.id}
+              title="Double-click to use this account"
+              className="flex cursor-default items-center justify-between rounded-lg border p-4"
+              onDoubleClick={() => activateAccount(account)}
+            >
               <div className="min-w-0 space-y-1">
                 <div className="flex min-w-0 items-center gap-2">
-                  <EditableAccountName
-                    name={account.name}
-                    disabled={renameAccount.isPending}
-                    onRename={async (nextName) => {
-                      try {
-                        await renameAccount.mutateAsync({ accountId: account.id, name: nextName });
-                        toast.success(`Renamed to ${nextName}.`);
-                      } catch (error) {
-                        toast.error(errorMessage(error, "Failed to rename account."));
-                        throw error;
-                      }
-                    }}
-                  />
+                  <p className="truncate font-medium">{account.name}</p>
                   {account.isActive ? <Badge>Active</Badge> : null}
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -191,32 +227,21 @@ export function SettingsPage() {
                 </p>
                 {account.identity ? <p className="truncate text-xs text-muted-foreground">{account.identity.arn}</p> : null}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2" onDoubleClick={(event) => event.stopPropagation()}>
                 <Button
                   type="button"
                   variant="outline"
                   disabled={account.isActive || setActiveAccount.isPending}
-                  onClick={() => {
-                    setActiveAccount.mutate(account.id, {
-                      onSuccess: () => toast.success(`${account.name} is now active.`),
-                      onError: (error) => toast.error(errorMessage(error, "Failed to set active account."))
-                    });
-                  }}
+                  onClick={() => activateAccount(account)}
                 >
                   <CheckCircle2 data-icon="inline-start" />
                   Use
                 </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={deleteAccount.isPending}
-                  onClick={() => {
-                    deleteAccount.mutate(account.id, {
-                      onSuccess: () => toast.success(`${account.name} deleted.`),
-                      onError: (error) => toast.error(errorMessage(error, "Failed to delete account."))
-                    });
-                  }}
-                >
+                <Button type="button" variant="outline" onClick={() => setAccountDialog({ mode: "edit", account })}>
+                  <Pencil data-icon="inline-start" />
+                  Edit
+                </Button>
+                <Button type="button" variant="destructive" onClick={() => setAccountPendingDelete(account)}>
                   <Trash2 data-icon="inline-start" />
                   Delete
                 </Button>
@@ -230,7 +255,8 @@ export function SettingsPage() {
         <CardHeader>
           <CardTitle>AWS CLI Profiles</CardTitle>
           <CardDescription>
-            Detect local AWS CLI static credential profiles and import them without exposing secret values to the UI.
+            Import local AWS CLI static credential profiles. If the profile is missing a region or the name is already
+            used, you will complete the details in the add-account form.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -256,16 +282,8 @@ export function SettingsPage() {
               <Button
                 type="button"
                 variant="outline"
-                disabled={!profile.canImport || importCliProfile.isPending}
-                onClick={() => {
-                  importCliProfile.mutate(
-                    { profileName: profile.profileName, makeActive: true },
-                    {
-                      onSuccess: () => toast.success(`${profile.profileName} imported.`),
-                      onError: (error) => toast.error(errorMessage(error, "Failed to import AWS CLI profile."))
-                    }
-                  );
-                }}
+                disabled={!profile.canImport || importCliProfile.isPending || loadCliProfile.isPending}
+                onClick={() => handleImportProfile(profile)}
               >
                 <Download data-icon="inline-start" />
                 Import
@@ -277,62 +295,6 @@ export function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>AWS Credentials</CardTitle>
-          <CardDescription>Create or replace a named access-key account.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="flex flex-col gap-4" onSubmit={save}>
-          <Field label="Account Name">
-            <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
-            <FieldError>{form.formState.errors.name?.message}</FieldError>
-          </Field>
-          <Field label="Access Key ID">
-            <Input placeholder="AKIA..." {...form.register("accessKeyId")} aria-invalid={Boolean(form.formState.errors.accessKeyId)} />
-            <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
-          </Field>
-          <Field label="Secret Access Key">
-            <Input
-              type="password"
-              placeholder="••••••••••••••••"
-              {...form.register("secretAccessKey")}
-              aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
-            />
-            <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
-          </Field>
-          <Field label="Region">
-            <Controller
-              control={form.control}
-              name="region"
-              render={({ field }) => (
-                <AwsRegionInput
-                  value={field.value}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                  aria-invalid={Boolean(form.formState.errors.region)}
-                />
-              )}
-            />
-            <FieldError>{form.formState.errors.region?.message}</FieldError>
-            <p className="text-xs text-muted-foreground">
-              Pick a common region from the suggestions or type any AWS region code. Importing an AWS CLI profile copies
-              its region automatically.
-            </p>
-          </Field>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" disabled={testCredentials.isPending} onClick={testConnection}>
-              <ShieldCheck data-icon="inline-start" />
-              {testCredentials.isPending ? "Testing..." : "Test Connection"}
-            </Button>
-            <Button type="submit" disabled={createAccount.isPending}>
-              <Save data-icon="inline-start" />
-              {createAccount.isPending ? "Saving..." : "Save Account"}
-            </Button>
-          </div>
-          </form>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <KeyRound className="size-5" />
             Future Authentication
@@ -340,6 +302,34 @@ export function SettingsPage() {
           <CardDescription>AWS Profile, SSO, and Assume Role are reserved for later versions.</CardDescription>
         </CardHeader>
       </Card>
+
+      <AccountFormDialog
+        open={Boolean(accountDialog)}
+        mode={accountDialog?.mode ?? "create"}
+        account={accountDialog?.mode === "edit" ? accountDialog.account : undefined}
+        createDefaults={accountDialog?.mode === "create" ? accountDialog.createDefaults : null}
+        onOpenChange={(open) => {
+          if (!open) setAccountDialog(null);
+        }}
+      />
+      <DeleteAccountDialog
+        open={Boolean(accountPendingDelete)}
+        accountName={accountPendingDelete?.name}
+        pending={deleteAccount.isPending}
+        onOpenChange={(open) => {
+          if (!open) setAccountPendingDelete(null);
+        }}
+        onConfirm={() => {
+          if (!accountPendingDelete) return;
+          deleteAccount.mutate(accountPendingDelete.id, {
+            onSuccess: () => {
+              toast.success(`${accountPendingDelete.name} deleted.`);
+              setAccountPendingDelete(null);
+            },
+            onError: (error) => toast.error(errorMessage(error, "Failed to delete account."))
+          });
+        }}
+      />
     </div>
   );
 }
@@ -353,21 +343,6 @@ function DemoError({ error }: { error: unknown }) {
         : errorMessage(error, "Failed to load accounts.")}
     </p>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <Label>{label}</Label>
-      {children}
-    </div>
-  );
-}
-
-function FieldError({ children }: { children?: React.ReactNode }) {
-  if (!children) return null;
-
-  return <p className="text-xs text-destructive">{children}</p>;
 }
 
 function errorMessage(error: unknown, fallback: string) {
