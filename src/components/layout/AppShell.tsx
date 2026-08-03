@@ -55,6 +55,9 @@ export function AppShell() {
   const openS3Page = useCallback(() => {
     startPageTransition(() => setActivePage("s3"));
   }, []);
+  const openSubmitPage = useCallback(() => {
+    startPageTransition(() => setActivePage("submit"));
+  }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
   }, []);
@@ -213,7 +216,7 @@ export function AppShell() {
       case "submit":
         return <SubmitJobPage onOpenLogs={openLogsPage} />;
       case "history":
-        return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} />;
+        return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} onOpenSubmit={openSubmitPage} />;
       case "logs":
         return <LogsPage />;
       case "templates":
@@ -229,7 +232,7 @@ export function AppShell() {
       default:
         return <SubmitJobPage onOpenLogs={openLogsPage} />;
     }
-  }, [activePage, openLogsPage, openS3Page]);
+  }, [activePage, openLogsPage, openS3Page, openSubmitPage]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

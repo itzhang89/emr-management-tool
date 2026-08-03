@@ -102,6 +102,23 @@ vi.mock("@/hooks/useEmr", () => ({
         state: "RUNNING",
         virtualClusterId: "vc-1",
         createdAt: "2026-06-10T00:00:00Z"
+      },
+      {
+        id: "job-failed-no-source",
+        name: "failed-no-source",
+        state: "FAILED",
+        virtualClusterId: "vc-1",
+        createdAt: "2026-06-10T00:01:00Z",
+        describeDetails: {
+          executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+          releaseLabel: "emr-7.2.0-latest",
+          jobDriver: {
+            type: "sparkSubmit",
+            entryPoint: "s3://bucket/app.jar",
+            entryPointArguments: ["--date", "2026-06-10"],
+            sparkSubmitParameters: "--class Main"
+          }
+        }
       }
     ],
     isLoading: false,
@@ -245,6 +262,20 @@ describe("AppShell", () => {
     expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
+  });
+
+  it("opens Submit Job when Resubmit has no sourceRequest", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.click(screen.getByRole("button", { name: /Job History/i }));
+    await screen.findByRole("heading", { name: "Job History" });
+    await user.click(
+      within(screen.getByRole("row", { name: /failed-no-source FAILED/i })).getByRole("button", { name: /Resubmit/i })
+    );
+
+    expect(await screen.findByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
   });
 
   it("opens the shortcuts dialog with the global shortcut in browser mode", async () => {
