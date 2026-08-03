@@ -57,7 +57,7 @@ vi.mock("@/hooks/useEmr", () => ({
 
 let jobs: JobRunSummary[];
 
-function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
+function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () => void; onOpenSubmit?: () => void }) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <JobHistoryPage {...props} />
@@ -167,7 +167,10 @@ describe("JobHistoryPage", () => {
     expect(within(runningRow).getByRole("button", { name: /Logs/i })).toBeInTheDocument();
 
     const failedRow = screen.getByRole("row", { name: /failed-etl FAILED/i });
-    expect(within(failedRow).getByRole("button", { name: /Rerun/i })).toBeInTheDocument();
+    expect(within(failedRow).getByRole("button", { name: /Resubmit/i })).toBeInTheDocument();
+
+    const cancelledRow = screen.getByRole("row", { name: /cancelled-etl CANCELLED/i });
+    expect(within(cancelledRow).getByRole("button", { name: /Resubmit/i })).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText(/search jobs/i), "failed");
     expect(screen.getByText("running-etl")).toBeInTheDocument();
@@ -418,6 +421,95 @@ describe("JobHistoryPage", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("resubmits a failed job with sourceRequest via startJob", async () => {
+    const user = userEvent.setup();
+    renderJobHistoryPage();
+
+    const failedJob = jobs.find((job) => job.id === "job-failed");
+    await user.click(within(screen.getByRole("row", { name: /failed-etl FAILED/i })).getByRole("button", { name: /Resubmit/i }));
+
+    expect(startMutate).toHaveBeenCalledWith(failedJob?.sourceRequest, expect.any(Object));
+  });
+
+  it("opens Submit Source flow when Resubmit has no sourceRequest", async () => {
+    const user = userEvent.setup();
+    const onOpenSubmit = vi.fn();
+    const setPendingSourceSubmit = vi.fn();
+    const originalSetPending = useSessionStore.getState().setPendingSourceSubmit;
+    useSessionStore.setState({ setPendingSourceSubmit });
+
+    jobs = [
+      {
+        id: "job-failed-no-source",
+        name: "failed-no-source",
+        state: "FAILED",
+        virtualClusterId: "vc-1",
+        createdAt: "2026-06-10T00:01:00Z",
+        describeDetails: {
+          executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+          releaseLabel: "emr-7.2.0-latest",
+          jobDriver: {
+            type: "sparkSubmit",
+            entryPoint: "s3://bucket/app.jar",
+            entryPointArguments: ["--date", "2026-06-10"],
+            sparkSubmitParameters: "--class Main"
+          }
+        }
+      }
+    ];
+
+    renderJobHistoryPage({ onOpenSubmit });
+
+    await user.click(screen.getByRole("button", { name: /Resubmit/i }));
+
+    expect(setPendingSourceSubmit).toHaveBeenCalledWith({
+      payload: expect.objectContaining({
+        name: "failed-no-source",
+        virtualClusterId: "vc-1",
+        executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+        releaseLabel: "emr-7.2.0-latest",
+        jobDriver: {
+          sparkSubmitJobDriver: {
+            entryPoint: "s3://bucket/app.jar",
+            entryPointArguments: ["--date", "2026-06-10"],
+            sparkSubmitParameters: "--class Main"
+          }
+        }
+      }),
+      virtualClusterId: "vc-1"
+    });
+    expect(onOpenSubmit).toHaveBeenCalled();
+
+    useSessionStore.setState({ setPendingSourceSubmit: originalSetPending });
+  });
+
+  it("shows unsupported toast when Resubmit describe is sparkSql", async () => {
+    const user = userEvent.setup();
+    jobs = [
+      {
+        id: "job-failed-spark-sql",
+        name: "failed-spark-sql",
+        state: "FAILED",
+        virtualClusterId: "vc-1",
+        createdAt: "2026-06-10T00:01:00Z",
+        describeDetails: {
+          executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+          releaseLabel: "emr-7.2.0-latest",
+          jobDriver: {
+            type: "sparkSql",
+            query: "SELECT 1"
+          }
+        }
+      }
+    ];
+
+    renderJobHistoryPage();
+
+    await user.click(screen.getByRole("button", { name: /Resubmit/i }));
+
+    expect(toastError).toHaveBeenCalledWith("Source Resubmit currently supports sparkSubmit jobs only.");
+  });
+
   it("shows a friendly message when AWS cannot find the searched job id", async () => {
     const user = userEvent.setup();
     describeJobRun.mockRejectedValue({
@@ -457,6 +549,13 @@ function makeJobs(): JobRunSummary[] {
       createdAt: "2026-06-10T00:00:00Z",
       startedAt: "2026-06-10T00:00:30Z",
       finishedAt: "2026-06-10T00:02:00Z"
+    },
+    {
+      id: "job-cancelled",
+      name: "cancelled-etl",
+      state: "CANCELLED",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:00:30Z"
     },
     {
       id: "job-failed",

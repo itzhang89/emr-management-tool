@@ -13,11 +13,13 @@ import {
   useVirtualClusters,
   type JobRunsQuery
 } from "@/hooks/useEmr";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { isLikelyEmrJobRunId } from "@/services/emrJobId";
 import { emrService } from "@/services/emrService";
 import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
 import { JOB_HISTORY_PAGE_SIZE, SUBMISSION_HISTORY_LIMIT } from "@/services/jobHistoryConstants";
 import { formatJobRunDuration } from "@/services/jobRunDisplay";
+import { describeJobToStartJobPayload, isSparkSubmitDescribe } from "@/services/startJobPayload";
 import { useSessionStore } from "@/stores/sessionStore";
 import type { JobRunSummary } from "@/types/domain";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -39,7 +41,8 @@ export function JobRunsPanel({
   submittedOnly = false,
   clusterJobsQuery,
   submissionJobsQuery,
-  onSubmissionStarted
+  onSubmissionStarted,
+  onOpenSubmit
 }: {
   virtualClusterId?: string;
   keyword?: string;
@@ -57,6 +60,7 @@ export function JobRunsPanel({
   clusterJobsQuery?: JobRunsQuery;
   submissionJobsQuery?: JobRunsQuery;
   onSubmissionStarted?: () => void;
+  onOpenSubmit?: () => void;
 }) {
   const [detailJobId, setDetailJobId] = useState<string>();
   const [page, setPage] = useState(1);
@@ -66,6 +70,9 @@ export function JobRunsPanel({
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
   const clusters = useVirtualClusters();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  const setPendingSourceSubmit = useSessionStore((state) => state.setPendingSourceSubmit);
 
   const submittedKeyword = keyword?.trim() || undefined;
   const useExternalClusterQuery = Boolean(clusterJobsQuery && !submittedOnly);
@@ -139,6 +146,35 @@ export function JobRunsPanel({
   useEffect(() => {
     setPage(1);
   }, [keyword, virtualClusterId, submittedOnly]);
+
+  async function handleResubmit(job: JobRunSummary) {
+    if (job.sourceRequest) {
+      startJob.mutate(job.sourceRequest, {
+        onSuccess: () => {
+          toast.success("Resubmit submitted.");
+          onSubmissionStarted?.();
+        },
+        onError: (error) => toast.error(errorMessage(error))
+      });
+      return;
+    }
+
+    try {
+      let detailed = job;
+      if (!job.describeDetails?.jobDriver) {
+        detailed = await emrService.describeJobRun(job.id, job.virtualClusterId, accountId);
+      }
+      if (!isSparkSubmitDescribe(detailed)) {
+        toast.error("Source Resubmit currently supports sparkSubmit jobs only.");
+        return;
+      }
+      const payload = describeJobToStartJobPayload(detailed);
+      setPendingSourceSubmit({ payload, virtualClusterId: detailed.virtualClusterId });
+      onOpenSubmit?.();
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to load job for Resubmit."));
+    }
+  }
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-2", className)}>
@@ -231,27 +267,17 @@ export function JobRunsPanel({
                           Kill
                         </Button>
                       ) : null}
-                      {job.state === "FAILED" ? (
+                      {(job.state === "FAILED" || job.state === "CANCELLED") ? (
                         <Button
                           variant="ghost"
                           size="sm"
                           disabled={startJob.isPending}
                           onClick={() => {
-                            if (!job.sourceRequest) {
-                              toast.error("This failed job has no locally saved submit configuration to rerun.");
-                              return;
-                            }
-                            startJob.mutate(job.sourceRequest, {
-                              onSuccess: () => {
-                                toast.success("Rerun submitted.");
-                                onSubmissionStarted?.();
-                              },
-                              onError: (error) => toast.error(errorMessage(error))
-                            });
+                            void handleResubmit(job);
                           }}
                         >
                           <Play data-icon="inline-start" />
-                          Rerun
+                          Resubmit
                         </Button>
                       ) : null}
                     </div>

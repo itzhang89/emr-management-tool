@@ -14,7 +14,7 @@ import {
   rememberJobHistorySearch
 } from "@/services/jobHistorySearchHistory";
 
-export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpenS3?: () => void }) {
+export function JobHistoryPage({ onOpenLogs, onOpenSubmit }: { onOpenLogs?: () => void; onOpenS3?: () => void; onOpenSubmit?: () => void }) {
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
@@ -91,6 +91,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
         keyword={submittedKeyword}
         autoRefresh={autoRefresh}
         onOpenLogs={onOpenLogs}
+        onOpenSubmit={onOpenSubmit}
         showFindInAws
         searchedJobId={submittedSearch.trim()}
         findInAwsSignal={findInAwsSignal}
