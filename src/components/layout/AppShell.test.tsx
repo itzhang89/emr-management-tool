@@ -284,6 +284,84 @@ describe("AppShell", () => {
     expect(await screen.findByRole("dialog", { name: /Switch AWS Account/i })).toBeInTheDocument();
   });
 
+  it("selects the active account on open and cycles selection with Meta+E", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.keyboard("{Meta>}e{/Meta}");
+    const dialog = await screen.findByRole("dialog", { name: /Switch AWS Account/i });
+
+    expect(within(dialog).getByRole("option", { name: /Test/i })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("option", { name: /Production/i })).toHaveAttribute("aria-selected", "false");
+
+    await user.keyboard("{Meta>}e{/Meta}");
+
+    expect(within(dialog).getByRole("option", { name: /Production/i })).toHaveAttribute("aria-selected", "true");
+    expect(within(dialog).getByRole("option", { name: /Test/i })).toHaveAttribute("aria-selected", "false");
+
+    await user.keyboard("{Meta>}e{/Meta}");
+
+    expect(within(dialog).getByRole("option", { name: /Test/i })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("activates the selected account with Enter", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.keyboard("{Meta>}e{/Meta}");
+    await screen.findByRole("dialog", { name: /Switch AWS Account/i });
+    await user.keyboard("{Meta>}e{/Meta}");
+    await user.keyboard("{Enter}");
+
+    expect(setActiveAccountMutate).toHaveBeenCalledWith("acct-prod", expect.any(Object));
+    expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
+  });
+
+  it("updates selection on single click without switching accounts", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.click(screen.getByRole("button", { name: /Switch AWS account/i }));
+    const dialog = screen.getByRole("dialog", { name: /Switch AWS Account/i });
+
+    await user.click(within(dialog).getByRole("option", { name: /Production/i }));
+
+    expect(within(dialog).getByRole("option", { name: /Production/i })).toHaveAttribute("aria-selected", "true");
+    expect(setActiveAccountMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: /Switch AWS Account/i })).toBeInTheDocument();
+  });
+
+  it("activates an account on double click", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.click(screen.getByRole("button", { name: /Switch AWS account/i }));
+    const dialog = screen.getByRole("dialog", { name: /Switch AWS Account/i });
+
+    await user.dblClick(within(dialog).getByRole("option", { name: /Production/i }));
+
+    expect(setActiveAccountMutate).toHaveBeenCalledWith("acct-prod", expect.any(Object));
+    expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
+  });
+
+  it("closes the account dialog with Escape without switching accounts", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    await user.keyboard("{Meta>}e{/Meta}");
+    expect(await screen.findByRole("dialog", { name: /Switch AWS Account/i })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
+    expect(setActiveAccountMutate).not.toHaveBeenCalled();
+  });
+
   it("navigates pages with number shortcuts", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();

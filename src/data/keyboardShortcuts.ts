@@ -80,7 +80,7 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     id: SHORTCUT_IDS.ACCOUNT_SWITCH,
     category: "account",
     label: "Switch AWS account",
-    description: "Open the account switcher dialog",
+    description: "Open the account switcher, then press again to cycle and Enter to confirm",
     keys: [formatModShortcut("E")]
   },
   ...navigationShortcuts,

@@ -41,11 +41,13 @@ export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [, startPageTransition] = useTransition();
   const accounts = useAwsAccounts();
-  const activeAccount = accounts.data?.find((account) => account.isActive);
+  const accountList = accounts.data ?? [];
+  const activeAccount = accountList.find((account) => account.isActive);
   const setActiveAccount = useSetActiveAwsAccount();
   const openLogsPage = useCallback(() => {
     startPageTransition(() => setActivePage("logs"));
@@ -59,9 +61,54 @@ export function AppShell() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
   }, []);
+  const initializeAccountSelection = useCallback(() => {
+    const activeId = accounts.data?.find((account) => account.isActive)?.id;
+    setSelectedAccountId(activeId ?? accounts.data?.[0]?.id ?? null);
+  }, [accounts.data]);
   const openAccountDialog = useCallback(() => {
+    initializeAccountSelection();
     setAccountDialogOpen(true);
-  }, []);
+  }, [initializeAccountSelection]);
+  const handleAccountDialogOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        initializeAccountSelection();
+      } else {
+        setSelectedAccountId(null);
+      }
+      setAccountDialogOpen(open);
+    },
+    [initializeAccountSelection]
+  );
+  const activateAccount = useCallback(
+    (accountId: string) => {
+      const account = accounts.data?.find((item) => item.id === accountId);
+      if (!account || account.isActive || setActiveAccount.isPending) {
+        setAccountDialogOpen(false);
+        setSelectedAccountId(null);
+        return;
+      }
+
+      setActiveAccount.mutate(accountId, {
+        onSuccess: () => {
+          toast.success(`${account.name} is now active.`);
+          setAccountDialogOpen(false);
+          setSelectedAccountId(null);
+        },
+        onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to set active account.")
+      });
+    },
+    [accounts.data, setActiveAccount]
+  );
+  const cycleAccountSelection = useCallback(() => {
+    if (accountList.length === 0) return;
+
+    setSelectedAccountId((currentId) => {
+      const currentIndex = accountList.findIndex((account) => account.id === currentId);
+      const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % accountList.length;
+      return accountList[nextIndex]?.id ?? null;
+    });
+  }, [accountList]);
   const sidebarToggleShortcut = formatModShortcut("/");
   const accountSwitchShortcut = formatModShortcut("E");
 
@@ -98,7 +145,19 @@ export function AppShell() {
 
       if (isAccountSwitchKey(event)) {
         event.preventDefault();
-        openAccountDialog();
+        if (accountDialogOpen) {
+          cycleAccountSelection();
+        } else {
+          openAccountDialog();
+        }
+        return;
+      }
+
+      if (accountDialogOpen && event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        if (selectedAccountId) {
+          activateAccount(selectedAccountId);
+        }
         return;
       }
 
@@ -135,7 +194,17 @@ export function AppShell() {
 
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [accountDialogOpen, activePage, navigateToPage, openAccountDialog, shortcutsDialogOpen, toggleSidebar]);
+  }, [
+    accountDialogOpen,
+    activateAccount,
+    activePage,
+    cycleAccountSelection,
+    navigateToPage,
+    openAccountDialog,
+    selectedAccountId,
+    shortcutsDialogOpen,
+    toggleSidebar
+  ]);
 
   const activePageContent = useMemo(() => {
     switch (activePage) {
@@ -239,13 +308,13 @@ export function AppShell() {
           </Suspense>
         </main>
       </div>
-      <Dialog open={accountDialogOpen} onOpenChange={setAccountDialogOpen}>
+      <Dialog open={accountDialogOpen} onOpenChange={handleAccountDialogOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Switch AWS Account</DialogTitle>
             <DialogDescription>Choose the active AWS account used by EMR, CloudWatch, and S3.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-3" role="listbox" aria-label="AWS accounts">
             {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
             {accounts.error ? <p className="text-sm text-destructive">Failed to load AWS accounts.</p> : null}
             {accounts.data?.length === 0 ? (
@@ -253,39 +322,48 @@ export function AppShell() {
                 No AWS accounts are configured yet. Open Settings to add one.
               </p>
             ) : null}
-            {accounts.data?.map((account) => (
-              <div key={account.id} className="flex items-center justify-between gap-3 rounded-lg border p-4">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate font-medium">{account.name}</p>
-                    {account.isActive ? <Badge>Active</Badge> : null}
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {account.region} · {account.accessKeyIdMasked}
-                    {account.identity ? ` · ${account.identity.account}` : ""}
-                  </p>
-                  {account.identity ? <p className="truncate text-xs text-muted-foreground">{account.identity.arn}</p> : null}
-                </div>
-                <Button
-                  type="button"
-                  variant={account.isActive ? "secondary" : "outline"}
-                  disabled={account.isActive || setActiveAccount.isPending}
-                  onClick={() => {
-                    setActiveAccount.mutate(account.id, {
-                      onSuccess: () => {
-                        toast.success(`${account.name} is now active.`);
-                        setAccountDialogOpen(false);
-                      },
-                      onError: (error) =>
-                        toast.error(error instanceof Error ? error.message : "Failed to set active account.")
-                    });
-                  }}
+            {accounts.data?.map((account) => {
+              const selected = account.id === selectedAccountId;
+              return (
+                <div
+                  key={account.id}
+                  role="option"
+                  aria-selected={selected}
+                  aria-label={account.name}
+                  tabIndex={-1}
+                  className={cn(
+                    "flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-4 transition-colors",
+                    selected ? "border-primary bg-accent" : "hover:bg-secondary/40"
+                  )}
+                  onClick={() => setSelectedAccountId(account.id)}
+                  onDoubleClick={() => activateAccount(account.id)}
                 >
-                  <CheckCircle2 data-icon="inline-start" />
-                  {account.isActive ? "Active" : "Use"}
-                </Button>
-              </div>
-            ))}
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate font-medium">{account.name}</p>
+                      {account.isActive ? <Badge>Active</Badge> : null}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {account.region} · {account.accessKeyIdMasked}
+                      {account.identity ? ` · ${account.identity.account}` : ""}
+                    </p>
+                    {account.identity ? <p className="truncate text-xs text-muted-foreground">{account.identity.arn}</p> : null}
+                  </div>
+                  <Button
+                    type="button"
+                    variant={account.isActive ? "secondary" : "outline"}
+                    disabled={account.isActive || setActiveAccount.isPending}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      activateAccount(account.id);
+                    }}
+                  >
+                    <CheckCircle2 data-icon="inline-start" />
+                    {account.isActive ? "Active" : "Use"}
+                  </Button>
+                </div>
+              );
+            })}
           </div>
         </DialogContent>
       </Dialog>
