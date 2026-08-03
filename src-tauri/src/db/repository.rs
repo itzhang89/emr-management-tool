@@ -237,7 +237,6 @@ pub async fn list_job_history(
              or lower(id) like ?4
              or lower(json_extract(payload, '$.name')) like ?4
              or lower(json_extract(payload, '$.state')) like ?4
-             or lower(payload) like ?4
            )
          order by created_at desc",
     )
@@ -657,6 +656,31 @@ mod tests {
         );
         assert_eq!(
             by_id.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            vec!["job-running"]
+        );
+
+        // "running" must not match COMPLETED jobs just because the word appears in payload JSON.
+        upsert_job_history(
+            &pool,
+            &job(
+                "job-completed",
+                "nightly-etl",
+                "COMPLETED",
+                "acct-1",
+                "vc-1",
+                &Utc::now().to_rfc3339(),
+            ),
+        )
+        .await
+        .expect("insert completed job");
+        let by_running = list_job_history(&pool, Some("acct-1"), Some("vc-1"), Some("running"))
+            .await
+            .expect("search running");
+        assert_eq!(
+            by_running
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["job-running"]
         );
     }

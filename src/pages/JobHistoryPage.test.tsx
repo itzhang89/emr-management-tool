@@ -494,6 +494,6 @@ function filterJobs(sourceJobs: JobRunSummary[], keyword?: string) {
   const normalized = keyword?.trim().toLowerCase();
   if (!normalized) return sourceJobs;
   return sourceJobs.filter((job) =>
-    [job.name, job.id, job.state, JSON.stringify(job)].some((value) => value.toLowerCase().includes(normalized))
+    [job.name, job.id, job.state].some((value) => value.toLowerCase().includes(normalized))
   );
 }

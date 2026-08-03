@@ -57,7 +57,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
               onChange={setSearchInput}
               onSubmit={submitLocalSearch}
               recentSearches={recentSearches}
-              placeholder="Search jobs by name, id, state, or keyword"
+              placeholder="Search jobs by name, id, or state"
               listLabel="Recent job searches"
             />
             <JobAutoRefreshToggle
