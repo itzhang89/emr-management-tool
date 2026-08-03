@@ -17,6 +17,8 @@ import {
 import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components/emr/VirtualClusterSelect";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -24,6 +26,7 @@ import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
 import { useSubmitJobSubmissionHistory } from "@/hooks/useSubmitJobAutoRefresh";
 import {
+  useCreateJobConfigTemplate,
   useJobConfigTemplates,
   useSubmitUser
 } from "@/hooks/useJobConfigTemplates";
@@ -71,6 +74,7 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     submissionJobs
   } = useSubmitJobSubmissionHistory(virtualClusterId);
   const jobConfigTemplates = useJobConfigTemplates();
+  const createTemplate = useCreateJobConfigTemplate();
   const resourceTemplates = useTemplates();
   const submitUserQuery = useSubmitUser();
 
@@ -83,6 +87,9 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const [sourceJson, setSourceJson] = useState("{}");
   const [sourceOrigin, setSourceOrigin] = useState<"template" | "external">("external");
   const [sourceSwitchConfirmOpen, setSourceSwitchConfirmOpen] = useState(false);
+  const [createTemplateDialogOpen, setCreateTemplateDialogOpen] = useState(false);
+  const [createTemplateName, setCreateTemplateName] = useState("");
+  const [createTemplateDescription, setCreateTemplateDescription] = useState("");
   const previewOpenRef = useRef(previewOpen);
   const runtimeSyncRef = useRef<{ virtualClusterId: string; resourceTemplateId: string } | null>(null);
   previewOpenRef.current = previewOpen;
@@ -196,7 +203,11 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const previewPayload = useMemo(() => {
     if (cloneRequest) return cloneRequest;
     if (!resolvedPayload) return undefined;
-    return applyResourceOverride(resolvedPayload, selectedResources);
+    try {
+      return applyResourceOverride(resolvedPayload, selectedResources);
+    } catch {
+      return undefined;
+    }
   }, [cloneRequest, resolvedPayload, selectedResources]);
 
   const submit = useCallback(async () => {
@@ -324,6 +335,56 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     setSourceOrigin("external");
     setMode("template");
   }, []);
+
+  const openCreateTemplateDialog = useCallback(() => {
+    setSourceSwitchConfirmOpen(false);
+    setCreateTemplateName("");
+    setCreateTemplateDescription("");
+    setCreateTemplateDialogOpen(true);
+  }, []);
+
+  const saveTemplateFromSource = useCallback(async () => {
+    const name = createTemplateName.trim();
+    if (!name) {
+      toast.error("Template name is required.");
+      return;
+    }
+    const parsed = parseSourceJobPayload(sourceJson);
+    if (!parsed.ok) {
+      toast.error(parsed.error);
+      return;
+    }
+    const now = new Date().toISOString();
+    const templateId = crypto.randomUUID();
+    const description = createTemplateDescription.trim();
+    try {
+      await createTemplate.mutateAsync({
+        id: templateId,
+        name,
+        description: description || undefined,
+        payloadTemplate: sourceJson,
+        customVariables: [],
+        defaultResourceTemplateId: resourceTemplateId,
+        builtIn: false,
+        createdAt: now,
+        updatedAt: now
+      });
+      setSelectedTemplateId(templateId);
+      setMode("template");
+      setSourceOrigin("template");
+      setCreateTemplateDialogOpen(false);
+      setSourceSwitchConfirmOpen(false);
+      toast.success("Template created from source JSON.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to create template."));
+    }
+  }, [
+    createTemplate,
+    createTemplateDescription,
+    createTemplateName,
+    resourceTemplateId,
+    sourceJson
+  ]);
 
   const openPreview = useCallback(() => {
     if (!previewPayload) return;
@@ -524,11 +585,50 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
             <Button type="button" variant="outline" onClick={() => setSourceSwitchConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="outline" disabled>
+            <Button type="button" variant="outline" onClick={openCreateTemplateDialog}>
               Create template and switch
             </Button>
             <Button type="button" onClick={discardSourceAndSwitchToTemplate}>
               Discard and switch
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={createTemplateDialogOpen} onOpenChange={setCreateTemplateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create template from source</DialogTitle>
+            <DialogDescription>
+              Save the current source JSON as a job config template, then switch to Template submit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Field label="Name">
+              <Input
+                value={createTemplateName}
+                onChange={(event) => setCreateTemplateName(event.target.value)}
+                placeholder="Template name"
+              />
+            </Field>
+            <Field label="Description">
+              <Textarea
+                value={createTemplateDescription}
+                onChange={(event) => setCreateTemplateDescription(event.target.value)}
+                placeholder="Optional description"
+                rows={3}
+              />
+            </Field>
+          </div>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button type="button" variant="outline" onClick={() => setCreateTemplateDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!createTemplateName.trim() || createTemplate.isPending}
+              onClick={() => void saveTemplateFromSource()}
+            >
+              {createTemplate.isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>

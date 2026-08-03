@@ -8,12 +8,38 @@ import { formatSourceJobPayload } from "@/services/startJobPayload";
 import { writeSubmitJobFormCache, writeSubmitJobLastTemplate } from "@/services/submitJobFormStorage";
 import type { StartJobPayloadJson } from "@/services/startJobPayload";
 
-const mocks = vi.hoisted(() => ({
-  startJobRun: vi.fn(),
-  toastError: vi.fn(),
-  toastSuccess: vi.fn(),
-  useSubmissionHistory: vi.fn(),
-  sessionState: {
+const mocks = vi.hoisted(() => {
+  const defaultJobConfigTemplate = {
+    id: "daily-etl",
+    name: "Daily ETL Jar",
+    payloadTemplate: `{
+          "name": "daily-\${submitUser}",
+          "virtualClusterId": "\${virtualClusterId}",
+          "executionRoleArn": "arn:aws:iam::123456789012:role/EMR",
+          "releaseLabel": "emr-7.2.0-latest",
+          "jobDriver": {
+            "sparkSubmitJobDriver": {
+              "entryPoint": "s3://bucket/app.jar",
+              "entryPointArguments": [],
+              "sparkSubmitParameters": "--class com.example.Main"
+            }
+          }
+        }`,
+    customVariables: [{ name: "ENV", type: "text", description: "Runtime environment name" }],
+    defaultResourceTemplateId: "tiny",
+    createdAt: "",
+    updatedAt: ""
+  };
+
+  return {
+    defaultJobConfigTemplate,
+    startJobRun: vi.fn(),
+    createJobConfigTemplate: vi.fn(),
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+    useSubmissionHistory: vi.fn(),
+    jobConfigTemplates: [defaultJobConfigTemplate],
+    sessionState: {
     selectedVirtualClusterId: "vc-1",
     setSelectedVirtualClusterId: vi.fn((id?: string) => {
       mocks.sessionState.selectedVirtualClusterId = id;
@@ -25,7 +51,8 @@ const mocks = vi.hoisted(() => ({
       mocks.sessionState.pendingSourceSubmit = value;
     })
   }
-}));
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -87,29 +114,11 @@ vi.mock("@/hooks/useTemplates", () => ({
 
 vi.mock("@/hooks/useJobConfigTemplates", () => ({
   useJobConfigTemplates: () => ({
-    data: [
-      {
-        id: "daily-etl",
-        name: "Daily ETL Jar",
-        payloadTemplate: `{
-          "name": "daily-\${submitUser}",
-          "virtualClusterId": "\${virtualClusterId}",
-          "executionRoleArn": "arn:aws:iam::123456789012:role/EMR",
-          "releaseLabel": "emr-7.2.0-latest",
-          "jobDriver": {
-            "sparkSubmitJobDriver": {
-              "entryPoint": "s3://bucket/app.jar",
-              "entryPointArguments": [],
-              "sparkSubmitParameters": "--class com.example.Main"
-            }
-          }
-        }`,
-        customVariables: [{ name: "ENV", type: "text", description: "Runtime environment name" }],
-        defaultResourceTemplateId: "tiny",
-        createdAt: "",
-        updatedAt: ""
-      }
-    ]
+    data: mocks.jobConfigTemplates
+  }),
+  useCreateJobConfigTemplate: () => ({
+    mutateAsync: mocks.createJobConfigTemplate,
+    isPending: false
   }),
   useSubmitUser: () => ({ data: "tester" })
 }));
@@ -135,6 +144,11 @@ describe("SubmitJobPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mocks.jobConfigTemplates = [{ ...mocks.defaultJobConfigTemplate }];
+    mocks.createJobConfigTemplate.mockImplementation(async (template) => {
+      mocks.jobConfigTemplates.push(template);
+      return mocks.jobConfigTemplates;
+    });
     mocks.sessionState.selectedVirtualClusterId = "vc-1";
     mocks.sessionState.clonedJobRequest = undefined;
     mocks.sessionState.pendingSourceSubmit = undefined;
@@ -311,6 +325,86 @@ describe("SubmitJobPage", () => {
       expect(mocks.sessionState.setPendingSourceSubmit).toHaveBeenCalledWith(undefined);
       expect(mocks.sessionState.setSelectedVirtualClusterId).toHaveBeenCalledWith("vc-pending");
       expect(mocks.toastSuccess).toHaveBeenCalledWith("Loaded job configuration into Source submit.");
+    });
+
+    it("prompts before leaving external Source mode for Template", async () => {
+      const user = userEvent.setup();
+      mocks.sessionState.pendingSourceSubmit = {
+        payload: {
+          name: "external-job",
+          virtualClusterId: "vc-pending",
+          executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+          releaseLabel: "emr-7.2.0-latest",
+          jobDriver: {
+            sparkSubmitJobDriver: {
+              entryPoint: "s3://bucket/app.jar",
+              entryPointArguments: [],
+              sparkSubmitParameters: ""
+            }
+          }
+        },
+        virtualClusterId: "vc-pending"
+      };
+
+      renderPage();
+
+      await waitFor(() => {
+        expect(screen.getByRole("textbox", { name: /payload json/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("tab", { name: /Template/i }));
+
+      expect(screen.getByRole("button", { name: /Discard and switch/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Create template/i })).toBeInTheDocument();
+    });
+
+    it("creates a template from source JSON and switches to Template mode", async () => {
+      const user = userEvent.setup();
+      const pendingPayload: StartJobPayloadJson = {
+        name: "external-job",
+        virtualClusterId: "vc-pending",
+        executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+        releaseLabel: "emr-7.2.0-latest",
+        jobDriver: {
+          sparkSubmitJobDriver: {
+            entryPoint: "s3://bucket/app.jar",
+            entryPointArguments: [],
+            sparkSubmitParameters: ""
+          }
+        }
+      };
+      mocks.sessionState.pendingSourceSubmit = {
+        payload: pendingPayload,
+        virtualClusterId: "vc-pending"
+      };
+
+      renderPage();
+
+      await waitFor(() => {
+        expect(screen.getByRole("textbox", { name: /payload json/i })).toHaveValue(
+          formatSourceJobPayload(pendingPayload)
+        );
+      });
+
+      await user.click(screen.getByRole("tab", { name: /Template/i }));
+      await user.click(screen.getByRole("button", { name: /Create template and switch/i }));
+      await user.type(screen.getByPlaceholderText("Template name"), "From Source");
+      await user.click(screen.getByRole("button", { name: /^Save$/i }));
+
+      await waitFor(() => {
+        expect(mocks.createJobConfigTemplate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "From Source",
+            customVariables: [],
+            defaultResourceTemplateId: "tiny",
+            payloadTemplate: formatSourceJobPayload(pendingPayload)
+          })
+        );
+      });
+
+      expect(screen.queryByRole("textbox", { name: /payload json/i })).not.toBeInTheDocument();
+      expect(screen.getByText("From Source")).toBeInTheDocument();
+      expect(mocks.toastSuccess).toHaveBeenCalledWith("Template created from source JSON.");
     });
 
     it("discards external source JSON when confirming switch back to Template", async () => {
