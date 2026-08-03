@@ -1,32 +1,58 @@
 import { Search } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-export function RecentSearchInput({
-  value,
-  onChange,
-  onSubmit,
-  recentSearches,
-  placeholder,
-  title,
-  className,
-  inputClassName,
-  listLabel = "Recent searches"
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: (query: string) => void;
-  recentSearches: string[];
-  placeholder?: string;
-  title?: string;
-  className?: string;
-  inputClassName?: string;
-  listLabel?: string;
-}) {
+export type RecentSearchInputHandle = {
+  focus: () => void;
+};
+
+export const RecentSearchInput = forwardRef<
+  RecentSearchInputHandle,
+  {
+    value: string;
+    onChange: (value: string) => void;
+    onSubmit: (query: string) => void;
+    recentSearches: string[];
+    placeholder?: string;
+    title?: string;
+    className?: string;
+    inputClassName?: string;
+    listLabel?: string;
+  }
+>(function RecentSearchInput(
+  {
+    value,
+    onChange,
+    onSubmit,
+    recentSearches,
+    placeholder,
+    title,
+    className,
+    inputClassName,
+    listLabel = "Recent searches"
+  },
+  ref
+) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const showRecentSearches = historyOpen && recentSearches.length > 0;
+
+  const openRecentSearches = () => {
+    if (recentSearches.length === 0) return;
+    setHistoryOpen(true);
+  };
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+      openRecentSearches();
+    }
+  }));
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -39,11 +65,6 @@ export function RecentSearchInput({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [historyOpen]);
 
-  const openRecentSearches = () => {
-    if (recentSearches.length === 0) return;
-    setHistoryOpen(true);
-  };
-
   const submit = (query: string) => {
     onSubmit(query);
     setHistoryOpen(false);
@@ -53,6 +74,7 @@ export function RecentSearchInput({
     <div ref={containerRef} className={cn("relative w-[16rem] min-w-[16rem]", className)}>
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       <Input
+        ref={inputRef}
         className={cn("h-9 pl-9", inputClassName)}
         placeholder={placeholder}
         title={title}
@@ -95,4 +117,4 @@ export function RecentSearchInput({
       ) : null}
     </div>
   );
-}
+});

@@ -14,6 +14,8 @@ export const SHORTCUT_IDS = {
   GLUE_CYCLE_RESULT_TAB_NEXT: "glue-cycle-result-tab-next",
   LOGS_TREE_TOGGLE: "logs-tree-toggle",
   LOGS_FIND: "logs-find",
+  LOGS_FOCUS_JOB_ID: "logs-focus-job-id",
+  HISTORY_FOCUS_SEARCH: "history-focus-search",
   S3_LIST_MOVE: "s3-list-move",
   S3_LIST_ENTER: "s3-list-enter",
   S3_FOCUS_EDITOR: "s3-focus-editor",
@@ -27,7 +29,15 @@ export type NavigationShortcutId = `nav-${PageId}`;
 
 export type ShortcutId = (typeof SHORTCUT_IDS)[keyof typeof SHORTCUT_IDS] | NavigationShortcutId;
 
-export type ShortcutCategoryId = "global" | "navigation" | "account" | "glue" | "logs" | "s3" | "submit";
+export type ShortcutCategoryId =
+  | "global"
+  | "navigation"
+  | "account"
+  | "glue"
+  | "history"
+  | "logs"
+  | "s3"
+  | "submit";
 
 export interface ShortcutCategory {
   id: ShortcutCategoryId;
@@ -48,6 +58,7 @@ export const shortcutCategories: ShortcutCategory[] = [
   { id: "navigation", label: "Navigation", description: "Jump between primary pages" },
   { id: "account", label: "Account", description: "AWS account switching" },
   { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL" },
+  { id: "history", label: "Job History", description: "Search and refresh job runs" },
   { id: "logs", label: "Job Logs", description: "Job log tree and viewer" },
   { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
   { id: "submit", label: "Submit Job", description: "Template-driven job submission" }
@@ -106,6 +117,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     keys: [formatModShortcut("\\")]
   },
   {
+    id: SHORTCUT_IDS.HISTORY_FOCUS_SEARCH,
+    category: "history",
+    label: "Focus job search",
+    description: "Focus the Job History search box",
+    keys: [formatModShortcut("F")]
+  },
+  {
     id: SHORTCUT_IDS.LOGS_TREE_TOGGLE,
     category: "logs",
     label: "Toggle log files panel",
@@ -113,10 +131,17 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     keys: [formatModShortcut("\\")]
   },
   {
+    id: SHORTCUT_IDS.LOGS_FOCUS_JOB_ID,
+    category: "logs",
+    label: "Focus job id",
+    description: "Focus the job id search box when no log viewer is open",
+    keys: [formatModShortcut("F")]
+  },
+  {
     id: SHORTCUT_IDS.LOGS_FIND,
     category: "logs",
     label: "Find in log",
-    description: "Open or close the find bar in the log viewer",
+    description: "Open or close the find bar when a log is open (same key focuses job id when closed)",
     keys: [formatModShortcut("F")]
   },
   {

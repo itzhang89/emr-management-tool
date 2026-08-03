@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { LogWorkspace } from "@/components/logs/LogWorkspace";
 import { LogsEmptyState } from "@/components/logs/LogsEmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { RecentSearchInput } from "@/components/search/RecentSearchInput";
+import { RecentSearchInput, type RecentSearchInputHandle } from "@/components/search/RecentSearchInput";
 import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
+import { isFocusSearchKey } from "@/lib/keyboardShortcut";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
 import { buildEmrLogTree, pickDefaultLogItem } from "@/services/emrLogTree";
 import { saveTextFile } from "@/services/fileDownload";
@@ -36,6 +37,7 @@ export function LogsPage() {
   const clusters = useVirtualClusters();
   const [jobIdInput, setJobIdInput] = useState(selectedJobId ?? "");
   const [recentJobIdSearches, setRecentJobIdSearches] = useState(() => readLogsJobIdSearchHistory());
+  const jobIdInputRef = useRef<RecentSearchInputHandle>(null);
   const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? effectiveVirtualClusterId);
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -102,6 +104,17 @@ export function LogsPage() {
 
   const showViewer = Boolean(selectedJobId && hasDestinations && !describedJob.isLoading && !describedJob.error);
 
+  useEffect(() => {
+    if (showViewer) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isFocusSearchKey(event)) return;
+      event.preventDefault();
+      jobIdInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showViewer]);
+
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
       <PageHeader
@@ -109,6 +122,7 @@ export function LogsPage() {
         actions={
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <RecentSearchInput
+              ref={jobIdInputRef}
               value={jobIdInput}
               onChange={setJobIdInput}
               onSubmit={submitJobId}

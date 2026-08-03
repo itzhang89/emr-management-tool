@@ -305,20 +305,32 @@ describe("JobHistoryPage", () => {
     expect(screen.getByText(/No job runs found yet/i)).toBeInTheDocument();
   });
 
-  it("enables 5 second auto refresh by default and allows turning it off", async () => {
+  it("enables 15 second auto refresh by default and allows turning it off", async () => {
     const user = userEvent.setup();
     localStorage.removeItem("emr-eks:job-history-auto-refresh");
 
     renderJobHistoryPage();
 
     expect(useJobRuns).toHaveBeenCalledWith("vc-1", true, undefined);
-    expect(screen.getByText("5s")).toBeInTheDocument();
-    expect(screen.queryByText("Auto refresh (5s)")).not.toBeInTheDocument();
+    expect(screen.getByText("15s")).toBeInTheDocument();
+    expect(screen.queryByText("Auto refresh (15s)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: /Auto refresh job history/i }));
 
     expect(useJobRuns).toHaveBeenCalledWith("vc-1", false, undefined);
     expect(window.localStorage.getItem("emr-eks:job-history-auto-refresh")).toBe("false");
+  });
+
+  it("focuses the job search input with Mod+F", async () => {
+    const user = userEvent.setup();
+    renderJobHistoryPage();
+
+    const input = screen.getByPlaceholderText(/Search jobs by name, id, or state/i);
+    expect(input).not.toHaveFocus();
+
+    await user.keyboard("{Meta>}f{/Meta}");
+
+    expect(input).toHaveFocus();
   });
 
   it("opens logs with only the job context and lets Logs resolve destinations", async () => {

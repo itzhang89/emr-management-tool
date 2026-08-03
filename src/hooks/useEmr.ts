@@ -1,15 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { JobRunSummary, ListVirtualClustersRequest, StartJobRunRequest } from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import { formatAppError } from "@/services/appErrorMessage";
+import { formatAppError, isAwsThrottleError } from "@/services/appErrorMessage";
 import { emrService } from "@/services/emrService";
-import { JOB_HISTORY_REFRESH_INTERVAL_MS } from "@/services/jobHistoryConstants";
+import {
+  AWS_THROTTLE_PAUSE_MS,
+  JOB_HISTORY_REFRESH_INTERVAL_MS
+} from "@/services/jobHistoryConstants";
 
 function useActiveAccountId() {
   const activeAccount = useActiveAwsAccount();
   return activeAccount.data?.id;
+}
+
+function noteThrottlePause(throttleUntilRef: { current: number }, error: unknown, toastId: string) {
+  if (!isAwsThrottleError(error)) return false;
+  throttleUntilRef.current = Date.now() + AWS_THROTTLE_PAUSE_MS;
+  toast.error(formatAppError(error, "AWS rate limit reached. Pausing auto-refresh briefly."), {
+    id: toastId
+  });
+  return true;
 }
 
 export function useVirtualClusters(request: ListVirtualClustersRequest = {}) {
@@ -36,6 +48,7 @@ export function useJobRuns(
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
   const normalizedKeyword = keyword?.trim() || undefined;
   const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const throttleUntilRef = useRef(0);
 
   const query = useQuery({
     queryKey: ["job-runs", accountId, normalizedVirtualClusterId, normalizedKeyword, createdAfterDays],
@@ -55,9 +68,30 @@ export function useJobRuns(
     }
 
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+
+    const scheduleNext = () => {
+      if (!autoRefresh || cancelled) return;
+      if (timeoutId) clearTimeout(timeoutId);
+      const remainingThrottle = throttleUntilRef.current - Date.now();
+      const waitMs =
+        remainingThrottle > 0
+          ? Math.max(remainingThrottle, JOB_HISTORY_REFRESH_INTERVAL_MS)
+          : JOB_HISTORY_REFRESH_INTERVAL_MS;
+      timeoutId = setTimeout(() => {
+        void syncFromAws();
+      }, waitMs);
+    };
 
     const syncFromAws = async () => {
+      if (cancelled || inFlight) return;
+      if (Date.now() < throttleUntilRef.current) {
+        scheduleNext();
+        return;
+      }
+
+      inFlight = true;
       setBackgroundSyncing(true);
       try {
         await emrService.syncJobRuns(normalizedVirtualClusterId, accountId, createdAfterDays);
@@ -68,25 +102,29 @@ export function useJobRuns(
         }
       } catch (error) {
         if (!cancelled) {
-          toast.error(formatAppError(error, "Failed to sync job runs from AWS."), {
-            id: `job-runs-sync:${accountId}:${normalizedVirtualClusterId}`
-          });
+          const throttled = noteThrottlePause(
+            throttleUntilRef,
+            error,
+            `job-runs-sync-throttle:${accountId}:${normalizedVirtualClusterId}`
+          );
+          if (!throttled) {
+            toast.error(formatAppError(error, "Failed to sync job runs from AWS."), {
+              id: `job-runs-sync:${accountId}:${normalizedVirtualClusterId}`
+            });
+          }
         }
       } finally {
+        inFlight = false;
         if (!cancelled) setBackgroundSyncing(false);
+        scheduleNext();
       }
     };
 
     void syncFromAws();
-    if (autoRefresh) {
-      intervalId = setInterval(() => {
-        void syncFromAws();
-      }, JOB_HISTORY_REFRESH_INTERVAL_MS);
-    }
 
     return () => {
       cancelled = true;
-      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [
     accountId,
@@ -107,13 +145,31 @@ export function useJobRuns(
 export function useSubmissionHistory(virtualClusterId?: string, autoRefresh = false, enabled = true) {
   const accountId = useActiveAccountId();
   const normalizedVirtualClusterId = virtualClusterId?.trim() || undefined;
+  const throttleUntilRef = useRef(0);
+
   return useQuery({
     queryKey: ["submission-history", accountId, normalizedVirtualClusterId],
-    queryFn: () => emrService.listSubmissionHistory(normalizedVirtualClusterId, accountId),
+    queryFn: async () => {
+      try {
+        return await emrService.listSubmissionHistory(normalizedVirtualClusterId, accountId);
+      } catch (error) {
+        noteThrottlePause(
+          throttleUntilRef,
+          error,
+          `submission-history-throttle:${accountId}:${normalizedVirtualClusterId}`
+        );
+        throw error;
+      }
+    },
     enabled: enabled && Boolean(accountId && normalizedVirtualClusterId),
     staleTime: autoRefresh ? 0 : undefined,
     structuralSharing: !autoRefresh,
-    refetchInterval: autoRefresh && enabled ? JOB_HISTORY_REFRESH_INTERVAL_MS : false
+    refetchInterval: () => {
+      if (!autoRefresh || !enabled) return false;
+      const throttleWait = throttleUntilRef.current - Date.now();
+      if (throttleWait > 0) return throttleWait;
+      return JOB_HISTORY_REFRESH_INTERVAL_MS;
+    }
   });
 }
 

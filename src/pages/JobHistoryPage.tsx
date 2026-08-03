@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
-import { RecentSearchInput } from "@/components/search/RecentSearchInput";
+import { useEffect, useRef, useState } from "react";
+import { RecentSearchInput, type RecentSearchInputHandle } from "@/components/search/RecentSearchInput";
 import { JobAutoRefreshToggle } from "@/components/emr/JobAutoRefreshToggle";
 import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useJobRuns } from "@/hooks/useEmr";
 import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
+import { isFocusSearchKey } from "@/lib/keyboardShortcut";
 import { isLikelyEmrJobRunId, normalizeEmrJobRunId } from "@/services/emrJobId";
 import { JOB_HISTORY_REFRESH_INTERVAL_SECONDS } from "@/services/jobHistoryConstants";
 import {
@@ -19,6 +20,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [findInAwsSignal, setFindInAwsSignal] = useState(0);
   const [recentSearches, setRecentSearches] = useState(() => readJobHistorySearchHistory());
+  const searchInputRef = useRef<RecentSearchInputHandle>(null);
   const submittedKeyword = submittedSearch.trim() || undefined;
   const { autoRefresh, setAutoRefresh, refreshCountdown, setRefreshCountdown } = useJobHistoryAutoRefresh();
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
@@ -27,6 +29,16 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
     if (!autoRefresh) return;
     setRefreshCountdown(JOB_HISTORY_REFRESH_INTERVAL_SECONDS);
   }, [autoRefresh, jobs.dataUpdatedAt, setRefreshCountdown]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isFocusSearchKey(event)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const submitLocalSearch = (rawQuery: string) => {
     const original = rawQuery.trim();
@@ -53,6 +65,7 @@ export function JobHistoryPage({ onOpenLogs }: { onOpenLogs?: () => void; onOpen
         actions={
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <RecentSearchInput
+              ref={searchInputRef}
               value={searchInput}
               onChange={setSearchInput}
               onSubmit={submitLocalSearch}

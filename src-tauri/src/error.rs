@@ -71,13 +71,16 @@ impl AppError {
             .or_else(|| error.meta().extra("request_id"))
             .map(str::to_string);
 
+        let retryable = is_retryable_aws_code(&code)
+            || message.to_ascii_lowercase().contains("too many requests");
+
         Self {
             kind: "aws".to_string(),
             service: Some(service.to_string()),
             code,
             message,
             request_id,
-            retryable: false,
+            retryable,
             account_id,
         }
     }
@@ -151,6 +154,18 @@ fn humanize_aws_error(
         "response error" => format!("Received an invalid response from AWS {service}."),
         display => format!("{display} ({service})"),
     }
+}
+
+fn is_retryable_aws_code(code: &str) -> bool {
+    matches!(
+        code,
+        "Throttling"
+            | "ThrottlingException"
+            | "TooManyRequestsException"
+            | "RequestLimitExceeded"
+            | "SlowDown"
+            | "ProvisionedThroughputExceededException"
+    )
 }
 
 fn message_for_aws_code(service: &str, code: &str) -> Option<String> {
@@ -240,5 +255,28 @@ mod tests {
 
         assert_eq!(error.code, "AccessDenied");
         assert!(error.message.contains("Access denied for S3"));
+    }
+
+    #[test]
+    fn aws_throttle_errors_are_marked_retryable() {
+        let metadata = ErrorMetadata::builder()
+            .code("ThrottlingException")
+            .message("Too Many Requests")
+            .build();
+        let error = AppError::aws_sdk("emr-containers", metadata);
+
+        assert_eq!(error.code, "ThrottlingException");
+        assert!(error.retryable);
+        assert_eq!(error.message, "Too Many Requests");
+    }
+
+    #[test]
+    fn aws_too_many_requests_message_is_retryable_without_known_code() {
+        let metadata = ErrorMetadata::builder()
+            .message("Too Many Requests")
+            .build();
+        let error = AppError::aws_sdk("emr-containers", metadata);
+
+        assert!(error.retryable);
     }
 }

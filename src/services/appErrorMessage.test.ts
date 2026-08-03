@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatAppError, formatS3BrowserError } from "./appErrorMessage";
+import { formatAppError, formatS3BrowserError, isAwsThrottleError } from "./appErrorMessage";
 
 describe("formatAppError", () => {
   it("returns the AWS error message when it is specific", () => {
@@ -79,5 +79,38 @@ describe("formatS3BrowserError", () => {
     ).toBe(
       "Access denied when listing objects in s3://logs-bucket/. Grant s3:ListBucket to this account in IAM."
     );
+  });
+});
+
+describe("isAwsThrottleError", () => {
+  it("detects retryable throttle errors", () => {
+    expect(
+      isAwsThrottleError({
+        kind: "aws",
+        code: "ThrottlingException",
+        message: "Too Many Requests",
+        retryable: true
+      })
+    ).toBe(true);
+  });
+
+  it("detects Too Many Requests messages without a typed code", () => {
+    expect(
+      isAwsThrottleError({
+        kind: "aws",
+        code: "AwsSdkError",
+        message: "Too Many Requests"
+      })
+    ).toBe(true);
+  });
+
+  it("ignores unrelated AWS errors", () => {
+    expect(
+      isAwsThrottleError({
+        kind: "aws",
+        code: "AccessDenied",
+        message: "denied"
+      })
+    ).toBe(false);
   });
 });

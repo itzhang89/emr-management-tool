@@ -83,3 +83,11 @@ export function isPageCycleNextKey(
 
   return event.key === "]" || event.code === "BracketRight";
 }
+
+export function isFocusSearchKey(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">
+) {
+  if (!hasPrimaryModShortcutModifiers(event)) return false;
+
+  return event.key === "f" || event.key === "F";
+}

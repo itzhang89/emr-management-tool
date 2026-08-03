@@ -215,6 +215,24 @@ describe("LogsPage", () => {
     expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")!)).toEqual(["job-manual"]);
   });
 
+  it("focuses the job id input with Mod+F when no log viewer is open", async () => {
+    const user = userEvent.setup();
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    const input = screen.getByPlaceholderText(/Enter job id/i);
+    expect(input).not.toHaveFocus();
+
+    await user.keyboard("{Meta>}f{/Meta}");
+
+    expect(input).toHaveFocus();
+  });
+
   it("shows recent job ids on click and applies one immediately", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(

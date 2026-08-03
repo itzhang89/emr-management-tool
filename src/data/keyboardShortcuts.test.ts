@@ -35,4 +35,10 @@ describe("keyboardShortcuts registry", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.NAV_PREV_PAGE)).toMatch(/\[/);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.NAV_NEXT_PAGE)).toMatch(/]/);
   });
+
+  it("exposes history and logs focus-search shortcuts", () => {
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.HISTORY_FOCUS_SEARCH)).toMatch(/F/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_FOCUS_JOB_ID)).toMatch(/F/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_FIND)).toMatch(/F/i);
+  });
 });

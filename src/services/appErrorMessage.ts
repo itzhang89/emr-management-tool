@@ -13,6 +13,18 @@ function asAppError(error: unknown): Partial<AppError> {
   return {};
 }
 
+export function isAwsThrottleError(error: unknown): boolean {
+  const appError = asAppError(error);
+  if (appError.retryable) return true;
+  const code = appError.code ?? "";
+  const message = appError.message ?? "";
+  return (
+    /TooManyRequests|Throttling|RequestLimitExceeded|SlowDown|ProvisionedThroughputExceeded/i.test(
+      code
+    ) || /too many requests/i.test(message)
+  );
+}
+
 function isGenericAwsMessage(message: string) {
   return /^(service error|dispatch failure|request has timed out|failed to construct request|response error)$/i.test(
     message.trim()

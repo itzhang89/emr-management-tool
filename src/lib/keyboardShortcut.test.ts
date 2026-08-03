@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatShortcutsHelpLabel, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey, getPageNavigationIndex } from "./keyboardShortcut";
+import {
+  formatShortcutsHelpLabel,
+  isAccountSwitchKey,
+  isFocusSearchKey,
+  isPageCycleNextKey,
+  isPageCyclePreviousKey,
+  isShortcutsHelpKey,
+  isSidebarToggleKey,
+  getPageNavigationIndex
+} from "./keyboardShortcut";
 
 describe("formatShortcutsHelpLabel", () => {
   it("returns platform-specific help shortcut label", () => {
@@ -141,5 +150,31 @@ describe("page cycle keys", () => {
         altKey: false
       })
     ).toBe(true);
+  });
+});
+
+describe("isFocusSearchKey", () => {
+  it("matches modifier plus F without shift", () => {
+    expect(
+      isFocusSearchKey({
+        key: "f",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
+  });
+
+  it("rejects shift-modified F", () => {
+    expect(
+      isFocusSearchKey({
+        key: "f",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: false
+      })
+    ).toBe(false);
   });
 });

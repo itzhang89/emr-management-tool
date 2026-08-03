@@ -895,6 +895,10 @@ async fn refresh_active_submission_jobs(
     region: &str,
     jobs: &mut [JobRunSummary],
 ) -> AppResult<()> {
+    const MAX_DESCRIBE_JOB_RUN_CONCURRENCY: usize = 3;
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        MAX_DESCRIBE_JOB_RUN_CONCURRENCY,
+    ));
     let mut join_set = tokio::task::JoinSet::new();
     for (index, job) in jobs.iter().enumerate() {
         if !is_active_job_state(&job.state) {
@@ -906,7 +910,9 @@ async fn refresh_active_submission_jobs(
         let source_request = job.source_request.clone();
         let account_id = account_id.to_string();
         let region = region.to_string();
+        let semaphore = semaphore.clone();
         join_set.spawn(async move {
+            let _permit = semaphore.acquire().await.ok();
             let refreshed = refresh_job_run_from_aws(
                 &client,
                 &id,
