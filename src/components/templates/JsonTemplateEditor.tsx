@@ -119,15 +119,17 @@ function createVariableExtensions(getKnown: () => string[]): Extension {
 export function JsonTemplateEditor({
   value,
   onChange,
-  knownVariables,
+  knownVariables = [],
   className,
-  readOnly = false
+  readOnly = false,
+  enableTemplateVariables = true
 }: {
   value: string;
   onChange: (value: string) => void;
-  knownVariables: string[];
+  knownVariables?: string[];
   className?: string;
   readOnly?: boolean;
+  enableTemplateVariables?: boolean;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -166,7 +168,9 @@ export function JsonTemplateEditor({
       lintGutter(),
       tooltips({ parent: document.body }),
       editorTheme,
-      compartments.variables.of(createVariableExtensions(() => knownRef.current)),
+      compartments.variables.of(
+        enableTemplateVariables ? createVariableExtensions(() => knownRef.current) : []
+      ),
       compartments.readOnly.of(EditorState.readOnly.of(readOnly)),
       updateListener
     ];
@@ -194,12 +198,12 @@ export function JsonTemplateEditor({
 
   useEffect(() => {
     const view = viewRef.current;
-    if (view) {
+    if (view && enableTemplateVariables) {
       view.dispatch({
         effects: compartments.variables.reconfigure(createVariableExtensions(() => knownRef.current))
       });
     }
-  }, [knownVariables, compartments]);
+  }, [knownVariables, compartments, enableTemplateVariables]);
 
   useEffect(() => {
     const view = viewRef.current;

@@ -31,4 +31,15 @@ describe("JsonTemplateEditor", () => {
 
     expect(onChange).toHaveBeenCalledWith('{"name":"updated"}');
   });
+
+  it("supports JSON-only mode without template variable prop requirements", () => {
+    render(
+      <JsonTemplateEditor
+        value='{"a":1}'
+        onChange={() => undefined}
+        enableTemplateVariables={false}
+      />
+    );
+    expect(screen.getByRole("textbox", { name: /payload json/i })).toBeInTheDocument();
+  });
 });
