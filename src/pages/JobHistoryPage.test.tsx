@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -429,6 +429,60 @@ describe("JobHistoryPage", () => {
     await user.click(within(screen.getByRole("row", { name: /failed-etl FAILED/i })).getByRole("button", { name: /Resubmit/i }));
 
     expect(startMutate).toHaveBeenCalledWith(failedJob?.sourceRequest, expect.any(Object));
+  });
+
+  it("disables Path B Resubmit while describe is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveDescribe: (value: JobRunSummary) => void = () => undefined;
+    describeJobRun.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveDescribe = resolve;
+        })
+    );
+
+    jobs = [
+      {
+        id: "job-failed-no-describe",
+        name: "failed-no-describe",
+        state: "FAILED",
+        virtualClusterId: "vc-1",
+        createdAt: "2026-06-10T00:01:00Z"
+      }
+    ];
+
+    renderJobHistoryPage();
+
+    const resubmitButton = screen.getByRole("button", { name: /Resubmit/i });
+    await user.click(resubmitButton);
+
+    expect(describeJobRun).toHaveBeenCalledTimes(1);
+    expect(resubmitButton).toBeDisabled();
+
+    await user.click(resubmitButton);
+    expect(describeJobRun).toHaveBeenCalledTimes(1);
+
+    resolveDescribe({
+      id: "job-failed-no-describe",
+      name: "failed-no-describe",
+      state: "FAILED",
+      virtualClusterId: "vc-1",
+      createdAt: "2026-06-10T00:01:00Z",
+      describeDetails: {
+        executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
+        releaseLabel: "emr-7.2.0-latest",
+        jobDriver: {
+          type: "sparkSubmit",
+          entryPoint: "s3://bucket/app.jar",
+          entryPointArguments: [],
+          sparkSubmitParameters: "--class Main"
+        }
+      }
+    });
+
+    await waitFor(() => {
+      expect(resubmitButton).not.toBeDisabled();
+    });
   });
 
   it("opens Submit Source flow when Resubmit has no sourceRequest", async () => {

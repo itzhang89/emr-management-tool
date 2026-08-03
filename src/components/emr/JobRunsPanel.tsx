@@ -67,6 +67,7 @@ export function JobRunsPanel({
   const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
   const [remoteLookupPending, setRemoteLookupPending] = useState(false);
   const [remoteLookupError, setRemoteLookupError] = useState<string>();
+  const [resubmitPending, setResubmitPending] = useState(false);
   const cancelJob = useCancelJobRun();
   const startJob = useStartJobRun();
   const clusters = useVirtualClusters();
@@ -159,6 +160,7 @@ export function JobRunsPanel({
       return;
     }
 
+    setResubmitPending(true);
     try {
       let detailed = job;
       if (!job.describeDetails?.jobDriver) {
@@ -173,6 +175,8 @@ export function JobRunsPanel({
       onOpenSubmit?.();
     } catch (error) {
       toast.error(formatAppError(error, "Failed to load job for Resubmit."));
+    } finally {
+      setResubmitPending(false);
     }
   }
 
@@ -271,7 +275,7 @@ export function JobRunsPanel({
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={startJob.isPending}
+                          disabled={startJob.isPending || resubmitPending}
                           onClick={() => {
                             void handleResubmit(job);
                           }}

@@ -282,6 +282,16 @@ describe("SubmitJobPage", () => {
       expect(screen.queryByRole("button", { name: /Preview JSON/i })).not.toBeInTheDocument();
     });
 
+    it("does not open preview JSON via keyboard shortcut in Source mode", async () => {
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(screen.getByRole("tab", { name: /Source/i }));
+      await user.keyboard("{Meta>}{Shift>}p{/Shift}{/Meta}");
+
+      expect(screen.queryByRole("dialog", { name: /Resolved Submit Payload/i })).not.toBeInTheDocument();
+    });
+
     it("blocks submit with a toast when source JSON is invalid", async () => {
       const user = userEvent.setup();
       renderPage();

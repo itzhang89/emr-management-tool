@@ -91,8 +91,10 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const [createTemplateName, setCreateTemplateName] = useState("");
   const [createTemplateDescription, setCreateTemplateDescription] = useState("");
   const previewOpenRef = useRef(previewOpen);
+  const modeRef = useRef(mode);
   const runtimeSyncRef = useRef<{ virtualClusterId: string; resourceTemplateId: string } | null>(null);
   previewOpenRef.current = previewOpen;
+  modeRef.current = mode;
 
   const templates = jobConfigTemplates.data ?? [];
   const resources = resourceTemplates.data?.resourceTemplates ?? [];
@@ -398,6 +400,7 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
       if (!mod) return;
 
       if (event.shiftKey && (event.key === "P" || event.key === "p")) {
+        if (modeRef.current !== "template") return;
         event.preventDefault();
         openPreview();
         return;
