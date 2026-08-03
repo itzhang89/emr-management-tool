@@ -10,7 +10,7 @@ pub struct ImportableAwsCliProfile {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub session_token: Option<String>,
-    pub region: String,
+    pub region: Option<String>,
 }
 
 pub fn discover_aws_cli_profiles() -> AppResult<Vec<AwsCliProfileSummary>> {
@@ -84,8 +84,8 @@ pub fn importable_profile_credentials(
                 .get(profile_name)
                 .and_then(|section| section.get("region"))
         })
-        .cloned()
-        .unwrap_or_else(|| "us-east-1".to_string());
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     Ok(ImportableAwsCliProfile {
         profile_name: profile_name.to_string(),
@@ -281,8 +281,23 @@ region = us-east-1
             importable_profile_credentials("dev", credentials, config).expect("profile imports");
 
         assert_eq!(profile.profile_name, "dev");
-        assert_eq!(profile.region, "us-east-1");
+        assert_eq!(profile.region.as_deref(), Some("us-east-1"));
         assert_eq!(profile.access_key_id, "AKIADEV5678");
         assert_eq!(profile.secret_access_key, "dev-secret");
+    }
+
+    #[test]
+    fn importable_profile_leaves_region_empty_when_unset() {
+        let credentials = r#"
+[dev]
+aws_access_key_id = AKIADEV5678
+aws_secret_access_key = dev-secret
+"#;
+        let config = "";
+
+        let profile =
+            importable_profile_credentials("dev", credentials, config).expect("profile imports");
+
+        assert_eq!(profile.region, None);
     }
 }

@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AwsAccountCredentialsInput, AwsAccountSummary, AwsCredentialsInput, ImportAwsCliProfileRequest } from "@/types/domain";
+import type {
+  AwsAccountCredentialsInput,
+  AwsAccountSummary,
+  AwsAccountUpdateInput,
+  AwsCredentialsInput,
+  ImportAwsCliProfileRequest
+} from "@/types/domain";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
 import { useSessionStore } from "@/stores/sessionStore";
 
@@ -32,6 +38,17 @@ export function useAwsCliProfiles() {
   });
 }
 
+function invalidateAccountScopedQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+  void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });
+  void queryClient.invalidateQueries({ queryKey: ["job-runs"] });
+  void queryClient.invalidateQueries({ queryKey: ["job-run"] });
+  void queryClient.invalidateQueries({ queryKey: ["s3-buckets"] });
+  void queryClient.invalidateQueries({ queryKey: ["s3-objects"] });
+  void queryClient.invalidateQueries({ queryKey: ["s3-text-object"] });
+  void queryClient.invalidateQueries({ queryKey: ["jobConfigTemplates"] });
+}
+
 export function useCreateAwsAccount() {
   const queryClient = useQueryClient();
 
@@ -56,6 +73,12 @@ export function useImportAwsCliProfile() {
   });
 }
 
+export function useLoadAwsCliProfile() {
+  return useMutation({
+    mutationFn: (profileName: string) => awsCredentialsService.loadCliProfile(profileName)
+  });
+}
+
 export function useSetActiveAwsAccount() {
   const queryClient = useQueryClient();
   const resetAccountScopedSession = useSessionStore((state) => state.resetAccountScopedSession);
@@ -71,14 +94,7 @@ export function useSetActiveAwsAccount() {
         }));
       });
       resetAccountScopedSession();
-      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
-      void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });
-      void queryClient.invalidateQueries({ queryKey: ["job-runs"] });
-      void queryClient.invalidateQueries({ queryKey: ["job-run"] });
-      void queryClient.invalidateQueries({ queryKey: ["s3-buckets"] });
-      void queryClient.invalidateQueries({ queryKey: ["s3-objects"] });
-      void queryClient.invalidateQueries({ queryKey: ["s3-text-object"] });
-      void queryClient.invalidateQueries({ queryKey: ["jobConfigTemplates"] });
+      invalidateAccountScopedQueries(queryClient);
     }
   });
 }
@@ -95,6 +111,37 @@ export function useRenameAwsAccount() {
         return accounts.map((account) => (account.id === renamed.id ? { ...account, ...renamed } : account));
       });
       void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+    }
+  });
+}
+
+export function useUpdateAwsAccount() {
+  const queryClient = useQueryClient();
+  const resetAccountScopedSession = useSessionStore((state) => state.resetAccountScopedSession);
+
+  return useMutation({
+    mutationFn: (account: AwsAccountUpdateInput) => awsCredentialsService.updateAccount(account),
+    onSuccess: (updated, variables) => {
+      const previous = queryClient
+        .getQueryData<AwsAccountSummary[]>(["aws-accounts"])
+        ?.find((account) => account.id === variables.accountId);
+      const regionChanged = previous !== undefined && previous.region !== updated.region;
+
+      queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
+        if (!accounts) return [updated];
+        return accounts.map((account) => (account.id === updated.id ? { ...account, ...updated } : account));
+      });
+
+      if (regionChanged && updated.isActive) {
+        resetAccountScopedSession();
+        invalidateAccountScopedQueries(queryClient);
+        return;
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      if (regionChanged || updated.isActive) {
+        void queryClient.invalidateQueries({ queryKey: ["virtual-clusters"] });
+      }
     }
   });
 }
@@ -123,5 +170,11 @@ export function useSaveAwsCredentials() {
 export function useTestAwsCredentials() {
   return useMutation({
     mutationFn: (credentials: AwsCredentialsInput) => awsCredentialsService.testConnection(credentials)
+  });
+}
+
+export function useTestAwsAccount() {
+  return useMutation({
+    mutationFn: awsCredentialsService.testAccountConnection
   });
 }

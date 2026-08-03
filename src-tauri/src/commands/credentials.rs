@@ -1,13 +1,15 @@
 use crate::aws::cli_profiles::{discover_aws_cli_profiles, load_aws_cli_profile_credentials};
 use crate::aws::credentials::{
     aws_config_from_credentials, clear_account_credentials,
-    clear_credentials as clear_saved_credentials, save_account_credentials, save_credentials,
+    clear_credentials as clear_saved_credentials, read_account_credentials,
+    save_account_credentials, save_credentials,
 };
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsAccount, AwsAccountCredentialsInput, AwsAccountSummary, AwsCliProfileSummary,
-    AwsCredentialsInput, AwsIdentity, AwsSettings, ImportAwsCliProfileRequest,
+    AwsAccount, AwsAccountCredentialsInput, AwsAccountSummary, AwsAccountUpdateInput,
+    AwsCliProfileCredentials, AwsCliProfileSummary, AwsCredentialsInput, AwsIdentity, AwsSettings,
+    ImportAwsCliProfileRequest, TestAwsAccountRequest,
 };
 use crate::state::AppState;
 use chrono::Utc;
@@ -96,19 +98,36 @@ pub async fn import_aws_cli_profile(
         return Err(AppError::validation("AWS CLI profile name is required."));
     }
     let profile = load_aws_cli_profile_credentials(&request.profile_name)?;
+    let region = request
+        .region
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| profile.region.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+        .ok_or_else(|| {
+            AppError::validation(
+                "Region is required. Choose a region before importing this AWS CLI profile."
+                    .to_string(),
+            )
+        })?
+        .to_string();
+
     let identity = test_aws_credentials(AwsCredentialsInput {
         access_key_id: profile.access_key_id.clone(),
         secret_access_key: profile.secret_access_key.clone(),
         session_token: profile.session_token.clone(),
-        region: profile.region.clone(),
+        region: region.clone(),
     })
     .await?;
 
     let account_id = format!("aws-profile-{}", sanitize_profile_id(&profile.profile_name));
     let account = build_account(
         account_id,
-        request.name.unwrap_or(profile.profile_name),
-        profile.region,
+        request
+            .name
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(profile.profile_name),
+        region,
         &profile.access_key_id,
         Some(identity),
         request.make_active,
@@ -122,6 +141,26 @@ pub async fn import_aws_cli_profile(
         profile.session_token.as_deref(),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn load_aws_cli_profile(
+    request: serde_json::Value,
+) -> AppResult<AwsCliProfileCredentials> {
+    let profile_name = request
+        .get("profileName")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::validation("AWS CLI profile name is required."))?;
+    let profile = load_aws_cli_profile_credentials(profile_name)?;
+    Ok(AwsCliProfileCredentials {
+        profile_name: profile.profile_name,
+        access_key_id: profile.access_key_id,
+        secret_access_key: profile.secret_access_key,
+        session_token: profile.session_token,
+        region: profile.region,
+    })
 }
 
 async fn save_account_with_credentials(
@@ -194,6 +233,102 @@ pub async fn rename_aws_account(request: serde_json::Value) -> AppResult<AwsAcco
     account.updated_at = Utc::now();
     repository::upsert_aws_account(&pool, &account).await?;
     Ok(AwsAccountSummary::from(account))
+}
+
+#[tauri::command]
+pub async fn update_aws_account(
+    app: AppHandle,
+    request: AwsAccountUpdateInput,
+) -> AppResult<AwsAccountSummary> {
+    let name = request.name.trim();
+    let region = request.region.trim();
+    if name.is_empty() {
+        return Err(AppError::validation("Account name is required."));
+    }
+    if region.is_empty() {
+        return Err(AppError::validation("Region is required."));
+    }
+
+    let secret_access_key = request
+        .secret_access_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let pool = repository::pool().await?;
+    let mut account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "AWS account {} was not found.",
+                request.account_id
+            ))
+        })?;
+
+    let stored = read_account_credentials(&app, &account.id)?;
+    let credentials = AwsCredentialsInput {
+        access_key_id: stored.access_key_id.clone(),
+        secret_access_key: secret_access_key
+            .unwrap_or(stored.secret_access_key.as_str())
+            .to_string(),
+        session_token: stored.session_token.clone(),
+        region: region.to_string(),
+    };
+    let identity = test_aws_credentials(credentials.clone()).await?;
+
+    if let Some(secret) = secret_access_key {
+        save_account_credentials(
+            &app,
+            &account.id,
+            &stored.access_key_id,
+            secret,
+            stored.session_token.as_deref(),
+        )?;
+    }
+
+    account.name = name.to_string();
+    account.region = region.to_string();
+    account.identity = Some(identity);
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+    Ok(AwsAccountSummary::from(account))
+}
+
+#[tauri::command]
+pub async fn test_aws_account(
+    app: AppHandle,
+    request: TestAwsAccountRequest,
+) -> AppResult<AwsIdentity> {
+    let region = request.region.trim();
+    if region.is_empty() {
+        return Err(AppError::validation("Region is required."));
+    }
+
+    let pool = repository::pool().await?;
+    let account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "AWS account {} was not found.",
+                request.account_id
+            ))
+        })?;
+
+    let stored = read_account_credentials(&app, &account.id)?;
+    let secret_access_key = request
+        .secret_access_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(stored.secret_access_key.as_str());
+
+    test_aws_credentials(AwsCredentialsInput {
+        access_key_id: stored.access_key_id,
+        secret_access_key: secret_access_key.to_string(),
+        session_token: stored.session_token,
+        region: region.to_string(),
+    })
+    .await
 }
 
 #[tauri::command]

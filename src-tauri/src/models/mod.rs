@@ -77,6 +77,25 @@ pub struct AwsAccountCredentialsInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AwsAccountUpdateInput {
+    pub account_id: String,
+    pub name: String,
+    pub region: String,
+    #[serde(default)]
+    pub secret_access_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestAwsAccountRequest {
+    pub account_id: String,
+    pub region: String,
+    #[serde(default)]
+    pub secret_access_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AwsCliProfileSummary {
     pub profile_name: String,
     pub region: Option<String>,
@@ -90,7 +109,18 @@ pub struct AwsCliProfileSummary {
 pub struct ImportAwsCliProfileRequest {
     pub profile_name: String,
     pub name: Option<String>,
+    pub region: Option<String>,
     pub make_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsCliProfileCredentials {
+    pub profile_name: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+    pub region: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

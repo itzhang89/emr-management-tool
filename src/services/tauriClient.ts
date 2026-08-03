@@ -5,7 +5,10 @@ import type {
   AwsAccount,
   AwsAccountCredentialsInput,
   AwsAccountSummary,
+  AwsAccountUpdateInput,
+  AwsCliProfileCredentials,
   AwsCliProfileSummary,
+  TestAwsAccountRequest,
   AwsCommandContext,
   AwsCredentialsInput,
   AwsIdentity,
@@ -62,10 +65,14 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     createAwsAccount: (request: AwsAccountCredentialsInput) => call<AwsAccount>("create_aws_account", request),
     renameAwsAccount: (request: { accountId: string; name: string }) =>
       call<AwsAccountSummary>("rename_aws_account", request),
+    updateAwsAccount: (request: AwsAccountUpdateInput) => call<AwsAccountSummary>("update_aws_account", request),
+    testAwsAccount: (request: TestAwsAccountRequest) => call<AwsIdentity>("test_aws_account", request),
     setActiveAwsAccount: (request: { accountId: string }) => call<AwsAccountSummary>("set_active_aws_account", request),
     deleteAwsAccount: (request: { accountId: string }) => call("delete_aws_account", request),
     listAwsCliProfiles: () => call<AwsCliProfileSummary[]>("list_aws_cli_profiles"),
     importAwsCliProfile: (request: ImportAwsCliProfileRequest) => call<AwsAccount>("import_aws_cli_profile", request),
+    loadAwsCliProfile: (request: { profileName: string }) =>
+      call<AwsCliProfileCredentials>("load_aws_cli_profile", request),
     listVirtualClusters: (request: ListVirtualClustersRequest) =>
       call<ListVirtualClustersResponse>("list_virtual_clusters", request),
     listJobRuns: (request: { accountId?: string; virtualClusterId?: string; keyword?: string }) =>

@@ -35,13 +35,33 @@ describe("createTauriClient", () => {
     const invoke = vi.fn().mockResolvedValue(account);
     const client = createTauriClient(invoke);
 
-    const result = await client.importAwsCliProfile({ profileName: "dev", makeActive: true });
+    const result = await client.importAwsCliProfile({
+      profileName: "dev",
+      region: "us-east-1",
+      makeActive: true
+    });
 
     expect(result).toEqual(account);
     expect(result).not.toHaveProperty("secretAccessKey");
     expect(invoke).toHaveBeenCalledWith("import_aws_cli_profile", {
-      request: { profileName: "dev", makeActive: true }
+      request: { profileName: "dev", region: "us-east-1", makeActive: true }
     });
+  });
+
+  it("loads AWS CLI profile credentials for the import form", async () => {
+    const credentials = {
+      profileName: "dev",
+      accessKeyId: "AKIATEST",
+      secretAccessKey: "secret",
+      region: "eu-west-1"
+    };
+    const invoke = vi.fn().mockResolvedValue(credentials);
+    const client = createTauriClient(invoke);
+
+    const result = await client.loadAwsCliProfile({ profileName: "dev" });
+
+    expect(result).toEqual(credentials);
+    expect(invoke).toHaveBeenCalledWith("load_aws_cli_profile", { request: { profileName: "dev" } });
   });
 
   it("exposes job log discovery commands through the invoke boundary", async () => {

@@ -49,6 +49,19 @@ export interface AwsAccountCredentialsInput {
   makeActive: boolean;
 }
 
+export interface AwsAccountUpdateInput {
+  accountId: string;
+  name: string;
+  region: AwsRegion;
+  secretAccessKey?: string;
+}
+
+export interface TestAwsAccountRequest {
+  accountId: string;
+  region: AwsRegion;
+  secretAccessKey?: string;
+}
+
 export interface AwsCliProfileSummary {
   profileName: string;
   region?: AwsRegion;
@@ -60,7 +73,16 @@ export interface AwsCliProfileSummary {
 export interface ImportAwsCliProfileRequest {
   profileName: string;
   name?: string;
+  region?: AwsRegion;
   makeActive: boolean;
+}
+
+export interface AwsCliProfileCredentials {
+  profileName: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+  region?: AwsRegion;
 }
 
 export interface AwsCommandContext {
