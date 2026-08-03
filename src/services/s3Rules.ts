@@ -1,4 +1,4 @@
-const EDITABLE_EXTENSIONS = new Set(["sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc", "csv"]);
+const EDITABLE_EXTENSIONS = new Set(["sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc", "csv", "py"]);
 const PREVIEWABLE_EXTENSIONS = new Set([...EDITABLE_EXTENSIONS]);
 const EDITOR_SIZE_LIMIT_BYTES = 5 * 1024 * 1024;
 
