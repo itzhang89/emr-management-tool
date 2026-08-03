@@ -1,5 +1,5 @@
 const EDITABLE_EXTENSIONS: &[&str] = &[
-    "sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc",
+    "sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc", "csv",
 ];
 const EDITOR_LIMIT_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -65,6 +65,11 @@ mod tests {
         assert!(sc.editable);
         assert!(sc.previewable);
         assert!(sc.reason.is_none());
+
+        let csv = s3_object_editability("data/dataset.csv", 1024);
+        assert!(csv.editable);
+        assert!(csv.previewable);
+        assert!(csv.reason.is_none());
     }
 
     #[test]
