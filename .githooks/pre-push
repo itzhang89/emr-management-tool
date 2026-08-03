@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Block pushes that introduce high-confidence secrets in the commit range.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-push: node is required for secrets scanning" >&2
+  exit 1
+fi
+
+# stdin from git: <local ref> <local sha> <remote ref> <remote sha>
+exec node "$ROOT/scripts/check-secrets.mjs" --pre-push

@@ -216,6 +216,16 @@ Build a macOS development package:
 npm run tauri -- build --debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json
 ```
 
+## Git Hooks
+
+`npm install` sets `core.hooksPath` to `.githooks`. The `pre-push` hook runs `npm run check:secrets` against the commits about to be pushed and blocks the push if high-confidence secrets are found (AWS keys, private keys, common tokens, DB URLs with passwords).
+
+```bash
+npm run check:secrets
+```
+
+Known safe fixtures can be listed in `.secretsallowlist`. Bypass once with `git push --no-verify` only when you are sure the finding is a false positive.
+
 ## Release Channels
 
 - `development`: debug build, local credential store, no automatic updates.
