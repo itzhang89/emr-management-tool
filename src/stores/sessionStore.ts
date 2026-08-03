@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { StartJobPayloadJson } from "@/services/startJobPayload";
 import type { StartJobRunRequest } from "@/types/domain";
 
 interface SessionState {
@@ -9,12 +10,14 @@ interface SessionState {
   selectedS3Bucket?: string;
   selectedS3Prefix?: string;
   clonedJobRequest?: StartJobRunRequest;
+  pendingSourceSubmit?: { payload: StartJobPayloadJson; virtualClusterId: string };
   setRegion: (region: string) => void;
   setSelectedVirtualClusterId: (id?: string) => void;
   setSelectedJobId: (id?: string) => void;
   setSelectedJobForLogs: (jobId: string, virtualClusterId?: string) => void;
   setSelectedS3Location: (bucket: string, prefix?: string) => void;
   setClonedJobRequest: (request?: StartJobRunRequest) => void;
+  setPendingSourceSubmit: (value?: { payload: StartJobPayloadJson; virtualClusterId: string }) => void;
   resetAccountScopedSession: () => void;
 }
 
@@ -26,6 +29,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   selectedS3Bucket: undefined,
   selectedS3Prefix: undefined,
   clonedJobRequest: undefined,
+  pendingSourceSubmit: undefined,
   setRegion: (region) => set({ region }),
   setSelectedVirtualClusterId: (selectedVirtualClusterId) => set({ selectedVirtualClusterId }),
   setSelectedJobId: (selectedJobId) => set({ selectedJobId }),
@@ -38,6 +42,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     }),
   setSelectedS3Location: (selectedS3Bucket, selectedS3Prefix) => set({ selectedS3Bucket, selectedS3Prefix }),
   setClonedJobRequest: (clonedJobRequest) => set({ clonedJobRequest }),
+  setPendingSourceSubmit: (pendingSourceSubmit) => set({ pendingSourceSubmit }),
   resetAccountScopedSession: () =>
     set({
       selectedVirtualClusterId: undefined,
@@ -45,6 +50,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       selectedJobVirtualClusterId: undefined,
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined,
-      clonedJobRequest: undefined
+      clonedJobRequest: undefined,
+      pendingSourceSubmit: undefined
     })
 }));

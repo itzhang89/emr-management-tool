@@ -55,4 +55,24 @@ describe("useSessionStore", () => {
     expect(useSessionStore.getState().selectedS3Prefix).toBeUndefined();
     expect(useSessionStore.getState().clonedJobRequest).toBeUndefined();
   });
+
+  it("stores and clears pendingSourceSubmit on account reset", () => {
+    const payload = {
+      name: "job",
+      virtualClusterId: "vc-1",
+      executionRoleArn: "arn:role",
+      releaseLabel: "emr-7.0.0-latest",
+      jobDriver: {
+        sparkSubmitJobDriver: {
+          entryPoint: "s3://b/a.jar",
+          entryPointArguments: [],
+          sparkSubmitParameters: ""
+        }
+      }
+    };
+    useSessionStore.getState().setPendingSourceSubmit({ payload, virtualClusterId: "vc-1" });
+    expect(useSessionStore.getState().pendingSourceSubmit?.payload.name).toBe("job");
+    useSessionStore.getState().resetAccountScopedSession();
+    expect(useSessionStore.getState().pendingSourceSubmit).toBeUndefined();
+  });
 });
