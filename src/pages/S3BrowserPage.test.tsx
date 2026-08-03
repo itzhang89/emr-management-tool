@@ -210,7 +210,7 @@ describe("S3BrowserPage", () => {
     downloadS3ObjectToDisk.mockResolvedValue(undefined);
   });
 
-  it("edits the displayed S3 path directly and reverts invalid input", async () => {
+  it("selects an S3 path through the browse dialog", async () => {
     const user = userEvent.setup();
 
     renderS3BrowserPage();
@@ -218,27 +218,22 @@ describe("S3BrowserPage", () => {
     expect(screen.queryByPlaceholderText(/Bucket name/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Open Bucket/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "logs-bucket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "s3://logs-bucket/" })).not.toBeInTheDocument();
+    expect(screen.getByText("s3://logs-bucket/")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "s3://logs-bucket/" }));
+    await user.click(screen.getByRole("button", { name: /^Browse S3 path$/i }));
 
-    expect(screen.getByText("s3://")).toBeInTheDocument();
-    const pathInput = screen.getByDisplayValue("logs-bucket/");
-    expect(pathInput).toHaveAttribute("list", "s3-path-options");
-    expect(document.querySelector('#s3-path-options option[value="data-bucket/"]')).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: /Select S3 path/i });
+    expect(within(dialog).queryByText(/Append submitUser subdirectory/i)).not.toBeInTheDocument();
 
+    const pathInput = within(dialog).getByPlaceholderText("bucket/folder/");
     await user.clear(pathInput);
-    await user.type(pathInput, "data-bucket/{Enter}");
+    await user.type(pathInput, "data-bucket/");
+    await user.click(within(dialog).getByRole("button", { name: /^Use path$/i }));
 
     expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
     expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "s3://data-bucket/" }));
-    const invalidPathInput = screen.getByDisplayValue("data-bucket/");
-    await user.clear(invalidPathInput);
-    await user.type(invalidPathInput, "{Enter}");
-
-    expect(useS3Objects).toHaveBeenLastCalledWith("data-bucket", "");
-    expect(screen.getByText("s3://data-bucket/")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /Select S3 path/i })).not.toBeInTheDocument();
   });
 
   it("restores the cached S3 path when switching AWS accounts", () => {
@@ -285,7 +280,8 @@ describe("S3BrowserPage", () => {
 
     renderS3BrowserPage();
 
-    expect(screen.getByRole("button", { name: "s3://logs-bucket/.../day/run/" })).toBeInTheDocument();
+    expect(screen.getByText("s3://logs-bucket/.../day/run/")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "s3://logs-bucket/.../day/run/" })).not.toBeInTheDocument();
     expect(screen.queryByText("s3://logs-bucket/year/month/day/run/")).not.toBeInTheDocument();
   });
 

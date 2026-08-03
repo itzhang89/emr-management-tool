@@ -1,4 +1,4 @@
-import { ArrowUp, Copy, Download, FileText, Folder, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { ArrowUp, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { S3PathPickerDialog } from "@/components/s3/S3PathPicker";
 import { S3ObjectEditor, type S3ObjectEditorHandle } from "@/components/s3/S3ObjectEditor";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
@@ -36,7 +37,6 @@ import {
   buildFolderKey,
   displayObjectName,
   formatCompactS3Path,
-  formatPathInput,
   formatS3Path,
   parentPrefix,
   parseS3PathInput,
@@ -77,8 +77,7 @@ export function S3BrowserPage() {
   const selectedBucket = bucket ?? selectedS3Bucket ?? (buckets.isSuccess ? buckets.data?.[0]?.name : undefined);
   const currentS3Path = formatS3Path(selectedBucket, prefix) || "s3://";
   const displayedS3Path = formatCompactS3Path(selectedBucket, prefix);
-  const [editingPath, setEditingPath] = useState(false);
-  const [pathInput, setPathInput] = useState(formatPathInput(selectedBucket, prefix));
+  const [pathPickerOpen, setPathPickerOpen] = useState(false);
   const [browserPaneWidth, setBrowserPaneWidth] = useState(BROWSER_PANE_DEFAULT_WIDTH);
   const objects = useS3Objects(selectedBucket, prefix);
   const [selectedKey, setSelectedKey] = useState<string>();
@@ -137,7 +136,6 @@ export function S3BrowserPage() {
     setBucket(lastPath?.bucket);
     setPrefix(lastPath?.prefix ?? "");
     setSelectedKey(undefined);
-    setEditingPath(false);
   }, [accountId]);
 
   useEffect(() => {
@@ -149,12 +147,6 @@ export function S3BrowserPage() {
       setBucket(selectedS3Bucket);
     }
   }, [selectedS3Bucket]);
-
-  useEffect(() => {
-    if (!editingPath) {
-      setPathInput(formatPathInput(selectedBucket, prefix));
-    }
-  }, [editingPath, prefix, selectedBucket]);
 
   useEffect(() => {
     if (selectedS3Bucket !== undefined || selectedS3Prefix !== undefined) {
@@ -333,19 +325,14 @@ export function S3BrowserPage() {
     }
   };
 
-  const openPath = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const parsed = parseS3PathInput(pathInput);
-    if (!parsed) {
-      setPathInput(formatPathInput(selectedBucket, prefix));
-      setEditingPath(false);
-      return;
-    }
+  const applySelectedPath = (path: string) => {
+    const parsed = parseS3PathInput(path);
+    if (!parsed) return;
     setBucket(parsed.bucket);
     setPrefix(parsed.prefix);
     setSelectedKey(undefined);
     setContent("");
-    setEditingPath(false);
+    setPathPickerOpen(false);
   };
 
   const goUp = () => {
@@ -640,44 +627,17 @@ export function S3BrowserPage() {
         <Card className="flex shrink-0 flex-col overflow-hidden" style={{ width: browserPaneWidth }}>
           <CardHeader className="shrink-0 space-y-1.5 p-4">
             <CardTitle className="flex min-w-0 items-center gap-1 text-sm">
-              {editingPath ? (
-                <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={openPath}>
-                  <span className="shrink-0 text-xs text-muted-foreground">s3://</span>
-                  <Input
-                    autoFocus
-                    list="s3-path-options"
-                    className="min-w-0 w-full font-mono text-xs"
-                    value={pathInput}
-                    title={pathInput}
-                    onChange={(event) => setPathInput(event.target.value)}
-                    onBlur={() => {
-                      setPathInput(formatPathInput(selectedBucket, prefix));
-                      setEditingPath(false);
-                    }}
-                  />
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  title={currentS3Path}
-                  className="min-w-0 flex-1 truncate rounded-sm text-left text-xs hover:underline"
-                  onClick={() => {
-                    setPathInput(formatPathInput(selectedBucket, prefix));
-                    setEditingPath(true);
-                  }}
-                >
-                  {displayedS3Path}
-                </button>
-              )}
+              <span title={currentS3Path} className="min-w-0 flex-1 truncate font-mono text-xs font-normal">
+                {displayedS3Path}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label="Refresh"
-                disabled={!selectedBucket || objects.isLoading}
-                onClick={() => void objects.refetch()}
+                aria-label="Browse S3 path"
+                onClick={() => setPathPickerOpen(true)}
               >
-                <RefreshCw data-icon="inline-start" />
+                <FolderOpen data-icon="inline-start" />
               </Button>
             </CardTitle>
             <CardDescription className="text-xs">
@@ -702,6 +662,17 @@ export function S3BrowserPage() {
                 }}
               >
                 <FolderPlus data-icon="inline-start" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2"
+                aria-label="Refresh"
+                disabled={!selectedBucket || objects.isLoading}
+                onClick={() => void objects.refetch()}
+              >
+                <RefreshCw data-icon="inline-start" />
               </Button>
             </div>
             {buckets.isLoading || objects.isLoading ? (
@@ -887,11 +858,14 @@ export function S3BrowserPage() {
           </CardContent>
         </Card>
       </div>
-      <datalist id="s3-path-options">
-        {(buckets.data ?? []).map((entry) => (
-          <option key={entry.name} value={`${entry.name}/`} />
-        ))}
-      </datalist>
+      {pathPickerOpen ? (
+        <S3PathPickerDialog
+          open={pathPickerOpen}
+          onOpenChange={setPathPickerOpen}
+          initialPath={currentS3Path}
+          onSelect={applySelectedPath}
+        />
+      ) : null}
       <Dialog open={createFolderOpen} onOpenChange={(open) => !open && setCreateFolderOpen(false)}>
         <DialogContent>
           <form onSubmit={(event) => void submitCreateFolder(event)}>
