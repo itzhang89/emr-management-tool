@@ -393,7 +393,13 @@ describe("SubmitJobPage", () => {
         jobDriver: {
           sparkSubmitJobDriver: {
             entryPoint: "s3://bucket/app.jar",
-            entryPointArguments: [],
+            entryPointArguments: [
+              "batch-job",
+              "--latest-only=false",
+              "--env=qa",
+              "--period=5",
+              "--default-start=2026-05-16 23:00:00"
+            ],
             sparkSubmitParameters: ""
           }
         }
@@ -420,16 +426,27 @@ describe("SubmitJobPage", () => {
         expect(mocks.createJobConfigTemplate).toHaveBeenCalledWith(
           expect.objectContaining({
             name: "From Source",
-            customVariables: [],
             defaultResourceTemplateId: "tiny",
-            payloadTemplate: formatSourceJobPayload(pendingPayload)
+            customVariables: expect.arrayContaining([
+              expect.objectContaining({ name: "latestOnly", type: "boolean", defaultValue: false }),
+              expect.objectContaining({ name: "env", type: "text", defaultValue: "qa" }),
+              expect.objectContaining({ name: "period", type: "number", defaultValue: 5 }),
+              expect.objectContaining({
+                name: "defaultStart",
+                type: "dateTime",
+                defaultValue: "2026-05-16 23:00:00"
+              })
+            ]),
+            payloadTemplate: expect.stringContaining("--latest-only=${latestOnly}")
           })
         );
       });
 
       expect(screen.queryByRole("textbox", { name: /payload json/i })).not.toBeInTheDocument();
       expect(screen.getByText("From Source")).toBeInTheDocument();
-      expect(mocks.toastSuccess).toHaveBeenCalledWith("Template created from source JSON.");
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "Template created with 4 variables from entryPointArguments."
+      );
     });
 
     it("discards external source JSON when confirming switch back to Template", async () => {

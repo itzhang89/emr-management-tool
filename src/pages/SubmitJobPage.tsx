@@ -38,6 +38,7 @@ import {
   formatSourceJobPayload,
   parseSourceJobPayload
 } from "@/services/startJobPayload";
+import { parameterizeSourcePayloadForTemplate } from "@/services/parameterizeEntryPointArguments";
 import {
   getDefaultCustomVariableValues,
   resolveTemplatePayload,
@@ -365,13 +366,14 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     const now = new Date().toISOString();
     const templateId = crypto.randomUUID();
     const description = createTemplateDescription.trim();
+    const parameterized = parameterizeSourcePayloadForTemplate(parsed.payload);
     try {
       await createTemplate.mutateAsync({
         id: templateId,
         name,
         description: description || undefined,
-        payloadTemplate: sourceJson,
-        customVariables: [],
+        payloadTemplate: parameterized.payloadTemplate,
+        customVariables: parameterized.customVariables,
         defaultResourceTemplateId: resourceTemplateId,
         builtIn: false,
         createdAt: now,
@@ -382,7 +384,11 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
       setSourceOrigin("template");
       setCreateTemplateDialogOpen(false);
       setSourceSwitchConfirmOpen(false);
-      toast.success("Template created from source JSON.");
+      toast.success(
+        parameterized.customVariables.length > 0
+          ? `Template created with ${parameterized.customVariables.length} variables from entryPointArguments.`
+          : "Template created from source JSON."
+      );
     } catch (error) {
       toast.error(errorMessage(error, "Failed to create template."));
     }
