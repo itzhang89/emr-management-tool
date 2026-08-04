@@ -40,7 +40,7 @@ const mocks = vi.hoisted(() => {
     useSubmissionHistory: vi.fn(),
     jobConfigTemplates: [defaultJobConfigTemplate],
     sessionState: {
-    selectedVirtualClusterId: "vc-1",
+    selectedVirtualClusterId: "vc-1" as string | undefined,
     setSelectedVirtualClusterId: vi.fn((id?: string) => {
       mocks.sessionState.selectedVirtualClusterId = id;
     }),

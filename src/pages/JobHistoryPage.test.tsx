@@ -556,7 +556,7 @@ describe("JobHistoryPage", () => {
           releaseLabel: "emr-7.2.0-latest",
           jobDriver: {
             type: "sparkSql",
-            query: "SELECT 1"
+            sparkSqlParameters: "SELECT 1"
           }
         }
       }

@@ -17,6 +17,9 @@
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
+  "overrides": {
+    "undici": "7.29.0"
+  },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.4",
