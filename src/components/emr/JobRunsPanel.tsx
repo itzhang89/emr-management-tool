@@ -150,9 +150,10 @@ export function JobRunsPanel({
 
   async function handleResubmit(job: JobRunSummary) {
     if (job.sourceRequest) {
+      const templateLabel = job.sourceRequest.templateName?.trim() || job.name;
       startJob.mutate(job.sourceRequest, {
         onSuccess: () => {
-          toast.success("Resubmit submitted using the matched local submit configuration.");
+          toast.success(`Rerun · ${templateLabel}`);
           onSubmissionStarted?.();
         },
         onError: (error) => toast.error(errorMessage(error))
@@ -167,14 +168,14 @@ export function JobRunsPanel({
         detailed = await emrService.describeJobRun(job.id, job.virtualClusterId, accountId);
       }
       if (!isSparkSubmitDescribe(detailed)) {
-        toast.error("Source Resubmit currently supports sparkSubmit jobs only.");
+        toast.error("Source Rerun currently supports sparkSubmit jobs only.");
         return;
       }
       const payload = describeJobToStartJobPayload(detailed);
       setPendingSourceSubmit({ payload, virtualClusterId: detailed.virtualClusterId });
       onOpenSubmit?.();
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to load job for Resubmit."));
+      toast.error(formatAppError(error, "Failed to load job for Rerun."));
     } finally {
       setResubmitPending(false);
     }
@@ -281,7 +282,7 @@ export function JobRunsPanel({
                           }}
                         >
                           <Play data-icon="inline-start" />
-                          Resubmit
+                          Rerun
                         </Button>
                       ) : null}
                     </div>

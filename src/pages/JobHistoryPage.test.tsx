@@ -167,10 +167,10 @@ describe("JobHistoryPage", () => {
     expect(within(runningRow).getByRole("button", { name: /Logs/i })).toBeInTheDocument();
 
     const failedRow = screen.getByRole("row", { name: /failed-etl FAILED/i });
-    expect(within(failedRow).getByRole("button", { name: /Resubmit/i })).toBeInTheDocument();
+    expect(within(failedRow).getByRole("button", { name: /Rerun/i })).toBeInTheDocument();
 
     const cancelledRow = screen.getByRole("row", { name: /cancelled-etl CANCELLED/i });
-    expect(within(cancelledRow).getByRole("button", { name: /Resubmit/i })).toBeInTheDocument();
+    expect(within(cancelledRow).getByRole("button", { name: /Rerun/i })).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText(/search jobs/i), "failed");
     expect(screen.getByText("running-etl")).toBeInTheDocument();
@@ -421,7 +421,7 @@ describe("JobHistoryPage", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("resubmits a failed job with sourceRequest via startJob", async () => {
+  it("reruns a failed job with sourceRequest via startJob", async () => {
     const user = userEvent.setup();
     const { toast } = await import("sonner");
     startMutate.mockImplementation((_request, options?: { onSuccess?: () => void }) => {
@@ -430,15 +430,13 @@ describe("JobHistoryPage", () => {
     renderJobHistoryPage();
 
     const failedJob = jobs.find((job) => job.id === "job-failed");
-    await user.click(within(screen.getByRole("row", { name: /failed-etl FAILED/i })).getByRole("button", { name: /Resubmit/i }));
+    await user.click(within(screen.getByRole("row", { name: /failed-etl FAILED/i })).getByRole("button", { name: /Rerun/i }));
 
     expect(startMutate).toHaveBeenCalledWith(failedJob?.sourceRequest, expect.any(Object));
-    expect(toast.success).toHaveBeenCalledWith(
-      "Resubmit submitted using the matched local submit configuration."
-    );
+    expect(toast.success).toHaveBeenCalledWith("Rerun · Daily ETL");
   });
 
-  it("disables Path B Resubmit while describe is in flight", async () => {
+  it("disables Path B Rerun while describe is in flight", async () => {
     const user = userEvent.setup();
     let resolveDescribe: (value: JobRunSummary) => void = () => undefined;
     describeJobRun.mockImplementation(
@@ -460,7 +458,7 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    const resubmitButton = screen.getByRole("button", { name: /Resubmit/i });
+    const resubmitButton = screen.getByRole("button", { name: /Rerun/i });
     await user.click(resubmitButton);
 
     expect(describeJobRun).toHaveBeenCalledTimes(1);
@@ -492,7 +490,7 @@ describe("JobHistoryPage", () => {
     });
   });
 
-  it("opens Submit Source flow when Resubmit has no sourceRequest", async () => {
+  it("opens Submit Source flow when Rerun has no sourceRequest", async () => {
     const user = userEvent.setup();
     const onOpenSubmit = vi.fn();
     const setPendingSourceSubmit = vi.fn();
@@ -521,7 +519,7 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage({ onOpenSubmit });
 
-    await user.click(screen.getByRole("button", { name: /Resubmit/i }));
+    await user.click(screen.getByRole("button", { name: /Rerun/i }));
 
     expect(setPendingSourceSubmit).toHaveBeenCalledWith({
       payload: expect.objectContaining({
@@ -544,7 +542,7 @@ describe("JobHistoryPage", () => {
     useSessionStore.setState({ setPendingSourceSubmit: originalSetPending });
   });
 
-  it("shows unsupported toast when Resubmit describe is sparkSql", async () => {
+  it("shows unsupported toast when Rerun describe is sparkSql", async () => {
     const user = userEvent.setup();
     jobs = [
       {
@@ -566,9 +564,9 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    await user.click(screen.getByRole("button", { name: /Resubmit/i }));
+    await user.click(screen.getByRole("button", { name: /Rerun/i }));
 
-    expect(toastError).toHaveBeenCalledWith("Source Resubmit currently supports sparkSubmit jobs only.");
+    expect(toastError).toHaveBeenCalledWith("Source Rerun currently supports sparkSubmit jobs only.");
   });
 
   it("shows a friendly message when AWS cannot find the searched job id", async () => {
@@ -626,6 +624,7 @@ function makeJobs(): JobRunSummary[] {
       createdAt: "2026-06-10T00:01:00Z",
       sourceRequest: {
         name: "failed-etl",
+        templateName: "Daily ETL",
         virtualClusterId: "vc-1",
         executionRoleArn: "arn:aws:iam::123456789012:role/EMR",
         releaseLabel: "emr-7.2.0-latest",

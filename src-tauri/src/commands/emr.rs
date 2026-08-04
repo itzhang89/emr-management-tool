@@ -1204,6 +1204,7 @@ mod tests {
                 },
             },
             configuration_overrides: None,
+            template_name: None,
         }
     }
 

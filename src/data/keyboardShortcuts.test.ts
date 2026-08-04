@@ -27,6 +27,7 @@ describe("keyboardShortcuts registry", () => {
   it("exposes submit job shortcut labels", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB)).toMatch(/Enter/);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON)).toMatch(/P/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_TOGGLE_MODE)).toBe("Tab");
   });
 
   it("exposes account and navigation shortcut labels", () => {

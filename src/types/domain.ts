@@ -196,6 +196,8 @@ export interface SubmitJobFormValues {
 
 export interface StartJobRunRequest extends SubmitJobFormValues {
   accountId?: string;
+  /** Job config template name when submitted from Template mode; kept for Rerun toast. */
+  templateName?: string;
   jobDriver: {
     sparkSubmitJobDriver: {
       entryPoint: string;

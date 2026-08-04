@@ -55,6 +55,7 @@ import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJ
 
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
+const TOGGLE_MODE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_TOGGLE_MODE);
 const FORM_PANE_MIN_PX = 220;
 const HISTORY_PANE_MIN_PX = 140;
 const SPLITTER_PX = 8;
@@ -424,6 +425,14 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     document.body.style.userSelect = "none";
   }, [formPaneHeight]);
 
+  const toggleSubmitMode = useCallback(() => {
+    if (modeRef.current === "template") {
+      enterSourceMode();
+      return;
+    }
+    enterTemplateMode();
+  }, [enterSourceMode, enterTemplateMode]);
+
   const openPreview = useCallback(() => {
     if (!previewPayload) return;
     setPreviewOpen(true);
@@ -431,7 +440,18 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (previewOpenRef.current) return;
+      if (previewOpenRef.current || sourceSwitchConfirmOpen || createTemplateDialogOpen) return;
+
+      if (event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("input, textarea, select, [contenteditable='true'], .cm-editor")) {
+          return;
+        }
+        event.preventDefault();
+        toggleSubmitMode();
+        return;
+      }
+
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) return;
 
@@ -450,7 +470,13 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openPreview, validateAndSubmit]);
+  }, [
+    createTemplateDialogOpen,
+    openPreview,
+    sourceSwitchConfirmOpen,
+    toggleSubmitMode,
+    validateAndSubmit
+  ]);
 
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
@@ -511,7 +537,7 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
           <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
               <Tabs value={mode} onValueChange={handleModeChange} className="shrink-0">
-                <TabsList>
+                <TabsList title={`Toggle mode · ${TOGGLE_MODE_SHORTCUT}`}>
                   <TabsTrigger value="template">Template</TabsTrigger>
                   <TabsTrigger value="source">Source</TabsTrigger>
                 </TabsList>
@@ -743,7 +769,10 @@ function buildSubmitRequest({
   if (!validation.ok) {
     return undefined;
   }
-  return toStartJobRunRequest(resolvedPayload, selectedResources);
+  return {
+    ...toStartJobRunRequest(resolvedPayload, selectedResources),
+    templateName: selectedTemplate.name
+  };
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

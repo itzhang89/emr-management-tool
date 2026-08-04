@@ -283,6 +283,20 @@ describe("SubmitJobPage", () => {
       expect(screen.queryByRole("button", { name: /Preview JSON/i })).not.toBeInTheDocument();
     });
 
+    it("toggles Template and Source with the Tab shortcut outside editable fields", async () => {
+      const user = userEvent.setup();
+      renderPage();
+
+      expect(screen.queryByRole("textbox", { name: /payload json/i })).not.toBeInTheDocument();
+      await user.keyboard("{Tab}");
+      expect(screen.getByRole("textbox", { name: /payload json/i })).toBeInTheDocument();
+
+      await user.click(screen.getByText("Runtime Selection"));
+      await user.keyboard("{Tab}");
+      expect(screen.queryByRole("textbox", { name: /payload json/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Template/i })).toHaveAttribute("data-state", "active");
+    });
+
     it("does not open preview JSON via keyboard shortcut in Source mode", async () => {
       const user = userEvent.setup();
       renderPage();

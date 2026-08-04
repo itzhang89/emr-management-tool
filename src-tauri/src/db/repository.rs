@@ -902,6 +902,7 @@ mod tests {
                     },
                 },
                 configuration_overrides: None,
+                template_name: None,
             }),
             describe_details: None,
         }

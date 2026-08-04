@@ -249,6 +249,8 @@ pub struct StartJobRunRequest {
     pub spark_config: HashMap<String, String>,
     pub job_driver: JobDriverRequest,
     pub configuration_overrides: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

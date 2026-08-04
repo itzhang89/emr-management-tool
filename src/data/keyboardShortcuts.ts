@@ -22,7 +22,8 @@ export const SHORTCUT_IDS = {
   S3_FOCUS_LIST: "s3-focus-list",
   S3_GO_UP: "s3-go-up",
   SUBMIT_JOB: "submit-job",
-  SUBMIT_PREVIEW_JSON: "submit-preview-json"
+  SUBMIT_PREVIEW_JSON: "submit-preview-json",
+  SUBMIT_TOGGLE_MODE: "submit-toggle-mode"
 } as const;
 
 export type NavigationShortcutId = `nav-${PageId}`;
@@ -220,6 +221,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Preview JSON",
     description: "Open the resolved submit payload preview",
     keys: [formatModShortcut("P", { shift: true })]
+  },
+  {
+    id: SHORTCUT_IDS.SUBMIT_TOGGLE_MODE,
+    category: "submit",
+    label: "Toggle Template / Source",
+    description: "Switch between Template and Source submit modes",
+    keys: ["Tab"]
   }
 ];
 

@@ -264,7 +264,7 @@ describe("AppShell", () => {
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });
 
-  it("opens Submit Job when Resubmit has no sourceRequest", async () => {
+  it("opens Submit Job when Rerun has no sourceRequest", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
     renderAppShell(queryClient);
@@ -272,7 +272,7 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: /Job History/i }));
     await screen.findByRole("heading", { name: "Job History" });
     await user.click(
-      within(screen.getByRole("row", { name: /failed-no-source FAILED/i })).getByRole("button", { name: /Resubmit/i })
+      within(screen.getByRole("row", { name: /failed-no-source FAILED/i })).getByRole("button", { name: /Rerun/i })
     );
 
     expect(await screen.findByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
