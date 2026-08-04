@@ -179,7 +179,8 @@ describe("SubmitJobPage", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
-    expect(screen.getByText("Job Config")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Template/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Source/i })).toBeInTheDocument();
     expect(screen.getByText("Runtime Selection")).toBeInTheDocument();
     expect(screen.getByText("Recent Submissions")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Preview JSON/i })).toBeInTheDocument();
@@ -448,7 +449,7 @@ describe("SubmitJobPage", () => {
       await user.click(screen.getByRole("button", { name: /Discard and switch/i }));
 
       expect(screen.queryByRole("textbox", { name: /payload json/i })).not.toBeInTheDocument();
-      expect(screen.getByText("Job Config")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Template/i })).toHaveAttribute("data-state", "active");
     });
   });
 });

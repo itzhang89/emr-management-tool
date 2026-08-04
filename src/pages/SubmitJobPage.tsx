@@ -1,5 +1,5 @@
 import { Eye, Send } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { JsonTemplateEditor } from "@/components/templates/JsonTemplateEditor";
@@ -55,6 +55,9 @@ import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJ
 
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
+const FORM_PANE_MIN_PX = 220;
+const HISTORY_PANE_MIN_PX = 140;
+const SPLITTER_PX = 8;
 
 export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
@@ -90,9 +93,11 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const [createTemplateDialogOpen, setCreateTemplateDialogOpen] = useState(false);
   const [createTemplateName, setCreateTemplateName] = useState("");
   const [createTemplateDescription, setCreateTemplateDescription] = useState("");
+  const [formPaneHeight, setFormPaneHeight] = useState<number | null>(null);
   const previewOpenRef = useRef(previewOpen);
   const modeRef = useRef(mode);
   const runtimeSyncRef = useRef<{ virtualClusterId: string; resourceTemplateId: string } | null>(null);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
   previewOpenRef.current = previewOpen;
   modeRef.current = mode;
 
@@ -388,6 +393,37 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
     sourceJson
   ]);
 
+  const beginFormPaneResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+
+    const formPane = container.querySelector<HTMLElement>("[data-submit-form-pane]");
+    const startY = event.clientY;
+    const startHeight =
+      formPaneHeight ?? formPane?.getBoundingClientRect().height ?? container.clientHeight * 0.7;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const maxHeight = container.clientHeight - HISTORY_PANE_MIN_PX - SPLITTER_PX;
+      const nextHeight = Math.min(
+        maxHeight,
+        Math.max(FORM_PANE_MIN_PX, startHeight + moveEvent.clientY - startY)
+      );
+      setFormPaneHeight(nextHeight);
+    };
+    const handleUp = () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }, [formPaneHeight]);
+
   const openPreview = useCallback(() => {
     if (!previewPayload) return;
     setPreviewOpen(true);
@@ -446,7 +482,7 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+      <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {cloneRequest ? (
           <Card className="shrink-0">
             <CardHeader>
@@ -463,25 +499,25 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
           </Card>
         ) : null}
 
-        <div className="grid max-h-[min(48vh,520px)] shrink-0 grid-cols-[1fr_320px] gap-4 overflow-hidden">
+        <div
+          data-submit-form-pane
+          className="grid min-h-0 grid-cols-[1fr_320px] gap-4 overflow-hidden"
+          style={
+            formPaneHeight != null
+              ? { height: formPaneHeight, flex: "none" }
+              : { flex: "7 1 0%" }
+          }
+        >
           <Card className="flex min-h-0 flex-col overflow-hidden">
-            <CardHeader className="shrink-0">
-              <CardTitle>Job Config</CardTitle>
-              <CardDescription>
-                {mode === "template"
-                  ? "Select the application JSON template and fill custom variables."
-                  : "Edit the StartJobRun JSON payload directly."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="min-h-0 flex-1 space-y-4 overflow-auto">
-              <Tabs value={mode} onValueChange={handleModeChange}>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
+              <Tabs value={mode} onValueChange={handleModeChange} className="shrink-0">
                 <TabsList>
                   <TabsTrigger value="template">Template</TabsTrigger>
                   <TabsTrigger value="source">Source</TabsTrigger>
                 </TabsList>
               </Tabs>
               {mode === "template" ? (
-                <>
+                <div className="min-h-0 flex-1 space-y-4 overflow-auto">
                   <Field label="Template">
                     <Select
                       value={selectedTemplateId}
@@ -512,14 +548,17 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
                       onChange={setCustomVariables}
                     />
                   ) : null}
-                </>
+                </div>
               ) : (
-                <JsonTemplateEditor
-                  value={sourceJson}
-                  onChange={setSourceJson}
-                  enableTemplateVariables={false}
-                  className="min-h-[220px] flex-1"
-                />
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  <JsonTemplateEditor
+                    value={sourceJson}
+                    onChange={setSourceJson}
+                    enableTemplateVariables={false}
+                    fillHeight
+                    className="h-full"
+                  />
+                </div>
               )}
             </CardContent>
           </Card>
@@ -559,24 +598,40 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
           </Card>
         </div>
 
-        <JobRunsPanel
-          virtualClusterId={virtualClusterId}
-          title="Recent Submissions"
-          showAutoRefreshControl
-          submittedOnly
-          autoRefresh={submissionAutoRefresh}
-          onAutoRefreshChange={setSubmissionAutoRefresh}
-          refreshCountdown={submissionRefreshCountdown}
-          submissionJobsQuery={submissionJobs}
-          onOpenLogs={onOpenLogs}
-          onSubmissionStarted={enableAfterSubmit}
-          className="min-h-0 flex-1"
-        />
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize editor and recent submissions"
+          aria-valuenow={formPaneHeight ?? undefined}
+          className="group relative h-2 shrink-0 cursor-row-resize touch-none"
+          onMouseDown={beginFormPaneResize}
+        >
+          <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border group-hover:bg-primary/50" />
+        </div>
+
+        <div
+          className="flex min-h-0 flex-col overflow-hidden"
+          style={formPaneHeight != null ? { flex: "1 1 0%" } : { flex: "3 1 0%" }}
+        >
+          <JobRunsPanel
+            virtualClusterId={virtualClusterId}
+            title="Recent Submissions"
+            showAutoRefreshControl
+            submittedOnly
+            autoRefresh={submissionAutoRefresh}
+            onAutoRefreshChange={setSubmissionAutoRefresh}
+            refreshCountdown={submissionRefreshCountdown}
+            submissionJobsQuery={submissionJobs}
+            onOpenLogs={onOpenLogs}
+            onSubmissionStarted={enableAfterSubmit}
+            className="min-h-0 flex-1"
+          />
+        </div>
       </div>
 
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} payload={previewPayload} />
       <Dialog open={sourceSwitchConfirmOpen} onOpenChange={setSourceSwitchConfirmOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Switch to Template submit?</DialogTitle>
             <DialogDescription>
@@ -584,14 +639,14 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
               save it as a template.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:justify-end">
-            <Button type="button" variant="outline" onClick={() => setSourceSwitchConfirmOpen(false)}>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setSourceSwitchConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="outline" onClick={openCreateTemplateDialog}>
+            <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={openCreateTemplateDialog}>
               Create template and switch
             </Button>
-            <Button type="button" onClick={discardSourceAndSwitchToTemplate}>
+            <Button type="button" className="w-full sm:w-auto" onClick={discardSourceAndSwitchToTemplate}>
               Discard and switch
             </Button>
           </DialogFooter>

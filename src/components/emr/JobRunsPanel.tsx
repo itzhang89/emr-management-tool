@@ -152,7 +152,7 @@ export function JobRunsPanel({
     if (job.sourceRequest) {
       startJob.mutate(job.sourceRequest, {
         onSuccess: () => {
-          toast.success("Resubmit submitted.");
+          toast.success("Resubmit submitted using the matched local submit configuration.");
           onSubmissionStarted?.();
         },
         onError: (error) => toast.error(errorMessage(error))

@@ -423,12 +423,19 @@ describe("JobHistoryPage", () => {
 
   it("resubmits a failed job with sourceRequest via startJob", async () => {
     const user = userEvent.setup();
+    const { toast } = await import("sonner");
+    startMutate.mockImplementation((_request, options?: { onSuccess?: () => void }) => {
+      options?.onSuccess?.();
+    });
     renderJobHistoryPage();
 
     const failedJob = jobs.find((job) => job.id === "job-failed");
     await user.click(within(screen.getByRole("row", { name: /failed-etl FAILED/i })).getByRole("button", { name: /Resubmit/i }));
 
     expect(startMutate).toHaveBeenCalledWith(failedJob?.sourceRequest, expect.any(Object));
+    expect(toast.success).toHaveBeenCalledWith(
+      "Resubmit submitted using the matched local submit configuration."
+    );
   });
 
   it("disables Path B Resubmit while describe is in flight", async () => {

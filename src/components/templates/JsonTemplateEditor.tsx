@@ -49,6 +49,12 @@ const editorTheme = EditorView.theme({
   ".cm-activeLine": {
     backgroundColor: "color-mix(in srgb, var(--color-muted) 65%, transparent)"
   },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary) 28%, transparent) !important"
+  },
+  ".cm-cursor": {
+    borderLeftColor: "var(--color-foreground)"
+  },
   ".cm-diagnostic-error": {
     borderLeft: "3px solid var(--color-destructive)"
   },
@@ -59,12 +65,33 @@ const editorTheme = EditorView.theme({
     color: "hsl(271 81% 56%)",
     fontWeight: "600"
   },
+  ".cm-tooltip": {
+    zIndex: "80",
+    backgroundColor: "var(--color-popover)",
+    color: "var(--color-popover-foreground)",
+    border: "1px solid var(--color-border)"
+  },
   ".cm-tooltip.cm-tooltip-autocomplete": {
     fontSize: "11px",
     fontFamily: "var(--font-mono)",
     backgroundColor: "var(--color-popover)",
     color: "var(--color-popover-foreground)",
     border: "1px solid var(--color-border)"
+  }
+});
+
+const fillHeightTheme = EditorView.theme({
+  "&.cm-editor": {
+    height: "100%",
+    maxHeight: "100%",
+    minHeight: "0"
+  },
+  ".cm-scroller": {
+    overflow: "auto",
+    height: "100%"
+  },
+  ".cm-content": {
+    minHeight: "0"
   }
 });
 
@@ -122,7 +149,8 @@ export function JsonTemplateEditor({
   knownVariables = [],
   className,
   readOnly = false,
-  enableTemplateVariables = true
+  enableTemplateVariables = true,
+  fillHeight = false
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -130,6 +158,8 @@ export function JsonTemplateEditor({
   className?: string;
   readOnly?: boolean;
   enableTemplateVariables?: boolean;
+  /** Constrain editor to parent height and scroll overflow inside the viewport. */
+  fillHeight?: boolean;
 }): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -168,6 +198,7 @@ export function JsonTemplateEditor({
       lintGutter(),
       tooltips({ parent: document.body }),
       editorTheme,
+      ...(fillHeight ? [fillHeightTheme] : []),
       compartments.variables.of(
         enableTemplateVariables ? createVariableExtensions(() => knownRef.current) : []
       ),
@@ -185,7 +216,7 @@ export function JsonTemplateEditor({
       view.destroy();
       viewRef.current = null;
     };
-  }, [compartments]);
+  }, [compartments, fillHeight]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -221,7 +252,8 @@ export function JsonTemplateEditor({
       aria-label="Payload JSON"
       aria-multiline="true"
       className={cn(
-        "json-template-editor min-h-[140px] w-full min-w-0 max-w-full overflow-hidden shrink-0 rounded-lg border bg-background",
+        "json-template-editor w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-background",
+        fillHeight ? "h-full min-h-0" : "min-h-[140px] shrink-0",
         className
       )}
     />
