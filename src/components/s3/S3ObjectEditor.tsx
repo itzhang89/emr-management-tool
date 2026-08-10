@@ -23,6 +23,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { createS3SearchPanel } from "@/components/s3/s3SearchPanel";
+import { s3ChangeGutter, setS3EditorBaseline } from "@/components/s3/s3ChangeGutter";
 import { s3ReplaceModeField, setS3ReplaceMode } from "@/services/s3EditorSearch";
 import { cn } from "@/lib/utils";
 
@@ -274,6 +275,8 @@ export const S3ObjectEditor = forwardRef<
   S3ObjectEditorHandle,
   {
     value: string;
+    /** Content last loaded or saved; used for dirty gutter markers. */
+    baseline?: string;
     fileKey?: string;
     readOnly?: boolean;
     className?: string;
@@ -283,7 +286,7 @@ export const S3ObjectEditor = forwardRef<
     onReadOnlyInput?: () => void;
   }
 >(function S3ObjectEditor(
-  { value, fileKey, readOnly = false, className, onChange, onSave, onFocusList, onReadOnlyInput },
+  { value, baseline = "", fileKey, readOnly = false, className, onChange, onSave, onFocusList, onReadOnlyInput },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -383,6 +386,7 @@ export const S3ObjectEditor = forwardRef<
 
     const extensions: Extension[] = [
       lineNumbers(),
+      s3ChangeGutter(),
       drawSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
@@ -409,6 +413,8 @@ export const S3ObjectEditor = forwardRef<
       parent: containerRef.current
     });
 
+    view.dispatch({ effects: setS3EditorBaseline.of(baseline) });
+
     viewRef.current = view;
 
     return () => {
@@ -426,6 +432,12 @@ export const S3ObjectEditor = forwardRef<
       });
     }
   }, [value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setS3EditorBaseline.of(baseline) });
+  }, [baseline]);
 
   useEffect(() => {
     const view = viewRef.current;

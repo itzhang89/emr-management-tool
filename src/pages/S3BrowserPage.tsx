@@ -99,6 +99,7 @@ export function S3BrowserPage() {
   const createFolder = useCreateS3Folder();
   const renameObject = useRenameS3Object();
   const [content, setContent] = useState("");
+  const [baselineContent, setBaselineContent] = useState("");
   const [transferPending, setTransferPending] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<S3UploadProgress | null>(null);
   const [uploadConflict, setUploadConflict] = useState<S3UploadPrepareResult | null>(null);
@@ -173,17 +174,22 @@ export function S3BrowserPage() {
   useEffect(() => {
     if (textObject.data?.content !== undefined) {
       setContent(textObject.data.content);
+      setBaselineContent(textObject.data.content);
       return;
     }
     if (selectedKey && selectedObject?.kind === "file" && !textObject.isLoading) {
       setContent("");
+      setBaselineContent("");
     }
   }, [textObject.data?.content, textObject.isLoading, selectedKey, selectedObject?.kind]);
 
+  const isContentDirty = editability?.editable === true && content !== baselineContent;
+
   const save = async () => {
-    if (!textObject.data || !editability?.editable) return;
+    if (!textObject.data || !editability?.editable || !isContentDirty) return;
     try {
       const saved = await saveObject.mutateAsync({ ...textObject.data, content });
+      setBaselineContent(content);
       toast.success(`Saved ${saved.key}`);
     } catch (error) {
       toast.error(formatAppError(error, "Failed to save object."));
@@ -332,6 +338,7 @@ export function S3BrowserPage() {
     setPrefix(parsed.prefix);
     setSelectedKey(undefined);
     setContent("");
+    setBaselineContent("");
     setPathPickerOpen(false);
   };
 
@@ -340,6 +347,7 @@ export function S3BrowserPage() {
     setPrefix(parent);
     setSelectedKey(undefined);
     setContent("");
+    setBaselineContent("");
   };
 
   const closeDeleteDialog = () => {
@@ -394,6 +402,7 @@ export function S3BrowserPage() {
         if (selectedKey === target.key || selectedKey?.startsWith(target.key)) {
           setSelectedKey(undefined);
           setContent("");
+          setBaselineContent("");
         }
         if (target.kind === "folder" && prefix.startsWith(target.key)) {
           setPrefix(parentPrefix(target.key));
@@ -531,6 +540,7 @@ export function S3BrowserPage() {
         setPrefix(selected.key);
         setSelectedKey(undefined);
         setContent("");
+        setBaselineContent("");
       }
       return;
     }
@@ -588,21 +598,7 @@ export function S3BrowserPage() {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
-      <PageHeader
-        pageId="s3"
-        actions={
-          <>
-            <Button variant="outline" disabled={!selectedBucket || transferPending} onClick={upload}>
-              <Upload data-icon="inline-start" />
-              {uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}
-            </Button>
-            <Button variant="outline" disabled={!selectedBucket || !selectedKey || transferPending} onClick={download}>
-              <Download data-icon="inline-start" />
-              Download
-            </Button>
-          </>
-        }
-      />
+      <PageHeader pageId="s3" />
       {uploadProgress ? (
         <Card className="shrink-0 border-primary/20 bg-primary/5 py-3">
           <CardContent className="space-y-2 px-4 py-0">
@@ -663,6 +659,22 @@ export function S3BrowserPage() {
               >
                 <FolderPlus data-icon="inline-start" />
               </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2"
+                    aria-label={uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}
+                    disabled={!selectedBucket || transferPending}
+                    onClick={upload}
+                  >
+                    <Upload data-icon="inline-start" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}</TooltipContent>
+              </Tooltip>
               <Button
                 type="button"
                 variant="outline"
@@ -727,6 +739,7 @@ export function S3BrowserPage() {
                         setPrefix(object.key);
                         setSelectedKey(undefined);
                         setContent("");
+                        setBaselineContent("");
                         return;
                       }
                       startRename(object);
@@ -781,21 +794,39 @@ export function S3BrowserPage() {
               <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
                 <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
                 {selectedObjectPath ? (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 shrink-0 px-1.5"
-                        aria-label="Copy S3 path"
-                        onClick={() => void copyS3Path(selectedObjectPath)}
-                      >
-                        <Copy className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Copy S3 path</TooltipContent>
-                  </Tooltip>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 shrink-0 px-1.5"
+                          aria-label="Copy S3 path"
+                          onClick={() => void copyS3Path(selectedObjectPath)}
+                        >
+                          <Copy className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Copy S3 path</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 shrink-0 px-1.5"
+                          aria-label="Download"
+                          disabled={!selectedBucket || !selectedKey || transferPending}
+                          onClick={() => void download()}
+                        >
+                          <Download className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Download</TooltipContent>
+                    </Tooltip>
+                  </div>
                 ) : null}
               </CardTitle>
               <CardDescription>
@@ -833,6 +864,7 @@ export function S3BrowserPage() {
                 ref={editorRef}
                 className="h-full"
                 value={content}
+                baseline={baselineContent}
                 fileKey={selectedKey}
                 readOnly={!editability?.editable}
                 onChange={setContent}
@@ -850,7 +882,7 @@ export function S3BrowserPage() {
                 <Trash2 data-icon="inline-start" />
                 Delete
               </Button>
-              <Button disabled={!editability?.editable || saveObject.isPending} onClick={save}>
+              <Button disabled={!isContentDirty || saveObject.isPending} onClick={save}>
                 <Save data-icon="inline-start" />
                 {saveObject.isPending ? "Saving..." : "Save"}
               </Button>
