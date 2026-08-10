@@ -51,5 +51,6 @@ describe("keyboardShortcuts registry", () => {
     const find = keyboardShortcuts.find((s) => s.id === SHORTCUT_IDS.S3_FIND);
     expect(find?.category).toBe("s3");
     expect(find?.description.toLowerCase()).toMatch(/replace/);
+    expect(find?.description.toLowerCase()).toMatch(/close/);
   });
 });

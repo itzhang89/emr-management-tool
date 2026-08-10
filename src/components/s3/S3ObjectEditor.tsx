@@ -20,7 +20,7 @@ import { json } from "@codemirror/legacy-modes/mode/javascript";
 import { yaml } from "@codemirror/legacy-modes/mode/yaml";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches, search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 
@@ -255,6 +255,16 @@ export const S3ObjectEditor = forwardRef<
             onSaveRef.current?.();
             return true;
           }
+        },
+        {
+          key: "Mod-f",
+          run: (view) => {
+            if (searchPanelOpen(view.state)) {
+              return closeSearchPanel(view);
+            }
+            return openSearchPanel(view);
+          },
+          scope: "editor search-panel"
         },
         {
           key: "ArrowLeft",

@@ -216,7 +216,7 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     category: "s3",
     label: "Find in editor",
     description:
-      "Open the editor find panel when the file editor has focus (includes replace when the file is editable)",
+      "Open or close the editor find panel when the file editor has focus (includes replace when the file is editable; Esc also closes)",
     keys: [formatModShortcut("F")]
   },
   {
