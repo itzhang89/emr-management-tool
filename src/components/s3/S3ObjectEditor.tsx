@@ -20,7 +20,7 @@ import { json } from "@codemirror/legacy-modes/mode/javascript";
 import { yaml } from "@codemirror/legacy-modes/mode/yaml";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +45,8 @@ const editorTheme = EditorView.theme({
     backgroundColor: "var(--color-background)",
     color: "var(--color-foreground)",
     height: "100%",
-    minHeight: "240px"
+    minHeight: "240px",
+    position: "relative"
   },
   ".cm-editor": {
     height: "100%",
@@ -74,6 +75,95 @@ const editorTheme = EditorView.theme({
   },
   ".cm-activeLine": {
     backgroundColor: "color-mix(in srgb, var(--color-muted) 65%, transparent)"
+  },
+  ".cm-panels.cm-panels-top": {
+    position: "absolute",
+    top: "8px",
+    right: "8px",
+    left: "auto",
+    width: "max-content",
+    maxWidth: "min(420px, calc(100% - 16px))",
+    zIndex: "40",
+    backgroundColor: "transparent",
+    color: "var(--color-popover-foreground)",
+    borderBottom: "none",
+    boxShadow: "none"
+  },
+  ".cm-panel.cm-search": {
+    padding: "8px 28px 8px 10px",
+    borderRadius: "var(--radius-md)",
+    border: "1px solid var(--color-border)",
+    backgroundColor: "color-mix(in srgb, var(--color-popover) 96%, transparent)",
+    color: "var(--color-popover-foreground)",
+    boxShadow: "0 8px 24px color-mix(in srgb, var(--color-foreground) 12%, transparent)",
+    fontFamily: "var(--font-sans)",
+    fontSize: "12px",
+    lineHeight: "1.3",
+    "& [name=close]": {
+      top: "6px",
+      right: "8px",
+      color: "var(--color-muted-foreground)",
+      cursor: "pointer",
+      fontSize: "14px",
+      lineHeight: "1"
+    },
+    "& [name=close]:hover": {
+      color: "var(--color-foreground)"
+    },
+    "& input, & button, & label": {
+      margin: "0 6px 4px 0"
+    },
+    "& label": {
+      fontSize: "11px",
+      color: "var(--color-muted-foreground)",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "0.25rem"
+    },
+    "& input[type=checkbox]": {
+      marginRight: "0.25rem",
+      accentColor: "var(--color-primary)"
+    }
+  },
+  ".cm-textfield": {
+    border: "1px solid var(--color-input)",
+    borderRadius: "var(--radius-sm)",
+    padding: "3px 8px",
+    minHeight: "26px",
+    backgroundColor: "var(--color-background)",
+    color: "var(--color-foreground)",
+    outline: "none",
+    fontSize: "12px",
+    fontFamily: "var(--font-sans)"
+  },
+  ".cm-textfield:focus": {
+    borderColor: "var(--color-ring)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--color-ring) 25%, transparent)"
+  },
+  ".cm-button": {
+    border: "1px solid var(--color-border)",
+    borderRadius: "var(--radius-sm)",
+    padding: "3px 8px",
+    minHeight: "26px",
+    backgroundColor: "var(--color-secondary)",
+    color: "var(--color-secondary-foreground)",
+    cursor: "pointer",
+    fontSize: "11px",
+    fontFamily: "var(--font-sans)",
+    boxShadow: "none"
+  },
+  ".cm-button:hover": {
+    backgroundColor: "var(--color-accent)",
+    color: "var(--color-accent-foreground)"
+  },
+  ".cm-button:active": {
+    backgroundColor: "color-mix(in srgb, var(--color-accent) 85%, var(--color-foreground) 15%)"
+  },
+  ".cm-searchMatch": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary) 22%, transparent)"
+  },
+  ".cm-searchMatch-selected": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary) 40%, transparent)"
   }
 });
 
@@ -202,6 +292,7 @@ export const S3ObjectEditor = forwardRef<
       drawSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
+      search({ top: true }),
       history(),
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
       saveKeymap,
