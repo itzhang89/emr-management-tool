@@ -2,6 +2,7 @@ pub mod aws;
 pub mod commands;
 pub mod db;
 pub mod diagnostics;
+pub mod distribution;
 pub mod error;
 pub mod models;
 pub mod state;

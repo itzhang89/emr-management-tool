@@ -17,7 +17,16 @@ fn job_history_cutoff() -> String {
 
 pub async fn pool() -> AppResult<SqlitePool> {
     let dir = app_data_dir()?;
-    fs::create_dir_all(&dir).map_err(|error| AppError::storage(error.to_string()))?;
+    fs::create_dir_all(&dir).map_err(|error| {
+        if crate::distribution::is_portable() {
+            AppError::storage(format!(
+                "Unable to create portable data directory at {}. Move the app to a writable folder. ({error})",
+                dir.display()
+            ))
+        } else {
+            AppError::storage(error.to_string())
+        }
+    })?;
     let options = SqliteConnectOptions::new()
         .filename(dir.join("emr-management-tool.sqlite"))
         .create_if_missing(true);
