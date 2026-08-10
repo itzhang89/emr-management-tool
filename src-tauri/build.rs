@@ -13,8 +13,10 @@ fn main() {
         std::env::var("EMR_CREDENTIAL_STORE").unwrap_or_else(|_| "auto".to_string());
     println!("cargo:rustc-env=EMR_CREDENTIAL_STORE={credential_store}");
 
-    let distribution =
-        std::env::var("VITE_APP_DISTRIBUTION").unwrap_or_else(|_| "installer".to_string());
+    let distribution = match std::env::var("VITE_APP_DISTRIBUTION") {
+        Ok(value) if value == "portable" => "portable",
+        _ => "installer",
+    };
     println!("cargo:rustc-env=EMR_APP_DISTRIBUTION={distribution}");
 
     tauri_build::build();
