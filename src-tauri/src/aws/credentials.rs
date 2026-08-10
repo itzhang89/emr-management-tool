@@ -6,6 +6,7 @@ use aws_types::region::Region;
 use serde::{Deserialize, Serialize};
 #[cfg(not(debug_assertions))]
 use std::sync::OnceLock;
+use std::path::PathBuf;
 use tauri::AppHandle;
 
 #[cfg(not(debug_assertions))]
@@ -13,7 +14,7 @@ const KEYCHAIN_SERVICE_NAME: &str = "emr-management-tool";
 const KEYRING_USER: &str = "default/access_key";
 const KEYRING_SECRET: &str = "default/secret_key";
 const KEYRING_SESSION_TOKEN: &str = "default/session_token";
-const DEV_CREDENTIAL_STORE_PATH: &str = "emr-management-tool.credentials.dev.json";
+const CREDENTIAL_STORE_FILENAME: &str = "emr-management-tool.credentials.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredAwsCredentials {
@@ -136,12 +137,20 @@ fn write_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
     write_store_secret(app, key, value)
 }
 
+fn credential_store_path(_app: &AppHandle) -> AppResult<PathBuf> {
+    Ok(crate::db::app_data_dir()?.join(CREDENTIAL_STORE_FILENAME))
+}
+
 fn write_store_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> {
     use serde_json::json;
     use tauri_plugin_store::StoreExt;
 
+    let data_dir = crate::db::app_data_dir()?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    let path = credential_store_path(app)?;
     let store = app
-        .store(DEV_CREDENTIAL_STORE_PATH)
+        .store(&path)
         .map_err(|error| AppError::storage(error.to_string()))?;
     store.set(key, json!(value));
     store
@@ -215,8 +224,9 @@ fn read_optional_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>>
 fn read_optional_store_secret(app: &AppHandle, key: &str) -> AppResult<Option<String>> {
     use tauri_plugin_store::StoreExt;
 
+    let path = credential_store_path(app)?;
     let store = app
-        .store(DEV_CREDENTIAL_STORE_PATH)
+        .store(&path)
         .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(store
         .get(key)
@@ -252,8 +262,9 @@ fn delete_secret(app: &AppHandle, key: &str) -> AppResult<()> {
 fn delete_store_secret(app: &AppHandle, key: &str) -> AppResult<()> {
     use tauri_plugin_store::StoreExt;
 
+    let path = credential_store_path(app)?;
     let store = app
-        .store(DEV_CREDENTIAL_STORE_PATH)
+        .store(&path)
         .map_err(|error| AppError::storage(error.to_string()))?;
     store.delete(key);
     store
@@ -289,6 +300,7 @@ fn use_local_credential_store() -> bool {
         cfg!(debug_assertions),
         option_env!("EMR_APP_CHANNEL"),
         option_env!("EMR_CREDENTIAL_STORE"),
+        option_env!("EMR_APP_DISTRIBUTION"),
     )
 }
 
@@ -296,7 +308,11 @@ fn should_use_local_credential_store(
     debug_assertions: bool,
     channel: Option<&str>,
     credential_store: Option<&str>,
+    distribution: Option<&str>,
 ) -> bool {
+    if matches!(distribution, Some("portable")) {
+        return true;
+    }
     match credential_store {
         Some("local") => true,
         Some("keychain") => false,
@@ -321,17 +337,20 @@ mod tests {
         assert!(should_use_local_credential_store(
             false,
             Some("development"),
-            None
+            None,
+            None,
         ));
         assert!(!should_use_local_credential_store(
             false,
             Some("stable"),
-            None
+            None,
+            None,
         ));
         assert!(should_use_local_credential_store(
             true,
             Some("stable"),
-            None
+            None,
+            None,
         ));
     }
 
@@ -340,22 +359,42 @@ mod tests {
         assert!(should_use_local_credential_store(
             false,
             Some("stable"),
-            Some("local")
+            Some("local"),
+            None,
         ));
         assert!(!should_use_local_credential_store(
             true,
             Some("development"),
-            Some("keychain")
+            Some("keychain"),
+            None,
         ));
         assert!(!should_use_local_credential_store(
             false,
             Some("stable"),
-            Some("auto")
+            Some("auto"),
+            None,
         ));
         assert!(should_use_local_credential_store(
             true,
             Some("stable"),
-            Some("unexpected")
+            Some("unexpected"),
+            None,
+        ));
+    }
+
+    #[test]
+    fn portable_distribution_forces_local_credential_store() {
+        assert!(should_use_local_credential_store(
+            false,
+            Some("stable"),
+            Some("keychain"),
+            Some("portable"),
+        ));
+        assert!(!should_use_local_credential_store(
+            false,
+            Some("stable"),
+            None,
+            Some("installer"),
         ));
     }
 }
