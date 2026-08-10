@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertReleaseVersion } from "./release-version.mjs";
+import { isInstallerWindowsBundle } from "./updater-assets.mjs";
 
 const UPDATER_TARGETS = [
   {
@@ -18,9 +19,7 @@ const UPDATER_TARGETS = [
   },
   {
     platform: "windows-x86_64",
-    isBundle: (name) =>
-      /\.(nsis\.zip|msi\.zip)$/i.test(name) ||
-      (/\.zip$/i.test(name) && /(setup|nsis|windows)/i.test(name))
+    isBundle: isInstallerWindowsBundle
   }
 ];
 
