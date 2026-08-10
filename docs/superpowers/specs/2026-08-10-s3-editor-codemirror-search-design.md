@@ -56,7 +56,7 @@ Replace next / replace all are panel buttons (and Enter behavior inside the pane
 In `src/data/keyboardShortcuts.ts` (S3 category):
 
 - Add entries for editor find (Mod-f) and find next/previous (Mod-g / Shift-Mod-g), describing that the panel includes replace when the file is editable.
-- Optionally document goto-line / select-next-occurrence only if keeping the help list short is still readable; minimum required is Find + next/previous.
+- Do not add Shortcuts help entries for goto-line, select-next-occurrence, or select-all-matches (those remain editor-only via `searchKeymap`).
 - Extend `keyboardShortcuts.test.ts` accordingly.
 
 ### 5. Interaction with existing S3 shortcuts
