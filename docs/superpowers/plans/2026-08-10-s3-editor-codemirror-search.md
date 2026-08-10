@@ -1,6 +1,6 @@
 # S3 Editor CodeMirror Search Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Wire CodeMirror’s standard search panel into `S3ObjectEditor` and document Find / Find next / Find previous in S3 shortcuts help.
 
@@ -37,7 +37,7 @@
 - Produces: `SHORTCUT_IDS.S3_FIND`, `SHORTCUT_IDS.S3_FIND_NEXT`, `SHORTCUT_IDS.S3_FIND_PREVIOUS`
 - Produces: three `keyboardShortcuts` entries in category `"s3"`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `src/data/keyboardShortcuts.test.ts`:
 
@@ -53,13 +53,13 @@ Add to `src/data/keyboardShortcuts.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- src/data/keyboardShortcuts.test.ts`
 
 Expected: FAIL (missing `S3_FIND` / related ids)
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `SHORTCUT_IDS` add:
 
@@ -96,13 +96,13 @@ After `S3_GO_UP` entry in `keyboardShortcuts`, insert:
   },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- src/data/keyboardShortcuts.test.ts`
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/data/keyboardShortcuts.ts src/data/keyboardShortcuts.test.ts
@@ -122,13 +122,13 @@ git commit -m "feat: document S3 editor find shortcuts in help"
 - Consumes: `@codemirror/search` exports `highlightSelectionMatches`, `searchKeymap`
 - Produces: editor extensions that open the default search panel on Mod-f
 
-- [ ] **Step 1: Install dependency**
+- [x] **Step 1: Install dependency**
 
 Run: `npm install @codemirror/search@^6`
 
 Expected: package listed under dependencies alongside other `@codemirror/*` packages
 
-- [ ] **Step 2: Wire editor extensions**
+- [x] **Step 2: Wire editor extensions**
 
 In `src/components/s3/S3ObjectEditor.tsx`:
 
@@ -154,7 +154,7 @@ keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
 
 Do not add a custom search panel theme or `search({ createPanel })`.
 
-- [ ] **Step 3: Typecheck / unit tests**
+- [x] **Step 3: Typecheck / unit tests**
 
 Run: `npm test -- src/data/keyboardShortcuts.test.ts`
 
@@ -162,7 +162,7 @@ Expected: PASS
 
 If the project has a typecheck script, run it for the editor file path or full project as usual (e.g. `npx tsc --noEmit` if that is the repo convention).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add package.json package-lock.json src/components/s3/S3ObjectEditor.tsx
@@ -175,7 +175,7 @@ git commit -m "feat: enable CodeMirror standard search in S3 editor"
 
 **Files:** none required
 
-- [ ] **Step 1: Verify acceptance against spec**
+- [x] **Step 1: Verify acceptance against spec**
 
 Checklist (manual in app when possible; otherwise code-review confirm):
 
@@ -186,7 +186,7 @@ Checklist (manual in app when possible; otherwise code-review confirm):
 5. Shortcuts help shows the three new S3 entries
 6. `@codemirror/search` is in `package.json`
 
-- [ ] **Step 2: Commit plan checkboxes if updated**
+- [x] **Step 2: Commit plan checkboxes if updated**
 
 If this plan file’s checkboxes were marked done during execution, commit the plan update; otherwise skip.
 
