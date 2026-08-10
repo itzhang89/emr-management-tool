@@ -55,6 +55,12 @@ vi.mock("@/hooks/useEmr", () => ({
   })
 }));
 
+vi.mock("@/hooks/useAwsSettings", () => ({
+  useActiveAwsAccount: () => ({
+    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+  })
+}));
+
 let jobs: JobRunSummary[];
 
 function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () => void; onOpenSubmit?: () => void }) {
@@ -100,13 +106,13 @@ describe("JobHistoryPage", () => {
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
-    window.localStorage.removeItem("emr-eks:job-history-search-recent");
+    window.localStorage.removeItem("emr-eks:job-history-search-recent:acct-test");
   });
 
   it("shows recent searches on focus and applies one immediately", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
-      "emr-eks:job-history-search-recent",
+      "emr-eks:job-history-search-recent:acct-test",
       JSON.stringify(["000000037tga8qam664", "failed"])
     );
     renderJobHistoryPage();
@@ -120,7 +126,7 @@ describe("JobHistoryPage", () => {
   it("reopens recent searches when clicking an already focused search input", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
-      "emr-eks:job-history-search-recent",
+      "emr-eks:job-history-search-recent:acct-test",
       JSON.stringify(["000000037tga8qam664", "failed"])
     );
     renderJobHistoryPage();
@@ -131,6 +137,36 @@ describe("JobHistoryPage", () => {
     expect(screen.queryByRole("button", { name: "000000037tga8qam664" })).not.toBeInTheDocument();
     await user.click(input);
     expect(await screen.findByRole("button", { name: "000000037tga8qam664" })).toBeInTheDocument();
+  });
+
+  it("ignores legacy global search history", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:job-history-search-recent",
+      JSON.stringify(["legacy-query"])
+    );
+    renderJobHistoryPage();
+    const input = screen.getByPlaceholderText(/Search jobs/i);
+    await user.click(input);
+    expect(screen.queryByRole("button", { name: "legacy-query" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("emr-eks:job-history-search-recent")).toBeNull();
+  });
+
+  it("keeps search history separate per account", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(
+      "emr-eks:job-history-search-recent:acct-test",
+      JSON.stringify(["query-for-test-account"])
+    );
+    window.localStorage.setItem(
+      "emr-eks:job-history-search-recent:acct-other",
+      JSON.stringify(["query-for-other-account"])
+    );
+    renderJobHistoryPage();
+    const input = screen.getByPlaceholderText(/Search jobs/i);
+    await user.click(input);
+    expect(await screen.findByRole("button", { name: "query-for-test-account" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "query-for-other-account" })).not.toBeInTheDocument();
   });
 
   it("strips spark- before searching and looking up in AWS", async () => {

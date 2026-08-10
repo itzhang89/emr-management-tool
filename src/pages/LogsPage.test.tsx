@@ -76,7 +76,7 @@ describe("LogsPage", () => {
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     });
-    window.localStorage.removeItem("emr-eks:logs-job-id-search-recent");
+    window.localStorage.removeItem("emr-eks:logs-job-id-search-recent:acct-test");
     useDescribeJobRun.mockReturnValue({
       data: {
         id: "job-running",
@@ -212,7 +212,7 @@ describe("LogsPage", () => {
     await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
     expect(useDescribeJobRun).toHaveBeenLastCalledWith("job-manual", "vc-1");
-    expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")!)).toEqual(["job-manual"]);
+    expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")!)).toEqual(["job-manual"]);
   });
 
   it("focuses the job id input with Mod+F when no log viewer is open", async () => {
@@ -236,7 +236,7 @@ describe("LogsPage", () => {
   it("shows recent job ids on click and applies one immediately", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
-      "emr-eks:logs-job-id-search-recent",
+      "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history", "job-other"])
     );
     useSessionStore.setState({
@@ -259,7 +259,7 @@ describe("LogsPage", () => {
   it("shows recently viewed jobs in the empty state and opens logs on click", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
-      "emr-eks:logs-job-id-search-recent",
+      "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history", "job-other"])
     );
     useSessionStore.setState({
@@ -300,10 +300,49 @@ describe("LogsPage", () => {
     expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
   });
 
+  it("ignores legacy global recently viewed history", () => {
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent",
+      JSON.stringify(["legacy-job"])
+    );
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")).toBeNull();
+  });
+
+  it("keeps recently viewed history separate per account", async () => {
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent:acct-test",
+      JSON.stringify(["job-for-test-account"])
+    );
+    window.localStorage.setItem(
+      "emr-eks:logs-job-id-search-recent:acct-other",
+      JSON.stringify(["job-for-other-account"])
+    );
+    useSessionStore.setState({
+      selectedJobId: undefined,
+      selectedJobVirtualClusterId: undefined,
+      selectedVirtualClusterId: "vc-1"
+    });
+
+    renderLogsPage();
+
+    const recentList = screen.getByRole("list", { name: /Recently viewed job ids/i });
+    expect(within(recentList).getByRole("button", { name: "job-for-test-account" })).toBeInTheDocument();
+    expect(within(recentList).queryByRole("button", { name: "job-for-other-account" })).not.toBeInTheDocument();
+  });
+
   it("reopens recent job ids when clicking an already focused input", async () => {
     const user = userEvent.setup();
     window.localStorage.setItem(
-      "emr-eks:logs-job-id-search-recent",
+      "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history"])
     );
     useSessionStore.setState({
@@ -346,12 +385,12 @@ describe("LogsPage", () => {
     });
 
     renderLogsPage();
-    expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")).toBeNull();
+    expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")).toBeNull();
 
     useSessionStore.getState().setSelectedJobForLogs("job-from-history-page", "vc-1");
 
     await waitFor(() =>
-      expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")!)).toEqual([
+      expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")!)).toEqual([
         "job-from-history-page"
       ])
     );

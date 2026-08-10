@@ -1,1 +1,50 @@
 import "@testing-library/jest-dom/vitest";
+
+/**
+ * Node 25+ may expose a non-functional global `localStorage` (requires
+ * `--localstorage-file`) that replaces jsdom's Storage. Provide an in-memory
+ * implementation for tests.
+ */
+class MemoryStorage implements Storage {
+  #map = new Map<string, string>();
+
+  get length() {
+    return this.#map.size;
+  }
+
+  clear() {
+    this.#map.clear();
+  }
+
+  getItem(key: string) {
+    return this.#map.has(key) ? this.#map.get(key)! : null;
+  }
+
+  key(index: number) {
+    return [...this.#map.keys()][index] ?? null;
+  }
+
+  removeItem(key: string) {
+    this.#map.delete(key);
+  }
+
+  setItem(key: string, value: string) {
+    this.#map.set(String(key), String(value));
+  }
+}
+
+const memoryStorage = new MemoryStorage();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  enumerable: true,
+  value: memoryStorage,
+  writable: true
+});
+if (typeof window !== "undefined") {
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    enumerable: true,
+    value: memoryStorage,
+    writable: true
+  });
+}

@@ -4,6 +4,7 @@ import { JobAutoRefreshToggle } from "@/components/emr/JobAutoRefreshToggle";
 import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobRuns } from "@/hooks/useEmr";
 import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
 import { isFocusSearchKey } from "@/lib/keyboardShortcut";
@@ -16,14 +17,20 @@ import {
 
 export function JobHistoryPage({ onOpenLogs, onOpenSubmit }: { onOpenLogs?: () => void; onOpenS3?: () => void; onOpenSubmit?: () => void }) {
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [findInAwsSignal, setFindInAwsSignal] = useState(0);
-  const [recentSearches, setRecentSearches] = useState(() => readJobHistorySearchHistory());
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const searchInputRef = useRef<RecentSearchInputHandle>(null);
   const submittedKeyword = submittedSearch.trim() || undefined;
   const { autoRefresh, setAutoRefresh, refreshCountdown, setRefreshCountdown } = useJobHistoryAutoRefresh();
   const jobs = useJobRuns(effectiveVirtualClusterId, autoRefresh, submittedKeyword);
+
+  useEffect(() => {
+    setRecentSearches(accountId ? readJobHistorySearchHistory(accountId) : []);
+  }, [accountId]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -42,8 +49,8 @@ export function JobHistoryPage({ onOpenLogs, onOpenSubmit }: { onOpenLogs?: () =
 
   const submitLocalSearch = (rawQuery: string) => {
     const original = rawQuery.trim();
-    if (original) {
-      setRecentSearches(rememberJobHistorySearch(original));
+    if (original && accountId) {
+      setRecentSearches(rememberJobHistorySearch(accountId, original));
     }
     const normalized = normalizeEmrJobRunId(original);
     if (

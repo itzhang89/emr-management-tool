@@ -36,7 +36,7 @@ export function LogsPage() {
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const clusters = useVirtualClusters();
   const [jobIdInput, setJobIdInput] = useState(selectedJobId ?? "");
-  const [recentJobIdSearches, setRecentJobIdSearches] = useState(() => readLogsJobIdSearchHistory());
+  const [recentJobIdSearches, setRecentJobIdSearches] = useState<string[]>([]);
   const jobIdInputRef = useRef<RecentSearchInputHandle>(null);
   const describedJob = useDescribeJobRun(selectedJobId, selectedJobVirtualClusterId ?? effectiveVirtualClusterId);
   const activeAccount = useActiveAwsAccount();
@@ -57,11 +57,15 @@ export function LogsPage() {
   const resolvedActiveSource = activeSource ?? (s3Destination ? "s3" : cloudWatchDestination ? "cloudwatch" : "s3");
 
   useEffect(() => {
+    setRecentJobIdSearches(accountId ? readLogsJobIdSearchHistory(accountId) : []);
+  }, [accountId]);
+
+  useEffect(() => {
     setJobIdInput(selectedJobId ?? "");
-    if (selectedJobId) {
-      setRecentJobIdSearches(rememberLogsJobIdSearch(selectedJobId));
+    if (selectedJobId && accountId) {
+      setRecentJobIdSearches(rememberLogsJobIdSearch(accountId, selectedJobId));
     }
-  }, [selectedJobId]);
+  }, [selectedJobId, accountId]);
 
   useEffect(() => {
     setActiveSource(undefined);
