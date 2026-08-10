@@ -132,7 +132,7 @@ vi.mock("@/components/s3/S3ObjectEditor", async () => {
 
 function renderS3BrowserPage() {
   return render(
-    <TooltipProvider>
+    <TooltipProvider delayDuration={0}>
       <S3BrowserPage />
     </TooltipProvider>
   );
@@ -595,7 +595,7 @@ describe("S3BrowserPage", () => {
     expect(within(browser).getByText(/1\.0 KB · 2026-06-10/)).toBeInTheDocument();
   });
 
-  it("shows selected file properties compactly in the right preview header", async () => {
+  it("shows selected file properties behind an info control in the right preview header", async () => {
     const user = userEvent.setup();
 
     renderS3BrowserPage();
@@ -606,15 +606,20 @@ describe("S3BrowserPage", () => {
     const preview = screen.getByRole("region", { name: /Selected S3 object/i });
     expect(within(preview).queryByRole("button", { name: "s3://logs-bucket/readme.txt" })).not.toBeInTheDocument();
     expect(within(preview).getByRole("button", { name: /^Copy S3 path$/i })).toBeInTheDocument();
-    expect(within(preview).getByText("Size")).toBeInTheDocument();
-    expect(within(preview).getByText("10 B")).toBeInTheDocument();
-    expect(within(preview).getByText("Last modified")).toBeInTheDocument();
-    expect(within(preview).getByText(/2026/)).toBeInTheDocument();
-    expect(within(preview).getByText("ETag")).toBeInTheDocument();
-    expect(within(preview).getByText("abc123")).toBeInTheDocument();
+    expect(within(preview).queryByText("Size")).not.toBeInTheDocument();
+    expect(within(preview).queryByText("ETag")).not.toBeInTheDocument();
+
+    const details = within(preview).getByRole("button", { name: /^Object details$/i });
+    await user.click(details);
+
+    expect(await screen.findByText("Size")).toBeInTheDocument();
+    expect(screen.getByText("10 B")).toBeInTheDocument();
+    expect(screen.getByText("Last modified")).toBeInTheDocument();
+    expect(screen.getByText("ETag")).toBeInTheDocument();
+    expect(screen.getByText("abc123")).toBeInTheDocument();
   });
 
-  it("marks read-only files with a lock and shows the reason only when editing is attempted", async () => {
+  it("marks read-only files with a gray name and lock beside the filename", async () => {
     const user = userEvent.setup();
 
     renderS3BrowserPage();
@@ -623,8 +628,11 @@ describe("S3BrowserPage", () => {
     await user.click(within(browser).getByRole("button", { name: /archive\.zip/i }));
 
     const preview = screen.getByRole("region", { name: /Selected S3 object/i });
+    const title = within(preview).getByText("archive.zip");
+    expect(title).toHaveClass("text-muted-foreground");
     expect(within(preview).getByLabelText("Object is read-only")).toBeInTheDocument();
     expect(screen.queryByText("File type is read-only.")).not.toBeInTheDocument();
+    expect(within(preview).queryByText(/Preview the selected object content/i)).not.toBeInTheDocument();
 
     fireEvent.keyDown(within(preview).getByRole("textbox"), { key: "a" });
 

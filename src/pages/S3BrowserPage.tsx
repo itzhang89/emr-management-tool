@@ -1,4 +1,4 @@
-import { ArrowUp, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { ArrowUp, CircleAlert, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { S3PathPickerDialog } from "@/components/s3/S3PathPicker";
@@ -789,53 +790,67 @@ export function S3BrowserPage() {
           <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/50 group-focus-visible:bg-primary" />
         </div>
         <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="region" aria-label="Selected S3 object">
-          <CardHeader className="shrink-0 flex-row items-start justify-between gap-4">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <CardTitle className="flex min-w-0 items-start gap-1 font-mono text-base">
-                <span className="min-w-0 flex-1 break-all">{selectedKey ?? "Select an object"}</span>
-                {selectedObjectPath ? (
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 shrink-0 px-1.5"
-                          aria-label="Copy S3 path"
-                          onClick={() => void copyS3Path(selectedObjectPath)}
-                        >
-                          <Copy className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Copy S3 path</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 shrink-0 px-1.5"
-                          aria-label="Download"
-                          disabled={!selectedBucket || !selectedKey || transferPending}
-                          onClick={() => void download()}
-                        >
-                          <Download className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Download</TooltipContent>
-                    </Tooltip>
-                  </div>
-                ) : null}
-              </CardTitle>
-              <CardDescription>
-                {editability?.editable
-                  ? "ETag-safe save will prevent overwriting remote changes."
-                  : "Preview the selected object content."}
-              </CardDescription>
-            </div>
-            <ObjectProperties object={selectedObject} />
+          <CardHeader className="shrink-0 flex-row items-center gap-2 py-3">
+            <CardTitle className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-base">
+              <span
+                className={cn(
+                  "min-w-0 flex-1 truncate",
+                  selectedObject?.kind === "file" && !editability?.editable && "text-muted-foreground"
+                )}
+                title={selectedKey}
+              >
+                {selectedKey ?? "Select an object"}
+              </span>
+              {selectedObject?.kind === "file" && !editability?.editable ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      aria-label="Object is read-only"
+                      className="inline-flex shrink-0 text-muted-foreground"
+                    >
+                      <Lock className="size-3.5" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{editability?.reason ?? "Object is read-only."}</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </CardTitle>
+            {selectedObjectPath ? (
+              <div className="flex shrink-0 items-center gap-0.5">
+                <ObjectProperties object={selectedObject} />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 shrink-0 px-1.5"
+                      aria-label="Copy S3 path"
+                      onClick={() => void copyS3Path(selectedObjectPath)}
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Copy S3 path</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 shrink-0 px-1.5"
+                      aria-label="Download"
+                      disabled={!selectedBucket || !selectedKey || transferPending}
+                      onClick={() => void download()}
+                    >
+                      <Download className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Download</TooltipContent>
+                </Tooltip>
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
             {textObject.error ? (
@@ -847,19 +862,6 @@ export function S3BrowserPage() {
               <p className="shrink-0 text-xs text-muted-foreground">Loading object content...</p>
             ) : null}
             <div className="relative min-h-0 flex-1">
-              {!editability?.editable && selectedObject?.kind === "file" ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      aria-label="Object is read-only"
-                      className="absolute right-3 top-3 rounded-md bg-background/90 p-1 text-muted-foreground shadow-sm"
-                    >
-                      <Lock className="size-4" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>{editability?.reason ?? "Object is read-only."}</TooltipContent>
-                </Tooltip>
-              ) : null}
               <S3ObjectEditor
                 ref={editorRef}
                 className="h-full"
@@ -1086,16 +1088,31 @@ function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
   if (properties.length === 0) return null;
 
   return (
-    <dl className="grid shrink-0 grid-cols-[auto_auto] gap-x-3 gap-y-1 text-right text-xs">
-      {properties.map(([label, value]) => (
-        <div key={label} className="contents">
-          <dt className="text-muted-foreground">{label}</dt>
-          <dd className="max-w-[180px] truncate font-mono" title={value}>
-            {value}
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 px-1.5"
+          aria-label="Object details"
+        >
+          <CircleAlert className="size-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-auto max-w-xs p-3">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          {properties.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="truncate font-mono" title={value}>
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </PopoverContent>
+    </Popover>
   );
 }
 
