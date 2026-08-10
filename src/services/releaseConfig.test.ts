@@ -45,6 +45,36 @@ describe("release configuration", () => {
     expect(developmentConfig.bundle.macOS?.signingIdentity).toBe("-");
   });
 
+  it("defines stable portable app identity with a single portable updater endpoint", () => {
+    const portableConfig = readJson<{
+      productName: string;
+      identifier: string;
+      bundle: { createUpdaterArtifacts?: boolean };
+      plugins?: { updater?: { endpoints?: string[]; windows?: { installMode?: string } } };
+    }>("src-tauri/tauri.portable.conf.json");
+
+    expect(portableConfig.productName).toBe("EMR Management Tool Portable");
+    expect(portableConfig.identifier).toBe("com.example.emr-management-tool.portable");
+    expect(portableConfig.bundle.createUpdaterArtifacts).toBe(false);
+    expect(portableConfig.plugins?.updater?.endpoints).toEqual([
+      "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json"
+    ]);
+    expect(portableConfig.plugins?.updater?.windows?.installMode).toBe("passive");
+  });
+
+  it("defines development portable app identity without updater artifacts", () => {
+    const developmentPortableConfig = readJson<{
+      productName: string;
+      identifier: string;
+      bundle: { createUpdaterArtifacts?: boolean; macOS?: { signingIdentity?: string } };
+    }>("src-tauri/tauri.development.portable.conf.json");
+
+    expect(developmentPortableConfig.productName).toBe("EMR Management Tool Dev Portable");
+    expect(developmentPortableConfig.identifier).toBe("com.example.emr-management-tool.development.portable");
+    expect(developmentPortableConfig.bundle.createUpdaterArtifacts).toBe(false);
+    expect(developmentPortableConfig.bundle.macOS?.signingIdentity).toBe("-");
+  });
+
   it("keeps updater permissions scoped through the default Tauri capability", () => {
     const capability = readJson<{ permissions: string[] }>("src-tauri/capabilities/default.json");
 
