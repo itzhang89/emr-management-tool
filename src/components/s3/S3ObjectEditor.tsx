@@ -23,6 +23,7 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { createS3SearchPanel } from "@/components/s3/s3SearchPanel";
+import { s3ReplaceModeField, setS3ReplaceMode } from "@/services/s3EditorSearch";
 import { cn } from "@/lib/utils";
 
 const highlightStyle = HighlightStyle.define([
@@ -83,7 +84,7 @@ const editorTheme = EditorView.theme({
     right: "8px",
     left: "auto",
     width: "max-content",
-    maxWidth: "min(440px, calc(100% - 16px))",
+    maxWidth: "min(520px, calc(100% - 16px))",
     zIndex: "40",
     backgroundColor: "transparent",
     color: "var(--color-popover-foreground)",
@@ -92,7 +93,7 @@ const editorTheme = EditorView.theme({
   },
   ".cm-panel.cm-search.cm-s3-search": {
     position: "relative",
-    padding: "10px 30px 10px 10px",
+    padding: "8px 28px 8px 8px",
     borderRadius: "var(--radius-md)",
     border: "1px solid var(--color-border)",
     backgroundColor: "color-mix(in srgb, var(--color-popover) 96%, transparent)",
@@ -103,11 +104,12 @@ const editorTheme = EditorView.theme({
     lineHeight: "1.3",
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: "6px",
+    minWidth: "360px",
     "& [name=close]": {
       position: "absolute",
-      top: "8px",
-      right: "8px",
+      top: "6px",
+      right: "6px",
       background: "transparent",
       border: "none",
       padding: "0",
@@ -127,57 +129,86 @@ const editorTheme = EditorView.theme({
     gap: "6px",
     flexWrap: "nowrap"
   },
-  ".cm-s3-search-options": {
-    gap: "10px",
-    flexWrap: "wrap"
+  ".cm-s3-field-shell": {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+    flex: "1 1 auto",
+    minWidth: "280px",
+    border: "1px solid var(--color-input)",
+    borderRadius: "var(--radius-sm)",
+    backgroundColor: "var(--color-background)",
+    padding: "0 4px 0 8px",
+    minHeight: "28px"
   },
-  ".cm-s3-search-options label": {
+  ".cm-s3-field-shell:focus-within": {
+    borderColor: "var(--color-ring)",
+    boxShadow: "0 0 0 2px color-mix(in srgb, var(--color-ring) 25%, transparent)"
+  },
+  ".cm-s3-field-input": {
+    flex: "1 1 auto",
+    minWidth: "0",
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "var(--color-foreground)",
+    fontSize: "12px",
+    fontFamily: "var(--font-sans)",
+    padding: "4px 0",
     margin: "0",
-    fontSize: "11px",
+    boxShadow: "none"
+  },
+  ".cm-s3-field-trailing": {
+    display: "flex",
+    alignItems: "center",
+    gap: "2px",
+    flex: "0 0 auto"
+  },
+  ".cm-s3-opt-btn, .cm-s3-nav-btn": {
+    border: "none",
+    background: "transparent",
     color: "var(--color-muted-foreground)",
+    cursor: "pointer",
+    borderRadius: "var(--radius-sm)",
+    minWidth: "22px",
+    height: "22px",
+    padding: "0 4px",
+    fontSize: "11px",
+    fontFamily: "var(--font-sans)",
+    lineHeight: "1",
     display: "inline-flex",
     alignItems: "center",
-    gap: "0.3rem",
-    whiteSpace: "nowrap"
+    justifyContent: "center"
   },
-  ".cm-s3-search-options input[type=checkbox]": {
-    margin: "0",
-    accentColor: "var(--color-primary)"
+  ".cm-s3-opt-btn:hover, .cm-s3-nav-btn:hover": {
+    backgroundColor: "var(--color-muted)",
+    color: "var(--color-foreground)"
   },
-  ".cm-s3-search-input": {
-    width: "160px",
-    minWidth: "120px",
-    flex: "1 1 auto"
+  ".cm-s3-opt-btn.is-active": {
+    backgroundColor: "color-mix(in srgb, var(--color-primary) 18%, transparent)",
+    color: "var(--color-primary)",
+    fontWeight: "600"
   },
   ".cm-s3-search-count": {
-    minWidth: "4.5rem",
-    textAlign: "center",
+    minWidth: "3.75rem",
+    padding: "0 4px",
+    textAlign: "right",
     fontSize: "11px",
     fontVariantNumeric: "tabular-nums",
     color: "var(--color-muted-foreground)",
     flex: "0 0 auto"
   },
-  ".cm-textfield": {
-    border: "1px solid var(--color-input)",
-    borderRadius: "var(--radius-sm)",
-    padding: "3px 8px",
-    minHeight: "26px",
-    backgroundColor: "var(--color-background)",
-    color: "var(--color-foreground)",
-    outline: "none",
-    fontSize: "12px",
-    fontFamily: "var(--font-sans)",
-    margin: "0"
+  ".cm-s3-replace-shell": {
+    minWidth: "280px"
   },
-  ".cm-textfield:focus": {
-    borderColor: "var(--color-ring)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--color-ring) 25%, transparent)"
+  ".cm-s3-search-replace .cm-button": {
+    flex: "0 0 auto"
   },
   ".cm-button": {
     border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-sm)",
     padding: "3px 8px",
-    minHeight: "26px",
+    minHeight: "28px",
     backgroundColor: "var(--color-secondary)",
     color: "var(--color-secondary-foreground)",
     cursor: "pointer",
@@ -193,6 +224,10 @@ const editorTheme = EditorView.theme({
   },
   ".cm-button:active": {
     backgroundColor: "color-mix(in srgb, var(--color-accent) 85%, var(--color-foreground) 15%)"
+  },
+  ".cm-button:disabled": {
+    opacity: "0.5",
+    cursor: "not-allowed"
   },
   ".cm-searchMatch": {
     backgroundColor: "color-mix(in srgb, var(--color-primary) 22%, transparent)"
@@ -295,9 +330,23 @@ export const S3ObjectEditor = forwardRef<
           key: "Mod-f",
           run: (view) => {
             if (searchPanelOpen(view.state)) {
+              view.dispatch({ effects: setS3ReplaceMode.of(false) });
               return closeSearchPanel(view);
             }
+            view.dispatch({ effects: setS3ReplaceMode.of(false) });
             return openSearchPanel(view);
+          },
+          scope: "editor search-panel"
+        },
+        {
+          key: "Mod-r",
+          run: (view) => {
+            if (view.state.readOnly) return false;
+            view.dispatch({ effects: setS3ReplaceMode.of(true) });
+            if (!searchPanelOpen(view.state)) {
+              openSearchPanel(view);
+            }
+            return true;
           },
           scope: "editor search-panel"
         },
@@ -337,6 +386,7 @@ export const S3ObjectEditor = forwardRef<
       drawSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
+      s3ReplaceModeField,
       search({ top: true, createPanel: createS3SearchPanel }),
       history(),
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),

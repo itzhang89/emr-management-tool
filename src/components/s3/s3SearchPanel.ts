@@ -7,13 +7,19 @@ import {
   findNext,
   findPrevious,
   replaceNext,
-  replaceAll,
   closeSearchPanel
 } from "@codemirror/search";
+import { formatModShortcut } from "@/lib/keyboardShortcut";
 import {
+  addExcludedRange,
+  buildReplaceAllChanges,
   collectSearchMatches,
   findActiveMatchIndex,
-  formatS3SearchMatchLabel
+  formatS3SearchMatchLabel,
+  isRangeExcluded,
+  s3ReplaceModeField,
+  setS3ReplaceMode,
+  type SearchMatchRange
 } from "@/services/s3EditorSearch";
 
 function elt(
@@ -42,6 +48,29 @@ function elt(
   return element;
 }
 
+function iconToggle(
+  label: string,
+  title: string,
+  pressed: boolean,
+  onToggle: () => void
+): HTMLButtonElement {
+  return elt(
+    "button",
+    {
+      type: "button",
+      class: "cm-s3-opt-btn",
+      title,
+      "aria-label": title,
+      "aria-pressed": pressed ? "true" : "false",
+      onclick: (event) => {
+        event.preventDefault();
+        onToggle();
+      }
+    },
+    [label]
+  ) as HTMLButtonElement;
+}
+
 export function createS3SearchPanel(view: EditorView): Panel {
   return new S3SearchPanel(view);
 }
@@ -50,95 +79,121 @@ class S3SearchPanel implements Panel {
   dom: HTMLElement;
   private view: EditorView;
   private query: SearchQuery;
+  private excluded: SearchMatchRange[] = [];
   private searchField: HTMLInputElement;
   private replaceField: HTMLInputElement;
-  private caseField: HTMLInputElement;
-  private reField: HTMLInputElement;
-  private wordField: HTMLInputElement;
+  private caseButton: HTMLButtonElement;
+  private wordButton: HTMLButtonElement;
+  private regexpButton: HTMLButtonElement;
   private countLabel: HTMLElement;
   private replaceRow: HTMLElement;
+  private excludeButton: HTMLButtonElement;
+  private caseSensitive: boolean;
+  private wholeWord: boolean;
+  private regexp: boolean;
 
   constructor(view: EditorView) {
     this.view = view;
     const query = (this.query = getSearchQuery(view.state));
+    this.caseSensitive = query.caseSensitive;
+    this.wholeWord = query.wholeWord;
+    this.regexp = query.regexp;
 
     this.searchField = elt("input", {
       value: query.search,
       placeholder: "Find",
       "aria-label": "Find",
-      class: "cm-textfield cm-s3-search-input",
+      class: "cm-s3-field-input",
       name: "search",
       form: "",
       "main-field": "true",
-      onchange: () => this.commit(),
-      onkeyup: () => this.commit()
+      oninput: () => this.commit(),
+      onchange: () => this.commit()
     }) as HTMLInputElement;
 
     this.replaceField = elt("input", {
       value: query.replace,
       placeholder: "Replace",
       "aria-label": "Replace",
-      class: "cm-textfield cm-s3-search-input",
+      class: "cm-s3-field-input",
       name: "replace",
       form: "",
-      onchange: () => this.commit(),
-      onkeyup: () => this.commit()
-    }) as HTMLInputElement;
-
-    this.caseField = elt("input", {
-      type: "checkbox",
-      name: "case",
-      form: "",
-      checked: query.caseSensitive,
+      oninput: () => this.commit(),
       onchange: () => this.commit()
     }) as HTMLInputElement;
 
-    this.reField = elt("input", {
-      type: "checkbox",
-      name: "re",
-      form: "",
-      checked: query.regexp,
-      onchange: () => this.commit()
-    }) as HTMLInputElement;
-
-    this.wordField = elt("input", {
-      type: "checkbox",
-      name: "word",
-      form: "",
-      checked: query.wholeWord,
-      onchange: () => this.commit()
-    }) as HTMLInputElement;
+    this.caseButton = iconToggle("Cc", "Match case", this.caseSensitive, () => {
+      this.caseSensitive = !this.caseSensitive;
+      this.syncOptionButtons();
+      this.commit();
+    });
+    this.wordButton = iconToggle("W", "By word", this.wholeWord, () => {
+      this.wholeWord = !this.wholeWord;
+      this.syncOptionButtons();
+      this.commit();
+    });
+    this.regexpButton = iconToggle(".*", "Regexp", this.regexp, () => {
+      this.regexp = !this.regexp;
+      this.syncOptionButtons();
+      this.commit();
+    });
 
     this.countLabel = elt("span", {
       class: "cm-s3-search-count",
       "aria-live": "polite"
     });
 
-    const button = (name: string, label: string, onclick: () => void) =>
+    const prevTitle = `Previous match (${formatModShortcut("G", { shift: true })})`;
+    const nextTitle = `Next match (${formatModShortcut("G")})`;
+
+    const findShell = elt("div", { class: "cm-s3-field-shell" }, [
+      this.searchField,
+      elt("div", { class: "cm-s3-field-trailing" }, [
+        this.caseButton,
+        this.wordButton,
+        this.regexpButton,
+        this.countLabel,
+        elt(
+          "button",
+          {
+            type: "button",
+            class: "cm-s3-nav-btn",
+            name: "prev",
+            title: prevTitle,
+            "aria-label": prevTitle,
+            onclick: () => findPrevious(view)
+          },
+          ["⬆"]
+        ),
+        elt(
+          "button",
+          {
+            type: "button",
+            class: "cm-s3-nav-btn",
+            name: "next",
+            title: nextTitle,
+            "aria-label": nextTitle,
+            onclick: () => findNext(view)
+          },
+          ["⬇"]
+        )
+      ])
+    ]);
+
+    const actionButton = (name: string, label: string, onclick: () => void) =>
       elt("button", { class: "cm-button", name, type: "button", onclick }, [label]);
 
-    const findRow = elt("div", { class: "cm-s3-search-row" }, [
-      this.searchField,
-      this.countLabel,
-      button("prev", "Prev", () => findPrevious(view)),
-      button("next", "Next", () => findNext(view))
-    ]);
-
-    const optionsRow = elt("div", { class: "cm-s3-search-row cm-s3-search-options" }, [
-      elt("label", null, [this.caseField, "Match case"]),
-      elt("label", null, [this.reField, "Regexp"]),
-      elt("label", null, [this.wordField, "By word"])
-    ]);
+    this.excludeButton = actionButton("exclude", "Exclude", () => this.excludeCurrent()) as HTMLButtonElement;
 
     this.replaceRow = elt("div", { class: "cm-s3-search-row cm-s3-search-replace" }, [
-      this.replaceField,
-      button("replace", "Replace", () => replaceNext(view)),
-      button("replaceAll", "Replace all", () => replaceAll(view))
+      elt("div", { class: "cm-s3-field-shell cm-s3-replace-shell" }, [this.replaceField]),
+      actionButton("replace", "Replace", () => replaceNext(view)),
+      actionButton("replaceAll", "Replace all", () => this.replaceAllWithExclusions()),
+      this.excludeButton
     ]);
 
     this.dom = elt("div", { class: "cm-search cm-s3-search", onkeydown: (event) => this.keydown(event) }, [
-      findRow,
-      optionsRow,
+      elt("div", { class: "cm-s3-search-row" }, [findShell]),
       this.replaceRow,
       elt(
         "button",
@@ -152,33 +207,85 @@ class S3SearchPanel implements Panel {
       )
     ]);
 
+    this.syncOptionButtons();
     this.syncReplaceVisibility();
     this.refreshCount();
+  }
+
+  private syncOptionButtons() {
+    this.caseButton.setAttribute("aria-pressed", String(this.caseSensitive));
+    this.wordButton.setAttribute("aria-pressed", String(this.wholeWord));
+    this.regexpButton.setAttribute("aria-pressed", String(this.regexp));
+    this.caseButton.classList.toggle("is-active", this.caseSensitive);
+    this.wordButton.classList.toggle("is-active", this.wholeWord);
+    this.regexpButton.classList.toggle("is-active", this.regexp);
   }
 
   private commit() {
     const query = new SearchQuery({
       search: this.searchField.value,
-      caseSensitive: this.caseField.checked,
-      regexp: this.reField.checked,
-      wholeWord: this.wordField.checked,
+      caseSensitive: this.caseSensitive,
+      regexp: this.regexp,
+      wholeWord: this.wholeWord,
       replace: this.replaceField.value
     });
-    if (!query.eq(this.query)) {
+    const queryChanged = !query.eq(this.query);
+    if (queryChanged) {
+      if (
+        query.search !== this.query.search ||
+        query.caseSensitive !== this.query.caseSensitive ||
+        query.regexp !== this.query.regexp ||
+        query.wholeWord !== this.query.wholeWord
+      ) {
+        this.excluded = [];
+      }
       this.query = query;
       this.view.dispatch({ effects: setSearchQuery.of(query) });
     }
     this.refreshCount();
   }
 
+  private activeMatch(): SearchMatchRange | null {
+    const { matches } = collectSearchMatches(this.view.state, this.query);
+    if (matches.length === 0) return null;
+    const { from, to } = this.view.state.selection.main;
+    const index = findActiveMatchIndex(matches, from, to);
+    if (index < 0) return null;
+    return matches[index] ?? null;
+  }
+
+  private excludeCurrent() {
+    if (this.view.state.readOnly) return;
+    const match = this.activeMatch();
+    if (!match) return;
+    this.excluded = addExcludedRange(this.excluded, match);
+    findNext(this.view);
+    this.refreshCount();
+  }
+
+  private replaceAllWithExclusions() {
+    if (this.view.state.readOnly) return;
+    const changes = buildReplaceAllChanges(this.view.state, this.query, this.excluded);
+    if (changes.length === 0) return;
+    this.view.dispatch({
+      changes,
+      userEvent: "input.replace.all"
+    });
+    this.excluded = [];
+    this.refreshCount();
+  }
+
   private refreshCount() {
     const query = this.query;
-    if (!query.search.trim()) {
-      this.countLabel.textContent = formatS3SearchMatchLabel(0, 0, { emptyQuery: true });
-      return;
-    }
     if (query.regexp && !query.valid) {
       this.countLabel.textContent = formatS3SearchMatchLabel(0, 0, { error: "Invalid regex" });
+      this.excludeButton.disabled = true;
+      return;
+    }
+
+    if (!query.search.trim()) {
+      this.countLabel.textContent = formatS3SearchMatchLabel(0, 0);
+      this.excludeButton.disabled = true;
       return;
     }
 
@@ -188,10 +295,17 @@ class S3SearchPanel implements Panel {
     this.countLabel.textContent = formatS3SearchMatchLabel(matches.length, activeIndex, {
       truncated
     });
+
+    const active = activeIndex >= 0 ? matches[activeIndex] : null;
+    this.excludeButton.disabled =
+      this.view.state.readOnly || !active || isRangeExcluded(this.excluded, active);
   }
 
   private syncReplaceVisibility() {
-    this.replaceRow.style.display = this.view.state.readOnly ? "none" : "";
+    const replaceMode = this.view.state.field(s3ReplaceModeField, false) ?? false;
+    const show = replaceMode && !this.view.state.readOnly;
+    this.replaceRow.style.display = show ? "" : "none";
+    this.dom.classList.toggle("cm-s3-search-replace-open", show);
   }
 
   private keydown(event: Event) {
@@ -217,7 +331,19 @@ class S3SearchPanel implements Panel {
         if (effect.is(setSearchQuery) && !effect.value.eq(this.query)) {
           this.setQuery(effect.value);
         }
+        if (effect.is(setS3ReplaceMode)) {
+          this.syncReplaceVisibility();
+          if (effect.value) {
+            queueMicrotask(() => {
+              this.replaceField.focus();
+              this.replaceField.select();
+            });
+          }
+        }
       }
+    }
+    if (update.docChanged) {
+      this.excluded = [];
     }
     if (
       update.docChanged ||
@@ -226,7 +352,10 @@ class S3SearchPanel implements Panel {
     ) {
       this.refreshCount();
     }
-    if (update.startState.readOnly !== update.state.readOnly) {
+    if (
+      update.startState.readOnly !== update.state.readOnly ||
+      update.startState.field(s3ReplaceModeField, false) !== update.state.field(s3ReplaceModeField, false)
+    ) {
       this.syncReplaceVisibility();
     }
   }
@@ -235,12 +364,19 @@ class S3SearchPanel implements Panel {
     this.query = query;
     this.searchField.value = query.search;
     this.replaceField.value = query.replace;
-    this.caseField.checked = query.caseSensitive;
-    this.reField.checked = query.regexp;
-    this.wordField.checked = query.wholeWord;
+    this.caseSensitive = query.caseSensitive;
+    this.regexp = query.regexp;
+    this.wholeWord = query.wholeWord;
+    this.syncOptionButtons();
   }
 
   mount() {
+    const replaceMode = this.view.state.field(s3ReplaceModeField, false) ?? false;
+    if (replaceMode && !this.view.state.readOnly) {
+      this.replaceField.focus();
+      this.replaceField.select();
+      return;
+    }
     this.searchField.select();
   }
 

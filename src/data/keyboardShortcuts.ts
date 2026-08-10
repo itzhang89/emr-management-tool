@@ -24,6 +24,7 @@ export const SHORTCUT_IDS = {
   S3_FIND: "s3-find",
   S3_FIND_NEXT: "s3-find-next",
   S3_FIND_PREVIOUS: "s3-find-previous",
+  S3_REPLACE: "s3-replace",
   SUBMIT_JOB: "submit-job",
   SUBMIT_PREVIEW_JSON: "submit-preview-json",
   SUBMIT_TOGGLE_MODE: "submit-toggle-mode"
@@ -216,8 +217,16 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     category: "s3",
     label: "Find in editor",
     description:
-      "Open or close the editor find panel when the file editor has focus (includes replace when the file is editable; Esc also closes)",
+      "Open or close the find panel when the file editor has focus (Esc also closes)",
     keys: [formatModShortcut("F")]
+  },
+  {
+    id: SHORTCUT_IDS.S3_REPLACE,
+    category: "s3",
+    label: "Replace in editor",
+    description:
+      "Open find with the replace row when the file is editable (Exclude skips the current match for Replace all)",
+    keys: [formatModShortcut("R")]
   },
   {
     id: SHORTCUT_IDS.S3_FIND_NEXT,

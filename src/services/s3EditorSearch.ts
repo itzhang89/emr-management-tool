@@ -1,6 +1,5 @@
-import type { EditorState } from "@codemirror/state";
+import { StateEffect, StateField, type ChangeSpec, type EditorState } from "@codemirror/state";
 import type { SearchQuery } from "@codemirror/search";
-import { formatSearchMatchLabel } from "@/services/logSearch";
 
 export const MAX_S3_SEARCH_MATCHES = 1_000;
 
@@ -8,6 +7,18 @@ export type SearchMatchRange = {
   from: number;
   to: number;
 };
+
+export const setS3ReplaceMode = StateEffect.define<boolean>();
+
+export const s3ReplaceModeField = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setS3ReplaceMode)) return effect.value;
+    }
+    return value;
+  }
+});
 
 export function collectSearchMatches(
   state: EditorState,
@@ -57,12 +68,77 @@ export function findActiveMatchIndex(
 export function formatS3SearchMatchLabel(
   matchCount: number,
   activeMatchIndex: number,
-  options?: { truncated?: boolean; error?: string; emptyQuery?: boolean }
+  options?: { truncated?: boolean; error?: string }
 ) {
-  if (options?.emptyQuery) return "";
   if (options?.error) return options.error;
-  return formatSearchMatchLabel(matchCount, Math.max(0, activeMatchIndex), {
-    truncated: options?.truncated,
-    error: options?.error
+  if (matchCount <= 0) return "0 Result";
+  const suffix = options?.truncated ? "+" : "";
+  return `${Math.max(0, activeMatchIndex) + 1}/${matchCount}${suffix}`;
+}
+
+export function rangeEquals(a: SearchMatchRange, b: SearchMatchRange) {
+  return a.from === b.from && a.to === b.to;
+}
+
+export function isRangeExcluded(excluded: SearchMatchRange[], range: SearchMatchRange) {
+  return excluded.some((entry) => rangeEquals(entry, range));
+}
+
+export function addExcludedRange(excluded: SearchMatchRange[], range: SearchMatchRange) {
+  if (isRangeExcluded(excluded, range)) return excluded;
+  return [...excluded, range];
+}
+
+function unquoteReplace(text: string, literal: boolean) {
+  if (literal) return text;
+  return text.replace(/\\([nrt\\])/g, (_, ch: string) =>
+    ch === "n" ? "\n" : ch === "r" ? "\r" : ch === "t" ? "\t" : "\\"
+  );
+}
+
+function replacementForMatch(
+  state: EditorState,
+  query: SearchQuery,
+  match: SearchMatchRange
+): string {
+  if (!query.regexp) {
+    return unquoteReplace(query.replace, query.literal);
+  }
+
+  const cursor = query.getCursor(state, match.from, match.to);
+  const step = cursor.next();
+  if (step.done) return query.replace;
+
+  const value = step.value as { from: number; to: number; match?: RegExpExecArray };
+  const matched = value.match;
+  if (!matched) return query.replace;
+
+  return query.replace.replace(/\$([$&]|\d+)/g, (whole, token: string) => {
+    if (token === "$") return "$";
+    if (token === "&") return matched[0];
+    const index = Number(token);
+    return matched[index] ?? whole;
   });
+}
+
+export function buildReplaceAllChanges(
+  state: EditorState,
+  query: SearchQuery,
+  excluded: SearchMatchRange[]
+): ChangeSpec[] {
+  if (!query.valid) return [];
+  const { matches } = collectSearchMatches(state, query);
+  const changes: ChangeSpec[] = [];
+
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const match = matches[index]!;
+    if (isRangeExcluded(excluded, match)) continue;
+    changes.push({
+      from: match.from,
+      to: match.to,
+      insert: replacementForMatch(state, query, match)
+    });
+  }
+
+  return changes;
 }

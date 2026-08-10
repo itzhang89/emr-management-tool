@@ -45,12 +45,16 @@ describe("keyboardShortcuts registry", () => {
 
   it("exposes S3 editor find shortcuts", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND)).toMatch(/F/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_REPLACE)).toMatch(/R/i);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND_NEXT)).toMatch(/G/i);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND_PREVIOUS)).toMatch(/G/i);
 
     const find = keyboardShortcuts.find((s) => s.id === SHORTCUT_IDS.S3_FIND);
     expect(find?.category).toBe("s3");
-    expect(find?.description.toLowerCase()).toMatch(/replace/);
     expect(find?.description.toLowerCase()).toMatch(/close/);
+
+    const replace = keyboardShortcuts.find((s) => s.id === SHORTCUT_IDS.S3_REPLACE);
+    expect(replace?.category).toBe("s3");
+    expect(replace?.description.toLowerCase()).toMatch(/exclude/);
   });
 });
