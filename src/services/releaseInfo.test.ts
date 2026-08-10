@@ -28,4 +28,31 @@ describe("createReleaseInfo", () => {
     expect(createReleaseInfo({ version: "0.2.0" }).version).toBe("0.2.0");
     expect(createReleaseInfo().version).toBe("0.0.0-dev");
   });
+
+  it("exposes portable distribution and updater eligibility", () => {
+    const portable = createReleaseInfo({
+      appChannel: "stable",
+      platform: "windows",
+      distribution: "portable"
+    });
+    expect(portable.distribution).toBe("portable");
+    expect(portable.isPortable).toBe(true);
+    expect(portable.canUseAutoUpdater).toBe(true);
+
+    expect(
+      createReleaseInfo({
+        appChannel: "development",
+        platform: "windows",
+        distribution: "portable"
+      }).canUseAutoUpdater
+    ).toBe(false);
+
+    expect(
+      createReleaseInfo({
+        appChannel: "stable",
+        platform: "windows",
+        distribution: "installer"
+      }).canUseAutoUpdater
+    ).toBe(true);
+  });
 });
