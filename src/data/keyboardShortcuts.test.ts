@@ -42,4 +42,14 @@ describe("keyboardShortcuts registry", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_FOCUS_JOB_ID)).toMatch(/F/i);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_FIND)).toMatch(/F/i);
   });
+
+  it("exposes S3 editor find shortcuts", () => {
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND)).toMatch(/F/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND_NEXT)).toMatch(/G/i);
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND_PREVIOUS)).toMatch(/G/i);
+
+    const find = keyboardShortcuts.find((s) => s.id === SHORTCUT_IDS.S3_FIND);
+    expect(find?.category).toBe("s3");
+    expect(find?.description.toLowerCase()).toMatch(/replace/);
+  });
 });

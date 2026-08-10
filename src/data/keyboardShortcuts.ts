@@ -21,6 +21,9 @@ export const SHORTCUT_IDS = {
   S3_FOCUS_EDITOR: "s3-focus-editor",
   S3_FOCUS_LIST: "s3-focus-list",
   S3_GO_UP: "s3-go-up",
+  S3_FIND: "s3-find",
+  S3_FIND_NEXT: "s3-find-next",
+  S3_FIND_PREVIOUS: "s3-find-previous",
   SUBMIT_JOB: "submit-job",
   SUBMIT_PREVIEW_JSON: "submit-preview-json",
   SUBMIT_TOGGLE_MODE: "submit-toggle-mode"
@@ -207,6 +210,28 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Go up",
     description: "Navigate to the parent prefix in the current bucket",
     keys: ["Esc"]
+  },
+  {
+    id: SHORTCUT_IDS.S3_FIND,
+    category: "s3",
+    label: "Find in editor",
+    description:
+      "Open the editor find panel when the file editor has focus (includes replace when the file is editable)",
+    keys: [formatModShortcut("F")]
+  },
+  {
+    id: SHORTCUT_IDS.S3_FIND_NEXT,
+    category: "s3",
+    label: "Find next",
+    description: "Jump to the next match in the open S3 object editor",
+    keys: [formatModShortcut("G"), "F3"]
+  },
+  {
+    id: SHORTCUT_IDS.S3_FIND_PREVIOUS,
+    category: "s3",
+    label: "Find previous",
+    description: "Jump to the previous match in the open S3 object editor",
+    keys: [formatModShortcut("G", { shift: true }), "⇧F3"]
   },
   {
     id: SHORTCUT_IDS.SUBMIT_JOB,
