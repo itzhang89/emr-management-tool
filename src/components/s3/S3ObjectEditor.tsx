@@ -20,6 +20,7 @@ import { json } from "@codemirror/legacy-modes/mode/javascript";
 import { yaml } from "@codemirror/legacy-modes/mode/yaml";
 import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 
@@ -200,8 +201,9 @@ export const S3ObjectEditor = forwardRef<
       lineNumbers(),
       drawSelection(),
       highlightActiveLine(),
+      highlightSelectionMatches(),
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
       saveKeymap,
       compartments.language.of(languageExtensionForKey(fileKey)),
       syntaxHighlighting(highlightStyle, { fallback: true }),
