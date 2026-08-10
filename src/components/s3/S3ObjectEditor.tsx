@@ -22,6 +22,7 @@ import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { createS3SearchPanel } from "@/components/s3/s3SearchPanel";
 import { cn } from "@/lib/utils";
 
 const highlightStyle = HighlightStyle.define([
@@ -82,15 +83,16 @@ const editorTheme = EditorView.theme({
     right: "8px",
     left: "auto",
     width: "max-content",
-    maxWidth: "min(420px, calc(100% - 16px))",
+    maxWidth: "min(440px, calc(100% - 16px))",
     zIndex: "40",
     backgroundColor: "transparent",
     color: "var(--color-popover-foreground)",
     borderBottom: "none",
     boxShadow: "none"
   },
-  ".cm-panel.cm-search": {
-    padding: "8px 28px 8px 10px",
+  ".cm-panel.cm-search.cm-s3-search": {
+    position: "relative",
+    padding: "10px 30px 10px 10px",
     borderRadius: "var(--radius-md)",
     border: "1px solid var(--color-border)",
     backgroundColor: "color-mix(in srgb, var(--color-popover) 96%, transparent)",
@@ -99,9 +101,17 @@ const editorTheme = EditorView.theme({
     fontFamily: "var(--font-sans)",
     fontSize: "12px",
     lineHeight: "1.3",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
     "& [name=close]": {
-      top: "6px",
+      position: "absolute",
+      top: "8px",
       right: "8px",
+      background: "transparent",
+      border: "none",
+      padding: "0",
+      margin: "0",
       color: "var(--color-muted-foreground)",
       cursor: "pointer",
       fontSize: "14px",
@@ -109,21 +119,43 @@ const editorTheme = EditorView.theme({
     },
     "& [name=close]:hover": {
       color: "var(--color-foreground)"
-    },
-    "& input, & button, & label": {
-      margin: "0 6px 4px 0"
-    },
-    "& label": {
-      fontSize: "11px",
-      color: "var(--color-muted-foreground)",
-      display: "inline-flex",
-      alignItems: "center",
-      gap: "0.25rem"
-    },
-    "& input[type=checkbox]": {
-      marginRight: "0.25rem",
-      accentColor: "var(--color-primary)"
     }
+  },
+  ".cm-s3-search-row": {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "nowrap"
+  },
+  ".cm-s3-search-options": {
+    gap: "10px",
+    flexWrap: "wrap"
+  },
+  ".cm-s3-search-options label": {
+    margin: "0",
+    fontSize: "11px",
+    color: "var(--color-muted-foreground)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "0.3rem",
+    whiteSpace: "nowrap"
+  },
+  ".cm-s3-search-options input[type=checkbox]": {
+    margin: "0",
+    accentColor: "var(--color-primary)"
+  },
+  ".cm-s3-search-input": {
+    width: "160px",
+    minWidth: "120px",
+    flex: "1 1 auto"
+  },
+  ".cm-s3-search-count": {
+    minWidth: "4.5rem",
+    textAlign: "center",
+    fontSize: "11px",
+    fontVariantNumeric: "tabular-nums",
+    color: "var(--color-muted-foreground)",
+    flex: "0 0 auto"
   },
   ".cm-textfield": {
     border: "1px solid var(--color-input)",
@@ -134,7 +166,8 @@ const editorTheme = EditorView.theme({
     color: "var(--color-foreground)",
     outline: "none",
     fontSize: "12px",
-    fontFamily: "var(--font-sans)"
+    fontFamily: "var(--font-sans)",
+    margin: "0"
   },
   ".cm-textfield:focus": {
     borderColor: "var(--color-ring)",
@@ -150,7 +183,9 @@ const editorTheme = EditorView.theme({
     cursor: "pointer",
     fontSize: "11px",
     fontFamily: "var(--font-sans)",
-    boxShadow: "none"
+    boxShadow: "none",
+    margin: "0",
+    whiteSpace: "nowrap"
   },
   ".cm-button:hover": {
     backgroundColor: "var(--color-accent)",
@@ -302,7 +337,7 @@ export const S3ObjectEditor = forwardRef<
       drawSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
-      search({ top: true }),
+      search({ top: true, createPanel: createS3SearchPanel }),
       history(),
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap]),
       saveKeymap,
