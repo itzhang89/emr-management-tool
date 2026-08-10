@@ -291,6 +291,24 @@ describe("release configuration", () => {
     });
   });
 
+  it("ships a Windows portable packaging script with flat exe zip layout", () => {
+    const script = readText("scripts/package-windows-portable.mjs");
+
+    expect(script).toContain("PORTABLE_EXE");
+    expect(script).toContain("PORTABLE_OUT");
+    expect(script).toContain("archive root");
+    expect(script).toContain('no `data/` folder');
+  });
+
+  it("signs portable zip artifacts when Tauri signing keys are configured", () => {
+    const script = readText("scripts/package-windows-portable.mjs");
+
+    expect(script).toContain("TAURI_SIGNING_PRIVATE_KEY");
+    expect(script).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
+    expect(script).toContain("signer sign");
+    expect(script).toContain(".sig");
+  });
+
   it("ad-hoc signs macOS CI packages when Apple certificates are not configured", () => {
     withReleaseScriptWorkspace((workspace) => {
       execFileSync(process.execPath, ["scripts/prepare-release-config.mjs"], {
