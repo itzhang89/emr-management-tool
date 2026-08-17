@@ -9,3 +9,4 @@ pub mod logs;
 pub mod s3;
 pub mod system;
 pub mod templates;
+pub mod portable_updater;

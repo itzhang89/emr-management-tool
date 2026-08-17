@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod distribution;
 pub mod error;
 pub mod models;
+pub mod portable_updater;
 pub mod state;
 
 use state::AppState;
@@ -101,6 +102,8 @@ pub fn run() {
             commands::files::open_text_file,
             commands::diagnostics::get_app_log_path,
             commands::diagnostics::open_app_log,
+            commands::portable_updater::check_portable_update,
+            commands::portable_updater::install_portable_update,
         ]);
 
     #[cfg(desktop)]
@@ -108,6 +111,13 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
+                if distribution::is_portable() {
+                    if let Ok(exe) = std::env::current_exe() {
+                        if let Some(parent) = exe.parent() {
+                            portable_updater::cleanup_old_executables(parent);
+                        }
+                    }
+                }
                 let undo = PredefinedMenuItem::undo(app, None)?;
                 let redo = PredefinedMenuItem::redo(app, None)?;
                 let separator = PredefinedMenuItem::separator(app)?;
