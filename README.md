@@ -18,9 +18,15 @@ Download the package for your operating system from GitHub Releases:
 
 - macOS Apple Silicon: `macos-arm64` / `aarch64`
 - macOS Intel: `macos-amd64` / `x64`
-- Windows: `.exe` or `.msi`
+- Windows Installer: `.exe` (NSIS setup) or `.msi`
+- Windows Portable: `*-portable.zip` (unzip to a writable directory and run without administrator rights)
 
-### macOS First Launch
+### Windows Portable First Launch
+
+1. Download and extract the `windows-amd64-portable.zip` archive into any writable folder (for example, in your user directory or a USB drive). No administrator rights are required.
+2. Launch the application `.exe`.
+3. Application data and AWS credentials are saved directly in a `data/` folder beside the executable. To back up or move your portable installation, simply copy or move the entire folder including `data/`.
+4. If Windows SmartScreen displays an "Unknown publisher" prompt on unsigned builds, click **More info** and then **Run anyway**.
 
 Packages built through GitHub Actions without an Apple Developer ID certificate are ad-hoc signed and not notarized. macOS may block the first launch until you explicitly allow the app.
 
