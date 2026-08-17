@@ -10,7 +10,7 @@ pub async fn check_portable_update() -> Result<Option<PortableUpdateInfo>, AppEr
 #[command]
 pub async fn install_portable_update(
     app: AppHandle,
-    update: PortableUpdateInfo,
+    request: PortableUpdateInfo,
 ) -> Result<(), AppError> {
-    install_update(&app, &update).await
+    install_update(&app, &request).await
 }

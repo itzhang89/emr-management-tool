@@ -1,5 +1,6 @@
 import { check as checkTauriUpdate } from "@tauri-apps/plugin-updater";
 import { getReleaseInfo } from "./releaseInfo";
+import { tauriClient } from "./tauriClient";
 
 export const UPDATE_CHECK_TIMEOUT_MS = 60_000;
 
@@ -20,6 +21,18 @@ export type UpdateCheckResult =
   | { status: "available"; version: string; notes?: string; install: () => Promise<void> };
 
 export type SilentUpdateResult = "skipped" | "no-update" | "installed" | "failed";
+
+export async function checkPortableUpdate(client = tauriClient): Promise<UpdateHandle | null> {
+  const update = await client.checkPortableUpdate();
+  if (!update) return null;
+  return {
+    version: update.version,
+    body: update.notes,
+    downloadAndInstall: async () => {
+      await client.installPortableUpdate(update);
+    }
+  };
+}
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +94,11 @@ export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency
   };
 }
 
+export function resolveUpdateChecker(releaseInfo = getReleaseInfo()) {
+  return releaseInfo.isPortable ? () => checkPortableUpdate() : checkTauriUpdate;
+}
+
 export const appUpdater = createAppUpdater({
   canUseAutoUpdater: getReleaseInfo().canUseAutoUpdater,
-  check: checkTauriUpdate
+  check: resolveUpdateChecker()
 });

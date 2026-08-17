@@ -595,3 +595,12 @@ export interface AthenaAccountPreferences {
   querySettingsIntroSeen?: boolean;
   skipCreateLocationReminder?: boolean;
 }
+
+export interface PortableUpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes?: string;
+  url: string;
+  signature: string;
+}
+

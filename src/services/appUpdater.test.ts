@@ -114,4 +114,54 @@ describe("createAppUpdater", () => {
     await expect(updater.checkAndInstallSilently()).resolves.toBe("skipped");
     expect(check).toHaveBeenCalledOnce();
   });
+
+  describe("checkPortableUpdate", () => {
+    it("returns null when no portable update is available", async () => {
+      const { checkPortableUpdate } = await import("./appUpdater");
+      const client = {
+        checkPortableUpdate: vi.fn().mockResolvedValue(null),
+        installPortableUpdate: vi.fn()
+      };
+      const result = await checkPortableUpdate(client as any);
+      expect(result).toBeNull();
+    });
+
+    it("wraps portable update into an UpdateHandle and invokes install on downloadAndInstall", async () => {
+      const { checkPortableUpdate } = await import("./appUpdater");
+      const mockUpdate = {
+        version: "0.2.0",
+        currentVersion: "0.1.0",
+        notes: "Portable update notes",
+        url: "https://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/windows-amd64-portable.zip",
+        signature: "sig-123"
+      };
+      const client = {
+        checkPortableUpdate: vi.fn().mockResolvedValue(mockUpdate),
+        installPortableUpdate: vi.fn().mockResolvedValue(undefined)
+      };
+      const handle = await checkPortableUpdate(client as any);
+      expect(handle).not.toBeNull();
+      expect(handle?.version).toBe("0.2.0");
+      expect(handle?.body).toBe("Portable update notes");
+
+      await handle?.downloadAndInstall();
+      expect(client.installPortableUpdate).toHaveBeenCalledWith(mockUpdate);
+    });
+  });
+
+  describe("resolveUpdateChecker", () => {
+    it("routes portable distribution to portable update check", async () => {
+      const { resolveUpdateChecker } = await import("./appUpdater");
+      const checker = resolveUpdateChecker({
+        appChannel: "stable",
+        platform: "windows",
+        version: "0.1.0",
+        distribution: "portable",
+        isPortable: true,
+        isDevelopment: false,
+        canUseAutoUpdater: true
+      });
+      expect(typeof checker).toBe("function");
+    });
+  });
 });

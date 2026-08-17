@@ -47,7 +47,8 @@ import type {
   AthenaQueryExecutionRequest,
   AthenaQueryResults,
   AthenaQueryResultsRequest,
-  ExportAthenaQueryCsvRequest
+  ExportAthenaQueryCsvRequest,
+  PortableUpdateInfo
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -163,7 +164,9 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<AthenaQueryResults>("get_athena_query_results", request),
     stopAthenaQuery: (request: AthenaQueryExecutionRequest) => call<AthenaQueryExecution>("stop_athena_query", request),
     exportAthenaQueryCsv: (request: ExportAthenaQueryCsvRequest) =>
-      call<string | undefined>("export_athena_query_csv", request)
+      call<string | undefined>("export_athena_query_csv", request),
+    checkPortableUpdate: () => call<PortableUpdateInfo | null>("check_portable_update"),
+    installPortableUpdate: (request: PortableUpdateInfo) => call<void>("install_portable_update", request)
   };
 }
 
