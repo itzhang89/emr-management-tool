@@ -132,7 +132,7 @@ describe("release configuration", () => {
 
     expect(developmentPackages).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'");
     expect(developmentPackages).toContain("RELEASE_CHANNEL:         development");
-    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE:    ${{ needs.detect-signing.outputs.credential_store }}");
+    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE:    ${{ matrix.distribution == 'portable' && 'local' || needs.detect-signing.outputs.credential_store }}");
     expect(developmentPackages).not.toContain("RELEASE_VERSION:");
     expect(developmentPackages).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
     expect(developmentPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
@@ -230,9 +230,38 @@ describe("release configuration", () => {
     expect(stableRelease).toContain("RELEASE_VERSION:                  ${{ github.ref_name }}");
     expect(stableRelease).toContain("VITE_APP_VERSION:                 ${{ needs.resolve-tag-version.outputs.app_version }}");
     expect(stableRelease).toContain("needs: [detect-updater, detect-signing, resolve-tag-version]");
-    expect(stableRelease).toContain("EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}");
     expect(stableRelease).toContain("includeUpdaterJson: false");
     expect(resolveTagVersion).toContain("validate-release-tag.mjs");
+  });
+
+  it("configures portable matrix rows and split portable updater publication in release workflow", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
+    const devPackages = workflowJobBlock(workflow, "dev-packages");
+    const stablePackages = workflowJobBlock(workflow, "stable-packages");
+    const publishStableUpdater = workflowJobBlock(workflow, "publish-stable-updater");
+    const stableRelease = workflowJobBlock(workflow, "stable-release");
+    const publishTagUpdater = workflowJobBlock(workflow, "publish-tag-updater-manifest");
+
+    expect(prepareRelease).toContain("windows-amd64-portable");
+    expect(prepareRelease).toContain("stable-windows-amd64-portable");
+    expect(prepareRelease).toContain("tauri.development.portable.conf.json");
+    expect(prepareRelease).toContain("tauri.portable.conf.json");
+
+    expect(devPackages).toContain("VITE_APP_DISTRIBUTION:   ${{ matrix.distribution || 'installer' }}");
+    expect(devPackages).toContain("package-windows-portable.mjs");
+
+    expect(stablePackages).toContain("VITE_APP_DISTRIBUTION:            ${{ matrix.distribution || 'installer' }}");
+    expect(stablePackages).toContain("package-windows-portable.mjs");
+
+    expect(publishStableUpdater).toContain("publish-portable-updater-manifest.mjs");
+    expect(publishStableUpdater).toContain("stable-channel-portable");
+
+    expect(stableRelease).toContain("windows-amd64-portable");
+    expect(stableRelease).toContain("package-windows-portable.mjs");
+
+    expect(publishTagUpdater).toContain("publish-portable-updater-manifest.mjs");
+    expect(publishTagUpdater).toContain("stable-channel-portable");
   });
 
   it("does not fail stable CI builds when updater keys are not configured", () => {

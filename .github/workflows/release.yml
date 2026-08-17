@@ -114,6 +114,18 @@ jobs:
               build_args: "--debug --config src-tauri/tauri.development.conf.json",
               bundle_dir: "src-tauri/target/debug/bundle",
               artifact_patterns: "*.exe;*.msi;*.zip"
+            },
+            {
+              label: "windows-amd64-portable",
+              os: "windows-latest",
+              rust_targets: "x86_64-pc-windows-msvc",
+              platform: "windows",
+              distribution: "portable",
+              package_target: "windows-portable",
+              package_group: "windows",
+              build_args: "--debug --no-bundle --config src-tauri/tauri.development.portable.conf.json",
+              bundle_dir: "src-tauri/target/debug",
+              artifact_patterns: "*-portable.zip"
             }
           ];
 
@@ -150,6 +162,18 @@ jobs:
               build_args: "--config src-tauri/tauri.conf.json",
               bundle_dir: "src-tauri/target/release/bundle",
               artifact_patterns: "*.exe;*.msi;*.zip;*.sig"
+            },
+            {
+              label: "stable-windows-amd64-portable",
+              os: "windows-latest",
+              rust_targets: "x86_64-pc-windows-msvc",
+              platform: "windows",
+              distribution: "portable",
+              package_target: "windows-portable",
+              package_group: "windows",
+              build_args: "--no-bundle --config src-tauri/tauri.portable.conf.json",
+              bundle_dir: "src-tauri/target/release",
+              artifact_patterns: "*-portable.zip;*-portable.zip.sig"
             }
           ];
 
@@ -217,7 +241,8 @@ jobs:
 
     env:
       RELEASE_CHANNEL:         development
-      EMR_CREDENTIAL_STORE:    ${{ needs.detect-signing.outputs.credential_store }}
+      VITE_APP_DISTRIBUTION:   ${{ matrix.distribution || 'installer' }}
+      EMR_CREDENTIAL_STORE:    ${{ matrix.distribution == 'portable' && 'local' || needs.detect-signing.outputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY: "false"
       VITE_APP_CHANNEL:        development
       VITE_APP_PLATFORM:       ${{ matrix.platform }}
@@ -257,6 +282,17 @@ jobs:
       - name: Build package
         run: npm run tauri -- build ${{ matrix.build_args }}
 
+      - name: Package portable zip
+        if: matrix.distribution == 'portable'
+        shell: bash
+        run: |
+          EXE_PATH="src-tauri/target/debug/EMR Management Tool Dev Portable.exe"
+          if [[ ! -f "$EXE_PATH" ]]; then
+            EXE_PATH="src-tauri/target/debug/emr-management-tool.exe"
+          fi
+          ZIP_PATH="src-tauri/target/debug/windows-amd64-portable.zip"
+          PORTABLE_EXE="$EXE_PATH" PORTABLE_OUT="$ZIP_PATH" node scripts/package-windows-portable.mjs
+
       - name: Stage artifacts
         uses: ./.github/actions/prepare-artifacts
         with:
@@ -284,8 +320,9 @@ jobs:
 
     env:
       RELEASE_CHANNEL:                  stable
+      VITE_APP_DISTRIBUTION:            ${{ matrix.distribution || 'installer' }}
       RELEASE_VERSION:                  ${{ needs.prepare-release.outputs.release_version }}
-      EMR_CREDENTIAL_STORE:             ${{ needs.detect-signing.outputs.credential_store }}
+      EMR_CREDENTIAL_STORE:             ${{ matrix.distribution == 'portable' && 'local' || needs.detect-signing.outputs.credential_store }}
       REQUIRE_UPDATER_PUBLIC_KEY:       ${{ needs.detect-updater.outputs.has_updater_keys == 'true' && 'true' || 'false' }}
       TAURI_UPDATER_PUBLIC_KEY:         ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY:        ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -335,6 +372,20 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build ${{ matrix.build_args }}
 
+      - name: Package portable zip
+        if: matrix.distribution == 'portable'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          EXE_PATH="src-tauri/target/release/EMR Management Tool Portable.exe"
+          if [[ ! -f "$EXE_PATH" ]]; then
+            EXE_PATH="src-tauri/target/release/emr-management-tool.exe"
+          fi
+          ZIP_PATH="src-tauri/target/release/stable-windows-amd64-portable.zip"
+          PORTABLE_EXE="$EXE_PATH" PORTABLE_OUT="$ZIP_PATH" node scripts/package-windows-portable.mjs
+
       - name: Stage artifacts
         uses: ./.github/actions/prepare-artifacts
         with:
@@ -350,7 +401,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
 
-  # ── 手动触发 · stable 更新清单（latest.json）──
+  # ── 手动触发 · stable 更新清单（latest.json + portable-latest.json）──
   publish-stable-updater:
     name: Publish stable updater manifest
     if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'stable' && needs.detect-updater.outputs.has_updater_keys == 'true'
@@ -382,6 +433,32 @@ jobs:
           fi
           gh release upload stable-channel latest.json \
             --repo "${{ github.repository }}" --clobber
+      - name: Build portable-latest.json
+        env:
+          GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:   ${{ github.repository }}
+          RELEASE_VERSION:     ${{ needs.prepare-release.outputs.release_version }}
+          RELEASE_TAG:         ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_NOTES:       Stable build ${{ github.run_number }}
+        run: node scripts/publish-portable-updater-manifest.mjs
+      - name: Upload portable-latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -f portable-latest.json ]]; then
+            gh release upload "${{ needs.prepare-release.outputs.release_tag }}" portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+            if ! gh release view stable-channel-portable --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release create stable-channel-portable \
+                --repo "${{ github.repository }}" \
+                --title "Stable portable channel" \
+                --notes "Rolling portable-latest.json for in-app portable updates from CI stable builds." \
+                --prerelease
+            fi
+            gh release upload stable-channel-portable portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+          fi
 
   # ── tag push · 校验 tag 版本号 ───────────────
   resolve-tag-version:
@@ -411,6 +488,12 @@ jobs:
             rust_targets: x86_64-pc-windows-msvc
             platform: windows
             build_args: ""
+          - label: windows-amd64-portable
+            os: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            platform: windows
+            distribution: portable
+            build_args: "--no-bundle --config src-tauri/tauri.portable.conf.json"
           - label: macos-arm64
             os: macos-latest
             rust_targets: aarch64-apple-darwin
@@ -423,7 +506,8 @@ jobs:
             build_args: "--target x86_64-apple-darwin"
     env:
       RELEASE_CHANNEL:                  stable
-      EMR_CREDENTIAL_STORE:             ${{ matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local' }}
+      VITE_APP_DISTRIBUTION:            ${{ matrix.distribution || 'installer' }}
+      EMR_CREDENTIAL_STORE:             ${{ matrix.distribution == 'portable' && 'local' || (matrix.platform == 'windows' && (vars.EMR_CREDENTIAL_STORE || 'keychain') || 'local') }}
       RELEASE_VERSION:                  ${{ github.ref_name }}
       VITE_APP_VERSION:                 ${{ needs.resolve-tag-version.outputs.app_version }}
       REQUIRE_UPDATER_PUBLIC_KEY:         "true"
@@ -463,7 +547,29 @@ jobs:
           APPLE_CERTIFICATE:      ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: node scripts/prepare-release-config.mjs
+      - name: Build portable package
+        if: matrix.distribution == 'portable'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm run tauri -- build ${{ matrix.build_args }}
+          EXE_PATH="src-tauri/target/release/EMR Management Tool Portable.exe"
+          if [[ ! -f "$EXE_PATH" ]]; then
+            EXE_PATH="src-tauri/target/release/emr-management-tool.exe"
+          fi
+          ZIP_PATH="src-tauri/target/release/windows-amd64-portable.zip"
+          PORTABLE_EXE="$EXE_PATH" PORTABLE_OUT="$ZIP_PATH" node scripts/package-windows-portable.mjs
+      - name: Upload portable release artifacts
+        if: matrix.distribution == 'portable'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG_NAME" src-tauri/target/release/windows-amd64-portable.zip* --clobber
       - uses: tauri-apps/tauri-action@v0
+        if: matrix.distribution != 'portable'
         env:
           GITHUB_TOKEN:                        ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY:           ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
@@ -508,3 +614,29 @@ jobs:
           fi
           gh release upload stable-channel latest.json \
             --repo "${{ github.repository }}" --clobber
+      - name: Build portable-latest.json
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION:   ${{ needs.resolve-tag-version.outputs.app_version }}
+          RELEASE_TAG:       ${{ github.ref_name }}
+          RELEASE_NOTES:     Release ${{ github.ref_name }}
+        run: node scripts/publish-portable-updater-manifest.mjs
+      - name: Upload portable-latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -f portable-latest.json ]]; then
+            gh release upload "${{ github.ref_name }}" portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+            if ! gh release view stable-channel-portable --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release create stable-channel-portable \
+                --repo "${{ github.repository }}" \
+                --title "Stable portable channel" \
+                --notes "Rolling portable-latest.json for in-app portable updates from CI stable builds." \
+                --prerelease
+            fi
+            gh release upload stable-channel-portable portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+          fi
