@@ -159,7 +159,8 @@ describe("createAppUpdater", () => {
         distribution: "portable",
         isPortable: true,
         isDevelopment: false,
-        canUseAutoUpdater: true
+        canUseAutoUpdater: true,
+        channelLabel: "Stable"
       });
       expect(typeof checker).toBe("function");
     });
