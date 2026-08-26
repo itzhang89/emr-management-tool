@@ -4,7 +4,6 @@ import {
   Bot,
   ChevronDown,
   CircleAlert,
-  CircleHelp,
   Copy,
   FileCode2,
   History,
@@ -21,7 +20,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import {
   Table,
@@ -113,48 +111,28 @@ const AGENTS: AgentTool[] = [
   }
 ];
 
-function AuditLogHelp() {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="icon" aria-label="About the audit log">
-          <CircleHelp className="size-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 space-y-2 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">About the audit log</p>
-        <p>
-          Each day's entries are written to a separate <code>mcp-audit-YYYY-MM-DD.jsonl</code> file. Each line
-          contains the tool name, arguments, result preview, duration, and any errors.
-        </p>
-        <p>
-          Raw (unsanitized) log text captured by certain tools is stored alongside in a <code>raw/</code>{" "}
-          subdirectory, keyed by entry ID.
-        </p>
-        <p>
-          Logs are retained for 30 days and automatically pruned. Recent entries can be reviewed in the{" "}
-          <strong>Audit Log</strong> tab on this page.
-        </p>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-function auditSummary(entry: McpAuditEntry): string {
-  if (entry.error) return "Error";
-  const causes = entry.resultPreview.candidateCauses ?? [];
-  if (causes.length > 0) return causes.join("; ");
-  const size = entry.resultPreview.sizeChars;
-  return size ? `${size.toLocaleString()} chars returned` : "OK";
+function formatJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/** One-line JSON for table cells; long values are truncated with an ellipsis. */
+function inlineJson(value: unknown): string {
+  const text = JSON.stringify(value ?? {}) ?? "{}";
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
 }
 
 function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
   const [expanded, setExpanded] = useState(false);
+  const isError = entry.status === "error" || Boolean(entry.error);
   return (
     <>
       <TableRow
@@ -166,11 +144,10 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
           <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", expanded && "rotate-180")} />
         </TableCell>
         <TableCell className="whitespace-nowrap font-mono text-xs">
-          {format(new Date(entry.timestamp), "MM-dd HH:mm:ss")}
+          {format(new Date(entry.timestamp), "yyyy-MM-dd HH:mm:ss")}
         </TableCell>
-        <TableCell className="font-mono text-xs">{entry.tool}</TableCell>
         <TableCell>
-          {entry.error ? (
+          {isError ? (
             <Badge variant="destructive" className="text-xs">
               Error
             </Badge>
@@ -179,30 +156,37 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
               variant="secondary"
               className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
             >
-              OK
+              Success
             </Badge>
           )}
         </TableCell>
-        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-          {formatDuration(entry.duration)}
+        <TableCell className="font-mono text-xs">{entry.tool}</TableCell>
+        <TableCell className="font-mono text-xs text-muted-foreground">{entry.client || "—"}</TableCell>
+        <TableCell className="max-w-56 truncate font-mono text-xs text-muted-foreground">
+          {inlineJson(entry.args)}
         </TableCell>
-        <TableCell className="max-w-md truncate text-xs text-muted-foreground">{auditSummary(entry)}</TableCell>
+        <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+          {isError ? entry.error : inlineJson(entry.result)}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+          {formatDuration(entry.durationMs)}
+        </TableCell>
       </TableRow>
       {expanded && (
         <TableRow className="hover:bg-muted/30">
-          <TableCell colSpan={6} className="bg-muted/30 py-3">
+          <TableCell colSpan={8} className="bg-muted/30 py-3">
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-muted-foreground">Request arguments</p>
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
-                    {JSON.stringify(entry.args ?? {}, null, 2)}
+                    {formatJson(entry.args)}
                   </pre>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">Result preview</p>
+                  <p className="text-xs font-medium text-muted-foreground">Response content</p>
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
-                    {JSON.stringify(entry.resultPreview ?? {}, null, 2)}
+                    {formatJson(entry.result)}
                   </pre>
                 </div>
               </div>
@@ -224,14 +208,9 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
 
 function AuditLogPanel() {
   const queryClient = useQueryClient();
-  const { data: auditDir } = useQuery({
-    queryKey: ["mcp-audit-dir"],
-    queryFn: () => tauriClient.getMcpAuditDir()
-  });
   const { data: entries, isLoading, isFetching } = useQuery({
     queryKey: ["mcp-audit-entries"],
-    queryFn: () => tauriClient.listMcpAuditEntries(200),
-    refetchInterval: 5000
+    queryFn: () => tauriClient.listMcpAuditEntries(500)
   });
 
   const refresh = useCallback(() => {
@@ -247,8 +226,8 @@ function AuditLogPanel() {
             Audit Log
           </CardTitle>
           <CardDescription>
-            Recent MCP tool invocations — time, status, request arguments and result preview. Click a row for
-            details. Entries are retained for 30 days.
+            MCP tool invocations recorded in the local database — time, status, tool, client, input arguments and
+            response content. Click a row for the full JSON. Entries are retained for 30 days.
           </CardDescription>
         </div>
         <Button variant="outline" size="sm" className="shrink-0" onClick={refresh} disabled={isFetching}>
@@ -274,10 +253,12 @@ function AuditLogPanel() {
                 <TableRow>
                   <TableHead className="w-8" />
                   <TableHead>Time</TableHead>
-                  <TableHead>Tool</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Tool</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Arguments</TableHead>
+                  <TableHead>Response</TableHead>
                   <TableHead>Duration</TableHead>
-                  <TableHead>Summary</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -287,11 +268,6 @@ function AuditLogPanel() {
               </TableBody>
             </Table>
           </div>
-        )}
-        {auditDir && (
-          <p className="mt-3 truncate font-mono text-xs text-muted-foreground" title={auditDir}>
-            Files: {auditDir}
-          </p>
         )}
       </CardContent>
     </Card>
@@ -380,7 +356,7 @@ export function McpPage() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-6 overflow-auto">
-      <PageHeader pageId="mcp" actions={<AuditLogHelp />} />
+      <PageHeader pageId="mcp" />
 
       <Tabs defaultValue="server" className="flex flex-col gap-4">
         <TabsList className="w-fit">

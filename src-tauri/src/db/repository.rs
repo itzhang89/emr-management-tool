@@ -10,6 +10,7 @@ use std::fs;
 
 pub const JOB_HISTORY_RETENTION_DAYS: i64 = 30;
 pub const SUBMISSION_HISTORY_LIMIT: i64 = 20;
+pub const MCP_AUDIT_RETENTION_DAYS: i64 = 30;
 
 fn job_history_cutoff() -> String {
     (Utc::now() - Duration::days(JOB_HISTORY_RETENTION_DAYS)).to_rfc3339()
@@ -333,6 +334,45 @@ pub async fn get_job_history(
         .transpose()
 }
 
+/// Write one MCP tool invocation to the audit table, then prune entries older
+/// than the retention window. The Node MCP server calls this through the
+/// bridge after every tool call; the Audit Log tab reads from the same table.
+pub async fn insert_mcp_audit_entry(
+    pool: &SqlitePool,
+    entry: &crate::models::McpAuditEntry,
+) -> AppResult<()> {
+    let args_json =
+        serde_json::to_string(&entry.args).map_err(|e| AppError::storage(e.to_string()))?;
+    let result_json =
+        serde_json::to_string(&entry.result).map_err(|e| AppError::storage(e.to_string()))?;
+    sqlx::query(
+        "insert into mcp_audit (id, timestamp, status, tool, client, duration_ms, args_json, result_json, error)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         on conflict(id) do nothing",
+    )
+    .bind(&entry.id)
+    .bind(&entry.timestamp)
+    .bind(&entry.status)
+    .bind(&entry.tool)
+    .bind(&entry.client)
+    .bind(entry.duration_ms)
+    .bind(args_json)
+    .bind(result_json)
+    .bind(&entry.error)
+    .execute(pool)
+    .await
+    .map_err(|e| AppError::storage(e.to_string()))?;
+
+    let cutoff = (Utc::now() - Duration::days(MCP_AUDIT_RETENTION_DAYS)).to_rfc3339();
+    sqlx::query("delete from mcp_audit where timestamp < ?1")
+        .bind(cutoff)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::storage(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn prune_job_history(pool: &SqlitePool, account_id: Option<&str>) -> AppResult<()> {
     let cutoff = job_history_cutoff();
     sqlx::query(
@@ -477,6 +517,7 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         "create table if not exists resource_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists job_history (id text primary key, created_at text not null, payload text not null)",
         "create table if not exists aws_accounts (id text primary key, name text not null, region text not null, is_active integer not null default 0, payload text not null)",
+        "create table if not exists mcp_audit (id text primary key, timestamp text not null, status text not null, tool text not null, client text, duration_ms integer not null, args_json text not null default '{}', result_json text not null default '{}', error text)",
         "alter table job_history add column account_id text",
         "alter table job_history add column region text",
         "alter table job_history add column virtual_cluster_id text",

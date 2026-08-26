@@ -173,8 +173,6 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     mcpStop: () => call<boolean>("mcp_stop"),
     mcpStatus: () => call<McpStatus>("mcp_status"),
     listMcpAuditEntries: (limit?: number) => call<McpAuditEntry[]>("list_mcp_audit_entries", { limit }),
-    getMcpAuditDir: () => call<string>("get_mcp_audit_dir"),
-    openMcpAuditLog: () => call<void>("open_mcp_audit_log"),
   };
 }
 

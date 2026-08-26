@@ -103,8 +103,6 @@ pub fn run() {
             commands::files::open_text_file,
             commands::diagnostics::get_app_log_path,
             commands::diagnostics::open_app_log,
-            commands::diagnostics::get_mcp_audit_dir,
-            commands::diagnostics::open_mcp_audit_log,
             commands::portable_updater::check_portable_update,
             commands::portable_updater::install_portable_update,
             commands::mcp::mcp_start,
@@ -146,13 +144,6 @@ pub fn run() {
                 )?;
                 let view_logs =
                     MenuItem::with_id(app, "view_logs", "View Logs", true, None::<&str>)?;
-                let view_mcp_audit_log = MenuItem::with_id(
-                    app,
-                    "view_mcp_audit_log",
-                    "View MCP Audit Log",
-                    true,
-                    None::<&str>,
-                )?;
                 let show_shortcuts = MenuItem::with_id(
                     app,
                     "show_shortcuts",
@@ -167,13 +158,7 @@ pub fn run() {
                     app,
                     "Help",
                     true,
-                    &[
-                        &show_shortcuts,
-                        &view_logs,
-                        &view_mcp_audit_log,
-                        &help_separator,
-                        &show_about,
-                    ],
+                    &[&show_shortcuts, &view_logs, &help_separator, &show_about],
                 )?;
                 let menu = Menu::with_items(app, &[&edit, &help])?;
                 app.set_menu(menu)?;
@@ -192,13 +177,6 @@ pub fn run() {
                         diagnostics::append_log_line(
                             "ERROR",
                             &format!("Failed to open app log from menu: {error}"),
-                        );
-                    }
-                } else if event.id() == "view_mcp_audit_log" {
-                    if let Err(error) = diagnostics::open_mcp_audit_log() {
-                        diagnostics::append_log_line(
-                            "ERROR",
-                            &format!("Failed to open MCP audit log from menu: {error}"),
                         );
                     }
                 } else if event.id() == "show_shortcuts" {

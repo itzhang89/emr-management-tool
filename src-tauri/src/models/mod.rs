@@ -750,17 +750,20 @@ pub struct McpStatus {
     pub entry_point: Option<String>,
 }
 
-/// One MCP tool invocation from the audit log (JSONL files written by the
-/// Node MCP server). Field names mirror `mcp/src/audit/types.ts`.
+/// One MCP tool invocation, persisted by the Node MCP server into the app's
+/// SQLite database (`mcp_audit` table) and shown in the Audit Log tab.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpAuditEntry {
     pub id: String,
     pub timestamp: String,
+    /// "success" | "error"
+    pub status: String,
     pub tool: String,
+    pub client: Option<String>,
+    pub duration_ms: i64,
     pub args: serde_json::Value,
-    pub result_preview: serde_json::Value,
-    pub duration: i64,
+    pub result: serde_json::Value,
     pub error: Option<String>,
 }
 

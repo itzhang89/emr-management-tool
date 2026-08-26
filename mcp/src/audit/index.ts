@@ -1,128 +1,86 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, unlink, readdir, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
-import type { AuditEntry, AuditEntryWithRaw, AuditStore } from "./types.js";
+import type { AuditRecord, AuditStore } from "./types.js";
 
-const AUDIT_RETENTION_DAYS = 30;
-const RAW_DIR = "raw";
+/**
+ * Audit storage for the Node MCP server.
+ *
+ * All writes go through the Rust bridge (`POST /write-audit-entry`) so the
+ * data lands in the app's own SQLite database — the single source the desktop
+ * Audit Log tab reads from. The Node process never touches the database
+ * directly; audit writes are fire-and-forget (a failed write must never break
+ * the tool call itself).
+ */
+
+const BRIDGE_INFO_PATH_ENV = "MCP_BRIDGE_INFO";
+
+interface BridgeConfig {
+  url: string;
+  token: string;
+}
 
 function appDataDir(): string {
-  // Platform-appropriate data directory
-  // Same convention as the Rust app's dirs crate
+  // Same convention as the Rust app's dirs crate.
   if (process.platform === "darwin") {
     return join(process.env.HOME || "/tmp", "Library", "Application Support", "emr-management-tool");
   }
   if (process.platform === "win32") {
     return join(process.env.APPDATA || "/tmp", "emr-management-tool");
   }
-  return join(process.env.XDG_DATA_HOME || join(process.env.HOME || "/tmp", ".local", "share"), "emr-management-tool");
+  return join(
+    process.env.XDG_DATA_HOME || join(process.env.HOME || "/tmp", ".local", "share"),
+    "emr-management-tool",
+  );
 }
 
-function auditDir(): string {
-  return process.env.MCP_AUDIT_DIR || join(appDataDir(), "mcp-audit");
-}
-
-function dailyFilePath(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return join(auditDir(), `mcp-audit-${y}-${m}-${d}.jsonl`);
+function readBridgeConfig(): BridgeConfig {
+  if (process.env.MCP_BRIDGE_URL && process.env.MCP_BRIDGE_TOKEN) {
+    return {
+      url: process.env.MCP_BRIDGE_URL.replace(/\/$/, ""),
+      token: process.env.MCP_BRIDGE_TOKEN,
+    };
+  }
+  // The desktop app publishes URL + token here while it's running.
+  const path = process.env[BRIDGE_INFO_PATH_ENV] || join(appDataDir(), "mcp-bridge.json");
+  const parsed = JSON.parse(readFileSync(path, "utf-8")) as { url?: string; token?: string };
+  if (!parsed.url || !parsed.token) {
+    throw new Error("Bridge info file is missing url or token");
+  }
+  return { url: parsed.url.replace(/\/$/, ""), token: parsed.token };
 }
 
 export function createAuditStore(): AuditStore {
-  let ready: Promise<void> | null = null;
+  let config: BridgeConfig | undefined;
+  let configError = false;
 
-  async function ensureDir(): Promise<void> {
-    if (ready) return ready;
-    ready = (async () => {
-      await mkdir(auditDir(), { recursive: true });
-      await mkdir(join(auditDir(), RAW_DIR), { recursive: true });
-      await pruneOldFiles();
-    })();
-    return ready;
-  }
-
-  async function pruneOldFiles(): Promise<void> {
-    try {
-      const files = await readdir(auditDir());
-      const cutoff = Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-      const prunePromises = files
-        .filter((f) => f.startsWith("mcp-audit-") && f.endsWith(".jsonl"))
-        .map(async (f) => {
-          const match = f.match(/mcp-audit-(\d{4})-(\d{2})-(\d{2})\.jsonl/);
-          if (match) {
-            const [_, y, m, d] = match;
-            const fileDate = new Date(`${y}-${m}-${d}T00:00:00Z`).getTime();
-            if (fileDate < cutoff) {
-              await unlink(join(auditDir(), f)).catch(() => {});
-            }
-          }
-        });
-      await Promise.all(prunePromises);
-    } catch {
-      // directory may not exist yet
+  function resolveConfig(): BridgeConfig | undefined {
+    if (configError) return config;
+    if (!config) {
+      try {
+        config = readBridgeConfig();
+      } catch (err) {
+        configError = true;
+        console.error("Audit store: bridge config unavailable:", err);
+      }
     }
+    return config;
   }
 
   return {
-    async write(entry: AuditEntry, rawText?: string): Promise<void> {
-      await ensureDir();
-      const filePath = dailyFilePath(new Date());
-      const line = JSON.stringify(entry) + "\n";
-      await writeFile(filePath, line, { flag: "a" });
-
-      if (rawText !== undefined) {
-        const rawPath = join(auditDir(), RAW_DIR, `${entry.id}.txt`);
-        await writeFile(rawPath, rawText, "utf-8");
-      }
+    write(record: AuditRecord): void {
+      const bridge = resolveConfig();
+      if (!bridge) return;
+      // Fire-and-forget: never block or throw on audit persistence.
+      void fetch(`${bridge.url}/write-audit-entry`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-mcp-bridge-token": bridge.token,
+        },
+        body: JSON.stringify(record),
+      }).catch((err) => {
+        console.error("Audit write failed:", err);
+      });
     },
-
-    async get(id: string): Promise<AuditEntryWithRaw | null> {
-      // Scan all daily files for the entry
-      const files = await readdir(auditDir()).catch(() => []);
-      const jsonlFiles = files
-        .filter((f) => f.startsWith("mcp-audit-") && f.endsWith(".jsonl"))
-        .sort();
-
-      for (const file of jsonlFiles) {
-        const content = await readFile(join(auditDir(), file), "utf-8").catch(() => "");
-        for (const line of content.split("\n").filter(Boolean)) {
-          try {
-            const entry = JSON.parse(line) as AuditEntry;
-            if (entry.id === id) {
-              const rawPath = join(auditDir(), RAW_DIR, `${id}.txt`);
-              const rawText = await readFile(rawPath, "utf-8").catch(() => undefined);
-              return { ...entry, rawText };
-            }
-          } catch {
-            continue;
-          }
-        }
-      }
-      return null;
-    },
-
-    getRawPath(id: string): string {
-      return join(auditDir(), RAW_DIR, `${id}.txt`);
-    },
-  };
-}
-
-export function createAuditEntry(
-  tool: string,
-  args: Record<string, unknown>,
-  duration: number,
-  error: string | null,
-  resultPreview: AuditEntry["resultPreview"],
-): AuditEntry {
-  return {
-    id: randomUUID(),
-    timestamp: new Date().toISOString(),
-    tool,
-    args,
-    resultPreview,
-    duration,
-    error,
   };
 }

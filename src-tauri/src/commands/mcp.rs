@@ -2,6 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::McpStartRequest;
 use crate::state::AppState;
 use nanoid::nanoid;
+use sqlx::Row;
 use tauri::{AppHandle, State as TauriState};
 
 const MCP_ENDPOINT_PATH: &str = "/mcp";
@@ -59,19 +60,17 @@ pub async fn mcp_start(
     let bridge_task = bridge_server.into_task();
 
     let mcp_path = find_mcp_entry_point()?;
-    let audit_dir = crate::diagnostics::mcp_audit_dir()?;
 
     write_bridge_info(bridge_port, &bridge_token)?;
 
     // The only supported transport is Streamable HTTP, served by the Node
-    // child on 127.0.0.1.
+    // child on 127.0.0.1. Audit entries go to the app's SQLite database.
     let child = tokio::process::Command::new("node")
         .arg(&mcp_path)
         .env("MCP_BRIDGE_URL", format!("http://127.0.0.1:{}", bridge_port))
         .env("MCP_BRIDGE_TOKEN", bridge_token.clone())
         .env("MCP_PORT", port.to_string())
         .env("MCP_HOST", "127.0.0.1")
-        .env("MCP_AUDIT_DIR", &audit_dir)
         .env("NODE_ENV", "production")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -166,74 +165,45 @@ pub async fn mcp_status(app_state: TauriState<'_, AppState>) -> AppResult<crate:
     })
 }
 
-/// Read recent MCP tool invocations from the audit log for the Audit Log tab.
-///
-/// The Node MCP server appends one JSON line per invocation to
-/// `mcp-audit-YYYY-MM-DD.jsonl` files. Read them newest-first, newest entries
-/// first, and return at most `limit` entries.
+/// Read recent MCP tool invocations from the audit table for the Audit Log
+/// tab. The Node MCP server writes one row per invocation into the app's
+/// SQLite database; newest first.
 #[tauri::command]
 pub async fn list_mcp_audit_entries(
     request: Option<crate::models::McpAuditQuery>,
 ) -> AppResult<Vec<crate::models::McpAuditEntry>> {
-    let limit = request.and_then(|r| r.limit).unwrap_or(200).min(1000);
-    let dir = crate::diagnostics::mcp_audit_dir()?;
+    let limit = request.and_then(|r| r.limit).unwrap_or(200).min(1000) as i64;
+    let pool = crate::db::repository::pool().await?;
 
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .map_err(|e| AppError::storage(format!("Failed to read audit dir: {e}")))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("mcp-audit-") && n.ends_with(".jsonl"))
-                .unwrap_or(false)
-        })
-        .collect();
-    // Newest file first (filenames sort chronologically).
-    files.sort();
-    files.reverse();
+    let rows = sqlx::query(
+        "select id, timestamp, status, tool, client, duration_ms, args_json, result_json, error
+         from mcp_audit
+         order by timestamp desc
+         limit ?1",
+    )
+    .bind(limit)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| AppError::storage(format!("Failed to read audit entries: {e}")))?;
 
-    let mut entries: Vec<crate::models::McpAuditEntry> = Vec::new();
-    for path in files {
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-        let mut lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-        // Newest entries first within a file.
-        lines.reverse();
-        for line in lines {
-            if entries.len() >= limit {
-                break;
-            }
-            if let Some(entry) = parse_audit_line(line) {
-                entries.push(entry);
-            }
-        }
-        if entries.len() >= limit {
-            break;
-        }
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in rows {
+        let args_json: String = row.get("args_json");
+        let result_json: String = row.get("result_json");
+        entries.push(crate::models::McpAuditEntry {
+            id: row.get("id"),
+            timestamp: row.get("timestamp"),
+            status: row.get("status"),
+            tool: row.get("tool"),
+            client: row.get("client"),
+            duration_ms: row.get("duration_ms"),
+            args: serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null),
+            result: serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null),
+            error: row.get("error"),
+        });
     }
 
     Ok(entries)
-}
-
-fn parse_audit_line(line: &str) -> Option<crate::models::McpAuditEntry> {
-    let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    Some(crate::models::McpAuditEntry {
-        id: value.get("id")?.as_str()?.to_string(),
-        timestamp: value.get("timestamp")?.as_str()?.to_string(),
-        tool: value.get("tool")?.as_str()?.to_string(),
-        args: value.get("args").cloned().unwrap_or(serde_json::Value::Null),
-        result_preview: value
-            .get("resultPreview")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        duration: value.get("duration").and_then(|d| d.as_i64()).unwrap_or(0),
-        error: value
-            .get("error")
-            .and_then(|e| e.as_str())
-            .map(String::from),
-    })
 }
 
 fn find_mcp_entry_point() -> AppResult<std::path::PathBuf> {

@@ -614,18 +614,17 @@ export interface McpStatus {
   entryPoint?: string;
 }
 
-/** One MCP tool invocation from the audit log (see mcp/src/audit/types.ts). */
+/** One MCP tool invocation from the audit database (mcp_audit table). */
 export interface McpAuditEntry {
   id: string;
   timestamp: string;
+  /** "success" | "error" */
+  status: string;
   tool: string;
+  client?: string | null;
+  durationMs: number;
   args: Record<string, unknown>;
-  resultPreview: {
-    sizeChars?: number;
-    candidateCauses?: string[];
-    sanitized?: boolean;
-  };
-  duration: number;
-  error: string | null;
+  result: Record<string, unknown>;
+  error?: string | null;
 }
 

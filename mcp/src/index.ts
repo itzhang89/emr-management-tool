@@ -9,11 +9,12 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createBridgeClient } from "./bridge/client.js";
-import { createAuditStore, createAuditEntry } from "./audit/index.js";
+import { createAuditStore } from "./audit/index.js";
 import type { BridgeClient } from "./bridge/client.js";
 import { buildAnalyzeJobFailureTool, AnalyzeJobFailureArgs } from "./tools/analyzeJobFailure.js";
 
@@ -51,6 +52,13 @@ async function findFreePort(startPort: number): Promise<number> {
   );
 }
 
+// --- Client identification for the audit log -------------------------------
+// The MCP initialize request carries clientInfo { name, version }. We record
+// the most recently seen client and attribute tool calls to it (stateless HTTP
+// transport: calls always follow an initialize from the same client).
+
+let latestClientInfo: { name: string; version?: string } | undefined;
+
 function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof createAuditStore>) {
   const server = new McpServer({
     name: "emr-job-log-analysis",
@@ -72,28 +80,57 @@ function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof creat
     },
     async (args) => {
       const start = Date.now();
+      const startedAt = new Date(start).toISOString();
       let error: string | null = null;
-      let candidateCauses: string[] = [];
-      let sizeChars = 0;
+      let result: Record<string, unknown> = {};
       try {
-        const result = await analyzeJobFailureHandler(args as unknown as AnalyzeJobFailureArgs);
-        sizeChars = (result.content[0] as { text?: string } | undefined)?.text?.length || 0;
-        const parsed = JSON.parse(sizeChars ? (result.content[0] as { text: string }).text : "{}");
-        candidateCauses = (parsed.evidence?.candidateCauses || []).map((c: { cause: string }) => c.cause);
-        return result;
+        const toolResult = await analyzeJobFailureHandler(args as unknown as AnalyzeJobFailureArgs);
+        const text = (toolResult.content[0] as { text?: string } | undefined)?.text || "{}";
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          const evidence = (parsed.evidence ?? {}) as Record<string, unknown>;
+          // The full raw logs would bloat the audit row; the structured
+          // evidence fields (errorTail, tracebacks, causes, …) are kept.
+          delete evidence.rawLogs;
+          parsed.evidence = evidence;
+          result = parsed;
+        } catch {
+          result = { raw: text.slice(0, 2000) };
+        }
+        return toolResult;
       } catch (e) {
         error = String(e);
         throw e;
       } finally {
-        await auditStore.write(createAuditEntry("analyze_job_failure", args as unknown as Record<string, unknown>, Date.now() - start, error, {
-          sizeChars,
-          sanitized: true,
-          candidateCauses,
-        }));
+        auditStore.write({
+          id: crypto.randomUUID(),
+          timestamp: startedAt,
+          status: error ? "error" : "success",
+          tool: "analyze_job_failure",
+          args: args as unknown as Record<string, unknown>,
+          result,
+          client: latestClientInfo?.name ?? "unknown",
+          durationMs: Date.now() - start,
+          error,
+        });
       }
     },
   );
 
+  return server;
+}
+
+function buildServer(bridge: BridgeClient, auditStore: ReturnType<typeof createAuditStore>) {
+  const server = registerTools(bridge, auditStore);
+  const lowLevel = (server as unknown as { server?: Server }).server;
+  if (lowLevel) {
+    lowLevel.oninitialized = () => {
+      const clientInfo = lowLevel.getClientVersion();
+      if (clientInfo) {
+        latestClientInfo = { name: clientInfo.name, version: clientInfo.version };
+      }
+    };
+  }
   return server;
 }
 
@@ -102,7 +139,6 @@ async function main() {
 
   const bridge = createBridgeClient() as BridgeClient;
   const auditStore = createAuditStore();
-  const buildServer = () => registerTools(bridge, auditStore);
 
   const resolvedPort = await findFreePort(config.port);
 
@@ -113,7 +149,7 @@ async function main() {
       if (url.pathname === STREAMABLE_HTTP_PATH) {
         // Stateless mode: a transport cannot be reused across requests, so build
         // a fresh server + transport per request and tear them down on close.
-        const server = buildServer();
+        const server = buildServer(bridge, auditStore);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });

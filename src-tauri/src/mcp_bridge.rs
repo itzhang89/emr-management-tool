@@ -101,6 +101,22 @@ struct FindJobByIdReq {
     job_id: String,
 }
 
+/// One MCP tool invocation, written by the Node MCP server via the bridge so
+/// all audit data lands in the app's own SQLite database (the Audit Log tab
+/// reads it from there).
+#[derive(Deserialize)]
+struct WriteAuditEntryReq {
+    id: String,
+    timestamp: String,
+    status: String,
+    tool: String,
+    client: Option<String>,
+    duration_ms: i64,
+    args: serde_json::Value,
+    result: serde_json::Value,
+    error: Option<String>,
+}
+
 /// Job found by id, across all configured accounts.
 ///
 /// `found_in_other_account` is true when the job lives in an account that is
@@ -167,6 +183,7 @@ pub async fn start(app: AppHandle, token: String) -> AppResult<BridgeServer> {
         .route("/list-s3-objects", post(list_s3_objects))
         .route("/get-s3-object", post(get_s3_object))
         .route("/find-job-by-id", post(find_job_by_id))
+        .route("/write-audit-entry", post(write_audit_entry))
         .with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -479,6 +496,36 @@ async fn find_job_by_id(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     auth_check(&state, &headers).await?;
     let r: AppResult<FindJobByIdResp> = do_find_job_by_id(&state.inner.app, &body.job_id).await;
+    to_json(r)
+}
+
+/// Persist one MCP tool invocation to the app's audit table. Called by the
+/// Node MCP server after every tool call.
+async fn write_audit_entry(
+    headers: HeaderMap,
+    State(state): State<BridgeState>,
+    Json(body): Json<WriteAuditEntryReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    auth_check(&state, &headers).await?;
+    let r: AppResult<()> = async {
+        let pool = repository::pool().await?;
+        repository::insert_mcp_audit_entry(
+            &pool,
+            &crate::models::McpAuditEntry {
+                id: body.id,
+                timestamp: body.timestamp,
+                status: body.status,
+                tool: body.tool,
+                client: body.client,
+                duration_ms: body.duration_ms,
+                args: body.args,
+                result: body.result,
+                error: body.error,
+            },
+        )
+        .await
+    }
+    .await;
     to_json(r)
 }
 
