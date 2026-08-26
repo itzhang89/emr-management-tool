@@ -110,6 +110,7 @@ pub fn run() {
             commands::mcp::mcp_start,
             commands::mcp::mcp_stop,
             commands::mcp::mcp_status,
+            commands::mcp::list_mcp_audit_entries,
         ]);
 
     #[cfg(desktop)]

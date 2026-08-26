@@ -4,31 +4,15 @@ use crate::state::AppState;
 use nanoid::nanoid;
 use tauri::{AppHandle, State as TauriState};
 
-const TRANSPORT_SSE: &str = "sse";
-const TRANSPORT_STREAMABLE_HTTP: &str = "streamableHttp";
-const TRANSPORT_STDIO: &str = "stdio";
+const MCP_ENDPOINT_PATH: &str = "/mcp";
 
-fn normalize_transport(requested: Option<&str>) -> &'static str {
-    match requested {
-        Some(TRANSPORT_SSE) => TRANSPORT_SSE,
-        Some(TRANSPORT_STDIO) => TRANSPORT_STDIO,
-        _ => TRANSPORT_STREAMABLE_HTTP,
-    }
+fn endpoint_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}{MCP_ENDPOINT_PATH}")
 }
 
-fn endpoint_url(transport: &str, port: u16, entry_point: &str) -> String {
-    match transport {
-        // stdio has no network endpoint; the agent launches the entry point directly.
-        TRANSPORT_STDIO => format!("node {entry_point}"),
-        TRANSPORT_SSE => format!("http://127.0.0.1:{port}/sse"),
-        _ => format!("http://127.0.0.1:{port}/mcp"),
-    }
-}
-
-/// While the bridge is running, publish its URL + token to a file so an
-/// externally-spawned stdio MCP child (launched by Claude Code, Cursor, …) can
-/// authenticate. The token still never reaches the LLM — only the local child
-/// process reads it.
+/// While the bridge is running, publish its URL + token to a file so the Node
+/// MCP child can authenticate. The token never reaches the LLM — only the
+/// local child process reads it.
 fn write_bridge_info(bridge_port: u16, token: &str) -> AppResult<std::path::PathBuf> {
     let path = crate::db::app_data_dir()?.join("mcp-bridge.json");
     if let Some(parent) = path.parent() {
@@ -68,7 +52,6 @@ pub async fn mcp_start(
     }
 
     let port = request.port.unwrap_or(5175);
-    let transport = normalize_transport(request.transport.as_deref());
     let bridge_token = nanoid!(24);
 
     let bridge_server = crate::mcp_bridge::start(app, bridge_token.clone()).await?;
@@ -78,33 +61,24 @@ pub async fn mcp_start(
     let mcp_path = find_mcp_entry_point()?;
     let audit_dir = crate::diagnostics::mcp_audit_dir()?;
 
-    // Always publish bridge info so a stdio child spawned by the agent can connect.
     write_bridge_info(bridge_port, &bridge_token)?;
 
-    // stdio: the desktop app does NOT spawn the Node process — the AI agent does,
-    // over its own stdin/stdout. We only keep the bridge alive and hand back the
-    // command the agent should run.
-    let child = if transport == TRANSPORT_STDIO {
-        None
-    } else {
-        Some(
-            tokio::process::Command::new("node")
-                .arg(&mcp_path)
-                .env("MCP_BRIDGE_URL", format!("http://127.0.0.1:{}", bridge_port))
-                .env("MCP_BRIDGE_TOKEN", bridge_token.clone())
-                .env("MCP_PORT", port.to_string())
-                .env("MCP_HOST", "127.0.0.1")
-                .env("MCP_TRANSPORT", transport)
-                .env("MCP_AUDIT_DIR", &audit_dir)
-                .env("NODE_ENV", "production")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| AppError::internal(format!("Failed to start MCP server: {e}")))?,
-        )
-    };
+    // The only supported transport is Streamable HTTP, served by the Node
+    // child on 127.0.0.1.
+    let child = tokio::process::Command::new("node")
+        .arg(&mcp_path)
+        .env("MCP_BRIDGE_URL", format!("http://127.0.0.1:{}", bridge_port))
+        .env("MCP_BRIDGE_TOKEN", bridge_token.clone())
+        .env("MCP_PORT", port.to_string())
+        .env("MCP_HOST", "127.0.0.1")
+        .env("MCP_AUDIT_DIR", &audit_dir)
+        .env("NODE_ENV", "production")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::internal(format!("Failed to start MCP server: {e}")))?;
 
-    let pid = child.as_ref().and_then(|c| c.id());
+    let pid = child.id();
     let entry_point = mcp_path.to_string_lossy().to_string();
 
     {
@@ -112,12 +86,12 @@ pub async fn mcp_start(
             AppError::internal(format!("Failed to acquire MCP lock: {e}"))
         })?;
         *mcp = crate::state::McpState {
-            child,
+            child: Some(child),
             bridge_port: Some(bridge_port),
             bridge_token: Some(bridge_token),
             bridge_task: Some(bridge_task),
             mcp_port: Some(port),
-            transport: Some(transport.to_string()),
+            transport: Some("streamableHttp".to_string()),
         };
     }
 
@@ -129,9 +103,7 @@ pub async fn mcp_start(
         bridge_port: Some(bridge_port),
         pid,
         health_url: Some(health_url),
-        sse_url: Some(format!("http://127.0.0.1:{}/sse", port)),
-        transport: Some(transport.to_string()),
-        endpoint_url: Some(endpoint_url(transport, port, &entry_point)),
+        endpoint_url: Some(endpoint_url(port)),
         entry_point: Some(entry_point),
     })
 }
@@ -174,13 +146,11 @@ pub async fn mcp_status(app_state: TauriState<'_, AppState>) -> AppResult<crate:
         AppError::internal(format!("Failed to acquire MCP lock: {e}"))
     })?;
 
-    // For stdio there is no child; "running" means the bridge task is alive.
     let running = mcp.bridge_task.is_some()
         || mcp.child.as_ref().map(|c| c.id().is_some()).unwrap_or(false);
     let pid = mcp.child.as_ref().and_then(|c| c.id());
     let mcp_port = mcp.mcp_port;
     let bridge_port = mcp.bridge_port;
-    let transport = mcp.transport.clone();
     let entry_point = find_mcp_entry_point()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -191,12 +161,78 @@ pub async fn mcp_status(app_state: TauriState<'_, AppState>) -> AppResult<crate:
         bridge_port,
         pid,
         health_url: bridge_port.map(|p| format!("http://127.0.0.1:{}/health", p)),
-        sse_url: mcp_port.map(|p| format!("http://127.0.0.1:{}/sse", p)),
-        endpoint_url: mcp_port.map(|p| {
-            endpoint_url(normalize_transport(transport.as_deref()), p, &entry_point)
-        }),
-        transport,
+        endpoint_url: mcp_port.map(endpoint_url),
         entry_point: Some(entry_point),
+    })
+}
+
+/// Read recent MCP tool invocations from the audit log for the Audit Log tab.
+///
+/// The Node MCP server appends one JSON line per invocation to
+/// `mcp-audit-YYYY-MM-DD.jsonl` files. Read them newest-first, newest entries
+/// first, and return at most `limit` entries.
+#[tauri::command]
+pub async fn list_mcp_audit_entries(
+    request: Option<crate::models::McpAuditQuery>,
+) -> AppResult<Vec<crate::models::McpAuditEntry>> {
+    let limit = request.and_then(|r| r.limit).unwrap_or(200).min(1000);
+    let dir = crate::diagnostics::mcp_audit_dir()?;
+
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::storage(format!("Failed to read audit dir: {e}")))?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("mcp-audit-") && n.ends_with(".jsonl"))
+                .unwrap_or(false)
+        })
+        .collect();
+    // Newest file first (filenames sort chronologically).
+    files.sort();
+    files.reverse();
+
+    let mut entries: Vec<crate::models::McpAuditEntry> = Vec::new();
+    for path in files {
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let mut lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        // Newest entries first within a file.
+        lines.reverse();
+        for line in lines {
+            if entries.len() >= limit {
+                break;
+            }
+            if let Some(entry) = parse_audit_line(line) {
+                entries.push(entry);
+            }
+        }
+        if entries.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(entries)
+}
+
+fn parse_audit_line(line: &str) -> Option<crate::models::McpAuditEntry> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    Some(crate::models::McpAuditEntry {
+        id: value.get("id")?.as_str()?.to_string(),
+        timestamp: value.get("timestamp")?.as_str()?.to_string(),
+        tool: value.get("tool")?.as_str()?.to_string(),
+        args: value.get("args").cloned().unwrap_or(serde_json::Value::Null),
+        result_preview: value
+            .get("resultPreview")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        duration: value.get("duration").and_then(|d| d.as_i64()).unwrap_or(0),
+        error: value
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(String::from),
     })
 }
 

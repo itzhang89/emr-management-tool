@@ -437,7 +437,11 @@ async fn get_s3_object(
         let body_bytes = resp.body.collect().await.map_err(|e| {
             AppError::internal(format!("Failed to read S3 object: {e}"))
         })?.into_bytes();
-        let content = String::from_utf8_lossy(body_bytes.as_ref()).to_string();
+        // EMR on EKS archives container logs gzip-compressed (.gz). Decode
+        // them like the desktop S3 log viewer so the MCP tool sees text, not
+        // binary. Also sniff the gzip magic bytes in case the object has no
+        // .gz suffix.
+        let content = decode_s3_text_object(&body.key, body_bytes.as_ref())?;
 
         Ok(S3TextObject {
             account_id: body.account_id,
@@ -451,6 +455,21 @@ async fn get_s3_object(
     }.await;
 
     to_json(r)
+}
+
+/// Decode an S3 object body to text, decompressing gzip when the key ends in
+/// `.gz` or the content carries the gzip magic bytes — mirroring the desktop
+/// app's S3 log decoding (`commands::s3::decode_s3_log_content`).
+fn decode_s3_text_object(key: &str, bytes: &[u8]) -> AppResult<String> {
+    let is_gzip = key.ends_with(".gz") || bytes.starts_with(&[0x1f, 0x8b]);
+    if is_gzip {
+        let mut decoder = flate2::read::GzDecoder::new(bytes);
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut content)
+            .map_err(|e| AppError::validation(format!("Gzip log object is not valid text: {e}")))?;
+        return Ok(content);
+    }
+    Ok(String::from_utf8_lossy(bytes).to_string())
 }
 
 async fn find_job_by_id(

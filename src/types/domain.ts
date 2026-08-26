@@ -604,17 +604,28 @@ export interface PortableUpdateInfo {
   signature: string;
 }
 
-export type McpTransport = "stdio" | "streamableHttp" | "sse";
-
 export interface McpStatus {
   running: boolean;
   mcpPort?: number;
   bridgePort?: number;
   pid?: number;
   healthUrl?: string;
-  sseUrl?: string;
-  transport?: McpTransport;
   endpointUrl?: string;
   entryPoint?: string;
+}
+
+/** One MCP tool invocation from the audit log (see mcp/src/audit/types.ts). */
+export interface McpAuditEntry {
+  id: string;
+  timestamp: string;
+  tool: string;
+  args: Record<string, unknown>;
+  resultPreview: {
+    sizeChars?: number;
+    candidateCauses?: string[];
+    sanitized?: boolean;
+  };
+  duration: number;
+  error: string | null;
 }
 

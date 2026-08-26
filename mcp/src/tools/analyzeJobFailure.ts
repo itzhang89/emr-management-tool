@@ -38,8 +38,10 @@ function normalizeEmrJobRunId(value: string): string {
  *  3. Otherwise fetch the job's logs — S3 preferred, CloudWatch fallback — by
  *     resolving the log destination exactly like the desktop Logs page does
  *     (`jobLogDestinations.ts`).
- *  4. Filter noise, then extract only the error-relevant evidence and return a
- *     compact, sanitized report for the calling AI to judge.
+ *  4. Filter noise, extract the error-relevant evidence (tracebacks, deepest
+ *     cause, heuristic candidates) and — so the caller never comes away
+ *     empty-handed — also return the (sanitized) raw logs themselves for the
+ *     calling AI to judge.
  */
 export function buildAnalyzeJobFailureTool(client: BridgeClient) {
   return async (args: AnalyzeJobFailureArgs) => {
@@ -96,13 +98,30 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
       stream: args.stream,
     });
 
-    // --- 4. Extract only the error-relevant lines ---------------------------
+    // --- 4. Extract the error-relevant lines -------------------------------
     const filtered = filterLogNoise(evidence.logText);
     const analysis = extractErrorSections(filtered.text);
     const candidateCauses = analysis.candidateCauses.map((c) => ({
       ...c,
       evidence: sanitizeLogText(c.evidence),
     }));
+
+    // The caller must always be able to analyze the failure even when the
+    // heuristic extractor finds nothing: hand back the (noise-filtered,
+    // sanitized) raw logs themselves.
+    const RAW_LOG_TAIL_LINES = 800;
+    const RAW_LOG_MAX_CHARS = 200_000;
+    const relevantLines = filtered.text
+      .split("\n")
+      .filter((l) => l.trim() !== "" && !GENERIC_NOISE_INFO_RE.test(l));
+    const rawLogTail = relevantLines.slice(-RAW_LOG_TAIL_LINES).join("\n");
+    let rawLogs = sanitizeLogText(rawLogTail);
+    if (rawLogs.length > RAW_LOG_MAX_CHARS) {
+      rawLogs = `${rawLogs.slice(-RAW_LOG_MAX_CHARS)}\n[truncated]`;
+    }
+
+    const hasEvidence =
+      analysis.errorTail.length > 0 || analysis.tracebacks.length > 0;
 
     const report = {
       foundInOtherAccount,
@@ -128,6 +147,7 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
         stateDetails,
         candidateCauses,
         evidence.source,
+        hasEvidence,
       ),
       evidence: {
         logSource: evidence.source,
@@ -138,10 +158,16 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
           : null,
         stepIds: analysis.stepIds,
         candidateCauses,
+        // The actual (noise-filtered, sanitized) log text: the last
+        // RAW_LOG_TAIL_LINES lines. Always present so the caller can judge
+        // even when the heuristic fields above are empty.
+        rawLogs,
+        truncated: relevantLines.length > RAW_LOG_TAIL_LINES || rawLogs.endsWith("[truncated]"),
       },
       meta: {
         totalLogLines: filtered.text.split("\n").length,
         noiseFilteredLines: filtered.hiddenCount,
+        rawLogTailLines: Math.min(relevantLines.length, RAW_LOG_TAIL_LINES),
         analysisGenerated: new Date().toISOString(),
       },
     };
@@ -205,6 +231,7 @@ function summarizeFailure(
   stateDetails: string | null,
   candidateCauses: Array<{ cause: string; confidence: string }>,
   source: "s3" | "cloudwatch" | "none",
+  hasEvidence: boolean,
 ): string {
   const parts: string[] = [];
   if (failureReason) {
@@ -222,6 +249,10 @@ function summarizeFailure(
   }
   if (source === "none") {
     parts.push("No log source was found (neither S3 nor CloudWatch).");
+  } else if (!hasEvidence) {
+    parts.push(
+      "No structured error evidence was extracted automatically; analyze evidence.rawLogs directly.",
+    );
   }
   return parts.length > 0
     ? parts.join("\n")
@@ -455,6 +486,11 @@ function filterLogNoise(text: string): { text: string; hiddenCount: number } {
 
   return { text: kept.join("\n"), hiddenCount };
 }
+
+// Spark-format lines that are routine informational chatter not worth shipping
+// to the model as raw evidence. Applied on top of filterLogNoise's
+// conservative keep rules when assembling evidence.rawLogs.
+const GENERIC_NOISE_INFO_RE = /^\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} INFO [^:]+:/;
 
 // Routine per-task INFO chatter that adds nothing for root-cause analysis.
 function isRoutineInfo(logger: string, message: string): boolean {

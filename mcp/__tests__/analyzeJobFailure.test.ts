@@ -197,12 +197,18 @@ describe("buildAnalyzeJobFailureTool", () => {
         logSource: string;
         deepestCausedBy: string | null;
         candidateCauses: Array<{ cause: string }>;
+        rawLogs: string;
       };
     };
     expect(report.evidence.logSource).toBe("s3");
     expect(bucketsRead.some((k) => k.includes("stderr"))).toBe(true);
     expect(report.evidence.deepestCausedBy).toContain("OutOfMemoryError");
     expect(report.evidence.candidateCauses.some((c) => c.cause.includes("OOM"))).toBe(true);
+    // The actual (noise-filtered) log text is returned too, so the caller can
+    // always judge — even beyond the heuristic fields.
+    expect(report.evidence.rawLogs).toContain("ERROR SparkContext: Job aborted");
+    expect(report.evidence.rawLogs).toContain("Caused by: java.lang.OutOfMemoryError: Java heap space");
+    expect(report.evidence.rawLogs).not.toContain("INFO ApplicationMaster"); // routine INFO noise filtered out of raw evidence
   });
 
   it("falls back to CloudWatch when S3 yields nothing", async () => {
@@ -340,6 +346,88 @@ describe("buildAnalyzeJobFailureTool", () => {
     ]);
     const report = parse(result) as { evidence: { logSource: string } };
     expect(report.evidence.logSource).toBe("cloudwatch");
+  });
+
+  it("returns raw logs and guidance when the evidence extractor finds nothing", async () => {
+    const plainLogs = [
+      "application output line one",
+      "23/08/01 10:00:05 INFO ApplicationMaster: preparing to shut down",
+      "some unstructured shutdown notice without any exception markers",
+    ].join("\n");
+    const client = {
+      findJobById: async () => ({
+        job: makeJob({
+          id: "job-noev",
+          state: "FAILED",
+          describeDetails: {
+            configurationOverrides: {
+              monitoringConfiguration: {
+                s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+              },
+            },
+          },
+        }),
+        accountId: "acct-1",
+        region: "us-east-1",
+        foundInOtherAccount: false,
+      }),
+      describeJob: async () => makeJob({
+        id: "job-noev",
+        state: "FAILED",
+        describeDetails: {
+          configurationOverrides: {
+            monitoringConfiguration: {
+              s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+            },
+          },
+        },
+      }),
+      listS3Objects: async () => ({
+        bucket: "my-log-bucket",
+        objects: [
+          { id: "1", label: "driver-stderr", stream: "stderr", s3Key: "path/vc-1/jobs/job-noev/driver-stderr", size: 10 },
+        ],
+        nextToken: undefined,
+      }),
+      getS3Object: async ({ key }: { key: string }) => ({
+        bucket: "my-log-bucket",
+        key,
+        content: plainLogs,
+      }),
+      getLogs: async () => {
+        throw new Error("should not reach CloudWatch when S3 has logs");
+      },
+      listAccounts: async () => [],
+      listLogStreams: async () => ({ jobId: "x", streams: [], nextToken: undefined }),
+    } as unknown as BridgeClient;
+
+    const tool = buildAnalyzeJobFailureTool(client);
+    const result = await tool({ jobId: "job-noev" });
+
+    const report = parse(result) as {
+      summary: string;
+      evidence: {
+        logSource: string;
+        errorTail: string[];
+        tracebacks: string[];
+        deepestCausedBy: string | null;
+        candidateCauses: unknown[];
+        rawLogs: string;
+        truncated: boolean;
+      };
+    };
+    // Heuristics found nothing...
+    expect(report.evidence.errorTail).toEqual([]);
+    expect(report.evidence.tracebacks).toEqual([]);
+    expect(report.evidence.deepestCausedBy).toBeNull();
+    expect(report.evidence.candidateCauses).toEqual([]);
+    // ...but the caller still gets the (noise-filtered, sanitized) logs.
+    expect(report.evidence.logSource).toBe("s3");
+    expect(report.evidence.rawLogs).toContain("application output line one");
+    expect(report.evidence.rawLogs).toContain("unstructured shutdown notice");
+    expect(report.evidence.rawLogs).not.toContain("INFO ApplicationMaster"); // routine noise filtered
+    expect(report.evidence.truncated).toBe(false);
+    expect(report.summary).toContain("rawLogs");
   });
 });
 

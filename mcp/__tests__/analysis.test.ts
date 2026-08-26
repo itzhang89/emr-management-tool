@@ -148,4 +148,77 @@ Caused by: java.net.SocketTimeoutException: Connection timed out`;
       expect(result.stepIds).toEqual([]);
     });
   });
+
+  describe("python tracebacks", () => {
+    const pyText = `23/08/01 10:00:00 INFO Utils: Running command
+Traceback (most recent call last):
+  File "/usr/lib/spark/python/lib/pyspark.zip/pyspark/worker.py", line 668, in main
+    func, profiler, deserializer, serializer = read_command(pickleSer, infile)
+  File "user_script.py", line 42, in transform
+    raise ValueError("bad input row")
+ValueError: bad input row
+23/08/01 10:00:01 INFO SchedulerBackend: Finished processing`;
+
+    it("should extract the full Python traceback block", () => {
+      const result = extractErrorSections(pyText);
+      expect(result.tracebacks.length).toBeGreaterThan(0);
+      const block = result.tracebacks[0]!;
+      expect(block).toContain("Traceback (most recent call last):");
+      expect(block).toContain('File "user_script.py", line 42');
+      expect(block).toContain('raise ValueError("bad input row")');
+      expect(block.trimEnd().endsWith("ValueError: bad input row")).toBe(true);
+    });
+
+    it("should use the final python exception line as the deepest cause", () => {
+      const result = extractErrorSections(pyText);
+      expect(result.deepestCausedBy).toBe('ValueError: bad input row');
+    });
+
+    it("should flag a MemoryError as a high-confidence cause", () => {
+      const text = `Traceback (most recent call last):
+  File "job.py", line 10, in run
+    huge = [0] * 10**10
+MemoryError`;
+      const result = extractErrorSections(text);
+      expect(result.candidateCauses).toContainEqual(expect.objectContaining({
+        cause: "Python MemoryError",
+        confidence: "high",
+      }));
+      expect(result.deepestCausedBy).toBe("MemoryError");
+    });
+
+    it("should collect python exception lines into the error tail", () => {
+      const result = extractErrorSections(pyText);
+      expect(result.errorTail).toContain('ValueError: bad input row');
+    });
+  });
+
+  describe("level-prefixed java exceptions", () => {
+    const text = `23/08/01 10:00:02 ERROR YarnSchedulerBackend: org.apache.spark.SparkException: Job aborted due to stage failure: Task 3 in stage 2 failed 4 times
+23/08/01 10:00:02 ERROR TaskSetManager: Container killed by YARN for exceeding memory limits`;
+
+    it("should extract the exception from behind a log-level prefix", () => {
+      const result = extractErrorSections(text);
+      expect(result.tracebacks.length).toBeGreaterThan(0);
+      expect(result.tracebacks[0]).toContain("SparkException: Job aborted due to stage failure");
+    });
+
+    it("should report the level-prefixed exception line in the error tail", () => {
+      const result = extractErrorSections(text);
+      expect(result.errorTail.some((l) => l.includes("SparkException: Job aborted"))).toBe(true);
+      expect(result.errorTail.some((l) => l.includes("Container killed by YARN"))).toBe(true);
+    });
+
+    it("should prefer a java caused-by over a python exception for the deepest cause", () => {
+      const mixed = `Traceback (most recent call last):
+  File "job.py", line 10, in run
+    open("/missing")
+FileNotFoundError: /missing
+Exception in thread "main" java.lang.RuntimeException: outer
+Caused by: java.io.IOException: Connection timed out
+  at java.io.FileInputStream.open0(Native Method)`;
+      const result = extractErrorSections(mixed);
+      expect(result.deepestCausedBy).toBe("java.io.IOException: Connection timed out");
+    });
+  });
 });

@@ -736,7 +736,6 @@ pub struct ExportAthenaQueryCsvRequest {
 #[serde(rename_all = "camelCase")]
 pub struct McpStartRequest {
     pub port: Option<u16>,
-    pub transport: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -747,8 +746,26 @@ pub struct McpStatus {
     pub bridge_port: Option<u16>,
     pub pid: Option<u32>,
     pub health_url: Option<String>,
-    pub sse_url: Option<String>,
-    pub transport: Option<String>,
     pub endpoint_url: Option<String>,
     pub entry_point: Option<String>,
+}
+
+/// One MCP tool invocation from the audit log (JSONL files written by the
+/// Node MCP server). Field names mirror `mcp/src/audit/types.ts`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpAuditEntry {
+    pub id: String,
+    pub timestamp: String,
+    pub tool: String,
+    pub args: serde_json::Value,
+    pub result_preview: serde_json::Value,
+    pub duration: i64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpAuditQuery {
+    pub limit: Option<usize>,
 }

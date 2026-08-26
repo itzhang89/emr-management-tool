@@ -23,9 +23,9 @@ function appDataDir(): string {
   );
 }
 
-// stdio clients are spawned by the agent (Claude Code, Cursor, …), not by the
-// desktop app, so they can't inherit MCP_BRIDGE_URL/TOKEN via env. The app
-// writes them to a bridge-info file while it's running; fall back to that.
+// The desktop app writes the bridge URL + token to a bridge-info file while
+// it's running; env vars take precedence when set (e.g. when the app spawns
+// this server itself).
 function readBridgeInfoFile(): Partial<EnvConfig> {
   const path = process.env.MCP_BRIDGE_INFO || join(appDataDir(), "mcp-bridge.json");
   try {
