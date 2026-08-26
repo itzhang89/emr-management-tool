@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "emr-log-analyzer": {
+      "url": "http://localhost:5175/sse"
+    }
+  }
+}
