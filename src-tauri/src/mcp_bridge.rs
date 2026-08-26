@@ -397,6 +397,10 @@ async fn list_s3_objects(
         let resp = op.send().await.map_err(|e| AppError::aws_sdk("s3", e))?;
 
         let mut objects = Vec::new();
+        // Classify each object the same way the desktop Logs page does, so the
+        // MCP tool can tell controller (control-logs/…) from driver/executor
+        // pods instead of receiving an undifferentiated "sparkLog" list.
+        let job_id = crate::emr_log_path::job_id_from_prefix(&body.prefix).unwrap_or_default();
         for obj in resp.contents().iter() {
             let key = obj.key().unwrap_or_default();
             if key.is_empty() || key.ends_with('/') {
@@ -407,14 +411,30 @@ async fn list_s3_objects(
                     continue;
                 }
             }
-            let stream = key.split('/').last().unwrap_or(key).to_string();
+            let normalized_key = key.strip_suffix(".gz").unwrap_or(key);
+            let parsed = crate::emr_log_path::parse_emr_log_path(normalized_key, &job_id);
+            // Objects outside the pod-log subtrees (e.g. job-metadata.log) have
+            // no pod identity; keep them listed but unclassified.
+            let stream = parsed
+                .as_ref()
+                .map(|p| p.stream.clone())
+                .unwrap_or_else(|| normalized_key.split('/').last().unwrap_or(key).to_string());
             objects.push(crate::models::S3JobLogObject {
                 source: "s3".to_string(),
                 id: key.to_string(),
-                label: stream.clone(),
-                r#type: "sparkLog".to_string(),
-                container: String::new(),
-                pod: String::new(),
+                label: parsed
+                    .as_ref()
+                    .map(|p| format!("{} {}", p.pod, p.stream))
+                    .unwrap_or_else(|| stream.clone()),
+                r#type: parsed
+                    .as_ref()
+                    .map(|p| p.log_type.clone())
+                    .unwrap_or_else(|| "sparkLog".to_string()),
+                container: parsed
+                    .as_ref()
+                    .map(|p| p.container.clone())
+                    .unwrap_or_default(),
+                pod: parsed.as_ref().map(|p| p.pod.clone()).unwrap_or_default(),
                 stream,
                 s3_key: key.to_string(),
                 size: obj.size().unwrap_or(0),

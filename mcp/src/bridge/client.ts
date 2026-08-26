@@ -166,6 +166,10 @@ export interface BridgeLogsResponse {
 export interface BridgeS3Object {
   id: string;
   label: string;
+  /** "controller" | "driver" | "executor", or "sparkLog" when unclassified. */
+  type: string;
+  container: string;
+  pod: string;
   stream: string;
   s3Key: string;
   size: number;

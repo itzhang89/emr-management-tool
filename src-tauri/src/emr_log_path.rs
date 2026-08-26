@@ -89,6 +89,17 @@ pub fn classify_pod(pod: &str, job_id: &str) -> String {
     }
 }
 
+/// Recover the job id from a log prefix like `logs/<vc>/jobs/<job_id>/`.
+pub fn job_id_from_prefix(prefix: &str) -> Option<String> {
+    let parts = prefix
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    parts
+        .windows(2)
+        .find_map(|window| (window[0] == "jobs").then(|| window[1].to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

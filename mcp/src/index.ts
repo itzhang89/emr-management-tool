@@ -50,9 +50,13 @@ function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof creat
   const analyzeJobFailureHandler = buildAnalyzeJobFailureTool(bridge);
   server.tool(
     "analyze_job_failure",
-    "Analyze an EMR on EKS job failure by id. Only jobId is required — the job is located automatically across the configured accounts (active account first, then others), so no virtual cluster or account must be supplied. Returns job state and concise error evidence for the AI to judge.",
+    "Analyze an EMR on EKS job failure by id. Only jobId is required — the job is located automatically across the configured accounts (active account first, then others), so no virtual cluster or account must be supplied. Returns the job state, pod-level controller evidence (checked first — image pull failures, OOMKills and rejected service accounts never reach the Spark driver log), and the Spark application error evidence. If the jobId is malformed the tool returns error \"invalidJobId\" without searching: ask the user for the complete id rather than guessing.",
     {
-      jobId: z.string().describe("EMR job run ID"),
+      jobId: z
+        .string()
+        .describe(
+          'Complete EMR job run ID — a lowercase alphanumeric id of 16-64 chars (e.g. "0000000381t77o3g8f5"), optionally "spark-" prefixed. Never truncate or invent it.',
+        ),
       virtualClusterId: z.string().optional().describe("EMR virtual cluster ID (optional — auto-resolved if omitted)"),
       accountId: z.string().optional().describe("Account ID (optional — defaults to active account, then other accounts)"),
       logType: z.enum(["driver", "executor", "controller"]).optional().default("driver").describe("Log type to analyze"),
@@ -73,6 +77,9 @@ function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof creat
           // evidence fields (errorTail, tracebacks, causes, …) are kept.
           delete evidence.rawLogs;
           parsed.evidence = evidence;
+          const controllerEvidence = (parsed.controllerEvidence ?? {}) as Record<string, unknown>;
+          delete controllerEvidence.rawLogs;
+          parsed.controllerEvidence = controllerEvidence;
           result = parsed;
         } catch {
           result = { raw: text.slice(0, 2000) };

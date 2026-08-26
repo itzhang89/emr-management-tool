@@ -1,7 +1,7 @@
 use crate::aws::runtime::runtime_for_context;
 use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
-use crate::emr_log_path::parse_emr_log_path;
+use crate::emr_log_path::{job_id_from_prefix, parse_emr_log_path};
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, S3Bucket, S3CreateFolderRequest, S3JobLogObject, S3JobLogObjectsRequest,
@@ -1281,16 +1281,6 @@ fn parse_s3_job_log_object(
         size,
         last_modified,
     })
-}
-
-fn job_id_from_prefix(prefix: &str) -> Option<String> {
-    let parts = prefix
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    parts
-        .windows(2)
-        .find_map(|window| (window[0] == "jobs").then(|| window[1].to_string()))
 }
 
 #[cfg(test)]
