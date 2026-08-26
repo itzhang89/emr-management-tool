@@ -33,6 +33,7 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
     // --- 1. Locate the job ---------------------------------------------------
     let job: BridgeJobSummary;
     let accountId: string | undefined = args.accountId;
+    let accountName: string | undefined;
     let region: string | undefined;
     let foundInOtherAccount = false;
 
@@ -45,12 +46,14 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
       });
       job = summary;
       accountId = summary.accountId || accountId;
+      accountName = summary.accountId || accountId;
       region = summary.region;
     } else {
       // Cross-account search: active account first, then the rest.
       const found = await client.findJobById(jobId);
       job = found.job;
       accountId = found.accountId;
+      accountName = found.accountName;
       region = found.region;
       foundInOtherAccount = found.foundInOtherAccount;
     }
@@ -64,7 +67,7 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
     // --- 2. Normal completion short-circuit --------------------------------
     const state = (job.state || "").toUpperCase();
     if (state === "COMPLETED" || state === "SUCCEEDED") {
-      return completionReport(job, { accountId, region, foundInOtherAccount });
+      return completionReport(job, { accountId, accountName, region, foundInOtherAccount });
     }
 
     // --- 3. Gather log evidence (S3 first, then CloudWatch) ----------------
@@ -86,6 +89,11 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
 
     const report = {
       foundInOtherAccount,
+      account: {
+        id: accountId,
+        name: accountName || null,
+        region,
+      },
       job: {
         id: job.id,
         name: job.name || null,
@@ -135,7 +143,12 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
 // A job that finished successfully: no logs are fetched, just a clean status.
 function completionReport(
   job: BridgeJobSummary,
-  scope: { accountId?: string; region?: string; foundInOtherAccount: boolean },
+  scope: {
+    accountId?: string;
+    accountName?: string;
+    region?: string;
+    foundInOtherAccount: boolean;
+  },
 ) {
   return {
     content: [
@@ -145,6 +158,11 @@ function completionReport(
           {
             ok: true,
             foundInOtherAccount: scope.foundInOtherAccount,
+            account: {
+              id: scope.accountId,
+              name: scope.accountName || null,
+              region: scope.region,
+            },
             summary: "Job completed successfully — no failure to analyze.",
             job: {
               id: job.id,
@@ -198,6 +216,15 @@ interface LogEvidence {
   source: "s3" | "cloudwatch" | "none";
 }
 
+/**
+ * Fetch the job's logs, S3 preferred then CloudWatch. Destination resolution
+ * mirrors the desktop app's `jobLogDestinations.ts`:
+ *
+ *  - S3       → configurationOverrides.monitoringConfiguration.s3MonitoringConfiguration.logUri
+ *  - CloudWatch → configurationOverrides.monitoringConfiguration.cloudWatchMonitoringConfiguration
+ *                 (logGroupName + streamNamePrefix), falling back to the
+ *                 conventional `/aws/emr-containers/jobs/{jobId}` group.
+ */
 async function gatherLogEvidence(
   client: BridgeClient,
   params: {
@@ -211,21 +238,23 @@ async function gatherLogEvidence(
   const { accountId, jobId, virtualClusterId, logType, stream } = params;
   const desiredStream = stream || "stderr";
 
-  // --- Try S3 first — driven by the job's monitoring logUri tag ----------
-  let jobForS3: BridgeJobSummary | null = null;
+  // Describe the job once to learn its monitoring configuration.
+  let describe: BridgeJobSummary | undefined;
   try {
-    jobForS3 = await client.describeJob({
-      accountId,
-      jobId,
-      virtualClusterId,
-    });
+    describe = await client.describeJob({ accountId, jobId, virtualClusterId });
   } catch {
-    /* describe may fail to return the logUri; fall through to CloudWatch */
+    /* rely on CloudWatch defaults below */
   }
 
-  const logUri = jobForS3?.describeDetails?.tags?.["emr.containers.job.logUri"];
-  if (logUri && virtualClusterId) {
-    const match = parseS3Uri(logUri);
+  const monitoring = describe?.describeDetails?.configurationOverrides?.monitoringConfiguration;
+
+  // --- Try S3 first --------------------------------------------------------
+  const s3Uri =
+    monitoring?.s3MonitoringConfiguration?.logUri ||
+    describe?.describeDetails?.tags?.["emr.containers.job.logUri"];
+
+  if (s3Uri && virtualClusterId) {
+    const match = parseS3Uri(s3Uri);
     if (match) {
       try {
         const prefix = `${virtualClusterId}/jobs/${jobId}/`;
@@ -235,8 +264,6 @@ async function gatherLogEvidence(
           prefix: `${match.prefix}${prefix}`,
         });
 
-        // Filter to the desired stream (e.g. stderr/stdout/driver), unless the
-        // caller overrode stream. Prefer matching objects; fall back to any.
         const matching = listing.objects.filter((o) =>
           o.s3Key.toLowerCase().includes(desiredStream.toLowerCase()),
         );
@@ -267,8 +294,17 @@ async function gatherLogEvidence(
   // --- Fall back to CloudWatch --------------------------------------------
   if (virtualClusterId) {
     try {
-      const logGroupName = `/aws/emr-containers/jobs/${jobId}`;
-      const streamNamePrefix = `${virtualClusterId}/jobs/${jobId}/containers`;
+      // Use the job's configured group/prefix when present, else the convention.
+      const cw = monitoring?.cloudWatchMonitoringConfiguration;
+      const logGroupName =
+        cw?.logGroupName?.trim() || `/aws/emr-containers/jobs/${jobId}`;
+
+      let streamNamePrefix = `${virtualClusterId}/jobs/${jobId}/containers`;
+      if (cw?.logStreamNamePrefix?.trim()) {
+        const base = cw.logStreamNamePrefix.trim();
+        const normalized = base.endsWith("/") ? base : `${base}/`;
+        streamNamePrefix = `${normalized}${virtualClusterId}/jobs/${jobId}/`;
+      }
 
       const result = await client.getLogs({
         accountId,

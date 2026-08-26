@@ -29,6 +29,7 @@ describe("buildAnalyzeJobFailureTool", () => {
         return {
           job: makeJob({ id: jobId, state: "FAILED" }),
           accountId: "acct-2",
+          accountName: "My Second Account",
           region: "us-west-2",
           foundInOtherAccount: true,
         };
@@ -48,6 +49,7 @@ describe("buildAnalyzeJobFailureTool", () => {
     const report = parse(result);
     expect(report.foundInOtherAccount).toBe(true);
     expect((report.job as { id: string }).id).toBe("job-00000abc");
+    expect((report.account as { name: string }).name).toBe("My Second Account");
   });
 
   it("short-circuits with ok when the job COMPLETED (no log fetch)", async () => {
@@ -93,7 +95,11 @@ describe("buildAnalyzeJobFailureTool", () => {
           id: "job-s3",
           state: "FAILED",
           describeDetails: {
-            tags: { "emr.containers.job.logUri": "s3://my-log-bucket/path/" },
+            configurationOverrides: {
+              monitoringConfiguration: {
+                s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+              },
+            },
           },
         }),
         accountId: "acct-1",
@@ -104,7 +110,11 @@ describe("buildAnalyzeJobFailureTool", () => {
         id: "job-s3",
         state: "FAILED",
         describeDetails: {
-          tags: { "emr.containers.job.logUri": "s3://my-log-bucket/path/" },
+          configurationOverrides: {
+            monitoringConfiguration: {
+              s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+            },
+          },
         },
       }),
       listS3Objects: async () => ({
@@ -160,7 +170,11 @@ describe("buildAnalyzeJobFailureTool", () => {
           id: "job-cw",
           state: "FAILED",
           describeDetails: {
-            tags: { "emr.containers.job.logUri": "s3://my-log-bucket/path/" },
+            configurationOverrides: {
+              monitoringConfiguration: {
+                s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+              },
+            },
           },
         }),
         accountId: "acct-1",

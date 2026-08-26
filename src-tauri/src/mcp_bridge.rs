@@ -111,6 +111,7 @@ struct FindJobByIdReq {
 struct FindJobByIdResp {
     job: JobRunSummary,
     account_id: String,
+    account_name: String,
     region: String,
     found_in_other_account: bool,
 }
@@ -462,70 +463,6 @@ async fn find_job_by_id(
     to_json(r)
 }
 
-/// Same mapping the desktop UI uses, local to the bridge so we don't reach
-/// into `commands::emr` internals (keeps that module's surface small).
-fn map_job_run_summary(
-    job: &aws_sdk_emrcontainers::types::JobRun,
-    account_id: Option<String>,
-    region: Option<String>,
-) -> JobRunSummary {
-    let created_at = job
-        .created_at()
-        .map(|created_at| created_at.to_string())
-        .unwrap_or_else(|| Utc::now().to_rfc3339());
-    let finished_at = job.finished_at().map(|finished_at| finished_at.to_string());
-
-    JobRunSummary {
-        id: job.id().unwrap_or_default().to_string(),
-        name: job.name().unwrap_or_default().to_string(),
-        state: job
-            .state()
-            .map(|state| state.as_str().to_string())
-            .unwrap_or_else(|| "PENDING".to_string()),
-        account_id,
-        region,
-        virtual_cluster_id: job.virtual_cluster_id().unwrap_or_default().to_string(),
-        virtual_cluster_name: None,
-        created_at: created_at.clone(),
-        started_at: None,
-        finished_at: finished_at.clone(),
-        duration_seconds: created_at
-            .parse::<chrono::DateTime<Utc>>()
-            .ok()
-            .zip(finished_at.as_deref().and_then(|f| f.parse().ok()))
-            .map(|(start, end): (chrono::DateTime<Utc>, chrono::DateTime<Utc>)| {
-                (end - start).num_seconds()
-            }),
-        source_request: None,
-        describe_details: Some(map_describe_details(job)),
-    }
-}
-
-fn map_describe_details(
-    job: &aws_sdk_emrcontainers::types::JobRun,
-) -> crate::models::JobRunDescribeDetails {
-    crate::models::JobRunDescribeDetails {
-        arn: job.arn().map(ToString::to_string),
-        client_token: job.client_token().map(ToString::to_string),
-        execution_role_arn: job.execution_role_arn().map(ToString::to_string),
-        release_label: job.release_label().map(ToString::to_string),
-        created_by: job.created_by().map(ToString::to_string),
-        state_details: job.state_details().map(ToString::to_string),
-        failure_reason: job
-            .failure_reason()
-            .map(|reason| reason.as_str().to_string()),
-        tags: job.tags().cloned(),
-        retry_max_attempts: job
-            .retry_policy_configuration()
-            .map(|config| config.max_attempts()),
-        retry_current_attempt_count: job
-            .retry_policy_execution()
-            .map(|execution| execution.current_attempt_count()),
-        job_driver: None,
-        configuration_overrides: None,
-    }
-}
-
 /// Locate a job by id across every configured account, active account first.
 ///
 /// For each account (active → others), first check the app's local job-history
@@ -548,7 +485,8 @@ async fn do_find_job_by_id(app: &AppHandle, job_id: &str) -> AppResult<FindJobBy
     }
 
     for account in accounts {
-        // 1. Local cache first — the app may already know this job.
+        // 1. Local cache first — the app may already know this job. Job ids are
+        //    matched exactly; no prefix matching is allowed.
         if let Ok(history) = repository::list_job_history(&pool, Some(&account.id), None, None)
             .await
         {
@@ -556,6 +494,7 @@ async fn do_find_job_by_id(app: &AppHandle, job_id: &str) -> AppResult<FindJobBy
                 return Ok(FindJobByIdResp {
                     job,
                     account_id: account.id.clone(),
+                    account_name: account.name.clone(),
                     region: account.region.clone(),
                     found_in_other_account: !account.is_active,
                 });
@@ -599,6 +538,8 @@ async fn do_find_job_by_id(app: &AppHandle, job_id: &str) -> AppResult<FindJobBy
         };
 
         for vc_id in vc_ids {
+            // Job ids are matched exactly on both the local cache and the AWS
+            // path — prefix resolution is not allowed anywhere.
             let Ok(response) = client
                 .describe_job_run()
                 .id(job_id)
@@ -611,15 +552,26 @@ async fn do_find_job_by_id(app: &AppHandle, job_id: &str) -> AppResult<FindJobBy
             let Some(job_run) = response.job_run() else {
                 continue;
             };
-            let job = map_job_run_summary(
+            let mut job = crate::commands::emr::map_job_run(
                 &job_run,
                 Some(account.id.clone()),
                 Some(account.region.clone()),
             );
+            // Enrich with configuration overrides (monitoring config for S3/CW log URIs).
+            if let Some(overrides) =
+                job_run.configuration_overrides().and_then(
+                    crate::commands::emr::map_configuration_overrides,
+                )
+            {
+                if let Some(details) = &mut job.describe_details {
+                    details.configuration_overrides = Some(overrides);
+                }
+            }
             repository::upsert_job_history(&pool, &job).await?;
             return Ok(FindJobByIdResp {
                 job,
                 account_id: account.id.clone(),
+                account_name: account.name.clone(),
                 region: account.region.clone(),
                 found_in_other_account: !account.is_active,
             });

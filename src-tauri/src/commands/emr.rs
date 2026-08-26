@@ -710,7 +710,7 @@ fn map_virtual_cluster(cluster: &aws_sdk_emrcontainers::types::VirtualCluster) -
     }
 }
 
-fn map_job_run(
+pub fn map_job_run(
     job: &aws_sdk_emrcontainers::types::JobRun,
     account_id: Option<String>,
     region: Option<String>,
@@ -766,7 +766,7 @@ fn map_describe_details(job: &aws_sdk_emrcontainers::types::JobRun) -> JobRunDes
     }
 }
 
-fn map_configuration_overrides(
+pub fn map_configuration_overrides(
     overrides: &aws_sdk_emrcontainers::types::ConfigurationOverrides,
 ) -> Option<serde_json::Value> {
     let application_configuration = overrides

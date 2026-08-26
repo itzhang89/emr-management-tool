@@ -109,6 +109,17 @@ export interface BridgeJobDescribeDetails {
   tags?: Record<string, string>;
   retryMaxAttempts?: number;
   retryCurrentAttemptCount?: number;
+  configurationOverrides?: {
+    monitoringConfiguration?: {
+      cloudWatchMonitoringConfiguration?: {
+        logGroupName?: string;
+        logStreamNamePrefix?: string;
+      };
+      s3MonitoringConfiguration?: {
+        logUri?: string;
+      };
+    };
+  };
 }
 
 export interface BridgeJobSummary {
@@ -217,6 +228,7 @@ export interface BridgeClient {
 export interface BridgeFindJobResult {
   job: BridgeJobSummary;
   accountId: string;
+  accountName: string;
   region: string;
   foundInOtherAccount: boolean;
 }
