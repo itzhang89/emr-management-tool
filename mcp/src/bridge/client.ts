@@ -183,6 +183,7 @@ export interface BridgeClient {
     jobId: string;
     virtualClusterId?: string;
   }): Promise<BridgeJobSummary>;
+  findJobById(jobId: string): Promise<BridgeFindJobResult>;
   listLogStreams(req: {
     accountId?: string;
     jobId: string;
@@ -213,6 +214,13 @@ export interface BridgeClient {
   }): Promise<BridgeS3ObjectContent>;
 }
 
+export interface BridgeFindJobResult {
+  job: BridgeJobSummary;
+  accountId: string;
+  region: string;
+  foundInOtherAccount: boolean;
+}
+
 export function createBridgeClient(): BridgeClient {
   const env = readEnv();
 
@@ -225,6 +233,11 @@ export function createBridgeClient(): BridgeClient {
         account_id: req.accountId,
         job_id: req.jobId,
         virtual_cluster_id: req.virtualClusterId,
+      }),
+
+    findJobById: async (jobId) =>
+      bridgeFetch<BridgeFindJobResult>(env, "/find-job-by-id", {
+        job_id: jobId,
       }),
 
     listLogStreams: async (req) =>

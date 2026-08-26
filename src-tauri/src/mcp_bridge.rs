@@ -3,7 +3,7 @@ use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, AwsAccountSummary, JobLogStream, JobLogStreamsResponse, JobLogsResponse,
-    LogEntry, S3JobLogObjectsResponse, S3TextObject,
+    JobRunSummary, LogEntry, S3JobLogObjectsResponse, S3TextObject,
 };
 use axum::{
     extract::State,
@@ -96,6 +96,25 @@ struct GetS3ObjectReq {
     key: String,
 }
 
+#[derive(Deserialize)]
+struct FindJobByIdReq {
+    job_id: String,
+}
+
+/// Job found by id, across all configured accounts.
+///
+/// `found_in_other_account` is true when the job lives in an account that is
+/// NOT the desktop app's currently-active account — the caller can surface a
+/// hint ("found in another account") to the user.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FindJobByIdResp {
+    job: JobRunSummary,
+    account_id: String,
+    region: String,
+    found_in_other_account: bool,
+}
+
 /// Account shape exposed to the MCP server (and therefore to the LLM).
 /// Deliberately omits access keys, the AWS account number, and the full
 /// identity ARN — only a human-readable username is exposed so the model can
@@ -146,6 +165,7 @@ pub async fn start(app: AppHandle, token: String) -> AppResult<BridgeServer> {
         .route("/get-logs", post(get_logs))
         .route("/list-s3-objects", post(list_s3_objects))
         .route("/get-s3-object", post(get_s3_object))
+        .route("/find-job-by-id", post(find_job_by_id))
         .with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -430,6 +450,232 @@ async fn get_s3_object(
     }.await;
 
     to_json(r)
+}
+
+async fn find_job_by_id(
+    headers: HeaderMap,
+    State(state): State<BridgeState>,
+    Json(body): Json<FindJobByIdReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    auth_check(&state, &headers).await?;
+    let r: AppResult<FindJobByIdResp> = do_find_job_by_id(&state.inner.app, &body.job_id).await;
+    to_json(r)
+}
+
+/// Same mapping the desktop UI uses, local to the bridge so we don't reach
+/// into `commands::emr` internals (keeps that module's surface small).
+fn map_job_run_summary(
+    job: &aws_sdk_emrcontainers::types::JobRun,
+    account_id: Option<String>,
+    region: Option<String>,
+) -> JobRunSummary {
+    let created_at = job
+        .created_at()
+        .map(|created_at| created_at.to_string())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+    let finished_at = job.finished_at().map(|finished_at| finished_at.to_string());
+
+    JobRunSummary {
+        id: job.id().unwrap_or_default().to_string(),
+        name: job.name().unwrap_or_default().to_string(),
+        state: job
+            .state()
+            .map(|state| state.as_str().to_string())
+            .unwrap_or_else(|| "PENDING".to_string()),
+        account_id,
+        region,
+        virtual_cluster_id: job.virtual_cluster_id().unwrap_or_default().to_string(),
+        virtual_cluster_name: None,
+        created_at: created_at.clone(),
+        started_at: None,
+        finished_at: finished_at.clone(),
+        duration_seconds: created_at
+            .parse::<chrono::DateTime<Utc>>()
+            .ok()
+            .zip(finished_at.as_deref().and_then(|f| f.parse().ok()))
+            .map(|(start, end): (chrono::DateTime<Utc>, chrono::DateTime<Utc>)| {
+                (end - start).num_seconds()
+            }),
+        source_request: None,
+        describe_details: Some(map_describe_details(job)),
+    }
+}
+
+fn map_describe_details(
+    job: &aws_sdk_emrcontainers::types::JobRun,
+) -> crate::models::JobRunDescribeDetails {
+    crate::models::JobRunDescribeDetails {
+        arn: job.arn().map(ToString::to_string),
+        client_token: job.client_token().map(ToString::to_string),
+        execution_role_arn: job.execution_role_arn().map(ToString::to_string),
+        release_label: job.release_label().map(ToString::to_string),
+        created_by: job.created_by().map(ToString::to_string),
+        state_details: job.state_details().map(ToString::to_string),
+        failure_reason: job
+            .failure_reason()
+            .map(|reason| reason.as_str().to_string()),
+        tags: job.tags().cloned(),
+        retry_max_attempts: job
+            .retry_policy_configuration()
+            .map(|config| config.max_attempts()),
+        retry_current_attempt_count: job
+            .retry_policy_execution()
+            .map(|execution| execution.current_attempt_count()),
+        job_driver: None,
+        configuration_overrides: None,
+    }
+}
+
+/// Locate a job by id across every configured account, active account first.
+///
+/// For each account (active → others), first check the app's local job-history
+/// cache; if the job isn't there, enumerate that account's virtual clusters
+/// (all states, so TERMINATED clusters are searched too) and call
+/// `DescribeJobRun` on each. The first hit wins and is cached in job_history.
+///
+/// Account/credential errors are logged and skipped rather than aborting the
+/// search, so one misconfigured account can't block lookup in the others.
+async fn do_find_job_by_id(app: &AppHandle, job_id: &str) -> AppResult<FindJobByIdResp> {
+    let pool = repository::pool().await?;
+    let active = repository::active_aws_account(&pool).await?;
+    let mut accounts = repository::list_aws_accounts(&pool).await?;
+    // Active account first so it is always searched before the others.
+    if let Some(active) = active {
+        if let Some(idx) = accounts.iter().position(|a| a.id == active.id) {
+            let account = accounts.remove(idx);
+            accounts.insert(0, account);
+        }
+    }
+
+    for account in accounts {
+        // 1. Local cache first — the app may already know this job.
+        if let Ok(history) = repository::list_job_history(&pool, Some(&account.id), None, None)
+            .await
+        {
+            if let Some(job) = history.into_iter().find(|job| job.id == job_id) {
+                return Ok(FindJobByIdResp {
+                    job,
+                    account_id: account.id.clone(),
+                    region: account.region.clone(),
+                    found_in_other_account: !account.is_active,
+                });
+            }
+        }
+
+        // 2. Enumerate virtual clusters and probe each one via AWS.
+        let runtime = match runtime_for_context(
+            app,
+            AwsCommandContext {
+                account_id: Some(account.id.clone()),
+            },
+        )
+        .await
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                crate::diagnostics::append_log_line(
+                    "WARN",
+                    &format!(
+                        "find-job-by-id: skipping account {} ({}): {e}",
+                        account.name, account.id
+                    ),
+                );
+                continue;
+            }
+        };
+        let client = aws_sdk_emrcontainers::Client::new(&runtime.config);
+        let vc_ids = match list_virtual_cluster_ids(&client).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                crate::diagnostics::append_log_line(
+                    "WARN",
+                    &format!(
+                        "find-job-by-id: skipping account {} ({}): {e}",
+                        account.name, account.id
+                    ),
+                );
+                continue;
+            }
+        };
+
+        for vc_id in vc_ids {
+            let Ok(response) = client
+                .describe_job_run()
+                .id(job_id)
+                .virtual_cluster_id(&vc_id)
+                .send()
+                .await
+            else {
+                continue;
+            };
+            let Some(job_run) = response.job_run() else {
+                continue;
+            };
+            let job = map_job_run_summary(
+                &job_run,
+                Some(account.id.clone()),
+                Some(account.region.clone()),
+            );
+            repository::upsert_job_history(&pool, &job).await?;
+            return Ok(FindJobByIdResp {
+                job,
+                account_id: account.id.clone(),
+                region: account.region.clone(),
+                found_in_other_account: !account.is_active,
+            });
+        }
+    }
+
+    Err(AppError::validation(format!(
+        "Job {job_id} was not found in any configured account."
+    )))
+}
+
+/// List the ids of all virtual clusters in an account, across every state
+/// (RUNNING, TERMINATED, …) and all pages. Pagination is bounded to the same
+/// limit the app uses elsewhere so a huge account can't loop forever.
+async fn list_virtual_cluster_ids(
+    client: &aws_sdk_emrcontainers::Client,
+) -> AppResult<Vec<String>> {
+    const MAX_EMR_PAGINATION_PAGES: usize = 100;
+
+    let mut ids = Vec::new();
+    let mut next_token = None;
+    let mut pages = 0usize;
+
+    loop {
+        pages += 1;
+        if pages > MAX_EMR_PAGINATION_PAGES {
+            crate::diagnostics::append_log_line(
+                "WARN",
+                "find-job-by-id: stopped ListVirtualClusters pagination after reaching the page limit.",
+            );
+            break;
+        }
+
+        let mut operation = client.list_virtual_clusters();
+        if let Some(token) = next_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        let response = operation
+            .send()
+            .await
+            .map_err(|e| AppError::aws_for_account_sdk("emr-containers", "unknown", e))?;
+
+        ids.extend(
+            response
+                .virtual_clusters()
+                .iter()
+                .filter_map(|vc| vc.id().map(|id| id.to_string())),
+        );
+
+        next_token = response.next_token().map(String::from);
+        if next_token.is_none() {
+            break;
+        }
+    }
+
+    Ok(ids)
 }
 
 async fn do_list_accounts() -> AppResult<Vec<BridgeAccount>> {

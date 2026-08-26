@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { BridgeClient } from "../bridge/client.js";
+import type { BridgeClient, BridgeJobSummary } from "../bridge/client.js";
 import { sanitizeLogText } from "../sanitize/index.js";
 import { extractErrorSections } from "../analysis/index.js";
 
@@ -13,122 +13,109 @@ export const AnalyzeJobFailureArgs = z.object({
 
 export type AnalyzeJobFailureArgs = z.infer<typeof AnalyzeJobFailureArgs>;
 
+/**
+ * The single MCP tool.
+ *
+ * Flow:
+ *  1. Locate the job. If a virtualClusterId is supplied, describe it directly
+ *     (fast path within one account/cluster). Otherwise search across the
+ *     configured accounts via the bridge (active account first, then others).
+ *  2. If COMPLETED, short-circuit: the job ran normally — no log digging.
+ *  3. Otherwise fetch the job's logs — S3 preferred, CloudWatch fallback — using
+ *     the resolved account + virtual cluster.
+ *  4. Filter noise, then extract only the error-relevant evidence and return a
+ *     compact, sanitized report for the calling AI to judge.
+ */
 export function buildAnalyzeJobFailureTool(client: BridgeClient) {
   return async (args: AnalyzeJobFailureArgs) => {
     const { jobId } = args;
 
-    let jobSummary: Awaited<ReturnType<BridgeClient["describeJob"]>> | null = null;
-    try {
-      jobSummary = await client.describeJob({
-        accountId: args.accountId,
+    // --- 1. Locate the job ---------------------------------------------------
+    let job: BridgeJobSummary;
+    let accountId: string | undefined = args.accountId;
+    let region: string | undefined;
+    let foundInOtherAccount = false;
+
+    if (args.virtualClusterId) {
+      // Fast path: caller pinned the cluster. Describe within that scope.
+      const summary = await client.describeJob({
+        accountId,
         jobId,
         virtualClusterId: args.virtualClusterId,
       });
-    } catch {
-      jobSummary = null;
+      job = summary;
+      accountId = summary.accountId || accountId;
+      region = summary.region;
+    } else {
+      // Cross-account search: active account first, then the rest.
+      const found = await client.findJobById(jobId);
+      job = found.job;
+      accountId = found.accountId;
+      region = found.region;
+      foundInOtherAccount = found.foundInOtherAccount;
     }
 
-    // Resolve the virtual cluster id: prefer the caller's value, otherwise take
-    // it from the describe result (the app can look a job up by id alone).
-    const virtualClusterId = args.virtualClusterId || jobSummary?.virtualClusterId || "";
+    const virtualClusterId = args.virtualClusterId || job.virtualClusterId;
 
-    // Fetch simplified log text
-    let logText = "";
-    let logSource: "s3" | "cloudwatch" | "none" = "none";
+    const describe = job.describeDetails;
+    const failureReason = describe?.failureReason || null;
+    const stateDetails = describe?.stateDetails || null;
 
-    // Try S3 first
-    if (jobSummary?.describeDetails?.tags?.["emr.containers.job.logUri"]) {
-      const logUri = jobSummary.describeDetails.tags["emr.containers.job.logUri"];
-      try {
-        const prefix = `${virtualClusterId}/jobs/${jobId}/`;
-        const match = parseS3Uri(logUri);
-        if (match) {
-          const s3Objects = await client.listS3Objects({
-            accountId: args.accountId,
-            bucket: match.bucket,
-            prefix: `${match.prefix}${prefix}`,
-          });
-          const targetStream = args.stream || "stderr";
-          const matching = s3Objects.objects.filter((o) =>
-            o.s3Key.toLowerCase().includes(targetStream.toLowerCase()),
-          );
-          const relevant = (matching.length > 0 ? matching : s3Objects.objects).slice(0, 3);
-
-          const allMessages: string[] = [];
-          for (const obj of relevant) {
-            try {
-              const content = await client.getS3Object({
-                accountId: args.accountId,
-                bucket: match.bucket,
-                key: obj.s3Key,
-              });
-              allMessages.push(...content.content.split("\n").filter(Boolean));
-            } catch {
-              /* skip */
-            }
-          }
-          if (allMessages.length > 0) {
-            logText = allMessages.join("\n");
-            logSource = "s3";
-          }
-        }
-      } catch {
-        /* fall through */
-      }
+    // --- 2. Normal completion short-circuit --------------------------------
+    const state = (job.state || "").toUpperCase();
+    if (state === "COMPLETED" || state === "SUCCEEDED") {
+      return completionReport(job, { accountId, region, foundInOtherAccount });
     }
 
-    // Fall back to CloudWatch
-    if (!logText) {
-      try {
-        const logGroupName = `/aws/emr-containers/jobs/${jobId}`;
-        const streamNamePrefix = `${virtualClusterId}/jobs/${jobId}/containers`;
-        const result = await client.getLogs({
-          accountId: args.accountId,
-          jobId,
-          logGroupName,
-          streamNamePrefix,
-          limit: 2000,
-        });
-        logText = result.entries.map((e) => e.message).join("\n");
-        logSource = "cloudwatch";
-      } catch {
-        /* leave empty */
-      }
-    }
+    // --- 3. Gather log evidence (S3 first, then CloudWatch) ----------------
+    const evidence = await gatherLogEvidence(client, {
+      accountId,
+      jobId,
+      virtualClusterId,
+      logType: args.logType,
+      stream: args.stream,
+    });
 
-    const filtered = filterLogNoise(logText);
-    const simplifiedText = filtered.text;
-    const analysis = extractErrorSections(simplifiedText);
-
-    const sanitizedTail = analysis.errorTail.map((l) => sanitizeLogText(l));
-    const sanitizedCauses = analysis.candidateCauses.map((c) => ({
+    // --- 4. Extract only the error-relevant lines ---------------------------
+    const filtered = filterLogNoise(evidence.logText);
+    const analysis = extractErrorSections(filtered.text);
+    const candidateCauses = analysis.candidateCauses.map((c) => ({
       ...c,
       evidence: sanitizeLogText(c.evidence),
     }));
-    const sanitizedDeepest = analysis.deepestCausedBy
-      ? sanitizeLogText(analysis.deepestCausedBy)
-      : null;
 
     const report = {
+      foundInOtherAccount,
       job: {
-        id: jobId,
-        name: jobSummary?.name || null,
-        state: jobSummary?.state || null,
-        stateDetails: jobSummary?.describeDetails?.stateDetails || null,
-        created: jobSummary?.createdAt || null,
-        finished: jobSummary?.finishedAt || null,
-        releaseLabel: jobSummary?.describeDetails?.releaseLabel || null,
+        id: job.id,
+        name: job.name || null,
+        state: job.state || null,
+        failureReason: sanitizeLogText(failureReason || ""),
+        stateDetails: sanitizeLogText(stateDetails || ""),
+        virtualClusterId,
+        createdAt: job.createdAt || null,
+        finishedAt: job.finishedAt || null,
+        releaseLabel: describe?.releaseLabel || null,
       },
+      summary: summarizeFailure(
+        state,
+        failureReason,
+        stateDetails,
+        candidateCauses,
+        evidence.source,
+      ),
       evidence: {
-        errorTail: sanitizedTail,
+        logSource: evidence.source,
+        errorTail: analysis.errorTail.map((l) => sanitizeLogText(l)),
         tracebacks: analysis.tracebacks.map((t) => sanitizeLogText(t)),
-        deepestCausedBy: sanitizedDeepest,
+        deepestCausedBy: analysis.deepestCausedBy
+          ? sanitizeLogText(analysis.deepestCausedBy)
+          : null,
         stepIds: analysis.stepIds,
-        logSource,
+        candidateCauses,
       },
-      candidateCauses: sanitizedCauses,
       meta: {
-        totalLogLines: simplifiedText.split("\n").length,
+        totalLogLines: filtered.text.split("\n").length,
         noiseFilteredLines: filtered.hiddenCount,
         analysisGenerated: new Date().toISOString(),
       },
@@ -145,6 +132,183 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
   };
 }
 
+// A job that finished successfully: no logs are fetched, just a clean status.
+function completionReport(
+  job: BridgeJobSummary,
+  scope: { accountId?: string; region?: string; foundInOtherAccount: boolean },
+) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(
+          {
+            ok: true,
+            foundInOtherAccount: scope.foundInOtherAccount,
+            summary: "Job completed successfully — no failure to analyze.",
+            job: {
+              id: job.id,
+              name: job.name || null,
+              state: job.state || null,
+              virtualClusterId: job.virtualClusterId,
+              releasedLabel: job.describeDetails?.releaseLabel || null,
+              startedAt: job.startedAt || null,
+              finishedAt: job.finishedAt || null,
+            },
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+}
+
+function summarizeFailure(
+  state: string,
+  failureReason: string | null,
+  stateDetails: string | null,
+  candidateCauses: Array<{ cause: string; confidence: string }>,
+  source: "s3" | "cloudwatch" | "none",
+): string {
+  const parts: string[] = [];
+  if (failureReason) {
+    parts.push(`EMR failure reason: ${failureReason}`);
+  }
+  if (stateDetails) {
+    parts.push(`State details: ${stateDetails}`);
+  }
+  if (candidateCauses.length > 0) {
+    parts.push(
+      `Heuristic causes: ${candidateCauses
+        .map((c) => `${c.cause} (${c.confidence})`)
+        .join("; ")}`,
+    );
+  }
+  if (source === "none") {
+    parts.push("No log source was found (neither S3 nor CloudWatch).");
+  }
+  return parts.length > 0
+    ? parts.join("\n")
+    : `Job is in state ${state} with no additional detail available.`;
+}
+
+interface LogEvidence {
+  logText: string;
+  source: "s3" | "cloudwatch" | "none";
+}
+
+async function gatherLogEvidence(
+  client: BridgeClient,
+  params: {
+    accountId?: string;
+    jobId: string;
+    virtualClusterId?: string;
+    logType?: string;
+    stream?: string;
+  },
+): Promise<LogEvidence> {
+  const { accountId, jobId, virtualClusterId, logType, stream } = params;
+  const desiredStream = stream || "stderr";
+
+  // --- Try S3 first — driven by the job's monitoring logUri tag ----------
+  let jobForS3: BridgeJobSummary | null = null;
+  try {
+    jobForS3 = await client.describeJob({
+      accountId,
+      jobId,
+      virtualClusterId,
+    });
+  } catch {
+    /* describe may fail to return the logUri; fall through to CloudWatch */
+  }
+
+  const logUri = jobForS3?.describeDetails?.tags?.["emr.containers.job.logUri"];
+  if (logUri && virtualClusterId) {
+    const match = parseS3Uri(logUri);
+    if (match) {
+      try {
+        const prefix = `${virtualClusterId}/jobs/${jobId}/`;
+        const listing = await client.listS3Objects({
+          accountId,
+          bucket: match.bucket,
+          prefix: `${match.prefix}${prefix}`,
+        });
+
+        // Filter to the desired stream (e.g. stderr/stdout/driver), unless the
+        // caller overrode stream. Prefer matching objects; fall back to any.
+        const matching = listing.objects.filter((o) =>
+          o.s3Key.toLowerCase().includes(desiredStream.toLowerCase()),
+        );
+        const relevant = (matching.length > 0 ? matching : listing.objects).slice(0, 5);
+
+        const messages: string[] = [];
+        for (const obj of relevant) {
+          try {
+            const content = await client.getS3Object({
+              accountId,
+              bucket: match.bucket,
+              key: obj.s3Key,
+            });
+            messages.push(...content.content.split("\n").filter(Boolean));
+          } catch {
+            /* skip unreadable object */
+          }
+        }
+        if (messages.length > 0) {
+          return { logText: messages.join("\n"), source: "s3" };
+        }
+      } catch {
+        /* fall through to CloudWatch */
+      }
+    }
+  }
+
+  // --- Fall back to CloudWatch --------------------------------------------
+  if (virtualClusterId) {
+    try {
+      const logGroupName = `/aws/emr-containers/jobs/${jobId}`;
+      const streamNamePrefix = `${virtualClusterId}/jobs/${jobId}/containers`;
+
+      const result = await client.getLogs({
+        accountId,
+        jobId,
+        logGroupName,
+        streamNamePrefix,
+        limit: 5000,
+      });
+
+      let entries = result.entries;
+      const want = (logType || "driver").toLowerCase();
+      if (want === "driver") {
+        entries = entries.filter((e) => e.streamName.toLowerCase().includes("driver"));
+      } else if (want === "executor") {
+        entries = entries.filter((e) => e.streamName.toLowerCase().includes("exec"));
+      } else if (want === "controller") {
+        entries = entries.filter(
+          (e) =>
+            !e.streamName.toLowerCase().includes("driver") &&
+            !e.streamName.toLowerCase().includes("exec"),
+        );
+      }
+      if (stream) {
+        const streamFiltered = entries.filter((e) =>
+          e.streamName.toLowerCase().includes(stream!.toLowerCase()),
+        );
+        if (streamFiltered.length > 0) entries = streamFiltered;
+      }
+
+      if (entries.length > 0) {
+        return { logText: entries.map((e) => e.message).join("\n"), source: "cloudwatch" };
+      }
+    } catch {
+      /* leave logText empty */
+    }
+  }
+
+  return { logText: "", source: "none" };
+}
+
 type S3UriMatch = { bucket: string; prefix: string } | null;
 
 function parseS3Uri(uri: string): S3UriMatch {
@@ -155,11 +319,13 @@ function parseS3Uri(uri: string): S3UriMatch {
 
 function filterLogNoise(text: string): { text: string; hiddenCount: number } {
   if (!text) return { text: "", hiddenCount: 0 };
+
   const lines = text.split("\n");
   const kept: string[] = [];
   let hiddenCount = 0;
 
   const SPARK_LINE_RE = /^(\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}) (INFO|WARN|ERROR|DEBUG|TRACE) ([^:]+): (.*)$/;
+
   const NOISE_LOGGERS = new Set([
     "TaskSetManager", "DAGScheduler", "BlockManagerInfo", "TaskSchedulerImpl",
     "MemoryStore", "CodeGenerator", "AppInfoParser", "Metrics", "SecurityManager",
@@ -170,20 +336,47 @@ function filterLogNoise(text: string): { text: string; hiddenCount: number } {
     "NativeCodeLoader", "ShutdownHookManager", "CodecPool", "SchedulerExtensionServices",
   ]);
 
+  const NOISE_PREFIXES = ["MapOutputTracker", "ResourceProfile", "BlockManager", "YarnScheduler"];
+
   function isNoiseLogger(logger: string): boolean {
     const base = logger.split("$")[0]!;
-    return NOISE_LOGGERS.has(base);
+    if (NOISE_LOGGERS.has(base)) return true;
+    return NOISE_PREFIXES.some((p) => base.startsWith(p));
   }
 
   for (const line of lines) {
     if (line.startsWith("SLF4J:")) { hiddenCount += 1; continue; }
+
     const match = SPARK_LINE_RE.exec(line);
     if (!match) { kept.push(line); continue; }
+
     const level = match[2]!;
     const logger = match[3]!;
-    if (level === "INFO" && isNoiseLogger(logger)) { hiddenCount += 1; continue; }
+    const message = match[4] ?? "";
+
+    if (level === "INFO" && (isNoiseLogger(logger) || isRoutineInfo(logger, message))) {
+      hiddenCount += 1;
+      continue;
+    }
+
     kept.push(line);
   }
 
   return { text: kept.join("\n"), hiddenCount };
+}
+
+// Routine per-task INFO chatter that adds nothing for root-cause analysis.
+function isRoutineInfo(logger: string, message: string): boolean {
+  if (logger === "Executor" && (message.startsWith("Running task") || message.startsWith("Finished task"))) {
+    return true;
+  }
+  if (
+    logger === "SparkContext" &&
+    !["Running Spark version", "Submitted application"].some((k) => message.includes(k))
+  ) {
+    return true;
+  }
+  if (logger === "TaskSetManager" && /Finished task/.test(message)) return true;
+  if (logger === "blockManager.BlockManagerStore" || message.startsWith("asked to send block")) return true;
+  return false;
 }
