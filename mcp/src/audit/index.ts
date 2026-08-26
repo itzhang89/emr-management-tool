@@ -70,7 +70,9 @@ export function createAuditStore(): AuditStore {
     write(record: AuditRecord): void {
       const bridge = resolveConfig();
       if (!bridge) return;
-      // Fire-and-forget: never block or throw on audit persistence.
+      // Fire-and-forget: never block or throw on audit persistence. A non-2xx
+      // response is logged too — a silently rejected body (e.g. a field-casing
+      // mismatch returning 422) would otherwise lose every audit row.
       void fetch(`${bridge.url}/write-audit-entry`, {
         method: "POST",
         headers: {
@@ -78,9 +80,16 @@ export function createAuditStore(): AuditStore {
           "x-mcp-bridge-token": bridge.token,
         },
         body: JSON.stringify(record),
-      }).catch((err) => {
-        console.error("Audit write failed:", err);
-      });
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const detail = await res.text().catch(() => "");
+            console.error(`Audit write rejected with ${res.status}: ${detail}`);
+          }
+        })
+        .catch((err) => {
+          console.error("Audit write failed:", err);
+        });
     },
   };
 }

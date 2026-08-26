@@ -6,6 +6,7 @@ use sqlx::Row;
 use tauri::{AppHandle, State as TauriState};
 
 const MCP_ENDPOINT_PATH: &str = "/mcp";
+const DEFAULT_MCP_PORT: u16 = 5175;
 
 fn endpoint_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}{MCP_ENDPOINT_PATH}")
@@ -35,31 +36,141 @@ fn remove_bridge_info() {
     }
 }
 
+/// True when something is already listening on 127.0.0.1:port.
+fn port_in_use(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+}
+
+/// Kill any leftover MCP server still holding the port.
+///
+/// A previous app run that exited without `mcp_stop` (crash, force-quit) leaves
+/// an orphaned `node .../mcp/dist/index.js` listening on the port. Auto-bumping
+/// to another port would desync the UI's "MCP Port" field and the agent configs
+/// generated from it, so reclaim the requested port instead. Only processes
+/// whose command line points at our own MCP entry point are touched.
+async fn reclaim_mcp_port(port: u16, entry_point: &str) {
+    if !port_in_use(port) {
+        return;
+    }
+
+    let pids = mcp_pids_listening_on(port, entry_point).await;
+    if pids.is_empty() {
+        crate::diagnostics::append_log_line(
+            "WARN",
+            &format!(
+                "MCP port {port} is in use by a process that is not our MCP server; leaving it alone."
+            ),
+        );
+        return;
+    }
+
+    for pid in pids {
+        crate::diagnostics::append_log_line(
+            "INFO",
+            &format!("Terminating orphaned MCP server (pid {pid}) holding port {port}."),
+        );
+        let _ = tokio::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+            .await;
+    }
+
+    // Give the listeners a moment to release the socket, then SIGKILL stragglers.
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if !port_in_use(port) {
+            return;
+        }
+    }
+    for pid in mcp_pids_listening_on(port, entry_point).await {
+        let _ = tokio::process::Command::new("kill")
+            .arg("-KILL")
+            .arg(pid.to_string())
+            .status()
+            .await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+}
+
+/// PIDs listening on the port whose command line references our MCP entry
+/// point, so we never kill an unrelated process that happens to own the port.
+async fn mcp_pids_listening_on(port: u16, entry_point: &str) -> Vec<u32> {
+    let output = match tokio::process::Command::new("lsof")
+        .args(["-nP", "-t", &format!("-iTCP@127.0.0.1:{port}"), "-sTCP:LISTEN"])
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(e) => {
+            crate::diagnostics::append_log_line(
+                "WARN",
+                &format!("Could not inspect port {port} holders: {e}"),
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut pids = Vec::new();
+    for pid in String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .filter_map(|s| s.parse::<u32>().ok())
+    {
+        if process_is_our_mcp_server(pid, entry_point).await {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+async fn process_is_our_mcp_server(pid: u32, entry_point: &str) -> bool {
+    let Ok(output) = tokio::process::Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .await
+    else {
+        return false;
+    };
+    let command = String::from_utf8_lossy(&output.stdout);
+    command.contains(entry_point) || command.contains("mcp/dist/index.js")
+}
+
 #[tauri::command]
 pub async fn mcp_start(
     app: AppHandle,
     request: McpStartRequest,
     app_state: TauriState<'_, AppState>,
 ) -> AppResult<crate::models::McpStatus> {
-    {
+    // Exactly one MCP server may run at a time. If this app already has one,
+    // shut it down first rather than failing — the caller asked for a server on
+    // a specific port and a stale instance must not shadow it.
+    let already_running = {
         let mcp = app_state.mcp_state.lock().map_err(|e| {
             AppError::internal(format!("Failed to acquire MCP lock: {e}"))
         })?;
-        if mcp.child.is_some() || mcp.bridge_task.is_some() {
-            return Err(AppError::validation(
-                "MCP server is already running. Stop it first.",
-            ));
-        }
+        mcp.child.is_some() || mcp.bridge_task.is_some()
+    };
+    if already_running {
+        stop_running_mcp(&app_state).await?;
     }
 
-    let port = request.port.unwrap_or(5175);
-    let bridge_token = nanoid!(24);
+    let port = request.port.unwrap_or(DEFAULT_MCP_PORT);
+    let mcp_path = find_mcp_entry_point()?;
+    let entry_point = mcp_path.to_string_lossy().to_string();
 
+    // Clear orphaned MCP servers (e.g. from a previous crash) so the child can
+    // bind the exact port the UI displays.
+    reclaim_mcp_port(port, &entry_point).await;
+    if port_in_use(port) {
+        return Err(AppError::validation(format!(
+            "Port {port} is already in use by another process. Choose a different port."
+        )));
+    }
+
+    let bridge_token = nanoid!(24);
     let bridge_server = crate::mcp_bridge::start(app, bridge_token.clone()).await?;
     let bridge_port = bridge_server.port();
     let bridge_task = bridge_server.into_task();
-
-    let mcp_path = find_mcp_entry_point()?;
 
     write_bridge_info(bridge_port, &bridge_token)?;
 
@@ -78,7 +189,6 @@ pub async fn mcp_start(
         .map_err(|e| AppError::internal(format!("Failed to start MCP server: {e}")))?;
 
     let pid = child.id();
-    let entry_point = mcp_path.to_string_lossy().to_string();
 
     {
         let mut mcp = app_state.mcp_state.lock().map_err(|e| {
@@ -94,6 +204,15 @@ pub async fn mcp_start(
         };
     }
 
+    // Confirm the child really bound the requested port; otherwise the UI would
+    // advertise an endpoint nothing is listening on.
+    if !wait_for_mcp_listening(port).await {
+        stop_running_mcp(&app_state).await?;
+        return Err(AppError::internal(format!(
+            "The MCP server did not start listening on port {port}. Check the app log for details."
+        )));
+    }
+
     let health_url = format!("http://127.0.0.1:{}/health", bridge_port);
 
     Ok(crate::models::McpStatus {
@@ -107,8 +226,23 @@ pub async fn mcp_start(
     })
 }
 
-#[tauri::command]
-pub async fn mcp_stop(app_state: TauriState<'_, AppState>) -> AppResult<bool> {
+/// Wait (briefly) for the freshly spawned child to accept connections.
+async fn wait_for_mcp_listening(port: u16) -> bool {
+    wait_for_mcp_listening_with_attempts(port, 50).await
+}
+
+async fn wait_for_mcp_listening_with_attempts(port: u16, attempts: u32) -> bool {
+    for _ in 0..attempts {
+        if port_in_use(port) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    false
+}
+
+/// Tear down the child process and bridge task held in app state.
+async fn stop_running_mcp(app_state: &TauriState<'_, AppState>) -> AppResult<bool> {
     let (child, bridge_task) = {
         let mut mcp = app_state.mcp_state.lock().map_err(|e| {
             AppError::internal(format!("Failed to acquire MCP lock: {e}"))
@@ -137,6 +271,11 @@ pub async fn mcp_stop(app_state: TauriState<'_, AppState>) -> AppResult<bool> {
     mcp.transport = None;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn mcp_stop(app_state: TauriState<'_, AppState>) -> AppResult<bool> {
+    stop_running_mcp(&app_state).await
 }
 
 #[tauri::command]
@@ -234,4 +373,68 @@ fn find_mcp_entry_point() -> AppResult<std::path::PathBuf> {
     Err(AppError::validation(
         "MCP entry point not found. Run `npm run mcp:build` so that mcp/dist/index.js exists.",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A port that is currently free. Ephemeral ports can be reclaimed by other
+    /// tests running in parallel, so callers retry rather than assert on the
+    /// first candidate.
+    fn free_port() -> u16 {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind probe listener");
+        listener.local_addr().expect("probe addr").port()
+    }
+
+    #[test]
+    fn endpoint_url_points_at_the_requested_port() {
+        assert_eq!(endpoint_url(5175), "http://127.0.0.1:5175/mcp");
+        assert_eq!(endpoint_url(6000), "http://127.0.0.1:6000/mcp");
+    }
+
+    #[test]
+    fn port_in_use_reports_a_bound_port() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("addr").port();
+        // The listener is held for the whole assertion, so this cannot race.
+        assert!(port_in_use(port), "a bound port must report as in use");
+    }
+
+    #[test]
+    fn port_in_use_reports_a_free_port() {
+        // Retry: a parallel test may transiently occupy the released port.
+        for attempt in 0..10 {
+            let port = free_port();
+            if !port_in_use(port) {
+                return;
+            }
+            assert!(attempt < 9, "no free port observed after 10 attempts");
+        }
+    }
+
+    #[tokio::test]
+    async fn reclaim_leaves_ports_held_by_unrelated_processes_alone() {
+        // A plain listener is not our MCP server, so reclaim must not free it.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let port = listener.local_addr().expect("addr").port();
+        reclaim_mcp_port(port, "/nonexistent/mcp/dist/index.js").await;
+        assert!(port_in_use(port), "unrelated listeners must survive reclaim");
+        drop(listener);
+    }
+
+    #[tokio::test]
+    async fn wait_for_mcp_listening_gives_up_when_nothing_binds() {
+        for attempt in 0..10 {
+            let port = free_port();
+            if port_in_use(port) {
+                assert!(attempt < 9, "no free port observed after 10 attempts");
+                continue;
+            }
+            // Nothing is listening, so the wait must terminate as false rather
+            // than hang.
+            assert!(!wait_for_mcp_listening_with_attempts(port, 2).await);
+            return;
+        }
+    }
 }

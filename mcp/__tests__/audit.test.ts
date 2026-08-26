@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAuditStore } from "../src/audit/index";
+import { resolveClientName } from "../src/audit/client";
 import type { AuditRecord } from "../src/audit/types";
 
 function makeRecord(overrides: Partial<AuditRecord> = {}): AuditRecord {
@@ -87,5 +88,51 @@ describe("audit store (bridge-backed)", () => {
     const store = createAuditStore();
     expect(() => store.write(makeRecord({ id: "entry-3" }))).not.toThrow();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("logs a rejected write instead of failing silently", async () => {
+    process.env.MCP_BRIDGE_URL = "http://127.0.0.1:9999";
+    process.env.MCP_BRIDGE_TOKEN = "tok-123";
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("field casing mismatch", { status: 422 })),
+    );
+
+    const store = createAuditStore();
+    store.write(makeRecord({ id: "entry-4" }));
+
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    expect(errorSpy.mock.calls.flat().join(" ")).toContain("422");
+    errorSpy.mockRestore();
+  });
+});
+
+describe("resolveClientName", () => {
+  it("prefers an explicit x-mcp-client header", () => {
+    const extra = { requestInfo: { headers: { "x-mcp-client": "my-agent/1.2" } } };
+    expect(resolveClientName(extra)).toBe("my-agent/1.2");
+  });
+
+  it("falls back to the request user-agent (how Claude Code identifies itself)", () => {
+    const extra = { requestInfo: { headers: { "user-agent": "claude-cli/2.0.22" } } };
+    expect(resolveClientName(extra)).toBe("claude-cli/2.0.22");
+  });
+
+  it("handles array-valued and differently-cased headers", () => {
+    const extra = { requestInfo: { headers: { "User-Agent": ["cursor/0.44", "extra"] } } };
+    expect(resolveClientName(extra)).toBe("cursor/0.44");
+  });
+
+  it("uses the initialize clientInfo when the request carries no headers", () => {
+    expect(resolveClientName({}, { name: "claude-code", version: "2.0.22" })).toBe(
+      "claude-code/2.0.22",
+    );
+    expect(resolveClientName(undefined, { name: "pi" })).toBe("pi");
+  });
+
+  it("reports unknown when nothing identifies the client", () => {
+    expect(resolveClientName(undefined)).toBe("unknown");
+    expect(resolveClientName({ requestInfo: { headers: { "user-agent": "  " } } })).toBe("unknown");
   });
 });

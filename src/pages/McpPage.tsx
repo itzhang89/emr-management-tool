@@ -6,10 +6,8 @@ import {
   CircleAlert,
   Copy,
   FileCode2,
-  History,
   LoaderCircle,
   Play,
-  RefreshCw,
   Shield,
   Waypoints
 } from "lucide-react";
@@ -124,10 +122,40 @@ function formatJson(value: unknown): string {
   }
 }
 
-/** One-line JSON for table cells; long values are truncated with an ellipsis. */
+/**
+ * One-line JSON for table cells. The cell itself truncates with CSS, so this
+ * only caps the string to keep very large responses out of the DOM.
+ */
 function inlineJson(value: unknown): string {
   const text = JSON.stringify(value ?? {}) ?? "{}";
-  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+  return text.length > 600 ? `${text.slice(0, 600)}…` : text;
+}
+
+/** Copies a JSON value to the clipboard; used by the expanded audit row. */
+function CopyJsonButton({ value, label }: { value: unknown; label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          aria-label={`Copy ${label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            navigator.clipboard.writeText(formatJson(value)).then(
+              () => toast.success(`${label} copied`),
+              () => toast.error("Failed to copy to clipboard")
+            );
+          }}
+        >
+          <Copy className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Copy {label}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
@@ -160,12 +188,14 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
             </Badge>
           )}
         </TableCell>
-        <TableCell className="font-mono text-xs">{entry.tool}</TableCell>
-        <TableCell className="font-mono text-xs text-muted-foreground">{entry.client || "—"}</TableCell>
-        <TableCell className="max-w-56 truncate font-mono text-xs text-muted-foreground">
+        <TableCell className="truncate font-mono text-xs">{entry.tool}</TableCell>
+        <TableCell className="truncate font-mono text-xs text-muted-foreground">
+          {entry.client || "—"}
+        </TableCell>
+        <TableCell className="truncate font-mono text-xs text-muted-foreground">
           {inlineJson(entry.args)}
         </TableCell>
-        <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground">
+        <TableCell className="truncate font-mono text-xs text-muted-foreground">
           {isError ? entry.error : inlineJson(entry.result)}
         </TableCell>
         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
@@ -176,16 +206,24 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
         <TableRow className="hover:bg-muted/30">
           <TableCell colSpan={8} className="bg-muted/30 py-3">
             <div className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">Request arguments</p>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
+              {/* Responses dwarf the arguments, so give them most of the width
+                  instead of an even split. */}
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex h-7 items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Request arguments</p>
+                    <CopyJsonButton value={entry.args} label="Request arguments" />
+                  </div>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
                     {formatJson(entry.args)}
                   </pre>
                 </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground">Response content</p>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex h-7 items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Response content</p>
+                    <CopyJsonButton value={entry.result} label="Response content" />
+                  </div>
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
                     {formatJson(entry.result)}
                   </pre>
                 </div>
@@ -206,71 +244,59 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
   );
 }
 
-function AuditLogPanel() {
-  const queryClient = useQueryClient();
-  const { data: entries, isLoading, isFetching } = useQuery({
+// The "Audit" tab trigger is the only label for this view — the panel itself
+// renders just the structured table, with no repeated heading or description.
+function AuditPanel() {
+  const { data: entries, isLoading } = useQuery({
     queryKey: ["mcp-audit-entries"],
-    queryFn: () => tauriClient.listMcpAuditEntries(500)
+    queryFn: () => tauriClient.listMcpAuditEntries(500),
+    // Always show the latest rows the MCP server has written.
+    refetchInterval: 3000,
+    refetchOnWindowFocus: true
   });
 
-  const refresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["mcp-audit-entries"] });
-  }, [queryClient]);
+  if (isLoading) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircle className="size-4 animate-spin" />
+        Loading entries...
+      </p>
+    );
+  }
+
+  if ((entries ?? []).length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No tool invocations recorded yet. Entries appear here after an AI assistant calls a tool through the MCP
+        server.
+      </p>
+    );
+  }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-        <div className="space-y-1.5">
-          <CardTitle className="flex items-center gap-2">
-            <History className="size-5" />
-            Audit Log
-          </CardTitle>
-          <CardDescription>
-            MCP tool invocations recorded in the local database — time, status, tool, client, input arguments and
-            response content. Click a row for the full JSON. Entries are retained for 30 days.
-          </CardDescription>
-        </div>
-        <Button variant="outline" size="sm" className="shrink-0" onClick={refresh} disabled={isFetching}>
-          <RefreshCw className={cn("mr-2 size-4", isFetching && "animate-spin")} />
-          Refresh
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" />
-            Loading audit entries...
-          </p>
-        ) : (entries ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No tool invocations recorded yet. Entries appear here after an AI assistant calls a tool through the
-            MCP server.
-          </p>
-        ) : (
-          <div className="overflow-auto rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8" />
-                  <TableHead>Time</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Tool</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Arguments</TableHead>
-                  <TableHead>Response</TableHead>
-                  <TableHead>Duration</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(entries ?? []).map((entry) => (
-                  <AuditLogRow key={entry.id} entry={entry} />
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <div className="w-full min-w-0 overflow-x-auto rounded-lg border">
+      {/* Fixed layout so the sized metadata columns stay put and Arguments /
+          Response absorb the remaining desktop width. */}
+      <Table className="w-full table-fixed">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-8" />
+            <TableHead className="w-40">Time</TableHead>
+            <TableHead className="w-24">Status</TableHead>
+            <TableHead className="w-44">Tool</TableHead>
+            <TableHead className="w-40">Client</TableHead>
+            <TableHead className="w-[22%]">Arguments</TableHead>
+            <TableHead>Response</TableHead>
+            <TableHead className="w-24">Duration</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {(entries ?? []).map((entry) => (
+            <AuditLogRow key={entry.id} entry={entry} />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -355,16 +381,18 @@ export function McpPage() {
   }, [endpointUrl]);
 
   return (
-    <div className="flex max-w-4xl flex-col gap-6 overflow-auto">
+    // No page-level width cap: the Audit table needs the full desktop width.
+    // The Server tab keeps its own readable max width below.
+    <div className="flex min-w-0 flex-col gap-6 overflow-auto">
       <PageHeader pageId="mcp" />
 
-      <Tabs defaultValue="server" className="flex flex-col gap-4">
+      <Tabs defaultValue="server" className="flex min-w-0 flex-col gap-4">
         <TabsList className="w-fit">
           <TabsTrigger value="server">Server</TabsTrigger>
-          <TabsTrigger value="audit">Audit Log</TabsTrigger>
+          <TabsTrigger value="audit">Audit</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="server" className="mt-0 space-y-6">
+        <TabsContent value="server" className="mt-0 max-w-4xl space-y-6">
           <Card>
             <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
               <div className="space-y-1.5">
@@ -572,8 +600,8 @@ export function McpPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="audit" className="mt-0">
-          <AuditLogPanel />
+        <TabsContent value="audit" className="mt-0 min-w-0">
+          <AuditPanel />
         </TabsContent>
       </Tabs>
 

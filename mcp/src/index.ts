@@ -12,14 +12,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createBridgeClient } from "./bridge/client.js";
 import { createAuditStore } from "./audit/index.js";
+import { resolveClientName, type ClientInfo } from "./audit/client.js";
 import type { BridgeClient } from "./bridge/client.js";
 import { buildAnalyzeJobFailureTool, AnalyzeJobFailureArgs } from "./tools/analyzeJobFailure.js";
 
 const DEFAULT_PORT = 5175;
-const MAX_PORT_ATTEMPTS = 20;
 const STREAMABLE_HTTP_PATH = "/mcp";
 
 function parseArgs() {
@@ -31,33 +32,12 @@ function parseArgs() {
   };
 }
 
-async function findFreePort(startPort: number): Promise<number> {
-  const net = await import("node:net");
-  for (let port = startPort; port < startPort + MAX_PORT_ATTEMPTS; port++) {
-    const available = await new Promise<boolean>((resolve) => {
-      const server = net.createServer();
-      server.on("error", () => {
-        server.close();
-        resolve(false);
-      });
-      server.listen(port, "127.0.0.1", () => {
-        server.close();
-        resolve(true);
-      });
-    });
-    if (available) return port;
-  }
-  throw new Error(
-    `Could not find a free port in range ${startPort}-${startPort + MAX_PORT_ATTEMPTS - 1}`,
-  );
-}
-
 // --- Client identification for the audit log -------------------------------
-// The MCP initialize request carries clientInfo { name, version }. We record
-// the most recently seen client and attribute tool calls to it (stateless HTTP
-// transport: calls always follow an initialize from the same client).
+// See ./audit/client.ts: the stateless HTTP transport rebuilds the server per
+// request, so the caller is identified from the request headers, falling back
+// to the clientInfo of the most recent initialize on this process.
 
-let latestClientInfo: { name: string; version?: string } | undefined;
+let latestClientInfo: ClientInfo | undefined;
 
 function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof createAuditStore>) {
   const server = new McpServer({
@@ -78,7 +58,7 @@ function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof creat
       logType: z.enum(["driver", "executor", "controller"]).optional().default("driver").describe("Log type to analyze"),
       stream: z.string().optional().default("stderr").describe("Stream name filter (default: stderr)"),
     },
-    async (args) => {
+    async (args, extra) => {
       const start = Date.now();
       const startedAt = new Date(start).toISOString();
       let error: string | null = null;
@@ -102,17 +82,22 @@ function registerTools(bridge: BridgeClient, auditStore: ReturnType<typeof creat
         error = String(e);
         throw e;
       } finally {
-        auditStore.write({
-          id: crypto.randomUUID(),
-          timestamp: startedAt,
-          status: error ? "error" : "success",
-          tool: "analyze_job_failure",
-          args: args as unknown as Record<string, unknown>,
-          result,
-          client: latestClientInfo?.name ?? "unknown",
-          durationMs: Date.now() - start,
-          error,
-        });
+        // Auditing must never break the tool call, so swallow anything here.
+        try {
+          auditStore.write({
+            id: randomUUID(),
+            timestamp: startedAt,
+            status: error ? "error" : "success",
+            tool: "analyze_job_failure",
+            args: args as unknown as Record<string, unknown>,
+            result,
+            client: resolveClientName(extra, latestClientInfo),
+            durationMs: Date.now() - start,
+            error,
+          });
+        } catch (auditError) {
+          console.error("Audit write failed:", auditError);
+        }
       }
     },
   );
@@ -140,8 +125,6 @@ async function main() {
   const bridge = createBridgeClient() as BridgeClient;
   const auditStore = createAuditStore();
 
-  const resolvedPort = await findFreePort(config.port);
-
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
@@ -164,7 +147,7 @@ async function main() {
 
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", port: resolvedPort }));
+        res.end(JSON.stringify({ status: "ok", port: config.port }));
         return;
       }
 
@@ -179,11 +162,26 @@ async function main() {
     }
   });
 
-  httpServer.listen(resolvedPort, "127.0.0.1", () => {
+  // Bind exactly the requested port. Auto-bumping to a nearby free port would
+  // make the app's "MCP Port" field and the agent config it generates point at
+  // the wrong endpoint, so a busy port is a hard failure instead — the desktop
+  // app clears stale listeners before spawning us.
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `Port ${config.port} is already in use. Stop whatever is listening on it and start the MCP server again.`,
+      );
+    } else {
+      console.error("HTTP server error:", err);
+    }
+    process.exit(1);
+  });
+
+  httpServer.listen(config.port, "127.0.0.1", () => {
     console.log(`EMR Job Log Analysis MCP Server`);
     console.log(`   Transport: streamableHttp`);
-    console.log(`   Endpoint:  http://localhost:${resolvedPort}${STREAMABLE_HTTP_PATH}`);
-    console.log(`   Health:    http://localhost:${resolvedPort}/health`);
+    console.log(`   Endpoint:  http://localhost:${config.port}${STREAMABLE_HTTP_PATH}`);
+    console.log(`   Health:    http://localhost:${config.port}/health`);
   });
 
   const shutdown = () => {

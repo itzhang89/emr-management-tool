@@ -102,9 +102,16 @@ struct FindJobByIdReq {
 }
 
 /// One MCP tool invocation, written by the Node MCP server via the bridge so
-/// all audit data lands in the app's own SQLite database (the Audit Log tab
-/// reads it from there).
+/// all audit data lands in the app's own SQLite database (the Audit tab reads
+/// it from there).
+///
+/// Unlike the other request structs on this bridge, the audit payload is
+/// camelCase: it is the `AuditRecord` from `mcp/src/audit/types.ts` serialized
+/// verbatim. A casing mismatch here silently loses every audit row (axum
+/// rejects the body with 422 before the handler runs), so keep the rename
+/// attribute and the Node type in sync.
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteAuditEntryReq {
     id: String,
     timestamp: String,
@@ -807,3 +814,84 @@ fn infer_level(msg: &str) -> String {
     "info".to_string()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Node MCP server serializes `AuditRecord` (mcp/src/audit/types.ts)
+    /// verbatim, so the bridge must accept camelCase keys. A mismatch makes
+    /// axum reject the body before the handler runs and every audit row is
+    /// silently lost — which is exactly the bug this guards.
+    #[test]
+    fn write_audit_entry_accepts_the_node_camel_case_payload() {
+        let body = serde_json::json!({
+            "id": "11111111-2222-3333-4444-555555555555",
+            "timestamp": "2026-08-26T08:00:00.000Z",
+            "status": "success",
+            "tool": "analyze_job_failure",
+            "client": "claude-cli/2.0.22",
+            "durationMs": 1234,
+            "args": {"jobId": "job-abc", "logType": "driver"},
+            "result": {"summary": "OOM"},
+            "error": serde_json::Value::Null,
+        });
+
+        let parsed: WriteAuditEntryReq =
+            serde_json::from_value(body).expect("camelCase audit payload deserializes");
+
+        assert_eq!(parsed.status, "success");
+        assert_eq!(parsed.tool, "analyze_job_failure");
+        assert_eq!(parsed.client.as_deref(), Some("claude-cli/2.0.22"));
+        assert_eq!(parsed.duration_ms, 1234);
+        assert_eq!(parsed.args["jobId"], "job-abc");
+        assert_eq!(parsed.result["summary"], "OOM");
+        assert!(parsed.error.is_none());
+    }
+
+    #[test]
+    fn write_audit_entry_records_an_error_status() {
+        let body = serde_json::json!({
+            "id": "err-1",
+            "timestamp": "2026-08-26T08:00:00.000Z",
+            "status": "error",
+            "tool": "analyze_job_failure",
+            "client": "claude-cli/2.0.22",
+            "durationMs": 12,
+            "args": {"jobId": "job-missing"},
+            "result": {},
+            "error": "Job job-missing was not found in any configured account.",
+        });
+
+        let parsed: WriteAuditEntryReq =
+            serde_json::from_value(body).expect("error audit payload deserializes");
+
+        assert_eq!(parsed.status, "error");
+        assert!(parsed.error.unwrap().contains("was not found"));
+    }
+
+    #[test]
+    fn decodes_gzip_and_plain_s3_objects() {
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"ERROR SparkContext: boom").unwrap();
+        let gzipped = encoder.finish().unwrap();
+
+        // Suffix-driven and magic-byte-driven detection both decompress.
+        assert_eq!(
+            decode_s3_text_object("logs/driver/stderr.gz", &gzipped).unwrap(),
+            "ERROR SparkContext: boom"
+        );
+        assert_eq!(
+            decode_s3_text_object("logs/driver/stderr", &gzipped).unwrap(),
+            "ERROR SparkContext: boom"
+        );
+        // Plain text passes through untouched.
+        assert_eq!(
+            decode_s3_text_object("logs/driver/stderr", b"plain line").unwrap(),
+            "plain line"
+        );
+    }
+}
