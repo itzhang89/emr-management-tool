@@ -1,7 +1,13 @@
 import { z } from "zod";
-import type { BridgeClient, BridgeJobSummary } from "../bridge/client.js";
+import type { BridgeClient, BridgeFindJobResult, BridgeJobSummary } from "../bridge/client.js";
 import { sanitizeLogText } from "../sanitize/index.js";
 import { extractErrorSections } from "../analysis/index.js";
+import {
+  defaultCloudWatchDestination,
+  resolveJobLogDestinations,
+  type CloudWatchLogDestination,
+  type S3LogDestination,
+} from "./jobLogDestinations.js";
 
 export const AnalyzeJobFailureArgs = z.object({
   jobId: z.string().min(1, "jobId is required"),
@@ -13,6 +19,13 @@ export const AnalyzeJobFailureArgs = z.object({
 
 export type AnalyzeJobFailureArgs = z.infer<typeof AnalyzeJobFailureArgs>;
 
+// Mirrors the desktop app's `src/services/emrJobId.ts`: "spark-<id>" and a raw
+// "<id>" are the same job. Only the canonical form is removed; ids are still
+// matched exactly everywhere (no prefix matching).
+function normalizeEmrJobRunId(value: string): string {
+  return value.trim().replace(/^spark-/i, "").trim();
+}
+
 /**
  * The single MCP tool.
  *
@@ -20,15 +33,17 @@ export type AnalyzeJobFailureArgs = z.infer<typeof AnalyzeJobFailureArgs>;
  *  1. Locate the job. If a virtualClusterId is supplied, describe it directly
  *     (fast path within one account/cluster). Otherwise search across the
  *     configured accounts via the bridge (active account first, then others).
+ *     Local job history is matched first, then AWS — same as the desktop app.
  *  2. If COMPLETED, short-circuit: the job ran normally — no log digging.
- *  3. Otherwise fetch the job's logs — S3 preferred, CloudWatch fallback — using
- *     the resolved account + virtual cluster.
+ *  3. Otherwise fetch the job's logs — S3 preferred, CloudWatch fallback — by
+ *     resolving the log destination exactly like the desktop Logs page does
+ *     (`jobLogDestinations.ts`).
  *  4. Filter noise, then extract only the error-relevant evidence and return a
  *     compact, sanitized report for the calling AI to judge.
  */
 export function buildAnalyzeJobFailureTool(client: BridgeClient) {
   return async (args: AnalyzeJobFailureArgs) => {
-    const { jobId } = args;
+    const jobId = normalizeEmrJobRunId(args.jobId);
 
     // --- 1. Locate the job ---------------------------------------------------
     let job: BridgeJobSummary;
@@ -49,8 +64,9 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
       accountName = summary.accountId || accountId;
       region = summary.region;
     } else {
-      // Cross-account search: active account first, then the rest.
-      const found = await client.findJobById(jobId);
+      // Cross-account search: local job history first, then AWS, active
+      // account first — the same lookup order as the desktop Job History.
+      const found: BridgeFindJobResult = await client.findJobById(jobId);
       job = found.job;
       accountId = found.accountId;
       accountName = found.accountName;
@@ -75,6 +91,7 @@ export function buildAnalyzeJobFailureTool(client: BridgeClient) {
       accountId,
       jobId,
       virtualClusterId,
+      describeDetails: describe,
       logType: args.logType,
       stream: args.stream,
     });
@@ -218,12 +235,16 @@ interface LogEvidence {
 
 /**
  * Fetch the job's logs, S3 preferred then CloudWatch. Destination resolution
- * mirrors the desktop app's `jobLogDestinations.ts`:
+ * mirrors the desktop Logs page (`src/services/jobLogDestinations.ts`):
  *
  *  - S3       → configurationOverrides.monitoringConfiguration.s3MonitoringConfiguration.logUri
- *  - CloudWatch → configurationOverrides.monitoringConfiguration.cloudWatchMonitoringConfiguration
- *                 (logGroupName + streamNamePrefix), falling back to the
- *                 conventional `/aws/emr-containers/jobs/{jobId}` group.
+ *               → prefix `{logUri prefix}{virtualClusterId}/jobs/{jobId}/`
+ *  - CloudWatch → cloudWatchMonitoringConfiguration (logGroupName +
+ *               streamNamePrefix), falling back to the conventional
+ *               `/aws/emr-containers/jobs/{jobId}` group with the job id as
+ *               the stream prefix — the same fallback the Logs page uses. As
+ *               a last resort, S3-only jobs also probe the conventional group
+ *               in case the S3 archive is empty.
  */
 async function gatherLogEvidence(
   client: BridgeClient,
@@ -231,126 +252,160 @@ async function gatherLogEvidence(
     accountId?: string;
     jobId: string;
     virtualClusterId?: string;
+    describeDetails?: BridgeJobSummary["describeDetails"];
     logType?: string;
     stream?: string;
   },
 ): Promise<LogEvidence> {
-  const { accountId, jobId, virtualClusterId, logType, stream } = params;
+  const { accountId, jobId, virtualClusterId, describeDetails, logType, stream } = params;
   const desiredStream = stream || "stderr";
 
-  // Describe the job once to learn its monitoring configuration.
-  let describe: BridgeJobSummary | undefined;
+  // Locate the job (local history first, then AWS) and learn its monitoring
+  // configuration. `findJobById` re-resolves even when we already know the
+  // account/cluster, because local job-history rows written by a StartJobRun
+  // submission carry no describe details — their monitoring config only
+  // exists in AWS. Errors here are non-fatal: we can still try the
+  // conventional CloudWatch group.
+  let described: BridgeJobSummary | undefined;
   try {
-    describe = await client.describeJob({ accountId, jobId, virtualClusterId });
+    described = virtualClusterId
+      ? await client.describeJob({ accountId, jobId, virtualClusterId })
+      : (await client.findJobById(jobId)).job;
   } catch {
-    /* rely on CloudWatch defaults below */
+    /* rely on the conventional CloudWatch fallback below */
   }
 
-  const monitoring = describe?.describeDetails?.configurationOverrides?.monitoringConfiguration;
+  const jobForDestinations = {
+    id: jobId,
+    virtualClusterId: virtualClusterId || "",
+    describeDetails: described?.describeDetails || describeDetails,
+  };
+
+  // Mirror the Logs page: configured destinations win, otherwise fall back to
+  // the conventional CloudWatch group naming.
+  const resolved = resolveJobLogDestinations(jobForDestinations);
+  const destinations =
+    resolved.cloudWatch || resolved.s3
+      ? resolved
+      : { cloudWatch: defaultCloudWatchDestination({ id: jobId }) };
 
   // --- Try S3 first --------------------------------------------------------
-  const s3Uri =
-    monitoring?.s3MonitoringConfiguration?.logUri ||
-    describe?.describeDetails?.tags?.["emr.containers.job.logUri"];
-
-  if (s3Uri && virtualClusterId) {
-    const match = parseS3Uri(s3Uri);
-    if (match) {
-      try {
-        const prefix = `${virtualClusterId}/jobs/${jobId}/`;
-        const listing = await client.listS3Objects({
-          accountId,
-          bucket: match.bucket,
-          prefix: `${match.prefix}${prefix}`,
-        });
-
-        const matching = listing.objects.filter((o) =>
-          o.s3Key.toLowerCase().includes(desiredStream.toLowerCase()),
-        );
-        const relevant = (matching.length > 0 ? matching : listing.objects).slice(0, 5);
-
-        const messages: string[] = [];
-        for (const obj of relevant) {
-          try {
-            const content = await client.getS3Object({
-              accountId,
-              bucket: match.bucket,
-              key: obj.s3Key,
-            });
-            messages.push(...content.content.split("\n").filter(Boolean));
-          } catch {
-            /* skip unreadable object */
-          }
-        }
-        if (messages.length > 0) {
-          return { logText: messages.join("\n"), source: "s3" };
-        }
-      } catch {
-        /* fall through to CloudWatch */
-      }
-    }
+  if (destinations.s3) {
+    const s3Evidence = await fetchS3Evidence(client, accountId, destinations.s3, desiredStream);
+    if (s3Evidence) return s3Evidence;
   }
 
-  // --- Fall back to CloudWatch --------------------------------------------
-  if (virtualClusterId) {
-    try {
-      // Use the job's configured group/prefix when present, else the convention.
-      const cw = monitoring?.cloudWatchMonitoringConfiguration;
-      const logGroupName =
-        cw?.logGroupName?.trim() || `/aws/emr-containers/jobs/${jobId}`;
+  // --- Then CloudWatch -----------------------------------------------------
+  if (destinations.cloudWatch) {
+    const cwEvidence = await fetchCloudWatchEvidence(
+      client,
+      { accountId, jobId },
+      destinations.cloudWatch,
+      logType,
+      stream,
+    );
+    if (cwEvidence) return cwEvidence;
+  }
 
-      let streamNamePrefix = `${virtualClusterId}/jobs/${jobId}/containers`;
-      if (cw?.logStreamNamePrefix?.trim()) {
-        const base = cw.logStreamNamePrefix.trim();
-        const normalized = base.endsWith("/") ? base : `${base}/`;
-        streamNamePrefix = `${normalized}${virtualClusterId}/jobs/${jobId}/`;
-      }
-
-      const result = await client.getLogs({
-        accountId,
-        jobId,
-        logGroupName,
-        streamNamePrefix,
-        limit: 5000,
-      });
-
-      let entries = result.entries;
-      const want = (logType || "driver").toLowerCase();
-      if (want === "driver") {
-        entries = entries.filter((e) => e.streamName.toLowerCase().includes("driver"));
-      } else if (want === "executor") {
-        entries = entries.filter((e) => e.streamName.toLowerCase().includes("exec"));
-      } else if (want === "controller") {
-        entries = entries.filter(
-          (e) =>
-            !e.streamName.toLowerCase().includes("driver") &&
-            !e.streamName.toLowerCase().includes("exec"),
-        );
-      }
-      if (stream) {
-        const streamFiltered = entries.filter((e) =>
-          e.streamName.toLowerCase().includes(stream!.toLowerCase()),
-        );
-        if (streamFiltered.length > 0) entries = streamFiltered;
-      }
-
-      if (entries.length > 0) {
-        return { logText: entries.map((e) => e.message).join("\n"), source: "cloudwatch" };
-      }
-    } catch {
-      /* leave logText empty */
-    }
+  // --- Last resort: the conventional CloudWatch group. Covers S3-only jobs
+  // whose S3 archive is empty/missing (a job can have an s3MonitoringConfig
+  // but zero objects there) yet still wrote to the default group.
+  if (destinations.s3 && !destinations.cloudWatch) {
+    const conventional = await fetchCloudWatchEvidence(
+      client,
+      { accountId, jobId },
+      defaultCloudWatchDestination({ id: jobId }),
+      logType,
+      stream,
+    );
+    if (conventional) return conventional;
   }
 
   return { logText: "", source: "none" };
 }
 
-type S3UriMatch = { bucket: string; prefix: string } | null;
+async function fetchS3Evidence(
+  client: BridgeClient,
+  accountId: string | undefined,
+  s3Destination: S3LogDestination,
+  desiredStream: string,
+): Promise<LogEvidence | undefined> {
+  try {
+    const listing = await client.listS3Objects({
+      accountId,
+      bucket: s3Destination.bucket,
+      prefix: s3Destination.prefix,
+    });
 
-function parseS3Uri(uri: string): S3UriMatch {
-  const m = uri.match(/^s3:\/\/([^/]+)(\/.*)?$/);
-  if (!m) return null;
-  return { bucket: m[1]!, prefix: m[2] || "" };
+    const matching = listing.objects.filter((o) =>
+      o.s3Key.toLowerCase().includes(desiredStream.toLowerCase()),
+    );
+    const relevant = (matching.length > 0 ? matching : listing.objects).slice(0, 5);
+
+    const messages: string[] = [];
+    for (const obj of relevant) {
+      try {
+        const content = await client.getS3Object({
+          accountId,
+          bucket: s3Destination.bucket,
+          key: obj.s3Key,
+        });
+        messages.push(...content.content.split("\n").filter(Boolean));
+      } catch {
+        /* skip unreadable object */
+      }
+    }
+    if (messages.length > 0) {
+      return { logText: messages.join("\n"), source: "s3" };
+    }
+  } catch {
+    /* fall through to CloudWatch */
+  }
+  return undefined;
+}
+
+async function fetchCloudWatchEvidence(
+  client: BridgeClient,
+  scope: { accountId?: string; jobId: string },
+  cloudWatchDestination: CloudWatchLogDestination,
+  logType?: string,
+  stream?: string,
+): Promise<LogEvidence | undefined> {
+  try {
+    const result = await client.getLogs({
+      ...scope,
+      logGroupName: cloudWatchDestination.logGroupName,
+      streamNamePrefix: cloudWatchDestination.streamNamePrefix ?? "",
+      limit: 5000,
+    });
+
+    let entries = result.entries;
+    const want = (logType || "driver").toLowerCase();
+    if (want === "driver") {
+      entries = entries.filter((e) => e.streamName.toLowerCase().includes("driver"));
+    } else if (want === "executor") {
+      entries = entries.filter((e) => e.streamName.toLowerCase().includes("exec"));
+    } else if (want === "controller") {
+      entries = entries.filter(
+        (e) =>
+          !e.streamName.toLowerCase().includes("driver") &&
+          !e.streamName.toLowerCase().includes("exec"),
+      );
+    }
+    if (stream) {
+      const streamFiltered = entries.filter((e) =>
+        e.streamName.toLowerCase().includes(stream!.toLowerCase()),
+      );
+      if (streamFiltered.length > 0) entries = streamFiltered;
+    }
+
+    if (entries.length > 0) {
+      return { logText: entries.map((e) => e.message).join("\n"), source: "cloudwatch" };
+    }
+  } catch {
+    /* leave logText empty */
+  }
+  return undefined;
 }
 
 function filterLogNoise(text: string): { text: string; hiddenCount: number } {

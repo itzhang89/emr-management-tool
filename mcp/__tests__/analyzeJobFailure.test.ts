@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { BridgeClient, BridgeJobSummary } from "../src/bridge/client";
 import { buildAnalyzeJobFailureTool } from "../src/tools/analyzeJobFailure";
+import {
+  buildJobS3LogPrefix,
+  defaultCloudWatchDestination,
+  parseS3Uri,
+  resolveJobLogDestinations,
+} from "../src/tools/jobLogDestinations";
 
 function makeJob(
   overrides: Partial<BridgeJobSummary> &
@@ -52,6 +58,32 @@ describe("buildAnalyzeJobFailureTool", () => {
     expect((report.account as { name: string }).name).toBe("My Second Account");
   });
 
+  it("normalizes a spark- prefixed id before searching (exact match otherwise)", async () => {
+    const calls: string[] = [];
+    const client = {
+      findJobById: async (jobId: string) => {
+        calls.push(jobId);
+        return {
+          job: makeJob({ id: jobId, state: "COMPLETED" }),
+          accountId: "acct-1",
+          region: "us-east-1",
+          foundInOtherAccount: false,
+        };
+      },
+      describeJob: async () => makeJob({ id: "x", state: "COMPLETED" }),
+      getLogs: async () => ({ jobId: "x", entries: [], nextForwardToken: undefined }),
+      listS3Objects: async () => ({ bucket: "b", objects: [], nextToken: undefined }),
+      getS3Object: async () => ({ bucket: "b", key: "k", content: "" }),
+      listAccounts: async () => [],
+      listLogStreams: async () => ({ jobId: "x", streams: [], nextToken: undefined }),
+    } as unknown as BridgeClient;
+
+    const tool = buildAnalyzeJobFailureTool(client);
+    await tool({ jobId: "  spark-job-00000abc  " });
+
+    expect(calls).toEqual(["job-00000abc"]);
+  });
+
   it("short-circuits with ok when the job COMPLETED (no log fetch)", async () => {
     let fetchedLogs = false;
     const client = {
@@ -87,7 +119,8 @@ describe("buildAnalyzeJobFailureTool", () => {
     expect(fetchedLogs).toBe(false);
   });
 
-  it("prefers S3 logs over CloudWatch for a failed job", async () => {
+  it("prefers S3 logs over CloudWatch, with the exact UI prefix (no leading slash)", async () => {
+    const listCalls: Array<{ bucket: string; prefix: string }> = [];
     const bucketsRead: string[] = [];
     const client = {
       findJobById: async () => ({
@@ -117,15 +150,18 @@ describe("buildAnalyzeJobFailureTool", () => {
           },
         },
       }),
-      listS3Objects: async () => ({
-        bucket: "my-log-bucket",
-        objects: [
-          { id: "1", label: "driver-stderr", stream: "stderr", s3Key: "path/vc-1/jobs/job-s3/driver-stderr", size: 10 },
-          { id: "2", label: "driver-stdout", stream: "stdout", s3Key: "path/vc-1/jobs/job-s3/driver-stdout", size: 10 },
-        ],
-        nextToken: undefined,
-      }),
-      getS3Object: async ({ key }) => {
+      listS3Objects: async (req: { bucket: string; prefix: string }) => {
+        listCalls.push({ bucket: req.bucket, prefix: req.prefix });
+        return {
+          bucket: "my-log-bucket",
+          objects: [
+            { id: "1", label: "driver-stderr", stream: "stderr", s3Key: "path/vc-1/jobs/job-s3/driver-stderr", size: 10 },
+            { id: "2", label: "driver-stdout", stream: "stdout", s3Key: "path/vc-1/jobs/job-s3/driver-stdout", size: 10 },
+          ],
+          nextToken: undefined,
+        };
+      },
+      getS3Object: async ({ key }: { key: string }) => {
         bucketsRead.push(key);
         if (key.includes("stderr")) {
           return {
@@ -149,6 +185,12 @@ describe("buildAnalyzeJobFailureTool", () => {
 
     const tool = buildAnalyzeJobFailureTool(client);
     const result = await tool({ jobId: "job-s3" });
+
+    // Same prefix the desktop Logs page builds (parseS3Uri normalizes the
+    // slash; no leading "/" that would match no real S3 key).
+    expect(listCalls).toEqual([
+      { bucket: "my-log-bucket", prefix: "path/vc-1/jobs/job-s3/" },
+    ]);
 
     const report = parse(result) as {
       evidence: {
@@ -200,5 +242,187 @@ describe("buildAnalyzeJobFailureTool", () => {
 
     const report = parse(result) as { evidence: { logSource: string } };
     expect(report.evidence.logSource).toBe("cloudwatch");
+  });
+
+  it("uses the conventional CloudWatch group with the job id stream prefix when there is no monitoring config", async () => {
+    const logCalls: Array<{ logGroupName?: string; streamNamePrefix?: string }> = [];
+    const client = {
+      findJobById: async () => ({
+        job: makeJob({ id: "job-plain", state: "FAILED" }),
+        accountId: "acct-1",
+        region: "us-east-1",
+        foundInOtherAccount: false,
+      }),
+      describeJob: async () => makeJob({ id: "job-plain", state: "FAILED" }),
+      listS3Objects: async () => ({ bucket: "b", objects: [], nextToken: undefined }),
+      getS3Object: async () => ({ bucket: "b", key: "k", content: "" }),
+      getLogs: async (req: { logGroupName?: string; streamNamePrefix?: string }) => {
+        logCalls.push({
+          logGroupName: req.logGroupName,
+          streamNamePrefix: req.streamNamePrefix,
+        });
+        return {
+          jobId: "job-plain",
+          entries: [
+            { timestamp: "t", level: "error", message: "23/08/01 ERROR SparkContext: failed", streamName: "driver-stderr" },
+          ],
+          nextForwardToken: undefined,
+        };
+      },
+      listAccounts: async () => [],
+      listLogStreams: async () => ({ jobId: "x", streams: [], nextToken: undefined }),
+    } as unknown as BridgeClient;
+
+    const tool = buildAnalyzeJobFailureTool(client);
+    const result = await tool({ jobId: "job-plain" });
+
+    expect(logCalls).toEqual([
+      { logGroupName: "/aws/emr-containers/jobs/job-plain", streamNamePrefix: "job-plain" },
+    ]);
+    const report = parse(result) as { evidence: { logSource: string } };
+    expect(report.evidence.logSource).toBe("cloudwatch");
+  });
+
+  it("probes the conventional CloudWatch group as a last resort for S3-only jobs with an empty archive", async () => {
+    const logCalls: Array<{ logGroupName?: string; streamNamePrefix?: string }> = [];
+    const client = {
+      findJobById: async () => ({
+        job: makeJob({
+          id: "job-s3only",
+          state: "FAILED",
+          describeDetails: {
+            configurationOverrides: {
+              monitoringConfiguration: {
+                s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+              },
+            },
+          },
+        }),
+        accountId: "acct-1",
+        region: "us-east-1",
+        foundInOtherAccount: false,
+      }),
+      describeJob: async () => makeJob({
+        id: "job-s3only",
+        state: "FAILED",
+        describeDetails: {
+          configurationOverrides: {
+            monitoringConfiguration: {
+              s3MonitoringConfiguration: { logUri: "s3://my-log-bucket/path/" },
+            },
+          },
+        },
+      }),
+      listS3Objects: async () => ({ bucket: "my-log-bucket", objects: [], nextToken: undefined }),
+      getS3Object: async () => ({ bucket: "b", key: "k", content: "" }),
+      getLogs: async (req: { logGroupName?: string; streamNamePrefix?: string }) => {
+        logCalls.push({
+          logGroupName: req.logGroupName,
+          streamNamePrefix: req.streamNamePrefix,
+        });
+        return {
+          jobId: "job-s3only",
+          entries: [
+            { timestamp: "t", level: "error", message: "23/08/01 ERROR SparkContext: failed", streamName: "driver-stderr" },
+          ],
+          nextForwardToken: undefined,
+        };
+      },
+      listAccounts: async () => [],
+      listLogStreams: async () => ({ jobId: "x", streams: [], nextToken: undefined }),
+    } as unknown as BridgeClient;
+
+    const tool = buildAnalyzeJobFailureTool(client);
+    const result = await tool({ jobId: "job-s3only" });
+
+    expect(logCalls).toEqual([
+      { logGroupName: "/aws/emr-containers/jobs/job-s3only", streamNamePrefix: "job-s3only" },
+    ]);
+    const report = parse(result) as { evidence: { logSource: string } };
+    expect(report.evidence.logSource).toBe("cloudwatch");
+  });
+});
+
+// The MCP port of src/services/jobLogDestinations.ts must stay in sync with
+// the desktop app's tests (src/services/jobLogDestinations.test.ts).
+describe("jobLogDestinations (MCP mirror)", () => {
+  it("parses s3 uris with and without key prefixes", () => {
+    expect(parseS3Uri("s3://logs-bucket/emr/")).toEqual({ bucket: "logs-bucket", prefix: "emr/" });
+    expect(parseS3Uri("s3://logs-bucket")).toEqual({ bucket: "logs-bucket", prefix: "" });
+  });
+
+  it("builds the EMR on EKS job log prefix under the configured log uri", () => {
+    expect(buildJobS3LogPrefix("s3://logs-bucket/emr/", "vc-1", "job-running")).toEqual({
+      bucket: "logs-bucket",
+      prefix: "emr/vc-1/jobs/job-running/",
+    });
+  });
+
+  it("resolves cloudwatch and s3 destinations from describe monitoring configuration", () => {
+    const destinations = resolveJobLogDestinations({
+      id: "job-running",
+      virtualClusterId: "vc-1",
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            cloudWatchMonitoringConfiguration: {
+              logGroupName: "/aws/emr-containers/jobs/custom",
+              logStreamNamePrefix: "custom-prefix",
+            },
+            s3MonitoringConfiguration: { logUri: "s3://logs-bucket/emr/" },
+          },
+        },
+      },
+    });
+
+    expect(destinations).toEqual({
+      cloudWatch: {
+        logGroupName: "/aws/emr-containers/jobs/custom",
+        streamNamePrefix: "custom-prefix/vc-1/jobs/job-running/",
+      },
+      s3: { bucket: "logs-bucket", prefix: "emr/vc-1/jobs/job-running/" },
+    });
+  });
+
+  it("returns only the configured destination when monitoring is partial", () => {
+    const cloudWatchOnly = resolveJobLogDestinations({
+      id: "job-running",
+      virtualClusterId: "vc-1",
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            cloudWatchMonitoringConfiguration: { logGroupName: "/aws/emr-containers/jobs/custom" },
+          },
+        },
+      },
+    });
+    const s3Only = resolveJobLogDestinations({
+      id: "job-running",
+      virtualClusterId: "vc-1",
+      describeDetails: {
+        configurationOverrides: {
+          monitoringConfiguration: {
+            s3MonitoringConfiguration: { logUri: "s3://logs-bucket" },
+          },
+        },
+      },
+    });
+
+    expect(cloudWatchOnly).toEqual({
+      cloudWatch: {
+        logGroupName: "/aws/emr-containers/jobs/custom",
+        streamNamePrefix: "vc-1/jobs/job-running/",
+      },
+    });
+    expect(s3Only).toEqual({
+      s3: { bucket: "logs-bucket", prefix: "vc-1/jobs/job-running/" },
+    });
+  });
+
+  it("falls back to the default cloudwatch group naming convention", () => {
+    expect(defaultCloudWatchDestination({ id: "job-running" })).toEqual({
+      logGroupName: "/aws/emr-containers/jobs/job-running",
+      streamNamePrefix: "job-running",
+    });
   });
 });
