@@ -216,6 +216,12 @@ fn access_denied_message(service: &str) -> String {
     }
 }
 
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        Self::internal(e.to_string())
+    }
+}
+
 pub type AppResult<T> = Result<T, AppError>;
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ pub mod files;
 pub mod glue;
 pub mod job_config_templates;
 pub mod logs;
+pub mod mcp;
 pub mod s3;
 pub mod system;
 pub mod templates;

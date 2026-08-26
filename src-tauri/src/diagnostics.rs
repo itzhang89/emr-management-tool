@@ -89,8 +89,18 @@ pub fn open_app_log() -> AppResult<()> {
     open_path_in_system(&path)
 }
 
+pub fn mcp_audit_dir() -> AppResult<PathBuf> {
+    Ok(crate::db::app_data_dir()?.join("mcp-audit"))
+}
+
+pub fn open_mcp_audit_log() -> AppResult<()> {
+    let dir = mcp_audit_dir()?;
+    fs::create_dir_all(&dir).map_err(|error| AppError::storage(error.to_string()))?;
+    open_path_in_system(&dir)
+}
+
 fn open_path_in_system(path: &Path) -> AppResult<()> {
-    append_log_line("INFO", &format!("Opening log file at {}", path.display()));
+    append_log_line("INFO", &format!("Opening {}", path.display()));
     let result = if cfg!(target_os = "macos") {
         Command::new("open").arg(path).status()
     } else if cfg!(target_os = "windows") {

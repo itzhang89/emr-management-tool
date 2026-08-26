@@ -731,3 +731,24 @@ pub struct ExportAthenaQueryCsvRequest {
     pub query_execution_id: String,
     pub suggested_name: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStartRequest {
+    pub port: Option<u16>,
+    pub transport: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub running: bool,
+    pub mcp_port: Option<u16>,
+    pub bridge_port: Option<u16>,
+    pub pid: Option<u32>,
+    pub health_url: Option<String>,
+    pub sse_url: Option<String>,
+    pub transport: Option<String>,
+    pub endpoint_url: Option<String>,
+    pub entry_point: Option<String>,
+}

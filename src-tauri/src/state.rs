@@ -5,12 +5,36 @@ use crate::models::{
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tokio::process::Child;
 
 pub struct AppState {
     pub settings: Mutex<AwsSettings>,
     pub job_history: Mutex<Vec<JobRunSummary>>,
     pub application_templates: Mutex<Vec<ApplicationTemplate>>,
     pub resource_templates: Mutex<Vec<ResourceTemplate>>,
+    pub mcp_state: Mutex<McpState>,
+}
+
+pub struct McpState {
+    pub child: Option<Child>,
+    pub bridge_port: Option<u16>,
+    pub bridge_token: Option<String>,
+    pub bridge_task: Option<tokio::task::JoinHandle<()>>,
+    pub mcp_port: Option<u16>,
+    pub transport: Option<String>,
+}
+
+impl Default for McpState {
+    fn default() -> Self {
+        Self {
+            child: None,
+            bridge_port: None,
+            bridge_token: None,
+            bridge_task: None,
+            mcp_port: None,
+            transport: None,
+        }
+    }
 }
 
 impl Default for AppState {
@@ -24,6 +48,7 @@ impl Default for AppState {
             job_history: Mutex::new(Vec::new()),
             application_templates: Mutex::new(Vec::new()),
             resource_templates: Mutex::new(default_resource_templates()),
+            mcp_state: Mutex::new(McpState::default()),
         }
     }
 }
