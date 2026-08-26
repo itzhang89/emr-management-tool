@@ -1,4 +1,5 @@
 use crate::aws::runtime::runtime_for_context;
+use crate::emr_log_path::parse_emr_log_path;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, JobLogStream, JobLogStreamsRequest, JobLogStreamsResponse, JobLogsRequest,
@@ -311,58 +312,6 @@ fn parse_cloud_watch_log_stream(
         cloud_watch_stream_name: stream_name.to_string(),
         last_event_timestamp,
     })
-}
-
-struct ParsedLogPath {
-    log_type: String,
-    container: String,
-    pod: String,
-    stream: String,
-}
-
-fn parse_emr_log_path(path: &str, job_id: &str) -> Option<ParsedLogPath> {
-    let parts = path
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    let containers_index = parts
-        .windows(3)
-        .position(|window| window[0] == "jobs" && window[1] == job_id && window[2] == "containers")
-        .map(|index| index + 2)?;
-    let after_containers = &parts[(containers_index + 1)..];
-    if after_containers.len() < 2 {
-        return None;
-    }
-
-    let stream = after_containers.last()?.to_string();
-    let pod = after_containers
-        .get(after_containers.len() - 2)?
-        .to_string();
-    let container = if after_containers.len() > 2 {
-        after_containers[..after_containers.len() - 2].join("/")
-    } else {
-        pod.clone()
-    };
-
-    Some(ParsedLogPath {
-        log_type: classify_pod(&pod, job_id),
-        container,
-        pod,
-        stream,
-    })
-}
-
-fn classify_pod(pod: &str, job_id: &str) -> String {
-    let lower = pod.to_lowercase();
-    if lower.contains("driver") {
-        "driver".to_string()
-    } else if lower.contains("exec") {
-        "executor".to_string()
-    } else if lower.contains(&format!("spark-{}", job_id).to_lowercase()) {
-        "driver".to_string()
-    } else {
-        "controller".to_string()
-    }
 }
 
 fn is_driver_stream(stream_name: &str, job_id: &str) -> bool {

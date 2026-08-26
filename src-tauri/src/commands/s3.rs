@@ -1,6 +1,7 @@
 use crate::aws::runtime::runtime_for_context;
 use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
+use crate::emr_log_path::parse_emr_log_path;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, S3Bucket, S3CreateFolderRequest, S3JobLogObject, S3JobLogObjectsRequest,
@@ -1282,58 +1283,6 @@ fn parse_s3_job_log_object(
     })
 }
 
-struct ParsedLogPath {
-    log_type: String,
-    container: String,
-    pod: String,
-    stream: String,
-}
-
-fn parse_emr_log_path(path: &str, job_id: &str) -> Option<ParsedLogPath> {
-    let parts = path
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    let containers_index = parts
-        .windows(3)
-        .position(|window| window[0] == "jobs" && window[1] == job_id && window[2] == "containers")
-        .map(|index| index + 2)?;
-    let after_containers = &parts[(containers_index + 1)..];
-    if after_containers.len() < 2 {
-        return None;
-    }
-
-    let stream = after_containers.last()?.to_string();
-    let pod = after_containers
-        .get(after_containers.len() - 2)?
-        .to_string();
-    let container = if after_containers.len() > 2 {
-        after_containers[..after_containers.len() - 2].join("/")
-    } else {
-        pod.clone()
-    };
-
-    Some(ParsedLogPath {
-        log_type: classify_pod(&pod, job_id),
-        container,
-        pod,
-        stream,
-    })
-}
-
-fn classify_pod(pod: &str, job_id: &str) -> String {
-    let lower = pod.to_lowercase();
-    if lower.contains("driver") {
-        "driver".to_string()
-    } else if lower.contains("exec") {
-        "executor".to_string()
-    } else if lower.contains(&format!("spark-{}", job_id).to_lowercase()) {
-        "driver".to_string()
-    } else {
-        "controller".to_string()
-    }
-}
-
 fn job_id_from_prefix(prefix: &str) -> Option<String> {
     let parts = prefix
         .split('/')
@@ -1348,7 +1297,31 @@ fn job_id_from_prefix(prefix: &str) -> Option<String> {
 mod tests {
     use super::{
         count_prefix_children, decode_s3_log_content, next_conflict_file_name, normalize_s3_prefix,
+        parse_s3_job_log_object,
     };
+
+    const JOB: &str = "0000000381t77o3g8f5";
+    const VC: &str = "virtual-cluster-1";
+
+    #[test]
+    fn control_log_objects_keep_their_gz_key_but_drop_the_suffix_from_the_stream() {
+        let key = format!("logs/{VC}/jobs/{JOB}/control-logs/{JOB}-qs8tm/stderr.gz");
+        let object = parse_s3_job_log_object(&key, JOB, 42, None).expect("control-logs object");
+
+        assert_eq!(object.r#type, "controller");
+        assert_eq!(object.stream, "stderr");
+        assert_eq!(object.s3_key, key, "the .gz key must stay fetchable");
+        assert_eq!(object.size, 42);
+    }
+
+    #[test]
+    fn skips_job_level_files_that_are_not_pod_logs() {
+        // job-metadata.log lives directly under the job prefix.
+        assert!(
+            parse_s3_job_log_object(&format!("logs/{VC}/jobs/{JOB}/job-metadata.log"), JOB, 1, None)
+                .is_none()
+        );
+    }
 
     #[test]
     fn decodes_gzip_s3_log_archives_as_text() {

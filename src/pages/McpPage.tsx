@@ -206,9 +206,9 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
         <TableRow className="hover:bg-muted/30">
           <TableCell colSpan={8} className="bg-muted/30 py-3">
             <div className="space-y-3">
-              {/* Responses dwarf the arguments, so give them most of the width
-                  instead of an even split. */}
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
+              {/* Responses dwarf the arguments, so split the width 1:4 rather
+                  than evenly. */}
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,4fr)]">
                 <div className="min-w-0 space-y-1">
                   <div className="flex h-7 items-center justify-between gap-2">
                     <p className="text-xs font-medium text-muted-foreground">Request arguments</p>

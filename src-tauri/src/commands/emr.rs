@@ -1123,7 +1123,7 @@ mod tests {
     #[test]
     fn rejects_job_names_that_emr_start_job_run_will_reject() {
         let mut request = valid_start_job_request();
-        request.name = "bigdata etl-jinghui".to_string();
+        request.name = "bigdata etl-xxxxx".to_string();
 
         let error = validate_start_job_request(&request).expect_err("job name is invalid");
 
@@ -1178,8 +1178,8 @@ mod tests {
     fn valid_start_job_request() -> StartJobRunRequest {
         StartJobRunRequest {
             account_id: None,
-            name: "bigdata-etl-jinghui".to_string(),
-            virtual_cluster_id: "li36cjq5163l1bh8ms7d6kr04".to_string(),
+            name: "bigdata-etl-xxxxx".to_string(),
+            virtual_cluster_id: "virtual-cluster-1".to_string(),
             execution_role_arn: "arn:aws:iam::123456789012:role/EMR".to_string(),
             release_label: "emr-7.2.0-latest".to_string(),
             application: JarApplicationConfig {

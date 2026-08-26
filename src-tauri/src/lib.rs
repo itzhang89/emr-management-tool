@@ -3,6 +3,7 @@ pub mod commands;
 pub mod db;
 pub mod diagnostics;
 pub mod distribution;
+pub mod emr_log_path;
 pub mod error;
 pub mod mcp_bridge;
 pub mod models;

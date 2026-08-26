@@ -77,24 +77,46 @@ export function buildEmrLogTree(items: Array<JobLogStream | JobLogObject>): JobL
     }));
 }
 
+/**
+ * EMR on EKS writes a job's logs under `.../jobs/<jobId>/` in two subtrees:
+ *
+ *   containers/<container>/<pod>/<stream>   driver + executor pods
+ *   control-logs/<pod>/<stream>             the job-runner / control pod
+ *
+ * Both are parsed into the same identity so they share one navigation tree.
+ */
+const CONTAINERS_SEGMENT = "containers";
+const CONTROL_LOGS_SEGMENT = "control-logs";
+
 function parseEmrLogPath(path: string, jobId: string) {
   const parts = path.split("/").filter(Boolean);
-  const containersIndex = parts.findIndex((part, index) => part === "containers" && parts[index - 2] === "jobs" && parts[index - 1] === jobId);
-  if (containersIndex === -1) return undefined;
+  const jobIdIndex = parts.findIndex((part, index) => part === jobId && parts[index - 1] === "jobs");
+  if (jobIdIndex === -1) return undefined;
 
-  const afterContainers = parts.slice(containersIndex + 1);
-  if (afterContainers.length < 2) return undefined;
+  const rest = parts.slice(jobIdIndex + 1);
+  const [section, ...afterSection] = rest;
 
-  const stream = afterContainers.at(-1)!;
-  const pod = afterContainers.at(-2)!;
-  const container = afterContainers.length > 2 ? afterContainers.slice(0, -2).join("/") : pod;
+  if (section === CONTAINERS_SEGMENT) {
+    if (afterSection.length < 2) return undefined;
+    const stream = afterSection.at(-1)!;
+    const pod = afterSection.at(-2)!;
+    const container = afterSection.length > 2 ? afterSection.slice(0, -2).join("/") : pod;
+    return { type: classifyPod(pod, jobId), container, pod, stream };
+  }
 
-  return {
-    type: classifyPod(pod, jobId),
-    container,
-    pod,
-    stream
-  };
+  if (section === CONTROL_LOGS_SEGMENT) {
+    // control-logs/<pod>/<stream> — always the control pod, never a Spark pod,
+    // so classifyPod (which keys off driver/exec naming) does not apply.
+    if (afterSection.length < 2) return undefined;
+    return {
+      type: "controller" as JobLogType,
+      container: CONTROL_LOGS_SEGMENT,
+      pod: afterSection.at(-2)!,
+      stream: afterSection.at(-1)!
+    };
+  }
+
+  return undefined;
 }
 
 function classifyPod(pod: string, jobId: string): JobLogType {
