@@ -36,6 +36,7 @@ const GlueCatalogPage = lazy(() =>
   import("@/pages/GlueCatalogPage").then((module) => ({ default: module.GlueCatalogPage }))
 );
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const McpPage = lazy(() => import("@/pages/McpPage").then((module) => ({ default: module.McpPage })));
 
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
@@ -227,6 +228,8 @@ export function AppShell() {
         return <S3BrowserPage />;
       case "glue":
         return <GlueCatalogPage />;
+      case "mcp":
+        return <McpPage />;
       case "settings":
         return <SettingsPage />;
       default:

@@ -604,3 +604,17 @@ export interface PortableUpdateInfo {
   signature: string;
 }
 
+export type McpTransport = "stdio" | "streamableHttp" | "sse";
+
+export interface McpStatus {
+  running: boolean;
+  mcpPort?: number;
+  bridgePort?: number;
+  pid?: number;
+  healthUrl?: string;
+  sseUrl?: string;
+  transport?: McpTransport;
+  endpointUrl?: string;
+  entryPoint?: string;
+}
+

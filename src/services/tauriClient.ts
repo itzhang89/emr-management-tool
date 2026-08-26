@@ -48,7 +48,9 @@ import type {
   AthenaQueryResults,
   AthenaQueryResultsRequest,
   ExportAthenaQueryCsvRequest,
-  PortableUpdateInfo
+  PortableUpdateInfo,
+  McpStatus,
+  McpTransport
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -166,7 +168,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     exportAthenaQueryCsv: (request: ExportAthenaQueryCsvRequest) =>
       call<string | undefined>("export_athena_query_csv", request),
     checkPortableUpdate: () => call<PortableUpdateInfo | null>("check_portable_update"),
-    installPortableUpdate: (request: PortableUpdateInfo) => call<void>("install_portable_update", request)
+    installPortableUpdate: (request: PortableUpdateInfo) => call<void>("install_portable_update", request),
+    mcpStart: (request?: { port?: number; transport?: McpTransport }) => call<McpStatus>("mcp_start", request),
+    mcpStop: () => call<boolean>("mcp_stop"),
+    mcpStatus: () => call<McpStatus>("mcp_status"),
+    getMcpAuditDir: () => call<string>("get_mcp_audit_dir"),
+    openMcpAuditLog: () => call<void>("open_mcp_audit_log"),
   };
 }
 
