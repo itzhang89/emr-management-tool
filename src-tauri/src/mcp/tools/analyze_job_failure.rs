@@ -21,8 +21,8 @@ use std::future::Future;
 
 use serde::Serialize;
 
-use crate::mcp::{analysis, job_id, log_destinations, noise, sanitize};
 use crate::error::AppResult;
+use crate::mcp::{analysis, job_id, log_destinations, noise, sanitize};
 
 const RAW_LOG_TAIL_LINES: usize = 800;
 const RAW_LOG_MAX_CHARS: usize = 200_000;
@@ -270,9 +270,8 @@ pub enum AnalyzeJobFailureReport {
 
 impl AnalyzeJobFailureReport {
     pub fn to_json_text(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|e| {
-            format!("{{\"error\":\"failed to serialize report: {e}\"}}")
-        })
+        serde_json::to_string_pretty(self)
+            .unwrap_or_else(|e| format!("{{\"error\":\"failed to serialize report: {e}\"}}"))
     }
 
     pub fn internal_failure(job_id: &str, message: &str) -> Self {
@@ -570,9 +569,7 @@ fn summarize_failure(
         ));
     }
     if source == "none" {
-        parts.push(
-            "No application log source was found (neither S3 nor CloudWatch).".to_string(),
-        );
+        parts.push("No application log source was found (neither S3 nor CloudWatch).".to_string());
     } else if !has_evidence {
         parts.push("No structured error evidence was extracted automatically; analyze controllerEvidence.rawLogs and evidence.rawLogs directly.".to_string());
     }
@@ -644,7 +641,11 @@ async fn gather_log_evidence<S: JobDataSource>(
             .await
             .ok()
     } else {
-        source.find_job(job_id_value).await.ok().map(|found| found.job)
+        source
+            .find_job(job_id_value)
+            .await
+            .ok()
+            .map(|found| found.job)
     };
 
     let configuration_overrides = described
@@ -753,12 +754,12 @@ async fn fetch_s3_evidence<S: JobDataSource>(
 
     let controller_objects: Vec<&LogObject> =
         objects.iter().filter(|o| o.is_controller()).collect();
-    let application_objects: Vec<&LogObject> = if application_type.eq_ignore_ascii_case("controller")
-    {
-        controller_objects.clone()
-    } else {
-        objects.iter().filter(|o| !o.is_controller()).collect()
-    };
+    let application_objects: Vec<&LogObject> =
+        if application_type.eq_ignore_ascii_case("controller") {
+            controller_objects.clone()
+        } else {
+            objects.iter().filter(|o| !o.is_controller()).collect()
+        };
 
     // Controller logs are small and there is only ever one stream worth reading,
     // so no stream filter is applied there.
@@ -857,7 +858,10 @@ async fn fetch_cloud_watch_evidence<S: JobDataSource>(
 
     let want = log_type.to_lowercase();
     let mut application_events: Vec<&LogEvent> = match want.as_str() {
-        "driver" => events.iter().filter(|e| is_driver(&e.stream_name)).collect(),
+        "driver" => events
+            .iter()
+            .filter(|e| is_driver(&e.stream_name))
+            .collect(),
         "executor" => events
             .iter()
             .filter(|e| is_executor(&e.stream_name))
@@ -1040,10 +1044,9 @@ mod tests {
             stream_name_prefix: &str,
             _limit: i32,
         ) -> AppResult<Vec<LogEvent>> {
-            self.calls().cloud_watch.push((
-                log_group_name.to_string(),
-                stream_name_prefix.to_string(),
-            ));
+            self.calls()
+                .cloud_watch
+                .push((log_group_name.to_string(), stream_name_prefix.to_string()));
             if self.cloud_watch_fails {
                 return Err(AppError::internal(
                     "should not reach CloudWatch when S3 has logs",
@@ -1110,7 +1113,10 @@ mod tests {
 
         assert_eq!(json["ok"], true);
         let calls = fake.calls();
-        assert!(calls.listed_s3.is_empty(), "no S3 listing for a completed job");
+        assert!(
+            calls.listed_s3.is_empty(),
+            "no S3 listing for a completed job"
+        );
         assert!(calls.cloud_watch.is_empty(), "no CloudWatch fetch either");
     }
 
@@ -1154,19 +1160,15 @@ mod tests {
         );
         assert_eq!(json["evidence"]["logSource"], "s3");
         assert!(fake.calls().read_keys.iter().any(|k| k.contains("stderr")));
-        assert!(
-            json["evidence"]["deepestCausedBy"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("OutOfMemoryError")
-        );
-        assert!(
-            json["evidence"]["candidateCauses"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c["cause"].as_str().unwrap_or_default().contains("OOM"))
-        );
+        assert!(json["evidence"]["deepestCausedBy"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("OutOfMemoryError"));
+        assert!(json["evidence"]["candidateCauses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["cause"].as_str().unwrap_or_default().contains("OOM")));
         // The noise-filtered log text is returned too, so the caller can always
         // judge beyond the heuristic fields.
         let raw = json["evidence"]["rawLogs"].as_str().unwrap_or_default();
@@ -1265,7 +1267,10 @@ mod tests {
         assert_eq!(json["evidence"]["tracebacks"].as_array().unwrap().len(), 0);
         assert!(json["evidence"]["deepestCausedBy"].is_null());
         assert_eq!(
-            json["evidence"]["candidateCauses"].as_array().unwrap().len(),
+            json["evidence"]["candidateCauses"]
+                .as_array()
+                .unwrap()
+                .len(),
             0
         );
         // ...but the caller still gets the noise-filtered, sanitized logs.
@@ -1276,12 +1281,10 @@ mod tests {
         // Routine INFO noise is filtered out of the raw evidence.
         assert!(!raw.contains("INFO ApplicationMaster"));
         assert_eq!(json["evidence"]["truncated"], false);
-        assert!(
-            json["summary"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("rawLogs")
-        );
+        assert!(json["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rawLogs"));
     }
 
     #[tokio::test]
@@ -1291,12 +1294,13 @@ mod tests {
         let mut fake = Fake::new(job);
         fake.s3_objects = vec![
             LogObject {
-                s3_key: "path/vc-1/jobs/job-ctl/control-logs/job-ctl-qs8tm/stderr.gz"
-                    .to_string(),
+                s3_key: "path/vc-1/jobs/job-ctl/control-logs/job-ctl-qs8tm/stderr.gz".to_string(),
                 log_type: "controller".to_string(),
             },
             LogObject {
-                s3_key: "path/vc-1/jobs/job-ctl/containers/spark-job-ctl/spark-job-ctl-driver/stderr.gz".to_string(),
+                s3_key:
+                    "path/vc-1/jobs/job-ctl/containers/spark-job-ctl/spark-job-ctl-driver/stderr.gz"
+                        .to_string(),
                 log_type: "driver".to_string(),
             },
         ];
@@ -1336,13 +1340,11 @@ mod tests {
             .as_str()
             .unwrap_or_default();
         assert!(controller_raw.contains("ErrImagePull"));
-        assert!(
-            json["controllerEvidence"]["errorTail"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|l| l.as_str().unwrap_or_default().contains("failed to start"))
-        );
+        assert!(json["controllerEvidence"]["errorTail"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l.as_str().unwrap_or_default().contains("failed to start")));
         let app_raw = json["evidence"]["rawLogs"].as_str().unwrap_or_default();
         assert!(app_raw.contains("ERROR SparkContext: Job aborted"));
         assert!(!app_raw.contains("ErrImagePull"));
@@ -1366,19 +1368,15 @@ mod tests {
         let report = run(&fake, &args("job-oomkill")).await.expect("report");
         let json = parse(&report);
 
-        assert!(
-            json["controllerEvidence"]["candidateCauses"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|c| c["cause"].as_str().unwrap_or_default().contains("OOM"))
-        );
-        assert!(
-            json["summary"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("Controller (pod-level) causes")
-        );
+        assert!(json["controllerEvidence"]["candidateCauses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["cause"].as_str().unwrap_or_default().contains("OOM")));
+        assert!(json["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Controller (pod-level) causes"));
         // No application logs existed, but the pod-level cause still surfaced.
         assert_eq!(json["evidence"]["logSource"], "none");
     }
@@ -1404,12 +1402,10 @@ mod tests {
         assert_eq!(fake.calls().cloud_watch.len(), 1);
 
         assert_eq!(json["controllerEvidence"]["logSource"], "cloudwatch");
-        assert!(
-            json["controllerEvidence"]["rawLogs"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("ErrImagePull")
-        );
+        assert!(json["controllerEvidence"]["rawLogs"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ErrImagePull"));
         assert_eq!(json["evidence"]["logSource"], "cloudwatch");
         let app_raw = json["evidence"]["rawLogs"].as_str().unwrap_or_default();
         assert!(app_raw.contains("ERROR SparkContext: Job aborted"));
@@ -1438,18 +1434,14 @@ mod tests {
         assert_eq!(json["ok"], false);
         assert_eq!(json["error"], "invalidJobId");
         assert_eq!(json["providedJobId"], "0000000381pbkl");
-        assert!(
-            json["summary"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("truncated")
-        );
-        assert!(
-            json["nextStep"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("Ask the user")
-        );
+        assert!(json["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("truncated"));
+        assert!(json["nextStep"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Ask the user"));
     }
 
     #[tokio::test]
@@ -1491,7 +1483,3 @@ mod tests {
         );
     }
 }
-
-
-
-

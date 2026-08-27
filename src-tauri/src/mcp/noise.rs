@@ -11,23 +11,49 @@ use regex::Regex;
 
 /// `23/08/01 10:00:02 INFO TaskSetManager: message`
 static SPARK_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) (INFO|WARN|ERROR|DEBUG|TRACE) ([^:]+): (.*)$")
-        .unwrap()
+    Regex::new(
+        r"^(\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) (INFO|WARN|ERROR|DEBUG|TRACE) ([^:]+): (.*)$",
+    )
+    .unwrap()
 });
 
 /// Noise loggers whose INFO lines are hidden.
 const NOISE_LOGGERS: &[&str] = &[
-    "TaskSetManager", "DAGScheduler", "BlockManagerInfo", "TaskSchedulerImpl",
-    "MemoryStore", "CodeGenerator", "AppInfoParser", "Metrics", "SecurityManager",
-    "ResourceUtils", "JettyUtils", "SparkEnv", "DiskBlockManager",
-    "CoarseGrainedExecutorBackend", "ShuffleBlockFetcherIterator", "TorrentBroadcast",
-    "FileScanRDD", "MapPartitionsRDD", "TransportClientFactory", "HiveConf",
-    "SharedState", "SubResultCacheManager", "ContextCleaner", "SignalUtils",
-    "NativeCodeLoader", "ShutdownHookManager", "CodecPool", "SchedulerExtensionServices",
+    "TaskSetManager",
+    "DAGScheduler",
+    "BlockManagerInfo",
+    "TaskSchedulerImpl",
+    "MemoryStore",
+    "CodeGenerator",
+    "AppInfoParser",
+    "Metrics",
+    "SecurityManager",
+    "ResourceUtils",
+    "JettyUtils",
+    "SparkEnv",
+    "DiskBlockManager",
+    "CoarseGrainedExecutorBackend",
+    "ShuffleBlockFetcherIterator",
+    "TorrentBroadcast",
+    "FileScanRDD",
+    "MapPartitionsRDD",
+    "TransportClientFactory",
+    "HiveConf",
+    "SharedState",
+    "SubResultCacheManager",
+    "ContextCleaner",
+    "SignalUtils",
+    "NativeCodeLoader",
+    "ShutdownHookManager",
+    "CodecPool",
+    "SchedulerExtensionServices",
 ];
 
 const NOISE_PREFIXES: &[&str] = &[
-    "MapOutputTracker", "ResourceProfile", "BlockManager", "YarnScheduler",
+    "MapOutputTracker",
+    "ResourceProfile",
+    "BlockManager",
+    "YarnScheduler",
 ];
 
 fn is_noise_logger(logger: &str) -> bool {

@@ -4,9 +4,9 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_types::region::Region;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 #[cfg(not(debug_assertions))]
 use std::sync::OnceLock;
-use std::path::PathBuf;
 use tauri::AppHandle;
 
 #[cfg(not(debug_assertions))]
@@ -217,8 +217,7 @@ fn write_store_secret(app: &AppHandle, key: &str, value: &str) -> AppResult<()> 
     use tauri_plugin_store::StoreExt;
 
     let data_dir = crate::db::app_data_dir()?;
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    std::fs::create_dir_all(&data_dir).map_err(|error| AppError::storage(error.to_string()))?;
     let path = credential_store_path(app)?;
     let store = app
         .store(&path)

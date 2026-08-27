@@ -396,7 +396,10 @@ mod tests {
     #[test]
     fn safe_account_falls_back_to_the_display_name() {
         // No identity at all (credentials never validated).
-        assert_eq!(SafeAccount::from(account("Staging", None)).username, "Staging");
+        assert_eq!(
+            SafeAccount::from(account("Staging", None)).username,
+            "Staging"
+        );
         // An ARN with no trailing segment.
         assert_eq!(
             SafeAccount::from(account("Staging", Some("arn:aws:iam::123456789012:root"))).username,

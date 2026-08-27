@@ -30,9 +30,10 @@ pub async fn mcp_start(
     let task = crate::mcp::http::start(app, port).await?;
 
     {
-        let mut mcp = app_state.mcp_state.lock().map_err(|e| {
-            AppError::internal(format!("Failed to acquire MCP lock: {e}"))
-        })?;
+        let mut mcp = app_state
+            .mcp_state
+            .lock()
+            .map_err(|e| AppError::internal(format!("Failed to acquire MCP lock: {e}")))?;
         mcp.task = Some(task);
         mcp.mcp_port = Some(port);
         mcp.transport = Some("streamableHttp".to_string());
@@ -49,9 +50,10 @@ pub async fn mcp_start(
 /// process, so there is no orphaned-child reclamation to do.
 async fn stop_running_mcp(app_state: &TauriState<'_, AppState>) -> AppResult<bool> {
     let task = {
-        let mut mcp = app_state.mcp_state.lock().map_err(|e| {
-            AppError::internal(format!("Failed to acquire MCP lock: {e}"))
-        })?;
+        let mut mcp = app_state
+            .mcp_state
+            .lock()
+            .map_err(|e| AppError::internal(format!("Failed to acquire MCP lock: {e}")))?;
         mcp.task.take()
     };
 
@@ -60,9 +62,10 @@ async fn stop_running_mcp(app_state: &TauriState<'_, AppState>) -> AppResult<boo
         task.abort();
     }
 
-    let mut mcp = app_state.mcp_state.lock().map_err(|e| {
-        AppError::internal(format!("Failed to acquire MCP lock: {e}"))
-    })?;
+    let mut mcp = app_state
+        .mcp_state
+        .lock()
+        .map_err(|e| AppError::internal(format!("Failed to acquire MCP lock: {e}")))?;
     mcp.mcp_port = None;
     mcp.transport = None;
 
@@ -76,9 +79,10 @@ pub async fn mcp_stop(app_state: TauriState<'_, AppState>) -> AppResult<bool> {
 
 #[tauri::command]
 pub async fn mcp_status(app_state: TauriState<'_, AppState>) -> AppResult<McpStatus> {
-    let mcp = app_state.mcp_state.lock().map_err(|e| {
-        AppError::internal(format!("Failed to acquire MCP lock: {e}"))
-    })?;
+    let mcp = app_state
+        .mcp_state
+        .lock()
+        .map_err(|e| AppError::internal(format!("Failed to acquire MCP lock: {e}")))?;
 
     let running = mcp.task.is_some();
     let mcp_port = mcp.mcp_port;
@@ -132,9 +136,10 @@ pub async fn list_mcp_audit_entries(
 }
 
 fn mcp_state_running(app_state: &TauriState<'_, AppState>) -> AppResult<bool> {
-    let mcp = app_state.mcp_state.lock().map_err(|e| {
-        AppError::internal(format!("Failed to acquire MCP lock: {e}"))
-    })?;
+    let mcp = app_state
+        .mcp_state
+        .lock()
+        .map_err(|e| AppError::internal(format!("Failed to acquire MCP lock: {e}")))?;
     Ok(mcp.task.is_some())
 }
 

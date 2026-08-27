@@ -1,9 +1,9 @@
+use crate::error::AppError;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Cursor;
 use std::path::{Component, Path};
-use serde::{Deserialize, Serialize};
-use crate::error::AppError;
 
 pub const PORTABLE_UPDATER_ENDPOINT: &str =
     "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json";
@@ -81,7 +81,11 @@ pub fn is_allowed_portable_asset_url(url: &str) -> bool {
     false
 }
 
-pub fn verify_signature(data: &[u8], signature_str: &str, pubkey_str: &str) -> Result<(), AppError> {
+pub fn verify_signature(
+    data: &[u8],
+    signature_str: &str,
+    pubkey_str: &str,
+) -> Result<(), AppError> {
     let pubkey = minisign_verify::PublicKey::decode(pubkey_str.trim())
         .map_err(|e| AppError::validation(format!("Invalid updater public key: {e}")))?;
     let signature = minisign_verify::Signature::decode(signature_str.trim())
@@ -160,16 +164,10 @@ pub fn apply_portable_archive(
                     })?;
                 }
                 let mut out_file = File::create(&out_path).map_err(|e| {
-                    AppError::storage(format!(
-                        "Failed to create file {}: {e}",
-                        out_path.display()
-                    ))
+                    AppError::storage(format!("Failed to create file {}: {e}", out_path.display()))
                 })?;
                 std::io::copy(&mut file, &mut out_file).map_err(|e| {
-                    AppError::storage(format!(
-                        "Failed to write file {}: {e}",
-                        out_path.display()
-                    ))
+                    AppError::storage(format!("Failed to write file {}: {e}", out_path.display()))
                 })?;
             }
         }
@@ -221,7 +219,9 @@ pub async fn check_portable_update() -> Result<Option<PortableUpdateInfo>, AppEr
         .header("User-Agent", "emr-management-tool-portable-updater")
         .send()
         .await
-        .map_err(|e| AppError::internal(format!("Failed to fetch portable update manifest: {e}")))?;
+        .map_err(|e| {
+            AppError::internal(format!("Failed to fetch portable update manifest: {e}"))
+        })?;
 
     if !response.status().is_success() {
         return Err(AppError::internal(format!(
@@ -230,10 +230,9 @@ pub async fn check_portable_update() -> Result<Option<PortableUpdateInfo>, AppEr
         )));
     }
 
-    let manifest: PortableManifest = response
-        .json()
-        .await
-        .map_err(|e| AppError::internal(format!("Failed to parse portable update manifest: {e}")))?;
+    let manifest: PortableManifest = response.json().await.map_err(|e| {
+        AppError::internal(format!("Failed to parse portable update manifest: {e}"))
+    })?;
 
     let platform_asset = manifest
         .platforms
@@ -321,10 +320,14 @@ mod tests {
     #[test]
     fn skip_archive_entry_protects_data_directory() {
         assert!(should_skip_archive_entry(Path::new("data/emr.sqlite")));
-        assert!(should_skip_archive_entry(Path::new("DATA/credentials.json")));
+        assert!(should_skip_archive_entry(Path::new(
+            "DATA/credentials.json"
+        )));
         assert!(should_skip_archive_entry(Path::new("nested/data/foo.txt")));
         assert!(should_skip_archive_entry(Path::new("data")));
-        assert!(!should_skip_archive_entry(Path::new("EMR Management Tool Portable.exe")));
+        assert!(!should_skip_archive_entry(Path::new(
+            "EMR Management Tool Portable.exe"
+        )));
         assert!(!should_skip_archive_entry(Path::new("resources/app.ico")));
     }
 
@@ -336,7 +339,9 @@ mod tests {
         assert!(is_allowed_portable_asset_url(
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/123/windows-amd64-portable.zip"
         ));
-        assert!(!is_allowed_portable_asset_url("https://evil.example.com/portable.zip"));
+        assert!(!is_allowed_portable_asset_url(
+            "https://evil.example.com/portable.zip"
+        ));
         assert!(!is_allowed_portable_asset_url(
             "https://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/installer-setup.exe"
         ));
@@ -357,7 +362,13 @@ mod tests {
 
     #[test]
     fn apply_archive_skips_data_and_renames_exe() {
-        let temp_dir = std::env::temp_dir().join(format!("emr-portable-test-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "emr-portable-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         fs::create_dir_all(&temp_dir).unwrap();
         let target_dir = &temp_dir;
         let current_exe = target_dir.join("app.exe");
@@ -372,9 +383,11 @@ mod tests {
         let mut zip_buf = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buf));
-            zip.start_file("app.exe", SimpleFileOptions::default()).unwrap();
+            zip.start_file("app.exe", SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(b"new-binary").unwrap();
-            zip.start_file("data/emr.sqlite", SimpleFileOptions::default()).unwrap();
+            zip.start_file("data/emr.sqlite", SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(b"overwritten-database").unwrap();
             zip.finish().unwrap();
         }

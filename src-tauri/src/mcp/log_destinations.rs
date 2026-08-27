@@ -233,7 +233,10 @@ mod tests {
 
     #[test]
     fn resolves_nothing_without_monitoring_config() {
-        assert_eq!(resolve("job-1", "vc-1", None), JobLogDestinations::default());
+        assert_eq!(
+            resolve("job-1", "vc-1", None),
+            JobLogDestinations::default()
+        );
         let empty = json!({});
         assert_eq!(
             resolve("job-1", "vc-1", Some(&empty)),

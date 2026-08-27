@@ -31,9 +31,8 @@ fn account_id_re() -> &'static Regex {
 }
 
 fn ip_address_re() -> &'static Regex {
-    static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-        Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap()
-    });
+    static RE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap());
     &RE
 }
 
@@ -47,10 +46,8 @@ fn ec2_hostname_re() -> &'static Regex {
 /// FQDN: at least 2 dots, no protocol prefix, not a bare IP address.
 fn fqdn_re() -> &'static Regex {
     static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-        Regex::new(
-            r"\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?){2,}\b",
-        )
-        .unwrap()
+        Regex::new(r"\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?){2,}\b")
+            .unwrap()
     });
     &RE
 }
@@ -203,8 +200,7 @@ mod tests {
 
     #[test]
     fn sql_log_line_with_s3() {
-        let text =
-            "SELECT * FROM s3://data-bucket/sales WHERE region = 'us-east-1'";
+        let text = "SELECT * FROM s3://data-bucket/sales WHERE region = 'us-east-1'";
         let result = sanitize(text);
         assert!(result.contains("s3://[S3_BUCKET]/"));
         assert!(!result.contains("data-bucket"));

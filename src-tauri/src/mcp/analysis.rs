@@ -42,8 +42,7 @@ const MAX_PY_BLOCK_LINES: usize = 80;
 /// How many error lines the tail reports.
 const ERROR_TAIL_LINES: usize = 30;
 
-static STEP_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^-- stepId=(\d+)\s*$").unwrap());
+static STEP_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-- stepId=(\d+)\s*$").unwrap());
 static CAUSED_BY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Caused by:\s*(.+)$").unwrap());
 static EXCEPTION_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -56,8 +55,7 @@ static LEVEL_EXCEPTION_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static STACK_FRAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s+at\s+.+\(.+\)$").unwrap());
-static ELLIPSIS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\.\.\. \d+ more$").unwrap());
+static ELLIPSIS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\.\.\. \d+ more$").unwrap());
 static PY_TRACEBACK_START_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^Traceback \(most recent call last\):").unwrap());
 static PY_EXCEPTION_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -509,17 +507,15 @@ mod tests {
 
     #[test]
     fn detects_parse_exception() {
-        let result = extract_error_sections(
-            "ERROR SQLExecution: ParseException: mismatched input 'SELECT'",
-        );
+        let result =
+            extract_error_sections("ERROR SQLExecution: ParseException: mismatched input 'SELECT'");
         assert!(has_cause(&result, "Bad SQL or script syntax", "high"));
     }
 
     #[test]
     fn detects_cancelled_job() {
-        let result = extract_error_sections(
-            "ERROR EMRClient: Job cancelled by user, state = CANCELLED",
-        );
+        let result =
+            extract_error_sections("ERROR EMRClient: Job cancelled by user, state = CANCELLED");
         assert!(has_cause(&result, "Job cancelled by user", "high"));
     }
 
@@ -533,8 +529,7 @@ mod tests {
 
     #[test]
     fn detects_disk_space_exhaustion() {
-        let result =
-            extract_error_sections("ERROR TaskSchedulerImpl: No space left on device");
+        let result = extract_error_sections("ERROR TaskSchedulerImpl: No space left on device");
         assert!(has_cause(&result, "Disk space exhausted", "high"));
     }
 
@@ -605,11 +600,9 @@ mod tests {
     #[test]
     fn python_exception_lines_reach_the_error_tail() {
         let result = extract_error_sections(PY_TEXT);
-        assert!(
-            result
-                .error_tail
-                .contains(&"ValueError: bad input row".to_string())
-        );
+        assert!(result
+            .error_tail
+            .contains(&"ValueError: bad input row".to_string()));
     }
 
     const LEVEL_PREFIXED: &str = concat!(
@@ -621,26 +614,20 @@ mod tests {
     fn extracts_an_exception_from_behind_a_log_level_prefix() {
         let result = extract_error_sections(LEVEL_PREFIXED);
         assert!(!result.tracebacks.is_empty());
-        assert!(
-            result.tracebacks[0].contains("SparkException: Job aborted due to stage failure")
-        );
+        assert!(result.tracebacks[0].contains("SparkException: Job aborted due to stage failure"));
     }
 
     #[test]
     fn level_prefixed_exception_reaches_the_error_tail() {
         let result = extract_error_sections(LEVEL_PREFIXED);
-        assert!(
-            result
-                .error_tail
-                .iter()
-                .any(|l| l.contains("SparkException: Job aborted"))
-        );
-        assert!(
-            result
-                .error_tail
-                .iter()
-                .any(|l| l.contains("Container killed by YARN"))
-        );
+        assert!(result
+            .error_tail
+            .iter()
+            .any(|l| l.contains("SparkException: Job aborted")));
+        assert!(result
+            .error_tail
+            .iter()
+            .any(|l| l.contains("Container killed by YARN")));
     }
 
     #[test]

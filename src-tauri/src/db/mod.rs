@@ -21,12 +21,11 @@ pub fn resolve_app_data_dir_with_base(
     system_data_dir: Option<PathBuf>,
 ) -> AppResult<PathBuf> {
     if is_portable {
-        let exe = exe_path.ok_or_else(|| {
-            AppError::storage("Unable to locate the application executable.")
-        })?;
-        let parent = exe.parent().ok_or_else(|| {
-            AppError::storage("Unable to locate the application directory.")
-        })?;
+        let exe = exe_path
+            .ok_or_else(|| AppError::storage("Unable to locate the application executable."))?;
+        let parent = exe
+            .parent()
+            .ok_or_else(|| AppError::storage("Unable to locate the application directory."))?;
         return Ok(parent.join("data"));
     }
     system_data_dir

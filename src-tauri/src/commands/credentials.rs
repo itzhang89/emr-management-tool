@@ -103,7 +103,13 @@ pub async fn import_aws_cli_profile(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .or_else(|| profile.region.as_deref().map(str::trim).filter(|value| !value.is_empty()))
+        .or_else(|| {
+            profile
+                .region
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
         .ok_or_else(|| {
             AppError::validation(
                 "Region is required. Choose a region before importing this AWS CLI profile."
@@ -259,10 +265,7 @@ pub async fn update_aws_account(
     let mut account = repository::get_aws_account(&pool, &request.account_id)
         .await?
         .ok_or_else(|| {
-            AppError::validation(format!(
-                "AWS account {} was not found.",
-                request.account_id
-            ))
+            AppError::validation(format!("AWS account {} was not found.", request.account_id))
         })?;
 
     let stored = read_account_credentials(&app, &account.id)?;
@@ -308,10 +311,7 @@ pub async fn test_aws_account(
     let account = repository::get_aws_account(&pool, &request.account_id)
         .await?
         .ok_or_else(|| {
-            AppError::validation(format!(
-                "AWS account {} was not found.",
-                request.account_id
-            ))
+            AppError::validation(format!("AWS account {} was not found.", request.account_id))
         })?;
 
     let stored = read_account_credentials(&app, &account.id)?;

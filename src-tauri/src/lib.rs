@@ -117,7 +117,8 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
-                if let Err(error) = aws::credentials::migrate_legacy_credential_store(app.handle()) {
+                if let Err(error) = aws::credentials::migrate_legacy_credential_store(app.handle())
+                {
                     diagnostics::append_log_line(
                         "WARN",
                         &format!("Failed to migrate the legacy credential store: {error}"),
@@ -164,11 +165,14 @@ pub fn run() {
                 let menu = Menu::with_items(app, &[&edit, &help])?;
                 app.set_menu(menu)?;
 
-                app.global_shortcut().on_shortcut(SHORTCUTS_HELP_ACCELERATOR, |app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        emit_to_frontend(app, "help:show-shortcuts");
-                    }
-                })?;
+                app.global_shortcut().on_shortcut(
+                    SHORTCUTS_HELP_ACCELERATOR,
+                    |app, _shortcut, event| {
+                        if event.state == ShortcutState::Pressed {
+                            emit_to_frontend(app, "help:show-shortcuts");
+                        }
+                    },
+                )?;
 
                 Ok(())
             })

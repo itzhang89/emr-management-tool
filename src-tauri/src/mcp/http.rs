@@ -10,8 +10,7 @@
 use std::sync::Arc;
 
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    session::never::NeverSessionManager,
+    session::never::NeverSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 
 use super::server::McpTools;
@@ -49,9 +48,7 @@ pub async fn start(
 
     let service = StreamableHttpService::new(
         // A fresh `McpTools` per request, since the transport is stateless.
-        move || {
-            Ok(McpTools::new(app.clone()))
-        },
+        move || Ok(McpTools::new(app.clone())),
         Arc::new(NeverSessionManager::default()),
         StreamableHttpServerConfig::default()
             .with_legacy_session_mode(false)

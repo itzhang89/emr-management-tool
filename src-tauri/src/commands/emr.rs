@@ -637,7 +637,8 @@ async fn sync_job_runs_pages(
         }
 
         let response = operation.send().await.map_err(|error| {
-            let app_error = AppError::aws_for_account_sdk("emr-containers", account_id.to_string(), error);
+            let app_error =
+                AppError::aws_for_account_sdk("emr-containers", account_id.to_string(), error);
             diagnostics::log_aws_failure(
                 "emr-containers",
                 "ListJobRuns",

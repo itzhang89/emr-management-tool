@@ -37,24 +37,5 @@ fn main() {
         });
     println!("cargo:rustc-env=EMR_UPDATER_PUBLIC_KEY={pubkey}");
 
-    // Tauri's build validates `bundle.resources` paths even during `tauri dev`.
-    // The MCP server's dist/ is gitignored, so a fresh checkout breaks dev unless
-    // we handle the missing directory here:
-    // - exists           -> bundled as configured (release & dev unchanged)
-    // - missing in dev   -> create a placeholder so the app boots; the MCP page
-    //                       surfaces "run npm run mcp:build" until it is built
-    // - missing in release -> hard error: never silently ship a bundle without MCP
-    let mcp_dist = std::path::Path::new("../mcp/dist");
-    println!("cargo:rerun-if-changed={}", mcp_dist.display());
-    if !mcp_dist.exists() {
-        if cfg!(debug_assertions) {
-            eprintln!("warning: ../mcp/dist missing — creating placeholder so `tauri dev` can start (run `npm run mcp:build` to enable the built-in MCP server)");
-            std::fs::create_dir_all(mcp_dist)
-                .expect("failed to create placeholder ../mcp/dist");
-        } else {
-            panic!("../mcp/dist is missing — run `npm run mcp:build` before bundling a release build");
-        }
-    }
-
     tauri_build::build();
 }

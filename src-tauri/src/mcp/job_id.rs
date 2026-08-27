@@ -34,9 +34,12 @@ pub fn describe_invalid_job_id(value: &str) -> String {
         return "The job id is empty.".to_string();
     }
     if normalized.chars().any(char::is_whitespace) {
-        return "The job id contains whitespace — pass a single job id with no surrounding text.".to_string();
+        return "The job id contains whitespace — pass a single job id with no surrounding text."
+            .to_string();
     }
-    if normalized.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    if normalized
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && normalized.len() < 16
     {
         return format!(
@@ -60,7 +63,10 @@ mod tests {
 
     #[test]
     fn normalizes_spark_prefix_and_whitespace() {
-        assert_eq!(normalize(" spark-0000000381t77o3g8f5 "), "0000000381t77o3g8f5");
+        assert_eq!(
+            normalize(" spark-0000000381t77o3g8f5 "),
+            "0000000381t77o3g8f5"
+        );
         assert_eq!(normalize("0000000381t77o3g8f5"), "0000000381t77o3g8f5");
         assert_eq!(normalize("Spark-abc"), "abc");
         assert_eq!(normalize("  spark-  abc  "), "abc");
@@ -99,6 +105,6 @@ mod tests {
         assert!(describe_invalid_job_id("a b").contains("whitespace"));
         assert!(describe_invalid_job_id("short").contains("at least 16"));
         assert!(describe_invalid_job_id("ABC123").contains("uppercase"));
-        assert!(describe_invalid_job_id("!!!" ).contains("not a valid EMR job run id"));
+        assert!(describe_invalid_job_id("!!!").contains("not a valid EMR job run id"));
     }
 }

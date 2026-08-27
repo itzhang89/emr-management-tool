@@ -153,9 +153,11 @@ mod tests {
             format!("{JOB}-a1b2c3d4e5"),
             "runner-77f2b".to_string(),
         ] {
-            let parsed =
-                parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/control-logs/{pod}/stderr"), JOB)
-                    .unwrap_or_else(|| panic!("control-logs path parses for pod {pod}"));
+            let parsed = parse_emr_log_path(
+                &format!("logs/{VC}/jobs/{JOB}/control-logs/{pod}/stderr"),
+                JOB,
+            )
+            .unwrap_or_else(|| panic!("control-logs path parses for pod {pod}"));
             assert_eq!(parsed.log_type, "controller");
             assert_eq!(parsed.container, "control-logs");
             assert_eq!(parsed.pod, pod);
@@ -186,12 +188,17 @@ mod tests {
     #[test]
     fn ignores_job_level_files_outside_the_log_subtrees() {
         // job-metadata.log sits directly under the job prefix — not a pod log.
-        assert!(parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/job-metadata.log"), JOB).is_none());
+        assert!(
+            parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/job-metadata.log"), JOB).is_none()
+        );
         // A control-logs entry with no stream segment is incomplete.
-        assert!(parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/control-logs/pod"), JOB).is_none());
+        assert!(
+            parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/control-logs/pod"), JOB).is_none()
+        );
         // Unknown subtree names are not guessed at.
         assert!(
-            parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/other-logs/pod/stderr"), JOB).is_none()
+            parse_emr_log_path(&format!("logs/{VC}/jobs/{JOB}/other-logs/pod/stderr"), JOB)
+                .is_none()
         );
     }
 }

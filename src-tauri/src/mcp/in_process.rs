@@ -7,9 +7,9 @@
 //! off. Both paths see the same tools and write to the same audit table.
 
 use rmcp::{
-    RoleClient,
     model::Tool,
     service::{RunningService, ServiceExt},
+    RoleClient,
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;

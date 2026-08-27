@@ -6,10 +6,9 @@
 //! table.
 
 use rmcp::{
-    ServerHandler,
     handler::server::wrapper::Parameters,
     model::{ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
+    tool, tool_handler, tool_router, ServerHandler,
 };
 
 use crate::models::McpAuditEntry;
@@ -160,10 +159,7 @@ impl McpTools {
     /// it was found in, and where its logs live (S3 prefix / CloudWatch group).
     /// Read-only.
     #[tool(name = "find_job")]
-    async fn find_job(
-        &self,
-        Parameters(args): Parameters<read_only_tools::FindJobArgs>,
-    ) -> String {
+    async fn find_job(&self, Parameters(args): Parameters<read_only_tools::FindJobArgs>) -> String {
         serde_json::to_string(
             &read_only_tools::find_job(&self.data_source, &args)
                 .await

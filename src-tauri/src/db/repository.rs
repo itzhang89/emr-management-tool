@@ -263,7 +263,6 @@ pub async fn list_job_history(
         .collect()
 }
 
-
 /// Earliest `created_at` among jobs that are not COMPLETED/FAILED, within retention.
 /// Timestamps are stored/compared as RFC3339 (UTC offset preserved); callers should
 /// convert with timezone-aware parsers before talking to AWS.
@@ -320,10 +319,7 @@ pub async fn list_submission_history(
         .collect()
 }
 
-pub async fn get_job_history(
-    pool: &SqlitePool,
-    id: &str,
-) -> AppResult<Option<JobRunSummary>> {
+pub async fn get_job_history(pool: &SqlitePool, id: &str) -> AppResult<Option<JobRunSummary>> {
     let row = sqlx::query("select payload from job_history where id = ?1")
         .bind(id)
         .fetch_optional(pool)
@@ -766,7 +762,6 @@ mod tests {
         );
     }
 
-
     #[tokio::test]
     async fn earliest_non_terminal_created_at_ignores_completed_and_failed() {
         let pool = SqlitePoolOptions::new()
@@ -782,7 +777,14 @@ mod tests {
 
         upsert_job_history(
             &pool,
-            &job("job-failed", "batch", "FAILED", "acct-1", "vc-1", &old_failed),
+            &job(
+                "job-failed",
+                "batch",
+                "FAILED",
+                "acct-1",
+                "vc-1",
+                &old_failed,
+            ),
         )
         .await
         .expect("insert failed");
@@ -865,7 +867,10 @@ mod tests {
             .map(|job| job.id.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(submitted, vec!["job-6", "job-5", "job-4", "job-3", "job-2", "job-1", "job-0"]);
+        assert_eq!(
+            submitted,
+            vec!["job-6", "job-5", "job-4", "job-3", "job-2", "job-1", "job-0"]
+        );
         assert!(remaining.iter().any(|job| job.id == "job-synced"));
     }
 

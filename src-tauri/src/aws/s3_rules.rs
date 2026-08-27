@@ -1,5 +1,15 @@
 const EDITABLE_EXTENSIONS: &[&str] = &[
-    "sql", "yaml", "yml", "json", "conf", "properties", "txt", "scala", "sc", "csv", "py",
+    "sql",
+    "yaml",
+    "yml",
+    "json",
+    "conf",
+    "properties",
+    "txt",
+    "scala",
+    "sc",
+    "csv",
+    "py",
 ];
 const EDITOR_LIMIT_BYTES: u64 = 5 * 1024 * 1024;
 

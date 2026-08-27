@@ -406,9 +406,9 @@ pub async fn prepare_s3_upload_from_disk(
         .and_then(|name| name.to_str())
         .ok_or_else(|| AppError::validation("Selected file has no name."))?
         .to_string();
-    let metadata = tokio::fs::metadata(&path)
-        .await
-        .map_err(|error| AppError::storage(format!("Failed to read selected file metadata: {error}")))?;
+    let metadata = tokio::fs::metadata(&path).await.map_err(|error| {
+        AppError::storage(format!("Failed to read selected file metadata: {error}"))
+    })?;
     let total_bytes = metadata.len();
     let prefix = request.prefix.clone().unwrap_or_default();
     let key = format!("{prefix}{file_name}");
@@ -424,7 +424,10 @@ pub async fn prepare_s3_upload_from_disk(
     let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
     let exists = s3_object_exists_on_client(&client, &request.bucket, &key, &account_id).await?;
     let suggested_file_name = if exists {
-        Some(suggest_unique_file_name(&client, &request.bucket, &prefix, &file_name, &account_id).await?)
+        Some(
+            suggest_unique_file_name(&client, &request.bucket, &prefix, &file_name, &account_id)
+                .await?,
+        )
     } else {
         None
     };
@@ -452,7 +455,9 @@ pub async fn upload_s3_object_from_path(
         return Err(AppError::validation("Local path is required."));
     }
     if request.key.contains("//") || request.key.ends_with('/') {
-        return Err(AppError::validation("Upload key must be a file object, not a folder."));
+        return Err(AppError::validation(
+            "Upload key must be a file object, not a folder.",
+        ));
     }
 
     let path = Path::new(&request.local_path);
@@ -462,9 +467,9 @@ pub async fn upload_s3_object_from_path(
         .or_else(|| request.key.rsplit('/').next())
         .ok_or_else(|| AppError::validation("Upload target has no file name."))?
         .to_string();
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|error| AppError::storage(format!("Failed to read selected file metadata: {error}")))?;
+    let metadata = tokio::fs::metadata(path).await.map_err(|error| {
+        AppError::storage(format!("Failed to read selected file metadata: {error}"))
+    })?;
     let total_bytes = metadata.len();
     let key = request.key.clone();
 
@@ -506,15 +511,19 @@ pub async fn upload_s3_object_from_path(
         .await?
     };
 
-    emit_upload_progress(&app, &file_name, &key, "completed", total_bytes, total_bytes);
+    emit_upload_progress(
+        &app,
+        &file_name,
+        &key,
+        "completed",
+        total_bytes,
+        total_bytes,
+    );
     Ok(uploaded)
 }
 
 #[tauri::command]
-pub async fn s3_object_exists(
-    app: AppHandle,
-    request: S3ObjectExistsRequest,
-) -> AppResult<bool> {
+pub async fn s3_object_exists(app: AppHandle, request: S3ObjectExistsRequest) -> AppResult<bool> {
     if request.bucket.trim().is_empty() || request.key.trim().is_empty() {
         return Err(AppError::validation("Bucket and key are required."));
     }
@@ -619,7 +628,9 @@ fn next_conflict_file_name(file_name: &str) -> String {
 
 fn split_file_name(file_name: &str) -> (&str, &str) {
     match file_name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() && !extension.contains(' ') => {
+        Some((stem, extension))
+            if !stem.is_empty() && !extension.is_empty() && !extension.contains(' ') =>
+        {
             (stem, extension)
         }
         _ => (file_name, ""),
@@ -773,10 +784,9 @@ async fn upload_multipart_parts(
     loop {
         let mut filled = 0;
         while filled < MULTIPART_PART_SIZE {
-            let read = file
-                .read(&mut buffer[filled..])
-                .await
-                .map_err(|error| AppError::storage(format!("Failed to read selected file: {error}")))?;
+            let read = file.read(&mut buffer[filled..]).await.map_err(|error| {
+                AppError::storage(format!("Failed to read selected file: {error}"))
+            })?;
             if read == 0 {
                 break;
             }
@@ -799,7 +809,9 @@ async fn upload_multipart_parts(
             .map_err(|error| AppError::aws_for_account_sdk("s3", account_id.to_string(), error))?;
         let etag = part
             .e_tag()
-            .ok_or_else(|| AppError::validation(format!("S3 part {part_number} did not return an ETag.")))?
+            .ok_or_else(|| {
+                AppError::validation(format!("S3 part {part_number} did not return an ETag."))
+            })?
             .to_string();
         completed_parts.push(
             CompletedPart::builder()
@@ -809,7 +821,14 @@ async fn upload_multipart_parts(
         );
 
         bytes_uploaded = (bytes_uploaded + filled as u64).min(total_bytes);
-        emit_upload_progress(app, file_name, key, "uploading", bytes_uploaded, total_bytes);
+        emit_upload_progress(
+            app,
+            file_name,
+            key,
+            "uploading",
+            bytes_uploaded,
+            total_bytes,
+        );
         part_number += 1;
     }
 
@@ -840,7 +859,14 @@ async fn upload_multipart_parts(
         ));
     }
 
-    emit_upload_progress(app, file_name, key, "completing", bytes_uploaded, total_bytes);
+    emit_upload_progress(
+        app,
+        file_name,
+        key,
+        "completing",
+        bytes_uploaded,
+        total_bytes,
+    );
     let completed = CompletedMultipartUpload::builder()
         .set_parts(Some(completed_parts))
         .build();
@@ -1033,7 +1059,8 @@ pub async fn describe_s3_prefix_deletion(
     )
     .await?;
     let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
-    let listed = list_all_object_keys(&client, &request.bucket, &prefix, S3_PREFIX_SCAN_LIMIT).await?;
+    let listed =
+        list_all_object_keys(&client, &request.bucket, &prefix, S3_PREFIX_SCAN_LIMIT).await?;
 
     Ok(build_prefix_deletion_summary(&prefix, listed))
 }
@@ -1072,7 +1099,9 @@ pub async fn delete_s3_prefix(app: AppHandle, request: S3ObjectRequest) -> AppRe
             )
             .send()
             .await
-            .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error))?;
+            .map_err(|error| {
+                AppError::aws_for_account_sdk("s3", runtime.account.id.clone(), error)
+            })?;
     }
 
     Ok(())
@@ -1183,7 +1212,10 @@ fn normalize_s3_prefix(prefix: &str) -> String {
     }
 }
 
-fn build_prefix_deletion_summary(prefix: &str, listed: ListedPrefixObjects) -> S3PrefixDeletionSummary {
+fn build_prefix_deletion_summary(
+    prefix: &str,
+    listed: ListedPrefixObjects,
+) -> S3PrefixDeletionSummary {
     let (file_count, folder_count) = count_prefix_children(&listed.keys, prefix);
 
     S3PrefixDeletionSummary {
@@ -1307,10 +1339,13 @@ mod tests {
     #[test]
     fn skips_job_level_files_that_are_not_pod_logs() {
         // job-metadata.log lives directly under the job prefix.
-        assert!(
-            parse_s3_job_log_object(&format!("logs/{VC}/jobs/{JOB}/job-metadata.log"), JOB, 1, None)
-                .is_none()
-        );
+        assert!(parse_s3_job_log_object(
+            &format!("logs/{VC}/jobs/{JOB}/job-metadata.log"),
+            JOB,
+            1,
+            None
+        )
+        .is_none());
     }
 
     #[test]

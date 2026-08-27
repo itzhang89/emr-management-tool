@@ -19,32 +19,45 @@ use crate::models::{AwsCommandContext, JobRunSummary};
 /// account cannot loop forever.
 const MAX_EMR_PAGINATION_PAGES: usize = 100;
 
+/// The production [`JobDataSource`]: the MCP tools' view of AWS, backed by the
+/// app's own SDK clients and SQLite job history.
+///
+/// This replaces the old Node→HTTP bridge (`mcp_bridge.rs`): the tools now call
+/// straight into the same code paths the desktop UI uses, so there is no
+/// cross-process DTO to keep in sync.
+///
+/// The wrapper holds an `Option<AppHandle>` so a raw variant can be built for
+/// unit tests, where no real Tauri runtime exists. Tool methods check the
+/// handle before touching it and return a readable error instead of panicking.
 pub struct AppJobDataSource {
-    app: AppHandle,
+    app: Option<AppHandle>,
 }
 
 impl AppJobDataSource {
     pub fn new(app: AppHandle) -> Self {
-        Self { app }
+        Self { app: Some(app) }
     }
 
-    /// Construct a data source for tests that never reach AWS: the wrapper only
-    /// holds an `AppHandle`, which cannot be built in a unit test, so expose a
-    /// raw variant the in-process transport tests can hand to `McpTools`.
-    ///
-    /// The tools it backs (`list_accounts`, `analyze_job_failure`) fail with a
-    /// "no app handle" error rather than panicking, which is what the transport
-    /// tests assert on (they only verify the handshake and tool advertisement).
+    /// Construct a data source for tests that never reach AWS: every tool
+    /// fails with a "no app handle" error rather than panicking, which is what
+    /// the transport tests assert on (they only verify the handshake and tool
+    /// advertisement).
     #[doc(hidden)]
     #[cfg(test)]
     pub fn new_unavailable_for_test() -> Self {
-        let app = tauri::test::mock_app();
-        Self { app: app.handle().clone() }
+        Self { app: None }
+    }
+
+    fn handle(&self) -> AppResult<&AppHandle> {
+        self.app
+            .as_ref()
+            .ok_or_else(|| AppError::internal("MCP data source has no app handle (test mode)."))
     }
 }
 
 /// Project a job-history row into the shape the tools consume.
-fn job_ref_from_summary(job: &JobRunSummary) -> JobRef {    let describe = job.describe_details.as_ref();
+fn job_ref_from_summary(job: &JobRunSummary) -> JobRef {
+    let describe = job.describe_details.as_ref();
     JobRef {
         id: job.id.clone(),
         name: Some(job.name.clone()).filter(|name| !name.is_empty()),
@@ -101,7 +114,7 @@ impl JobDataSource for AppJobDataSource {
 
             // 2. Enumerate virtual clusters and probe each one via AWS.
             let runtime = match runtime_for_context(
-                &self.app,
+                self.handle()?,
                 AwsCommandContext {
                     account_id: Some(account.id.clone()),
                 },
@@ -188,7 +201,7 @@ impl JobDataSource for AppJobDataSource {
         // Delegate to the same command the desktop UI uses: it resolves the job
         // via AWS when a cluster id is given and falls back to local history.
         let job = crate::commands::emr::describe_job_run(
-            self.app.clone(),
+            self.handle()?.clone(),
             crate::models::JobRunRequest {
                 account_id: account_id.map(ToString::to_string),
                 id: Some(job_id.to_string()),
@@ -210,7 +223,7 @@ impl JobDataSource for AppJobDataSource {
         prefix: &str,
     ) -> AppResult<Vec<LogObject>> {
         let runtime = runtime_for_context(
-            &self.app,
+            self.handle()?,
             AwsCommandContext {
                 account_id: account_id.map(ToString::to_string),
             },
@@ -259,7 +272,7 @@ impl JobDataSource for AppJobDataSource {
         key: &str,
     ) -> AppResult<String> {
         let runtime = runtime_for_context(
-            &self.app,
+            self.handle()?,
             AwsCommandContext {
                 account_id: account_id.map(ToString::to_string),
             },
@@ -293,7 +306,7 @@ impl JobDataSource for AppJobDataSource {
         limit: i32,
     ) -> AppResult<Vec<LogEvent>> {
         let runtime = runtime_for_context(
-            &self.app,
+            self.handle()?,
             AwsCommandContext {
                 account_id: account_id.map(ToString::to_string),
             },
