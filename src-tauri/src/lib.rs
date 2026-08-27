@@ -5,7 +5,7 @@ pub mod diagnostics;
 pub mod distribution;
 pub mod emr_log_path;
 pub mod error;
-pub mod mcp_bridge;
+pub mod mcp;
 pub mod models;
 pub mod portable_updater;
 pub mod state;

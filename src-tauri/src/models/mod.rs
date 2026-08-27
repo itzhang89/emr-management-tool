@@ -743,11 +743,7 @@ pub struct McpStartRequest {
 pub struct McpStatus {
     pub running: bool,
     pub mcp_port: Option<u16>,
-    pub bridge_port: Option<u16>,
-    pub pid: Option<u32>,
-    pub health_url: Option<String>,
     pub endpoint_url: Option<String>,
-    pub entry_point: Option<String>,
 }
 
 /// One MCP tool invocation, persisted by the Node MCP server into the app's

@@ -607,11 +607,7 @@ export interface PortableUpdateInfo {
 export interface McpStatus {
   running: boolean;
   mcpPort?: number;
-  bridgePort?: number;
-  pid?: number;
-  healthUrl?: string;
   endpointUrl?: string;
-  entryPoint?: string;
 }
 
 /** One MCP tool invocation from the audit database (mcp_audit table). */

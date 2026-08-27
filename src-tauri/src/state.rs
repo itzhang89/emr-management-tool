@@ -5,7 +5,6 @@ use crate::models::{
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tokio::process::Child;
 
 pub struct AppState {
     pub settings: Mutex<AwsSettings>,
@@ -15,11 +14,11 @@ pub struct AppState {
     pub mcp_state: Mutex<McpState>,
 }
 
+/// State for the in-process MCP server. The axum task is spawned inside the
+/// app process and aborted on stop, so nothing can outlive the app — there is
+/// no child process to track.
 pub struct McpState {
-    pub child: Option<Child>,
-    pub bridge_port: Option<u16>,
-    pub bridge_token: Option<String>,
-    pub bridge_task: Option<tokio::task::JoinHandle<()>>,
+    pub task: Option<tokio::task::JoinHandle<()>>,
     pub mcp_port: Option<u16>,
     pub transport: Option<String>,
 }
@@ -27,10 +26,7 @@ pub struct McpState {
 impl Default for McpState {
     fn default() -> Self {
         Self {
-            child: None,
-            bridge_port: None,
-            bridge_token: None,
-            bridge_task: None,
+            task: None,
             mcp_port: None,
             transport: None,
         }

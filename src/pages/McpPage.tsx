@@ -317,7 +317,6 @@ export function McpPage() {
   });
 
   const isRunning = status?.running ?? false;
-  const bridgePort = status?.bridgePort;
   const mcpPort = status?.mcpPort ?? port;
   const endpointUrl =
     (isRunning ? status?.endpointUrl : undefined) ?? `http://127.0.0.1:${mcpPort}/mcp`;
@@ -467,12 +466,6 @@ export function McpPage() {
                       Active
                     </Badge>
                     <span className="text-sm font-medium">MCP server is running</span>
-                    {bridgePort && (
-                      <span className="text-xs text-muted-foreground">
-                        (bridge: {bridgePort}
-                        {status?.pid ? `, PID: ${status.pid}` : ""})
-                      </span>
-                    )}
                   </div>
                 </div>
               ) : (
@@ -572,13 +565,6 @@ export function McpPage() {
                   <span>
                     <strong>Local-only communication.</strong> The MCP server listens on <code>127.0.0.1</code>{" "}
                     only — it is not accessible from any other device on your network.
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="mt-0.5 shrink-0 text-green-600">&#10003;</span>
-                  <span>
-                    <strong>Token-authenticated bridge.</strong> Internal API calls between MCP and the app require
-                    a randomly generated token that is created fresh each time the server starts.
                   </span>
                 </li>
                 <li className="flex items-start gap-2">

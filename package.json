@@ -4,8 +4,7 @@
   "description": "Desktop GUI for submitting and managing EMR on EKS jobs.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && npm run mcp:build",
-    "mcp:build": "cd mcp && npm run build",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
