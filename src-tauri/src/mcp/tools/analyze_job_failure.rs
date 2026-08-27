@@ -260,12 +260,13 @@ pub struct InvalidJobIdReport {
 }
 
 /// What the tool returns: one of three report shapes, serialized as JSON text.
+/// `FailureReport` is boxed to keep the enum from ballooning past 700 bytes.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum AnalyzeJobFailureReport {
     InvalidJobId(InvalidJobIdReport),
     Completed(CompletionReport),
-    Failure(FailureReport),
+    Failure(Box<FailureReport>),
 }
 
 impl AnalyzeJobFailureReport {
@@ -275,7 +276,7 @@ impl AnalyzeJobFailureReport {
     }
 
     pub fn internal_failure(job_id: &str, message: &str) -> Self {
-        AnalyzeJobFailureReport::Failure(FailureReport {
+        AnalyzeJobFailureReport::Failure(Box::new(FailureReport {
             found_in_other_account: false,
             account: AccountScope {
                 id: None,
@@ -319,7 +320,7 @@ impl AnalyzeJobFailureReport {
                 controller_log_lines: 0,
                 analysis_generated: chrono::Utc::now().to_rfc3339(),
             },
-        })
+        }))
     }
 }
 
@@ -470,7 +471,7 @@ pub async fn run<S: JobDataSource>(
         has_evidence,
     );
 
-    Ok(AnalyzeJobFailureReport::Failure(FailureReport {
+    Ok(AnalyzeJobFailureReport::Failure(Box::new(FailureReport {
         found_in_other_account,
         account,
         job: JobReport {
@@ -517,7 +518,7 @@ pub async fn run<S: JobDataSource>(
             controller_log_lines: controller_relevant_lines.len(),
             analysis_generated: chrono::Utc::now().to_rfc3339(),
         },
-    }))
+    })))
 }
 
 fn tail_lines(lines: &[&str], count: usize) -> String {

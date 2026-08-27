@@ -135,7 +135,7 @@ impl McpTools {
                 None,
                 serde_json::to_value(&args).unwrap_or_default(),
                 serde_json::Value::Null,
-                Some(error.message.clone()),
+                Some(error.message.to_string()),
             ),
         }
         result
@@ -182,7 +182,7 @@ impl McpTools {
                     job_id: args.job_id.clone(),
                     bucket: None,
                     objects: Vec::new(),
-                    note: Some(error.message),
+                    note: Some(error.message.to_string()),
                 }),
         )
         .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
@@ -206,7 +206,7 @@ impl McpTools {
                     total_lines: 0,
                     noise_filtered_lines: 0,
                     truncated: false,
-                    error: Some(error.message),
+                    error: Some(error.message.to_string()),
                 }),
         )
         .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))

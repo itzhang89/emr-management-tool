@@ -191,7 +191,7 @@ pub fn migrate_legacy_credential_store(app: &AppHandle) -> AppResult<()> {
         if store.get(&key).is_some() {
             continue;
         }
-        if !value.as_str().is_some_and(|value| !value.trim().is_empty()) {
+        if value.as_str().is_none_or(|value| value.trim().is_empty()) {
             continue;
         }
         store.set(key, value);

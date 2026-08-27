@@ -334,7 +334,7 @@ pub async fn get_athena_query_execution(
     let statistics = execution.statistics();
     let state = status
         .and_then(|value| value.state())
-        .map(|value| query_state_as_str(&value))
+        .map(query_state_as_str)
         .unwrap_or("UNKNOWN");
 
     Ok(AthenaQueryExecution {

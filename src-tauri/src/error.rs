@@ -6,22 +6,22 @@ use thiserror::Error;
 #[serde(rename_all = "camelCase")]
 #[error("{message}")]
 pub struct AppError {
-    pub kind: String,
-    pub code: String,
-    pub message: String,
-    pub service: Option<String>,
-    pub request_id: Option<String>,
+    pub kind: Box<str>,
+    pub code: Box<str>,
+    pub message: Box<str>,
+    pub service: Option<Box<str>>,
+    pub request_id: Option<Box<str>>,
     pub retryable: bool,
-    pub account_id: Option<String>,
+    pub account_id: Option<Box<str>>,
 }
 
 impl AppError {
     pub fn aws(service: &'static str, error: impl std::fmt::Display) -> Self {
         Self {
-            kind: "aws".to_string(),
-            service: Some(service.to_string()),
-            code: "AwsSdkError".to_string(),
-            message: error.to_string(),
+            kind: "aws".into(),
+            service: Some(service.into()),
+            code: "AwsSdkError".into(),
+            message: error.to_string().into(),
             request_id: None,
             retryable: false,
             account_id: None,
@@ -34,7 +34,7 @@ impl AppError {
         error: impl std::fmt::Display,
     ) -> Self {
         Self {
-            account_id: Some(account_id.into()),
+            account_id: Some(account_id.into().into()),
             ..Self::aws(service, error)
         }
     }
@@ -59,37 +59,38 @@ impl AppError {
         account_id: Option<String>,
         error: &(impl ProvideErrorMetadata + std::fmt::Display),
     ) -> Self {
-        let code = error
+        let code: Box<str> = error
             .code()
             .filter(|value| !value.is_empty())
             .unwrap_or("AwsSdkError")
-            .to_string();
-        let message = humanize_aws_error(service, error);
+            .into();
+        let message: Box<str> = humanize_aws_error(service, error).into();
         let request_id = error
             .meta()
             .extra("aws_request_id")
             .or_else(|| error.meta().extra("request_id"))
-            .map(str::to_string);
+            .map(str::to_string)
+            .map(Into::into);
 
         let retryable = is_retryable_aws_code(&code)
             || message.to_ascii_lowercase().contains("too many requests");
 
         Self {
-            kind: "aws".to_string(),
-            service: Some(service.to_string()),
+            kind: "aws".into(),
+            service: Some(service.into()),
             code,
             message,
             request_id,
             retryable,
-            account_id,
+            account_id: account_id.map(Into::into),
         }
     }
 
     pub fn storage(message: impl Into<String>) -> Self {
         Self {
-            kind: "storage".to_string(),
-            code: "StorageError".to_string(),
-            message: message.into(),
+            kind: "storage".into(),
+            code: "StorageError".into(),
+            message: message.into().into(),
             service: None,
             request_id: None,
             retryable: false,
@@ -99,9 +100,9 @@ impl AppError {
 
     pub fn validation(message: impl Into<String>) -> Self {
         Self {
-            kind: "validation".to_string(),
-            code: "ValidationError".to_string(),
-            message: message.into(),
+            kind: "validation".into(),
+            code: "ValidationError".into(),
+            message: message.into().into(),
             service: None,
             request_id: None,
             retryable: false,
@@ -111,9 +112,9 @@ impl AppError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
-            kind: "internal".to_string(),
-            code: "InternalError".to_string(),
-            message: message.into(),
+            kind: "internal".into(),
+            code: "InternalError".into(),
+            message: message.into().into(),
             service: None,
             request_id: None,
             retryable: false,
@@ -247,9 +248,9 @@ mod tests {
             .build();
         let error = AppError::aws_sdk("s3", metadata);
 
-        assert_eq!(error.code, "AccessDenied");
+        assert_eq!(error.code.as_ref(), "AccessDenied");
         assert_eq!(
-            error.message,
+            error.message.as_ref(),
             "User is not authorized to perform: s3:ListAllMyBuckets"
         );
     }
@@ -259,7 +260,7 @@ mod tests {
         let metadata = ErrorMetadata::builder().code("AccessDenied").build();
         let error = AppError::aws_sdk("s3", metadata);
 
-        assert_eq!(error.code, "AccessDenied");
+        assert_eq!(error.code.as_ref(), "AccessDenied");
         assert!(error.message.contains("Access denied for S3"));
     }
 
@@ -271,9 +272,9 @@ mod tests {
             .build();
         let error = AppError::aws_sdk("emr-containers", metadata);
 
-        assert_eq!(error.code, "ThrottlingException");
+        assert_eq!(error.code.as_ref(), "ThrottlingException");
         assert!(error.retryable);
-        assert_eq!(error.message, "Too Many Requests");
+        assert_eq!(error.message.as_ref(), "Too Many Requests");
     }
 
     #[test]

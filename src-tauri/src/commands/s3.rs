@@ -486,28 +486,28 @@ pub async fn upload_s3_object_from_path(
     let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
 
     let uploaded = if total_bytes > MULTIPART_THRESHOLD_BYTES {
-        upload_file_multipart(
-            &app,
-            &client,
-            &account_id,
-            &request.bucket,
-            &key,
-            &file_name,
+        upload_file_multipart(&UploadContext {
+            app: &app,
+            client: &client,
+            account_id: &account_id,
+            bucket: &request.bucket,
+            key: &key,
+            file_name: &file_name,
             path,
             total_bytes,
-        )
+        })
         .await?
     } else {
-        upload_file_single(
-            &app,
-            &client,
-            &account_id,
-            &request.bucket,
-            &key,
-            &file_name,
+        upload_file_single(&UploadContext {
+            app: &app,
+            client: &client,
+            account_id: &account_id,
+            bucket: &request.bucket,
+            key: &key,
+            file_name: &file_name,
             path,
             total_bytes,
-        )
+        })
         .await?
     };
 
@@ -674,16 +674,30 @@ fn emit_upload_progress(
     );
 }
 
-async fn upload_file_single(
-    app: &AppHandle,
-    client: &aws_sdk_s3::Client,
-    account_id: &str,
-    bucket: &str,
-    key: &str,
-    file_name: &str,
-    path: &Path,
+/// Shared context for one S3 file upload, passed by reference to the upload
+/// helpers so they do not each take eight-plus loose arguments.
+struct UploadContext<'a> {
+    app: &'a AppHandle,
+    client: &'a aws_sdk_s3::Client,
+    account_id: &'a str,
+    bucket: &'a str,
+    key: &'a str,
+    file_name: &'a str,
+    path: &'a Path,
     total_bytes: u64,
-) -> AppResult<S3ObjectEntry> {
+}
+
+async fn upload_file_single(context: &UploadContext<'_>) -> AppResult<S3ObjectEntry> {
+    let UploadContext {
+        app,
+        client,
+        account_id,
+        bucket,
+        key,
+        file_name,
+        path,
+        total_bytes,
+    } = *context;
     emit_upload_progress(app, file_name, key, "reading", 0, total_bytes);
     let bytes = tokio::fs::read(path)
         .await
@@ -710,16 +724,17 @@ async fn upload_file_single(
     ))
 }
 
-async fn upload_file_multipart(
-    app: &AppHandle,
-    client: &aws_sdk_s3::Client,
-    account_id: &str,
-    bucket: &str,
-    key: &str,
-    file_name: &str,
-    path: &Path,
-    total_bytes: u64,
-) -> AppResult<S3ObjectEntry> {
+async fn upload_file_multipart(context: &UploadContext<'_>) -> AppResult<S3ObjectEntry> {
+    let UploadContext {
+        app,
+        client,
+        account_id,
+        bucket,
+        key,
+        file_name,
+        total_bytes,
+        ..
+    } = *context;
     emit_upload_progress(app, file_name, key, "uploading", 0, total_bytes);
 
     let create = client
@@ -734,18 +749,7 @@ async fn upload_file_multipart(
         .ok_or_else(|| AppError::validation("S3 did not return a multipart upload id."))?
         .to_string();
 
-    let upload_result = upload_multipart_parts(
-        app,
-        client,
-        account_id,
-        bucket,
-        key,
-        file_name,
-        path,
-        total_bytes,
-        &upload_id,
-    )
-    .await;
+    let upload_result = upload_multipart_parts(context, &upload_id).await;
 
     match upload_result {
         Ok(entry) => Ok(entry),
@@ -763,16 +767,19 @@ async fn upload_file_multipart(
 }
 
 async fn upload_multipart_parts(
-    app: &AppHandle,
-    client: &aws_sdk_s3::Client,
-    account_id: &str,
-    bucket: &str,
-    key: &str,
-    file_name: &str,
-    path: &Path,
-    total_bytes: u64,
+    context: &UploadContext<'_>,
     upload_id: &str,
 ) -> AppResult<S3ObjectEntry> {
+    let UploadContext {
+        app,
+        client,
+        account_id,
+        bucket,
+        key,
+        file_name,
+        path,
+        total_bytes,
+    } = *context;
     let mut file = File::open(path)
         .await
         .map_err(|error| AppError::storage(format!("Failed to open selected file: {error}")))?;

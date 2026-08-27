@@ -17,20 +17,11 @@ pub struct AppState {
 /// State for the in-process MCP server. The axum task is spawned inside the
 /// app process and aborted on stop, so nothing can outlive the app — there is
 /// no child process to track.
+#[derive(Default)]
 pub struct McpState {
     pub task: Option<tokio::task::JoinHandle<()>>,
     pub mcp_port: Option<u16>,
     pub transport: Option<String>,
-}
-
-impl Default for McpState {
-    fn default() -> Self {
-        Self {
-            task: None,
-            mcp_port: None,
-            transport: None,
-        }
-    }
 }
 
 impl Default for AppState {
@@ -72,13 +63,17 @@ pub fn default_application_template() -> ApplicationTemplate {
 pub fn default_resource_templates() -> Vec<ResourceTemplate> {
     let now = Utc::now();
 
-    vec![
-        builtin_resource_template("tiny", "Tiny", 1, "1G", 1, "1G", 1, now),
-        builtin_resource_template("small", "Small", 1, "2G", 2, "2G", 2, now),
-        builtin_resource_template("medium", "Medium", 1, "4G", 2, "4G", 2, now),
-        builtin_resource_template("large", "Large", 1, "8G", 4, "8G", 2, now),
-        builtin_resource_template("xlarge", "XLarge", 1, "16G", 4, "16G", 2, now),
-    ]
+    let presets = [
+        ("tiny", "Tiny", 1, "1G", 1, "1G", 1),
+        ("small", "Small", 1, "2G", 2, "2G", 2),
+        ("medium", "Medium", 1, "4G", 2, "4G", 2),
+        ("large", "Large", 1, "8G", 4, "8G", 2),
+        ("xlarge", "XLarge", 1, "16G", 4, "16G", 2),
+    ];
+    presets
+        .into_iter()
+        .map(|preset| builtin_resource_template(preset, now))
+        .collect()
 }
 
 pub fn default_job_config_templates() -> Vec<JobConfigTemplate> {
@@ -147,13 +142,15 @@ pub fn default_job_config_templates() -> Vec<JobConfigTemplate> {
 }
 
 fn builtin_resource_template(
-    id: &str,
-    name: &str,
-    driver_cores: i32,
-    driver_memory: &str,
-    executor_cores: i32,
-    executor_memory: &str,
-    executor_instances: i32,
+    (id, name, driver_cores, driver_memory, executor_cores, executor_memory, executor_instances): (
+        &str,
+        &str,
+        i32,
+        &str,
+        i32,
+        &str,
+        i32,
+    ),
     now: chrono::DateTime<Utc>,
 ) -> ResourceTemplate {
     ResourceTemplate {

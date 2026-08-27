@@ -29,7 +29,7 @@ pub async fn start(
 ) -> Result<tokio::task::JoinHandle<()>, crate::error::AppError> {
     use crate::error::AppError;
 
-    if port < 1024 || port > u16::MAX / 2 {
+    if !(1024..=u16::MAX / 2).contains(&port) {
         return Err(AppError::validation("Port must be between 1024 and 65535."));
     }
 

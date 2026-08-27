@@ -1129,7 +1129,7 @@ mod tests {
         let error = validate_start_job_request(&request).expect_err("job name is invalid");
 
         assert_eq!(
-            error.message,
+            error.message.as_ref(),
             "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores."
         );
     }
