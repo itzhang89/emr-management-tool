@@ -1,16 +1,17 @@
 import { useState } from "react";
-import { CheckCircle2, Download, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileDown, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
 import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
+import { ImportCliProfileDialog } from "@/components/settings/ImportCliProfileDialog";
 import {
   useAwsAccounts,
-  useAwsCliProfiles,
   useDeleteAwsAccount,
   useImportAwsCliProfile,
   useLoadAwsCliProfile,
@@ -40,8 +41,8 @@ export function SettingsPage() {
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [accountDialog, setAccountDialog] = useState<AccountDialogState | null>(null);
   const [accountPendingDelete, setAccountPendingDelete] = useState<AwsAccountSummary | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const accounts = useAwsAccounts();
-  const cliProfiles = useAwsCliProfiles();
   const importCliProfile = useImportAwsCliProfile();
   const loadCliProfile = useLoadAwsCliProfile();
   const setActiveAccount = useSetActiveAwsAccount();
@@ -51,6 +52,7 @@ export function SettingsPage() {
     const notice = cliImportPromptReason(profile, accounts.data ?? []);
     try {
       const credentials = await loadCliProfile.mutateAsync(profile.profileName);
+      setImportDialogOpen(false);
       setAccountDialog({
         mode: "create",
         createDefaults: {
@@ -83,7 +85,10 @@ export function SettingsPage() {
         makeActive: true
       },
       {
-        onSuccess: () => toast.success(`${profile.profileName} imported.`),
+        onSuccess: () => {
+          toast.success(`${profile.profileName} imported.`);
+          setImportDialogOpen(false);
+        },
         onError: (error) => toast.error(errorMessage(error, "Failed to import AWS CLI profile."))
       }
     );
@@ -140,72 +145,91 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="flex max-w-5xl flex-col gap-6 overflow-auto">
+    <div className="flex w-full min-w-0 flex-col gap-6 overflow-auto">
       <PageHeader
         pageId="settings"
-        titleAddon={releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
-        actions={
-          <div className="flex flex-col items-end gap-1.5">
-            <p className="text-sm text-muted-foreground" aria-live="polite">
+        showIcon
+        titleAddon={
+          <>
+            <Separator orientation="vertical" className="h-5" />
+            <span className="text-sm font-medium text-muted-foreground" aria-live="polite">
+              v{releaseInfo.version}
               {availableUpdate ? (
                 <>
-                  Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
-                  {" · "}
-                  Upgrade to <span className="font-medium text-foreground">{availableUpdate.version}</span>
+                  {" → "}
+                  <span className="text-foreground">v{availableUpdate.version}</span>
                 </>
-              ) : (
-                <>
-                  Current version: <span className="font-medium text-foreground">{releaseInfo.version}</span>
-                </>
-              )}
-            </p>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={checkingUpdate || installingUpdate}
-                  onClick={availableUpdate ? installUpdate : checkForUpdates}
-                >
-                  {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                  {updateButtonLabel}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{updateTooltip}</TooltipContent>
-            </Tooltip>
-          </div>
+              ) : null}
+            </span>
+            {releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
+          </>
         }
-      />
-
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-          <div className="space-y-1.5">
-            <CardTitle>Configured Accounts</CardTitle>
-            <CardDescription>
-              Double-click an account to make it active. Use Edit to change the name or region. Access Key stays fixed;
-              unlock Secret only when rotating the secret for the same key.
-            </CardDescription>
-          </div>
+        actions={
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
-                aria-label="Add account"
-                onClick={() => setAccountDialog({ mode: "create" })}
+                disabled={checkingUpdate || installingUpdate}
+                onClick={availableUpdate ? installUpdate : checkForUpdates}
               >
-                <Plus />
+                {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                {updateButtonLabel}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Add account</TooltipContent>
+            <TooltipContent>{updateTooltip}</TooltipContent>
           </Tooltip>
+        }
+      />
+
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 p-4 2xl:p-5">
+          <div className="space-y-1">
+            <CardTitle className="text-base 2xl:text-lg">Configured Accounts</CardTitle>
+            <CardDescription className="text-xs 2xl:text-sm">
+              Double-click an account to make it active. Use Edit to change the name or region. Access Key stays fixed;
+              unlock Secret only when rotating the secret for the same key. Use the import icon to bring in local AWS CLI
+              profiles.
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-9 2xl:size-10"
+                  aria-label="Import AWS CLI profiles"
+                  onClick={() => setImportDialogOpen(true)}
+                >
+                  <FileDown className="size-4 2xl:size-[18px]" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Import AWS CLI profiles</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-9 2xl:size-10"
+                  aria-label="Add account"
+                  onClick={() => setAccountDialog({ mode: "create" })}
+                >
+                  <Plus className="size-4 2xl:size-[18px]" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add account</TooltipContent>
+            </Tooltip>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2 p-4 pt-0 2xl:space-y-2.5 2xl:p-5 2xl:pt-0">
           {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
           {accounts.error ? <DemoError error={accounts.error} /> : null}
           {accounts.data?.length === 0 ? (
-            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground 2xl:p-4 2xl:text-sm">
               No AWS accounts are configured yet. Click + to add one and enable production commands.
             </p>
           ) : null}
@@ -213,38 +237,73 @@ export function SettingsPage() {
             <div
               key={account.id}
               title="Double-click to use this account"
-              className="flex cursor-default items-center justify-between rounded-lg border p-4"
+              className="flex cursor-default items-center justify-between gap-3 rounded-md border px-3 py-2.5 transition-colors hover:bg-accent/40 2xl:px-4 2xl:py-3 3xl:px-5 3xl:py-3.5"
               onDoubleClick={() => activateAccount(account)}
             >
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 space-y-0.5 2xl:space-y-1">
                 <div className="flex min-w-0 items-center gap-2">
-                  <p className="truncate font-medium">{account.name}</p>
-                  {account.isActive ? <Badge>Active</Badge> : null}
+                  <p className="truncate text-sm font-medium 2xl:text-base">{account.name}</p>
+                  {account.isActive ? (
+                    <Badge className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]">
+                      Active
+                    </Badge>
+                  ) : null}
                 </div>
-                <p className="text-sm text-muted-foreground">
+                <p className="truncate text-xs text-muted-foreground 2xl:text-sm">
                   {account.region} · {account.accessKeyIdMasked}
                   {account.identity ? ` · ${account.identity.account}` : ""}
                 </p>
-                {account.identity ? <p className="truncate text-xs text-muted-foreground">{account.identity.arn}</p> : null}
+                {account.identity ? (
+                  <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">{account.identity.arn}</p>
+                ) : null}
               </div>
-              <div className="flex gap-2" onDoubleClick={(event) => event.stopPropagation()}>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={account.isActive || setActiveAccount.isPending}
-                  onClick={() => activateAccount(account)}
-                >
-                  <CheckCircle2 data-icon="inline-start" />
-                  Use
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setAccountDialog({ mode: "edit", account })}>
-                  <Pencil data-icon="inline-start" />
-                  Edit
-                </Button>
-                <Button type="button" variant="destructive" onClick={() => setAccountPendingDelete(account)}>
-                  <Trash2 data-icon="inline-start" />
-                  Delete
-                </Button>
+              <div className="flex shrink-0 items-center gap-1" onDoubleClick={(event) => event.stopPropagation()}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 2xl:size-10"
+                      aria-label={`Use ${account.name}`}
+                      disabled={account.isActive || setActiveAccount.isPending}
+                      onClick={() => activateAccount(account)}
+                    >
+                      <CheckCircle2 className="size-4 2xl:size-[18px]" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{account.isActive ? "Already active" : "Use this account"}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 2xl:size-10"
+                      aria-label={`Edit ${account.name}`}
+                      onClick={() => setAccountDialog({ mode: "edit", account })}
+                    >
+                      <Pencil className="size-4 2xl:size-[18px]" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Edit</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 text-destructive hover:bg-destructive/10 hover:text-destructive 2xl:size-10"
+                      aria-label={`Delete ${account.name}`}
+                      onClick={() => setAccountPendingDelete(account)}
+                    >
+                      <Trash2 className="size-4 2xl:size-[18px]" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Delete</TooltipContent>
+                </Tooltip>
               </div>
             </div>
           ))}
@@ -252,57 +311,24 @@ export function SettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>AWS CLI Profiles</CardTitle>
-          <CardDescription>
-            Import local AWS CLI static credential profiles. If the profile is missing a region or the name is already
-            used, you will complete the details in the add-account form.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {cliProfiles.isLoading ? <p className="text-sm text-muted-foreground">Scanning AWS CLI profiles...</p> : null}
-          {cliProfiles.error ? <DemoError error={cliProfiles.error} /> : null}
-          {cliProfiles.data?.length === 0 ? (
-            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No AWS CLI profiles were found in the local credentials or config files.
-            </p>
-          ) : null}
-          {cliProfiles.data?.map((profile) => (
-            <div key={profile.profileName} className="flex items-center justify-between rounded-lg border p-4">
-              <div className="min-w-0 space-y-1">
-                <div className="flex items-center gap-2">
-                  <p className="font-medium">{profile.profileName}</p>
-                  {profile.canImport ? <Badge variant="secondary">Importable</Badge> : <Badge variant="outline">Unsupported</Badge>}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {profile.region ?? "No region"} · {profile.accessKeyIdMasked ?? "No static access key"}
-                </p>
-                {profile.importError ? <p className="text-xs text-muted-foreground">{profile.importError}</p> : null}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!profile.canImport || importCliProfile.isPending || loadCliProfile.isPending}
-                onClick={() => handleImportProfile(profile)}
-              >
-                <Download data-icon="inline-start" />
-                Import
-              </Button>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <KeyRound className="size-5" />
+        <CardHeader className="p-4 2xl:p-5">
+          <CardTitle className="flex items-center gap-2 text-base 2xl:text-lg">
+            <KeyRound className="size-4 2xl:size-[18px]" />
             Future Authentication
           </CardTitle>
-          <CardDescription>AWS Profile, SSO, and Assume Role are reserved for later versions.</CardDescription>
+          <CardDescription className="text-xs 2xl:text-sm">
+            AWS Profile, SSO, and Assume Role are reserved for later versions.
+          </CardDescription>
         </CardHeader>
       </Card>
 
+      <ImportCliProfileDialog
+        open={importDialogOpen}
+        pending={importCliProfile.isPending || loadCliProfile.isPending}
+        onOpenChange={setImportDialogOpen}
+        onImport={handleImportProfile}
+        renderError={(error) => <DemoError error={error} />}
+      />
       <AccountFormDialog
         open={Boolean(accountDialog)}
         mode={accountDialog?.mode ?? "create"}

@@ -24,4 +24,12 @@ describe("PageHeader", () => {
     expect(screen.getByText("Development")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check for Updates" })).toBeInTheDocument();
   });
+
+  it("renders the navigation icon only when showIcon is set", () => {
+    const { container, rerender } = render(<PageHeader pageId="settings" />);
+    expect(container.querySelector("svg")).not.toBeInTheDocument();
+
+    rerender(<PageHeader pageId="settings" showIcon />);
+    expect(container.querySelector("svg")).toBeInTheDocument();
+  });
 });

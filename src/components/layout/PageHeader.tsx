@@ -5,18 +5,21 @@ import { getPageMeta, type PageId } from "@/pages/pageMeta";
 export function PageHeader({
   pageId,
   actions,
-  titleAddon
+  titleAddon,
+  showIcon
 }: {
   pageId: PageId;
   actions?: ReactNode;
   titleAddon?: ReactNode;
+  showIcon?: boolean;
 }) {
-  const { label, description } = getPageMeta(pageId);
+  const { label, description, icon: Icon } = getPageMeta(pageId);
 
   return (
     <div className={cn("shrink-0", actions && "flex items-start justify-between gap-4")}>
       <div>
         <div className="flex items-center gap-2">
+          {showIcon ? <Icon className="size-6 shrink-0 text-muted-foreground" aria-hidden /> : null}
           <h1 className="text-2xl font-semibold tracking-tight">{label}</h1>
           {titleAddon}
         </div>

@@ -125,8 +125,7 @@ describe("SettingsPage updates", () => {
     renderSettingsPage();
 
     expect(screen.queryByRole("heading", { name: "Application Updates" })).not.toBeInTheDocument();
-    expect(screen.getByText(/Current version:/i)).toBeInTheDocument();
-    expect(screen.getByText("0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
 
     await user.hover(screen.getByRole("button", { name: /Check for Updates/i }));
 
@@ -146,9 +145,8 @@ describe("SettingsPage updates", () => {
     renderSettingsPage();
     await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
 
-    expect(screen.getByText(/Current version:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Upgrade to/i)).toBeInTheDocument();
-    expect(screen.getByText("0.2.0")).toBeInTheDocument();
+    expect(screen.getByText(/v0\.1\.0/)).toBeInTheDocument();
+    expect(screen.getByText("v0.2.0")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Install 0.2.0/i }));
 
@@ -230,7 +228,8 @@ describe("SettingsPage updates", () => {
     const user = userEvent.setup();
 
     renderSettingsPage();
-    const importButtons = screen.getAllByRole("button", { name: /Import/i });
+    const dialog = await openImportDialog(user);
+    const importButtons = within(dialog).getAllByRole("button", { name: /Import/i });
     await user.click(importButtons[0]);
 
     expect(mocks.importMutate).toHaveBeenCalledWith(
@@ -245,6 +244,16 @@ describe("SettingsPage updates", () => {
     expect(mocks.loadMutateAsync).not.toHaveBeenCalled();
   });
 
+  it("keeps CLI profiles out of the top-level page until the import icon is clicked", async () => {
+    const user = userEvent.setup();
+
+    renderSettingsPage();
+    expect(screen.queryByText("ready-profile")).not.toBeInTheDocument();
+
+    const dialog = await openImportDialog(user);
+    expect(within(dialog).getByText("ready-profile")).toBeInTheDocument();
+  });
+
   it("opens the add form when importing a duplicate-named CLI profile", async () => {
     const user = userEvent.setup();
     mocks.loadMutateAsync.mockResolvedValue({
@@ -255,7 +264,8 @@ describe("SettingsPage updates", () => {
     });
 
     renderSettingsPage();
-    const importButtons = screen.getAllByRole("button", { name: /Import/i });
+    const dialog = await openImportDialog(user);
+    const importButtons = within(dialog).getAllByRole("button", { name: /Import/i });
     await user.click(importButtons[1]);
 
     expect(mocks.loadMutateAsync).toHaveBeenCalledWith("prod");
@@ -270,7 +280,8 @@ describe("SettingsPage updates", () => {
     const user = userEvent.setup();
 
     renderSettingsPage();
-    const importButtons = screen.getAllByRole("button", { name: /Import/i });
+    const profilesDialog = await openImportDialog(user);
+    const importButtons = within(profilesDialog).getAllByRole("button", { name: /Import/i });
     await user.click(importButtons[2]);
 
     expect(mocks.loadMutateAsync).toHaveBeenCalledWith("no-region");
@@ -281,6 +292,11 @@ describe("SettingsPage updates", () => {
     expect(within(dialog).getByPlaceholderText("eu-central-1")).toHaveValue("");
   });
 });
+
+async function openImportDialog(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /Import AWS CLI profiles/i }));
+  return screen.findByRole("dialog");
+}
 
 function renderSettingsPage() {
   return render(
