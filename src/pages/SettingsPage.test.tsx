@@ -49,6 +49,12 @@ const mocks = vi.hoisted(() => ({
       region: undefined,
       accessKeyIdMasked: "AKIA****NONE",
       canImport: true
+    },
+    {
+      profileName: "already-imported",
+      region: "us-east-1",
+      accessKeyIdMasked: "AKIA****",
+      canImport: true
     }
   ]
 }));
@@ -252,6 +258,22 @@ describe("SettingsPage updates", () => {
 
     const dialog = await openImportDialog(user);
     expect(within(dialog).getByText("ready-profile")).toBeInTheDocument();
+  });
+
+  it("marks a profile whose access key is already configured and blocks re-importing it", async () => {
+    const user = userEvent.setup();
+
+    renderSettingsPage();
+    const dialog = await openImportDialog(user);
+    const row = within(dialog).getByText("already-imported").closest("div.rounded-md") as HTMLElement;
+
+    expect(within(row).getByText("Imported")).toBeInTheDocument();
+    expect(within(row).getByText(/Already imported as “prod”/)).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Import/i })).toBeDisabled();
+
+    await user.click(within(row).getByRole("button", { name: /Import/i }));
+    expect(mocks.importMutate).not.toHaveBeenCalled();
+    expect(mocks.loadMutateAsync).not.toHaveBeenCalled();
   });
 
   it("opens the add form when importing a duplicate-named CLI profile", async () => {

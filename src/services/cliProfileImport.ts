@@ -1,5 +1,27 @@
 import type { AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
 
+type ProfileKeyRef = Pick<AwsCliProfileSummary, "accessKeyIdMasked">;
+type AccountKeyRef = Pick<AwsAccountSummary, "name" | "accessKeyIdMasked">;
+
+function normalizeMaskedKey(value: string | undefined) {
+  return value?.trim().toUpperCase() ?? "";
+}
+
+/**
+ * Returns the already-configured account that uses the same access key as this
+ * profile, or null. Backend and frontend mask keys identically (first four plus
+ * last four characters), so masked values compare directly and no full secret
+ * has to reach the renderer.
+ */
+export function findAccountForProfileKey(
+  profile: ProfileKeyRef,
+  accounts: Array<AccountKeyRef>
+): AccountKeyRef | null {
+  const profileKey = normalizeMaskedKey(profile.accessKeyIdMasked);
+  if (!profileKey) return null;
+  return accounts.find((account) => normalizeMaskedKey(account.accessKeyIdMasked) === profileKey) ?? null;
+}
+
 /** Returns true when Import should open the add-account dialog instead of importing silently. */
 export function shouldPromptCliImport(
   profile: Pick<AwsCliProfileSummary, "profileName" | "region">,

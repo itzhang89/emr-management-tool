@@ -53,6 +53,7 @@ pub async fn create_aws_account(
     if request.region.trim().is_empty() {
         return Err(AppError::validation("Region is required."));
     }
+    ensure_access_key_unused(&request.access_key_id, request.id.as_deref()).await?;
 
     let identity = test_aws_credentials(AwsCredentialsInput {
         access_key_id: request.access_key_id.clone(),
@@ -98,6 +99,7 @@ pub async fn import_aws_cli_profile(
         return Err(AppError::validation("AWS CLI profile name is required."));
     }
     let profile = load_aws_cli_profile_credentials(&request.profile_name)?;
+    ensure_access_key_unused(&profile.access_key_id, None).await?;
     let region = request
         .region
         .as_deref()
@@ -470,4 +472,28 @@ fn sanitize_profile_id(profile_name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Rejects a second account for an access key that is already configured.
+/// `skip_account_id` lets an edit of an existing account keep its own key.
+async fn ensure_access_key_unused(
+    access_key_id: &str,
+    skip_account_id: Option<&str>,
+) -> AppResult<()> {
+    let masked = mask_access_key(access_key_id);
+    let pool = repository::pool().await?;
+    let existing = repository::list_aws_accounts(&pool).await?.into_iter().find(
+        |account| {
+            account.access_key_id_masked == masked
+                && skip_account_id.is_none_or(|id| account.id != id)
+        },
+    );
+
+    match existing {
+        Some(account) => Err(AppError::validation(format!(
+            "Access key {masked} is already configured as account \"{}\". Delete that account first if you want to re-import it.",
+            account.name
+        ))),
+        None => Ok(()),
+    }
 }

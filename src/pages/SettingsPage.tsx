@@ -325,6 +325,7 @@ export function SettingsPage() {
       <ImportCliProfileDialog
         open={importDialogOpen}
         pending={importCliProfile.isPending || loadCliProfile.isPending}
+        accounts={accounts.data ?? []}
         onOpenChange={setImportDialogOpen}
         onImport={handleImportProfile}
         renderError={(error) => <DemoError error={error} />}

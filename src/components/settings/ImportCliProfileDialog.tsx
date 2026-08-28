@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Download } from "lucide-react";
+import { Check, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,12 +10,15 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAwsCliProfiles } from "@/hooks/useAwsSettings";
-import type { AwsCliProfileSummary } from "@/types/domain";
+import { findAccountForProfileKey } from "@/services/cliProfileImport";
+import type { AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
 
 type ImportCliProfileDialogProps = {
   open: boolean;
   pending?: boolean;
+  accounts: AwsAccountSummary[];
   onOpenChange: (open: boolean) => void;
   onImport: (profile: AwsCliProfileSummary) => void;
   renderError: (error: unknown) => ReactNode;
@@ -24,6 +27,7 @@ type ImportCliProfileDialogProps = {
 export function ImportCliProfileDialog({
   open,
   pending,
+  accounts,
   onOpenChange,
   onImport,
   renderError
@@ -48,50 +52,82 @@ export function ImportCliProfileDialog({
               No AWS CLI profiles were found in the local credentials or config files.
             </p>
           ) : null}
-          {cliProfiles.data?.map((profile) => (
-            <div
-              key={profile.profileName}
-              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 2xl:px-4 2xl:py-3"
-            >
-              <div className="min-w-0 space-y-0.5 2xl:space-y-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="truncate text-sm font-medium 2xl:text-base">{profile.profileName}</p>
-                  {profile.canImport ? (
-                    <Badge
-                      variant="secondary"
-                      className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
-                    >
-                      Importable
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
-                    >
-                      Unsupported
-                    </Badge>
-                  )}
-                </div>
-                <p className="truncate text-xs text-muted-foreground 2xl:text-sm">
-                  {profile.region ?? "No region"} · {profile.accessKeyIdMasked ?? "No static access key"}
-                </p>
-                {profile.importError ? (
-                  <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">{profile.importError}</p>
-                ) : null}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 2xl:h-10 2xl:px-4"
-                disabled={!profile.canImport || pending}
-                onClick={() => onImport(profile)}
+          {cliProfiles.data?.map((profile) => {
+            const importedAs = findAccountForProfileKey(profile, accounts);
+            const alreadyImported = Boolean(importedAs);
+            return (
+              <div
+                key={profile.profileName}
+                className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 2xl:px-4 2xl:py-3"
               >
-                <Download data-icon="inline-start" className="size-4" />
-                Import
-              </Button>
-            </div>
-          ))}
+                <div className="min-w-0 space-y-0.5 2xl:space-y-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="truncate text-sm font-medium 2xl:text-base">{profile.profileName}</p>
+                    {alreadyImported ? (
+                      <Badge
+                        variant="outline"
+                        className="gap-1 border-primary/40 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-primary 2xl:text-[11px]"
+                      >
+                        <Check className="size-3" aria-hidden />
+                        Imported
+                      </Badge>
+                    ) : profile.canImport ? (
+                      <Badge
+                        variant="secondary"
+                        className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
+                      >
+                        Importable
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
+                      >
+                        Unsupported
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground 2xl:text-sm">
+                    {profile.region ?? "No region"} · {profile.accessKeyIdMasked ?? "No static access key"}
+                  </p>
+                  {alreadyImported ? (
+                    <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">
+                      Already imported as “{importedAs?.name}”.
+                    </p>
+                  ) : profile.importError ? (
+                    <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">{profile.importError}</p>
+                  ) : null}
+                </div>
+                {alreadyImported ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span tabIndex={0} className="shrink-0">
+                        <Button type="button" variant="outline" size="sm" className="2xl:h-10 2xl:px-4" disabled>
+                          <Download data-icon="inline-start" className="size-4" />
+                          Import
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      This access key is already configured as “{importedAs?.name}”.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 2xl:h-10 2xl:px-4"
+                    disabled={!profile.canImport || pending}
+                    onClick={() => onImport(profile)}
+                  >
+                    <Download data-icon="inline-start" className="size-4" />
+                    Import
+                  </Button>
+                )}
+              </div>
+            );
+          })}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
