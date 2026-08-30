@@ -8,6 +8,7 @@ pub mod error;
 pub mod mcp;
 pub mod models;
 pub mod portable_updater;
+pub mod secrets;
 pub mod state;
 
 use state::AppState;
@@ -117,8 +118,7 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
-                if let Err(error) = aws::credentials::migrate_legacy_credential_store(app.handle())
-                {
+                if let Err(error) = secrets::migrate_legacy_credential_store(app.handle()) {
                     diagnostics::append_log_line(
                         "WARN",
                         &format!("Failed to migrate the legacy credential store: {error}"),
