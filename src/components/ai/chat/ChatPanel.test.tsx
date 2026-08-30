@@ -38,12 +38,19 @@ vi.mock("@/services/tauriClient", () => ({
 }));
 
 // The stream binding needs the Tauri runtime; these tests cover the panel's
-// rendering and command wiring, so it is a no-op here.
+// rendering and command wiring, so the handlers are captured and fired directly.
+let streamHandlers: import("@/services/chatStream").ChatStreamHandlers | null = null;
 vi.mock("@/services/chatStream", async () => {
   const actual = await vi.importActual<typeof import("@/services/chatStream")>(
     "@/services/chatStream"
   );
-  return { ...actual, bindChatStreamEvents: async () => () => {} };
+  return {
+    ...actual,
+    bindChatStreamEvents: async (handlers: import("@/services/chatStream").ChatStreamHandlers) => {
+      streamHandlers = handlers;
+      return () => {};
+    }
+  };
 });
 
 function assistant(overrides: Partial<ChatAssistant> = {}): ChatAssistant {
@@ -144,6 +151,7 @@ function renderPanel(onConfigureModels = vi.fn()) {
 describe("ChatPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    streamHandlers = null;
     listChatAssistants.mockResolvedValue([assistant()]);
     listChatSessions.mockResolvedValue([session()]);
     listChatMessages.mockResolvedValue([]);
@@ -329,6 +337,26 @@ describe("ChatPanel", () => {
     expect(screen.getByText("Spark tuning")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "shuffle spill" })).toBeInTheDocument();
     expect(screen.queryByText("EMR failure analysis")).not.toBeInTheDocument();
+  });
+
+  it("shows the generated title as soon as the backend names the conversation", async () => {
+    const user = userEvent.setup();
+    chatSend.mockResolvedValue("msg-assistant");
+    listChatSessions.mockResolvedValue([session({ title: "New conversation" })]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "New conversation" }));
+    await waitFor(() => expect(streamHandlers).not.toBeNull());
+
+    // The title lands before the answer does, so the sidebar stops saying "New
+    // conversation" while tools are still running.
+    listChatSessions.mockResolvedValue([session({ title: "Driver OOM on job-abc" })]);
+    streamHandlers!.onTitle({ sessionId: "s1", title: "Driver OOM on job-abc" });
+
+    // Both the sidebar entry and the conversation header pick it up.
+    const renamed = await screen.findAllByRole("button", { name: "Driver OOM on job-abc" });
+    expect(renamed).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "New conversation" })).not.toBeInTheDocument();
   });
 
   it("changes the conversation's model", async () => {

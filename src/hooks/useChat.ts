@@ -153,6 +153,11 @@ export function useChatConversation(sessionId: string | null) {
       onError: (event) => {
         if (!forCurrentSession(event.sessionId)) return;
         setStreaming((turn) => applyError(turn ?? emptyStreamingTurn(event.sessionId), event));
+      },
+      // Not filtered by session: a conversation can be named while the user has
+      // already switched away, and the sidebar shows every session's title.
+      onTitle: () => {
+        void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }
     }).then((unbind) => {
       if (cancelled) {

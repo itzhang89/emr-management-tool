@@ -69,10 +69,22 @@ pub struct ErrorEvent {
     pub message: String,
 }
 
+/// A conversation that just earned a name from its first message. Emitted as soon
+/// as the title is known rather than when the answer finishes, because the answer
+/// can take a minute of tool calls and the sidebar should not say "New
+/// conversation" for all of it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TitleEvent {
+    pub session_id: String,
+    pub title: String,
+}
+
 pub const EVENT_DELTA: &str = "chat:delta";
 pub const EVENT_TOOL: &str = "chat:tool";
 pub const EVENT_DONE: &str = "chat:done";
 pub const EVENT_ERROR: &str = "chat:error";
+pub const EVENT_TITLE: &str = "chat:title";
 
 // --- Resolving what to send with ------------------------------------------
 
@@ -292,6 +304,10 @@ pub async fn send(
     let started = Instant::now();
     let target = resolve_target(app, pool, session_id).await?;
 
+    // Read before the user turn is stored: "no messages yet" is what marks this
+    // as the first send, and appending would make it false.
+    let needs_title = crate::db::chat::awaiting_first_title(pool, session_id).await?;
+
     crate::db::chat::append_message(
         pool,
         session_id,
@@ -312,16 +328,24 @@ pub async fn send(
     )
     .await?;
 
-    let outcome = run_rounds(
-        app,
-        pool,
-        in_process,
-        session_id,
-        &assistant.id,
-        &target,
-        &cancel,
-    )
-    .await;
+    // Naming runs alongside the answer rather than before it: the user is waiting
+    // on the reply, not the title, and the two requests touch nothing in common.
+    let (outcome, ()) = tokio::join!(
+        run_rounds(
+            app,
+            pool,
+            in_process,
+            session_id,
+            &assistant.id,
+            &target,
+            &cancel,
+        ),
+        async {
+            if needs_title {
+                name_session(app, pool, session_id, text, &target, &cancel).await;
+            }
+        }
+    );
 
     let duration_ms = started.elapsed().as_millis() as i64;
 
@@ -377,6 +401,38 @@ pub async fn send(
             );
             Err(error)
         }
+    }
+}
+
+/// Names a still-unnamed conversation from its first message.
+///
+/// Deliberately infallible: a title is a convenience, so a naming request that
+/// fails must not stop the answer the user actually asked for. The rename is
+/// conditional in SQL, so a user renaming the session at the same moment wins.
+async fn name_session(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    session_id: &str,
+    first_message: &str,
+    target: &ResolvedTarget,
+    cancel: &tokio_util::sync::CancellationToken,
+) {
+    let title = super::title::generate(target, first_message, cancel).await;
+    match crate::db::chat::rename_if_untitled(pool, session_id, &title).await {
+        Ok(true) => emit(
+            app,
+            EVENT_TITLE,
+            TitleEvent {
+                session_id: session_id.to_string(),
+                title,
+            },
+        ),
+        // False means the user renamed it first, which is not a problem.
+        Ok(false) => {}
+        Err(error) => crate::diagnostics::append_log_line(
+            "WARN",
+            &format!("Could not store the generated chat title: {error}"),
+        ),
     }
 }
 

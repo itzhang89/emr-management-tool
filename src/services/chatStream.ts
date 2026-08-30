@@ -1,17 +1,24 @@
 import { listen } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { CHAT_EVENTS } from "@/types/domain";
-import type { ChatDeltaEvent, ChatDoneEvent, ChatErrorEvent, ChatToolEvent } from "@/types/domain";
+import type {
+  ChatDeltaEvent,
+  ChatDoneEvent,
+  ChatErrorEvent,
+  ChatTitleEvent,
+  ChatToolEvent
+} from "@/types/domain";
 
 export type ChatStreamHandlers = {
   onDelta: (event: ChatDeltaEvent) => void;
   onTool: (event: ChatToolEvent) => void;
   onDone: (event: ChatDoneEvent) => void;
   onError: (event: ChatErrorEvent) => void;
+  onTitle: (event: ChatTitleEvent) => void;
 };
 
 /**
- * Subscribes to the Rust chat loop's four progress channels.
+ * Subscribes to the Rust chat loop's progress channels.
  *
  * Returns an unsubscribe function. Outside the Tauri runtime it is a no-op, so
  * the Chat panel renders in tests and in a browser without special-casing.
@@ -25,7 +32,8 @@ export async function bindChatStreamEvents(handlers: ChatStreamHandlers) {
     listen<ChatDeltaEvent>(CHAT_EVENTS.delta, (event) => handlers.onDelta(event.payload)),
     listen<ChatToolEvent>(CHAT_EVENTS.tool, (event) => handlers.onTool(event.payload)),
     listen<ChatDoneEvent>(CHAT_EVENTS.done, (event) => handlers.onDone(event.payload)),
-    listen<ChatErrorEvent>(CHAT_EVENTS.error, (event) => handlers.onError(event.payload))
+    listen<ChatErrorEvent>(CHAT_EVENTS.error, (event) => handlers.onError(event.payload)),
+    listen<ChatTitleEvent>(CHAT_EVENTS.title, (event) => handlers.onTitle(event.payload))
   ]);
 
   return () => {

@@ -61,12 +61,3 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     disconnect() {}
   } as unknown as typeof ResizeObserver;
 }
-
-/**
- * jsdom implements no scrolling, so `scrollIntoView` is missing entirely.
- * Components that follow a growing list (the chat transcript) call it in an
- * effect, where the resulting TypeError would unmount the whole tree.
- */
-if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
-  Element.prototype.scrollIntoView = function scrollIntoView() {};
-}

@@ -868,10 +868,20 @@ export interface ChatErrorEvent {
   message: string;
 }
 
+/**
+ * A conversation named from its first message. Arrives before the answer, so the
+ * sidebar stops saying "New conversation" while the tools are still running.
+ */
+export interface ChatTitleEvent {
+  sessionId: string;
+  title: string;
+}
+
 export const CHAT_EVENTS = {
   delta: "chat:delta",
   tool: "chat:tool",
   done: "chat:done",
-  error: "chat:error"
+  error: "chat:error",
+  title: "chat:title"
 } as const;
 

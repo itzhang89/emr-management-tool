@@ -341,6 +341,9 @@ pub async fn list_sessions(pool: &SqlitePool) -> AppResult<Vec<ChatSession>> {
         .collect())
 }
 
+/// The name a conversation starts with, until its first message earns it one.
+pub const DEFAULT_SESSION_TITLE: &str = "New conversation";
+
 pub async fn create_session(
     pool: &SqlitePool,
     assistant_id: &str,
@@ -354,7 +357,7 @@ pub async fn create_session(
     let title = title
         .map(str::trim)
         .filter(|title| !title.is_empty())
-        .unwrap_or("New conversation");
+        .unwrap_or(DEFAULT_SESSION_TITLE);
 
     sqlx::query(
         "insert into chat_sessions (id, assistant_id, title, model_id, created_at, updated_at)
@@ -402,6 +405,52 @@ pub async fn update_session(
     }
 
     touch_session(pool, id).await
+}
+
+/// Whether this session should have a title generated from the message about to
+/// be sent: it still has the default name and nothing has been said yet.
+///
+/// Checked before the user turn is stored, so the first send names the
+/// conversation and later ones do not spend a request re-deciding.
+pub async fn awaiting_first_title(pool: &SqlitePool, id: &str) -> AppResult<bool> {
+    let row = sqlx::query(
+        "select s.title as title,
+                (select count(*) from chat_messages m where m.session_id = s.id) as message_count
+         from chat_sessions s
+         where s.id = ?1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    let Some(row) = row else { return Ok(false) };
+    let title: String = row.get("title");
+    let message_count: i64 = row.get("message_count");
+    Ok(title == DEFAULT_SESSION_TITLE && message_count == 0)
+}
+
+/// Renames a session only while it still carries the default title.
+///
+/// The auto-naming path uses this rather than `update_session`: a title generated
+/// from the first message must never overwrite a name the user typed, and the
+/// check has to be part of the same statement to avoid racing a rename.
+pub async fn rename_if_untitled(pool: &SqlitePool, id: &str, title: &str) -> AppResult<bool> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Ok(false);
+    }
+
+    let affected = sqlx::query("update chat_sessions set title = ?1 where id = ?2 and title = ?3")
+        .bind(title)
+        .bind(id)
+        .bind(DEFAULT_SESSION_TITLE)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .rows_affected();
+
+    Ok(affected > 0)
 }
 
 pub async fn delete_session(pool: &SqlitePool, id: &str) -> AppResult<()> {
@@ -1005,6 +1054,69 @@ mod tests {
         assert!(list_sessions(&pool).await.unwrap().is_empty());
         assert!(list_messages(&pool, &session_id).await.unwrap().is_empty());
         assert_eq!(list_assistants(&pool).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_fresh_default_titled_session_awaits_its_first_title() {
+        let pool = test_pool().await;
+        let assistants = list_assistants(&pool).await.unwrap();
+        let id = create_session(&pool, &assistants[0].id, None, None)
+            .await
+            .unwrap();
+
+        assert!(awaiting_first_title(&pool, &id).await.unwrap());
+
+        // Once something has been said, the naming request is not worth issuing.
+        user_message(&pool, &id, "why did it fail?").await;
+        assert!(!awaiting_first_title(&pool, &id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_session_created_with_a_title_is_never_auto_named() {
+        let pool = test_pool().await;
+        let assistants = list_assistants(&pool).await.unwrap();
+        let id = create_session(&pool, &assistants[0].id, Some("job-abc"), None)
+            .await
+            .unwrap();
+
+        assert!(!awaiting_first_title(&pool, &id).await.unwrap());
+        // And a generated title cannot overwrite it either.
+        assert!(!rename_if_untitled(&pool, &id, "Driver OOM").await.unwrap());
+        let sessions = list_sessions(&pool).await.unwrap();
+        assert_eq!(sessions[0].title, "job-abc");
+    }
+
+    #[tokio::test]
+    async fn a_generated_title_replaces_the_default_name_once() {
+        let pool = test_pool().await;
+        let assistants = list_assistants(&pool).await.unwrap();
+        let id = create_session(&pool, &assistants[0].id, None, None)
+            .await
+            .unwrap();
+
+        assert!(rename_if_untitled(&pool, &id, "  Driver OOM on job-abc  ")
+            .await
+            .unwrap());
+        let sessions = list_sessions(&pool).await.unwrap();
+        assert_eq!(sessions[0].title, "Driver OOM on job-abc");
+
+        // A second generated title must not clobber the first.
+        assert!(!rename_if_untitled(&pool, &id, "Something else").await.unwrap());
+        // Nor may an empty one blank the name.
+        assert!(!rename_if_untitled(&pool, &id, "   ").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_user_rename_survives_a_later_generated_title() {
+        let pool = test_pool().await;
+        let assistants = list_assistants(&pool).await.unwrap();
+        let id = create_session(&pool, &assistants[0].id, None, None)
+            .await
+            .unwrap();
+
+        update_session(&pool, &id, Some("my own name"), None).await.unwrap();
+        assert!(!rename_if_untitled(&pool, &id, "Generated").await.unwrap());
+        assert_eq!(list_sessions(&pool).await.unwrap()[0].title, "my own name");
     }
 
     #[tokio::test]
