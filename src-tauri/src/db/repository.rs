@@ -526,6 +526,7 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     }
 
     migrate_job_config_templates_table(pool).await?;
+    crate::db::llm::migrate(pool).await?;
 
     Ok(())
 }

@@ -768,3 +768,195 @@ pub struct McpAuditEntry {
 pub struct McpAuditQuery {
     pub limit: Option<usize>,
 }
+
+// --- LLM provider configuration -------------------------------------------
+// A three-level structure: provider → endpoint → model. API keys live on the
+// endpoint (alongside its base URL) and never enter SQLite or the WebView —
+// they go to the OS keychain via `secrets`, and the frontend only ever sees a
+// masked value it can replace but not read.
+
+/// Which request/response shape an endpoint speaks. Not a vendor name: an
+/// OpenAI-compatible gateway is `Openai` regardless of who runs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProviderKind {
+    Openai,
+    Anthropic,
+}
+
+impl LlmProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Openai => "openai",
+            Self::Anthropic => "anthropic",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai" => Some(Self::Openai),
+            "anthropic" => Some(Self::Anthropic),
+            _ => None,
+        }
+    }
+
+    /// Suggested base URL for a brand-new endpoint. Editable, so
+    /// OpenAI-compatible gateways and self-hosted endpoints work too.
+    pub fn default_base_url(self) -> &'static str {
+        match self {
+            Self::Openai => "https://api.openai.com/v1",
+            Self::Anthropic => "https://api.anthropic.com/v1",
+        }
+    }
+}
+
+/// One model offered by an endpoint. `model_id` is the value sent to the API;
+/// `series` groups models in the UI ("claude-opus" for "claude-opus-4-8").
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmModel {
+    pub id: String,
+    pub endpoint_id: String,
+    pub model_id: String,
+    pub series: String,
+    pub display_name: Option<String>,
+    pub is_default: bool,
+    pub context_window: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// An API endpoint of a provider. Carries the base URL and — in the keychain,
+/// never here — the API key. `has_api_key` and `api_key_masked` are what the
+/// frontend gets instead of the secret.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmEndpoint {
+    pub id: String,
+    pub provider_id: String,
+    pub name: String,
+    pub base_url: String,
+    pub is_default: bool,
+    pub has_api_key: bool,
+    pub api_key_masked: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub models: Vec<LlmModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmProvider {
+    pub id: String,
+    pub name: String,
+    pub kind: LlmProviderKind,
+    pub enabled: bool,
+    pub sort_order: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub endpoints: Vec<LlmEndpoint>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLlmProviderRequest {
+    pub name: String,
+    pub kind: LlmProviderKind,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLlmProviderRequest {
+    pub id: String,
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLlmEndpointRequest {
+    pub provider_id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub is_default: Option<bool>,
+}
+
+/// `api_key: None` leaves the stored key untouched — the frontend cannot read
+/// it back, so "unchanged" has to be expressible as an absent field rather
+/// than a round-trip of the current value.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLlmEndpointRequest {
+    pub id: String,
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub is_default: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmEndpointTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub latency_ms: i64,
+    /// How many models the endpoint advertised, when it answered at all.
+    pub model_count: Option<usize>,
+}
+
+/// A model the endpoint advertises, before the user chooses to import it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmModelCandidate {
+    pub model_id: String,
+    pub series: String,
+    pub display_name: Option<String>,
+    /// True when this endpoint already has the model stored, so the import
+    /// dialog can pre-check it and label it as already added.
+    pub already_added: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLlmModelsRequest {
+    pub endpoint_id: String,
+    pub models: Vec<AddLlmModelInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLlmModelInput {
+    pub model_id: String,
+    pub series: Option<String>,
+    pub display_name: Option<String>,
+    pub context_window: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLlmModelRequest {
+    pub id: String,
+    pub series: Option<String>,
+    pub display_name: Option<String>,
+    pub is_default: Option<bool>,
+    pub context_window: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+}
+
+/// Deletes addressed by row id. A named struct rather than a bare `String`
+/// argument so every LLM command takes the same `{ request: … }` envelope the
+/// rest of the app's Tauri commands use.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmIdRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmEndpointIdRequest {
+    pub endpoint_id: String,
+}

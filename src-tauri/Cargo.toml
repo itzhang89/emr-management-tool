@@ -40,7 +40,7 @@ axum = "0.8"
 nanoid = "0.4"
 uuid = { version = "1.23.3", features = ["v4", "serde"] }
 tauri-plugin-updater = "2.10.1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 minisign-verify = "0.2"
 semver = "1.0"
@@ -48,6 +48,7 @@ rmcp = { version = "3.1.4", features = ["server", "client", "transport-streamabl
 schemars = "1.2"
 regex = "1.13.1"
 tokio-util = "0.7.19"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }

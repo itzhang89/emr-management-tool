@@ -5,6 +5,7 @@ pub mod emr;
 pub mod files;
 pub mod glue;
 pub mod job_config_templates;
+pub mod llm;
 pub mod logs;
 pub mod mcp;
 pub mod portable_updater;

@@ -1,3 +1,4 @@
+pub mod llm;
 pub mod repository;
 
 use crate::error::{AppError, AppResult};
