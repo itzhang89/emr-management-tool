@@ -17,9 +17,10 @@ export function AiAssistantPage() {
   const [tab, setTab] = useState("chat");
 
   return (
-    // Chat and Audit need the full height to scroll on their own, so the page
-    // lets each tab manage its own overflow instead of scrolling as a whole.
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
+    // Pinned to the viewport the same way Logs and S3 Browser are (3rem is the
+    // main element's padding): Chat and Audit scroll inside themselves, so the
+    // page must not be free to grow and hand its overflow to the window.
+    <div className="flex h-[calc(100vh-3rem)] min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
       <PageHeader pageId="ai" />
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
@@ -30,19 +31,19 @@ export function AiAssistantPage() {
           <TabsTrigger value="audit">Audit</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="chat" className="mt-0 flex min-h-0 flex-1 flex-col">
+        <TabsContent value="chat" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <ChatPanel onConfigureModels={() => setTab("settings")} />
         </TabsContent>
 
-        <TabsContent value="settings" className="mt-0 flex min-h-0 flex-1 flex-col">
+        <TabsContent value="settings" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <LlmSettingsPanel />
         </TabsContent>
 
-        <TabsContent value="server" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+        <TabsContent value="server" className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto">
           <McpServerPanel />
         </TabsContent>
 
-        <TabsContent value="audit" className="mt-0 min-h-0 flex-1 overflow-y-auto">
+        <TabsContent value="audit" className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto">
           <McpAuditPanel />
         </TabsContent>
       </Tabs>

@@ -150,7 +150,9 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
   return (
     <div
       className={cn(
-        "grid min-h-0 flex-1 gap-3",
+        // overflow-hidden so a long transcript cannot stretch the grid and push
+        // its scrollbar onto the page.
+        "grid min-h-0 min-w-0 flex-1 gap-3 overflow-hidden",
         sidebarVisible ? "lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]" : "grid-cols-1"
       )}
     >
@@ -172,7 +174,7 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
         />
       )}
 
-      <div className="flex min-h-0 min-w-0 flex-col rounded-lg border">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border">
         <div className="flex shrink-0 items-center gap-2 border-b p-2">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -226,39 +228,39 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <MessageList
-              messages={conversation.messages}
-            assistant={activeAssistant}
-            streaming={conversation.streaming}
-            isLoading={conversation.isLoading}
-            emptyHint={
-              noModels ? (
-                <div className="space-y-3 text-sm">
-                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
-                    <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                    <p>
-                      No model is configured yet. Chat sends your messages and tool results —
-                      including log excerpts — to the provider you configure. Until now this app
-                      sent nothing anywhere except AWS.
-                    </p>
-                  </div>
-                  <Button type="button" size="sm" onClick={onConfigureModels}>
-                    Configure a provider
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-1 text-sm text-muted-foreground">
-                  <p>Paste a job id and ask why it failed.</p>
-                  <p className="text-xs">
-                    The assistant locates the job across your accounts, then reads its controller
-                    and Spark logs. Every tool call is shown, and all of them are read-only.
+        {/* The transcript owns its own scrolling — see MessageList. */}
+        <MessageList
+          sessionId={activeSession?.id ?? null}
+          messages={conversation.messages}
+          assistant={activeAssistant}
+          streaming={conversation.streaming}
+          isLoading={conversation.isLoading}
+          emptyHint={
+            noModels ? (
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
+                  <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                  <p>
+                    No model is configured yet. Chat sends your messages and tool results —
+                    including log excerpts — to the provider you configure. Until now this app
+                    sent nothing anywhere except AWS.
                   </p>
                 </div>
-              )
-            }
-          />
-        </div>
+                <Button type="button" size="sm" onClick={onConfigureModels}>
+                  Configure a provider
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-1 text-sm text-muted-foreground">
+                <p>Paste a job id and ask why it failed.</p>
+                <p className="text-xs">
+                  The assistant locates the job across your accounts, then reads its controller
+                  and Spark logs. Every tool call is shown, and all of them are read-only.
+                </p>
+              </div>
+            )
+          }
+        />
 
         <Composer
           disabled={!activeSession || noModels}

@@ -124,7 +124,7 @@ export function LlmSettingsPanel() {
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
       {/* Until now this app sent nothing anywhere except AWS. Chat changes that,
           and the place where a provider gets configured is where it has to be
           said. */}
@@ -137,7 +137,7 @@ export function LlmSettingsPanel() {
         </p>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]">
+      <div className="grid min-h-0 min-w-0 flex-1 gap-6 overflow-hidden lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]">
         <ProviderList
           providers={providerList}
           selectedId={selectedProvider?.id ?? null}
@@ -148,7 +148,7 @@ export function LlmSettingsPanel() {
           onAdd={() => setProviderDialogOpen(true)}
         />
 
-        <div className="min-w-0 space-y-4 overflow-y-auto">
+        <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto">
           {!selectedProvider ? (
             <p className="text-sm text-muted-foreground">
               Add a provider to configure an API endpoint and its models.
