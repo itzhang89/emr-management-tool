@@ -50,7 +50,23 @@ import type {
   ExportAthenaQueryCsvRequest,
   PortableUpdateInfo,
   McpStatus,
-  McpAuditEntry
+  McpAuditEntry,
+  AddLlmModelsRequest,
+  CreateLlmEndpointRequest,
+  CreateLlmProviderRequest,
+  LlmEndpointTestResult,
+  LlmModelCandidate,
+  LlmProvider,
+  UpdateLlmEndpointRequest,
+  UpdateLlmModelRequest,
+  UpdateLlmProviderRequest,
+  ChatAssistant,
+  ChatMessage,
+  ChatSession,
+  CreateChatAssistantRequest,
+  CreateChatSessionRequest,
+  UpdateChatAssistantRequest,
+  UpdateChatSessionRequest
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -173,6 +189,37 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     mcpStop: () => call<boolean>("mcp_stop"),
     mcpStatus: () => call<McpStatus>("mcp_status"),
     listMcpAuditEntries: (limit?: number) => call<McpAuditEntry[]>("list_mcp_audit_entries", { limit }),
+    listLlmProviders: () => call<LlmProvider[]>("list_llm_providers"),
+    createLlmProvider: (request: CreateLlmProviderRequest) => call<string>("create_llm_provider", request),
+    updateLlmProvider: (request: UpdateLlmProviderRequest) => call<void>("update_llm_provider", request),
+    deleteLlmProvider: (id: string) => call<void>("delete_llm_provider", { id }),
+    createLlmEndpoint: (request: CreateLlmEndpointRequest) => call<string>("create_llm_endpoint", request),
+    updateLlmEndpoint: (request: UpdateLlmEndpointRequest) => call<void>("update_llm_endpoint", request),
+    deleteLlmEndpoint: (id: string) => call<void>("delete_llm_endpoint", { id }),
+    testLlmEndpoint: (endpointId: string) => call<LlmEndpointTestResult>("test_llm_endpoint", { endpointId }),
+    syncLlmModels: (endpointId: string) => call<LlmModelCandidate[]>("sync_llm_models", { endpointId }),
+    addLlmModels: (request: AddLlmModelsRequest) => call<number>("add_llm_models", request),
+    updateLlmModel: (request: UpdateLlmModelRequest) => call<void>("update_llm_model", request),
+    deleteLlmModel: (id: string) => call<void>("delete_llm_model", { id }),
+    listChatAssistants: () => call<ChatAssistant[]>("list_chat_assistants"),
+    createChatAssistant: (request: CreateChatAssistantRequest) =>
+      call<string>("create_chat_assistant", request),
+    updateChatAssistant: (request: UpdateChatAssistantRequest) =>
+      call<void>("update_chat_assistant", request),
+    deleteChatAssistant: (id: string) => call<void>("delete_chat_assistant", { id }),
+    listChatSessions: () => call<ChatSession[]>("list_chat_sessions"),
+    createChatSession: (request: CreateChatSessionRequest) => call<string>("create_chat_session", request),
+    updateChatSession: (request: UpdateChatSessionRequest) => call<void>("update_chat_session", request),
+    deleteChatSession: (id: string) => call<void>("delete_chat_session", { id }),
+    deleteAllChatSessions: () => call<number>("delete_all_chat_sessions"),
+    listChatMessages: (sessionId: string) => call<ChatMessage[]>("list_chat_messages", { sessionId }),
+    clearChatContext: (sessionId: string) => call<boolean>("clear_chat_context", { sessionId }),
+    /**
+     * Resolves when the whole exchange finishes, returning the assistant message
+     * id. Progress arrives meanwhile on the CHAT_EVENTS channels.
+     */
+    chatSend: (sessionId: string, text: string) => call<string>("chat_send", { sessionId, text }),
+    chatCancel: (sessionId: string) => call<boolean>("chat_cancel", { sessionId })
   };
 }
 

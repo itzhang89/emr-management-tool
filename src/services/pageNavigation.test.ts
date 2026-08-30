@@ -5,14 +5,16 @@ describe("pageNavigation", () => {
   it("maps sidebar order to page ids", () => {
     expect(getPageIdByNavigationIndex(1)).toBe("submit");
     expect(getPageIdByNavigationIndex(2)).toBe("history");
-    expect(getPageIdByNavigationIndex(9)).toBe("settings");
-    expect(getPageIdByNavigationIndex(10)).toBeUndefined();
+    expect(getPageIdByNavigationIndex(7)).toBe("ai");
+    expect(getPageIdByNavigationIndex(10)).toBe("settings");
+    expect(getPageIdByNavigationIndex(11)).toBeUndefined();
   });
 
   it("maps page ids back to sidebar indexes", () => {
     expect(getNavigationIndex("submit")).toBe(1);
     expect(getNavigationIndex("glue")).toBe(5);
-    expect(getNavigationIndex("settings")).toBe(9);
+    expect(getNavigationIndex("ai")).toBe(7);
+    expect(getNavigationIndex("settings")).toBe(10);
   });
 
   it("cycles pages in sidebar order", () => {

@@ -1,5 +1,4 @@
 import {
-  Bot,
   Cloud,
   Database,
   FileCode2,
@@ -9,6 +8,7 @@ import {
   ScrollText,
   Send,
   Settings,
+  Sparkles,
   Table2
 } from "lucide-react";
 
@@ -21,7 +21,7 @@ export type PageId =
   | "clusters"
   | "s3"
   | "glue"
-  | "mcp"
+  | "ai"
   | "settings";
 
 export const navigationItems = [
@@ -31,7 +31,7 @@ export const navigationItems = [
   { id: "s3", label: "S3 Browser", description: "Text file editing", icon: FileCode2 },
   { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL", icon: Table2 },
   { id: "templates", label: "Templates", description: "Application and resource templates", icon: Layers3 },
-  { id: "mcp", label: "MCP Server", description: "AI assistant integration", icon: Bot },
+  { id: "ai", label: "AI Assistant", description: "Chat, models, and MCP tools", icon: Sparkles },
   { id: "dashboard", label: "Dashboard", description: "Cluster job statistics", icon: LayoutDashboard },
   { id: "clusters", label: "Virtual Clusters", description: "EMR on EKS clusters", icon: Database },
   { id: "settings", label: "Settings", description: "AWS credentials", icon: Settings }

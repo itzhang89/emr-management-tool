@@ -10,6 +10,7 @@ EMR Management Tool is a desktop GUI for submitting and managing Amazon EMR on E
 - Preview job payloads before submission.
 - View local job history and clone previous submissions.
 - Read EMR job logs and browse S3 log/output files.
+- Analyse job failures with an AI assistant, or expose the same read-only tools to external agents over MCP (see [AI Assistant](#ai-assistant)).
 - Check for application updates on supported stable releases.
 
 ## Install
@@ -189,6 +190,47 @@ Rename downloads the object and writes it back under a new key, so it needs `s3:
 - If Virtual Clusters is empty, first confirm the account region in Settings matches the region shown in the AWS console for your EMR virtual cluster.
 - If Job History is empty after submitting jobs elsewhere, select the correct virtual cluster in the page header so the app can call `ListJobRuns`.
 - Open **Help → View Logs** to inspect AWS API failures. The log file is stored under your local app data directory in `emr-management-tool/logs/app.log`.
+
+## AI Assistant
+
+The **AI Assistant** page collects the app's AI capabilities into four tabs.
+
+**Chat** answers questions about job failures. Assistants are presets — a system
+prompt, a default model, and which tools they may use — and each holds its own
+conversations. A built-in "EMR failure analysis" assistant is seeded on first run.
+Every tool call the model makes is shown as an expandable step with its arguments
+and result.
+
+**LLM Setting** configures providers in three levels: a provider (a name plus the
+API shape, `openai` or `anthropic`), its endpoints (base URL and API key), and the
+models each endpoint offers. Nothing is hardcoded, so any OpenAI-compatible
+gateway works. `Sync` fetches the endpoint's model list and lets you pick which
+ones to import.
+
+**MCP Server** starts a Streamable HTTP endpoint on `127.0.0.1` for external
+agents (Claude Code, Cursor, Codex, and any other MCP client), with a copyable
+config per tool. **Audit** lists every tool invocation both Chat and external
+agents made.
+
+### What leaves your machine
+
+Before this feature the app sent data to AWS and nowhere else. Chat changes that:
+your messages and the tool results, including log excerpts, go to the provider you
+configure. No provider is configured by default.
+
+- **AWS credentials never reach the model.** They stay in the AWS SDK clients;
+  `list_accounts` exposes only account display names and regions.
+- **LLM API keys never reach the UI.** They are stored in your OS keychain, keyed
+  by endpoint, and the frontend only ever sees a masked value it can replace but
+  not read.
+- **Log content is redacted before it leaves a tool** — ARNs, bucket names,
+  account ids, IPs, and hostnames become placeholders.
+- **Every MCP tool is read-only.** Nothing reachable through Chat or an external
+  agent can change AWS state.
+- **The HTTP endpoint binds loopback only** and validates the `Host` header.
+- **Conversations persist to the local SQLite database**, so tool output including
+  log excerpts is stored on disk. Deleting a conversation or an assistant removes
+  it.
 
 ## Development
 

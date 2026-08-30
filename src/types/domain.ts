@@ -624,3 +624,254 @@ export interface McpAuditEntry {
   error?: string | null;
 }
 
+// --- LLM provider configuration -------------------------------------------
+// A three-level structure: provider → endpoint → model. API keys are never part
+// of these types — an endpoint reports `hasApiKey` plus a masked value that can
+// be replaced but not read back.
+
+/**
+ * Which request/response shape an endpoint speaks — not a vendor name. An
+ * OpenAI-compatible gateway is "openai" no matter who runs it.
+ */
+export type LlmProviderKind = "openai" | "anthropic";
+
+export interface LlmModel {
+  id: string;
+  endpointId: string;
+  /** The value sent to the API, e.g. "claude-opus-4-8". */
+  modelId: string;
+  /** Grouping label in the model tree, e.g. "claude-opus". */
+  series: string;
+  displayName?: string | null;
+  isDefault: boolean;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  createdAt: string;
+}
+
+export interface LlmEndpoint {
+  id: string;
+  providerId: string;
+  name: string;
+  baseUrl: string;
+  isDefault: boolean;
+  hasApiKey: boolean;
+  /** e.g. "sk-••••abcd". Display only — the real key stays in the keychain. */
+  apiKeyMasked?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  models: LlmModel[];
+}
+
+export interface LlmProvider {
+  id: string;
+  name: string;
+  kind: LlmProviderKind;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  endpoints: LlmEndpoint[];
+}
+
+export interface CreateLlmProviderRequest {
+  name: string;
+  kind: LlmProviderKind;
+}
+
+export interface UpdateLlmProviderRequest {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  sortOrder?: number;
+}
+
+export interface CreateLlmEndpointRequest {
+  providerId: string;
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}
+
+/** Omit `apiKey` to leave the stored key untouched; pass "" to clear it. */
+export interface UpdateLlmEndpointRequest {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}
+
+export interface LlmEndpointTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  modelCount?: number | null;
+}
+
+/** A model the endpoint advertises, before the user chooses to import it. */
+export interface LlmModelCandidate {
+  modelId: string;
+  series: string;
+  displayName?: string | null;
+  alreadyAdded: boolean;
+}
+
+export interface AddLlmModelInput {
+  modelId: string;
+  series?: string;
+  displayName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+export interface AddLlmModelsRequest {
+  endpointId: string;
+  models: AddLlmModelInput[];
+}
+
+export interface UpdateLlmModelRequest {
+  id: string;
+  series?: string;
+  displayName?: string;
+  isDefault?: boolean;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+// --- Chat ------------------------------------------------------------------
+// Two levels: an assistant is a preset (system prompt, default model, which
+// tools it may use), and a session is one conversation with that assistant.
+
+export interface ChatAssistant {
+  id: string;
+  name: string;
+  systemPrompt?: string | null;
+  /** `LlmModel.id`, not the API's model id. */
+  defaultModelId?: string | null;
+  /** null means every MCP tool is available. */
+  enabledTools?: string[] | null;
+  accent?: string | null;
+  sortOrder: number;
+  /** The seeded "EMR failure analysis" assistant, which cannot be deleted. */
+  builtIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatSession {
+  id: string;
+  assistantId: string;
+  title: string;
+  /** Overrides the assistant's default model for this conversation. */
+  modelId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+/**
+ * "context_reset" is a real stored message, not a deletion: history stays
+ * readable while the next request starts from after the marker.
+ */
+export type ChatRole = "user" | "assistant" | "tool" | "context_reset";
+
+export interface ChatToolCall {
+  callId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  durationMs?: number | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  /** Monotonic within a session; the sort key. */
+  seq: number;
+  role: ChatRole;
+  content?: string | null;
+  toolCalls: ChatToolCall[];
+  modelId?: string | null;
+  durationMs?: number | null;
+  error?: string | null;
+  createdAt: string;
+}
+
+export interface CreateChatAssistantRequest {
+  name: string;
+  systemPrompt?: string;
+  defaultModelId?: string;
+  enabledTools?: string[];
+  accent?: string;
+}
+
+/** Omit a field to leave it unchanged; pass `enabledTools: null` to allow all. */
+export interface UpdateChatAssistantRequest {
+  id: string;
+  name?: string;
+  systemPrompt?: string;
+  defaultModelId?: string;
+  enabledTools?: string[] | null;
+  accent?: string;
+  sortOrder?: number;
+}
+
+export interface CreateChatSessionRequest {
+  assistantId: string;
+  title?: string;
+  modelId?: string;
+}
+
+export interface UpdateChatSessionRequest {
+  id: string;
+  title?: string;
+  modelId?: string;
+}
+
+// --- Chat streaming events -------------------------------------------------
+// Emitted by the Rust chat loop while `chat_send` runs, so the UI streams rather
+// than waiting for the whole exchange.
+
+export interface ChatDeltaEvent {
+  sessionId: string;
+  messageId: string;
+  text: string;
+}
+
+/** Emitted twice per tool call: once at "start", once at "end". */
+export interface ChatToolEvent {
+  sessionId: string;
+  messageId: string;
+  callId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  phase: "start" | "end";
+  durationMs?: number | null;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface ChatDoneEvent {
+  sessionId: string;
+  messageId: string;
+  durationMs: number;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}
+
+export interface ChatErrorEvent {
+  sessionId: string;
+  messageId: string;
+  message: string;
+}
+
+export const CHAT_EVENTS = {
+  delta: "chat:delta",
+  tool: "chat:tool",
+  done: "chat:done",
+  error: "chat:error"
+} as const;
+

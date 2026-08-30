@@ -48,3 +48,25 @@ if (typeof window !== "undefined") {
     writable: true
   });
 }
+
+/**
+ * jsdom has no ResizeObserver, which several Radix primitives (radio group,
+ * select, scroll area) construct on mount. A no-op is enough: tests assert on
+ * markup and behaviour, not measured layout.
+ */
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}
+
+/**
+ * jsdom implements no scrolling, so `scrollIntoView` is missing entirely.
+ * Components that follow a growing list (the chat transcript) call it in an
+ * effect, where the resulting TypeError would unmount the whole tree.
+ */
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
