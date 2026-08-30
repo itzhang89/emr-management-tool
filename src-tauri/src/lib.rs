@@ -1,4 +1,5 @@
 pub mod aws;
+pub mod chat;
 pub mod commands;
 pub mod db;
 pub mod diagnostics;
@@ -111,6 +112,31 @@ pub fn run() {
             commands::mcp::mcp_stop,
             commands::mcp::mcp_status,
             commands::mcp::list_mcp_audit_entries,
+            commands::llm::list_llm_providers,
+            commands::llm::create_llm_provider,
+            commands::llm::update_llm_provider,
+            commands::llm::delete_llm_provider,
+            commands::llm::create_llm_endpoint,
+            commands::llm::update_llm_endpoint,
+            commands::llm::delete_llm_endpoint,
+            commands::llm::test_llm_endpoint,
+            commands::llm::sync_llm_models,
+            commands::llm::add_llm_models,
+            commands::llm::update_llm_model,
+            commands::llm::delete_llm_model,
+            commands::chat::list_chat_assistants,
+            commands::chat::create_chat_assistant,
+            commands::chat::update_chat_assistant,
+            commands::chat::delete_chat_assistant,
+            commands::chat::list_chat_sessions,
+            commands::chat::create_chat_session,
+            commands::chat::update_chat_session,
+            commands::chat::delete_chat_session,
+            commands::chat::delete_all_chat_sessions,
+            commands::chat::list_chat_messages,
+            commands::chat::clear_chat_context,
+            commands::chat::chat_send,
+            commands::chat::chat_cancel,
         ]);
 
     #[cfg(desktop)]

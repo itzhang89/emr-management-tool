@@ -1,4 +1,5 @@
 pub mod athena;
+pub mod chat;
 pub mod credentials;
 pub mod diagnostics;
 pub mod emr;

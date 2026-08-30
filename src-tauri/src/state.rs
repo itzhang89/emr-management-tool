@@ -12,6 +12,13 @@ pub struct AppState {
     pub application_templates: Mutex<Vec<ApplicationTemplate>>,
     pub resource_templates: Mutex<Vec<ResourceTemplate>>,
     pub mcp_state: Mutex<McpState>,
+    /// The Chat page's MCP client, connected lazily on the first tool call and
+    /// then resident. Independent of `mcp_state`: Chat works whether or not the
+    /// Streamable HTTP endpoint external agents use is running.
+    pub in_process_mcp: crate::mcp::in_process::InProcessClient,
+    /// One cancellation token per streaming chat send, keyed by session id, so
+    /// the UI's stop button can interrupt the request it belongs to.
+    pub chat_cancellations: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
 }
 
 /// State for the in-process MCP server. The axum task is spawned inside the
@@ -36,6 +43,8 @@ impl Default for AppState {
             application_templates: Mutex::new(Vec::new()),
             resource_templates: Mutex::new(default_resource_templates()),
             mcp_state: Mutex::new(McpState::default()),
+            in_process_mcp: crate::mcp::in_process::InProcessClient::new(),
+            chat_cancellations: Mutex::new(HashMap::new()),
         }
     }
 }

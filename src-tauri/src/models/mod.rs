@@ -960,3 +960,167 @@ pub struct LlmIdRequest {
 pub struct LlmEndpointIdRequest {
     pub endpoint_id: String,
 }
+
+// --- Chat -----------------------------------------------------------------
+// Two levels: an assistant is a preset (system prompt, default model, which
+// tools it may use), and a session is one conversation with that assistant.
+// Messages persist so the sidebar's session list survives a restart.
+
+/// A saved preset. `enabled_tools` of `None` means every MCP tool is available;
+/// a list restricts the assistant to those names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAssistant {
+    pub id: String,
+    pub name: String,
+    pub system_prompt: Option<String>,
+    /// `llm_models.id`, not the API's model id.
+    pub default_model_id: Option<String>,
+    pub enabled_tools: Option<Vec<String>>,
+    /// Avatar colour token, chosen by the UI.
+    pub accent: Option<String>,
+    pub sort_order: i64,
+    pub built_in: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSession {
+    pub id: String,
+    pub assistant_id: String,
+    pub title: String,
+    /// Overrides the assistant's default model for this conversation.
+    pub model_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    /// Denormalised for the sidebar, which lists sessions without their bodies.
+    pub message_count: i64,
+}
+
+/// What a stored message is.
+///
+/// `ContextReset` is a real persisted row rather than a deletion: the user keeps
+/// a readable history while the next request starts from after the marker, which
+/// is what "clear context" means here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatRole {
+    User,
+    Assistant,
+    Tool,
+    ContextReset,
+}
+
+impl ChatRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Tool => "tool",
+            Self::ContextReset => "context_reset",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "assistant" => Some(Self::Assistant),
+            "tool" => Some(Self::Tool),
+            "context_reset" => Some(Self::ContextReset),
+            _ => None,
+        }
+    }
+}
+
+/// One tool invocation made while answering. Persisted with the assistant
+/// message that triggered it so the UI can redraw the collapsible steps after a
+/// restart, not just while streaming.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCall {
+    pub call_id: String,
+    pub tool: String,
+    pub args: serde_json::Value,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessage {
+    pub id: String,
+    pub session_id: String,
+    /// Monotonic within a session; the sort key.
+    pub seq: i64,
+    pub role: ChatRole,
+    pub content: Option<String>,
+    pub tool_calls: Vec<ChatToolCall>,
+    /// Which model produced this message, kept for after-the-fact traceability.
+    pub model_id: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChatAssistantRequest {
+    pub name: String,
+    pub system_prompt: Option<String>,
+    pub default_model_id: Option<String>,
+    pub enabled_tools: Option<Vec<String>>,
+    pub accent: Option<String>,
+}
+
+/// Absent fields are left unchanged. `enabled_tools` uses a nested Option so
+/// "not mentioned" stays distinguishable from "explicitly cleared to all tools".
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateChatAssistantRequest {
+    pub id: String,
+    pub name: Option<String>,
+    pub system_prompt: Option<String>,
+    pub default_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_tools: Option<Option<Vec<String>>>,
+    pub accent: Option<String>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateChatSessionRequest {
+    pub assistant_id: String,
+    pub title: Option<String>,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateChatSessionRequest {
+    pub id: String,
+    pub title: Option<String>,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSessionIdRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatIdRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSendRequest {
+    pub session_id: String,
+    pub text: String,
+}
