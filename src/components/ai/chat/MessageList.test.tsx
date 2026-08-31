@@ -111,8 +111,9 @@ describe("MessageList", () => {
       list({ onCopy, onDelete, modelOptions: [], messages: [message({ role: "user" })] })
     );
 
-    // The action icons live on a row under the message; they are still in the
-    // DOM even while invisible, so they can be clicked directly.
+    // The icons only exist while the message is hovered.
+    await userEvent.hover(screen.getByText("why did it fail?"));
+
     await userEvent.click(screen.getByRole("button", { name: "Copy" }));
     expect(onCopy).toHaveBeenCalledWith(expect.objectContaining({ content: "why did it fail?" }));
 
@@ -135,6 +136,8 @@ describe("MessageList", () => {
       })
     );
 
+    await userEvent.hover(screen.getByText("driver OOM"));
+
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(onRegenerate).toHaveBeenCalled();
 
@@ -152,5 +155,23 @@ describe("MessageList", () => {
     render(list({ sessionId: null, messages: [], emptyHint: <p>Paste a job id</p> }));
 
     expect(screen.getByText("Paste a job id")).toBeInTheDocument();
+  });
+
+  it("reveals the action row on hover and hides it again on mouse leave", async () => {
+    const user = userEvent.setup();
+    render(list({ messages: [message({ role: "user" })] }));
+
+    // Nothing is rendered until the message is hovered — an invisible-but-present
+    // row would still answer the mouse.
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+
+    const bubble = screen.getByText("why did it fail?");
+    await user.hover(bubble);
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+
+    await user.unhover(bubble);
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 });

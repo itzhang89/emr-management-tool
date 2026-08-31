@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AtSign, Bot, CircleAlert, Copy, LoaderCircle, Pencil, RefreshCw, Trash2, User } from "lucide-react";
 import { Markdown } from "@/components/ai/chat/Markdown";
 import { ToolCallStep, type ToolStep } from "@/components/ai/chat/ToolCallStep";
@@ -48,8 +49,13 @@ export function UserMessage({
   onEdit: (text: string) => void;
   onDelete: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
   return (
-    <div className="group flex gap-3">
+    <div
+      className="group flex gap-3"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
         <User className="size-4 text-muted-foreground" />
       </div>
@@ -57,7 +63,7 @@ export function UserMessage({
         <p className="text-xs font-medium text-muted-foreground">You</p>
         {/* Preserve the user's own line breaks. */}
         <p className="whitespace-pre-wrap break-words text-sm">{text}</p>
-        <ActionRow>
+        <ActionRow visible={hovered}>
           <ActionIcon label="Copy" onClick={onCopy}>
             <Copy className="size-3.5" />
           </ActionIcon>
@@ -111,9 +117,17 @@ export function AssistantMessage({
   onDelete: () => void;
 }) {
   const hasBody = Boolean(text) || toolSteps.length > 0 || Boolean(error);
+  const [hovered, setHovered] = useState(false);
+  // The model list is portaled outside the message, so hovering it no longer
+  // counts as hovering the message; keep the row up while it is open.
+  const [modelListOpen, setModelListOpen] = useState(false);
 
   return (
-    <div className="group flex gap-3">
+    <div
+      className="group flex gap-3"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-full",
@@ -156,7 +170,7 @@ export function AssistantMessage({
 
         {!hasBody && !streaming && <p className="text-xs text-muted-foreground">No response.</p>}
 
-        <ActionRow>
+        <ActionRow visible={hovered || modelListOpen}>
           <ActionIcon label="Copy" onClick={onCopy}>
             <Copy className="size-3.5" />
           </ActionIcon>
@@ -170,6 +184,7 @@ export function AssistantMessage({
               <SwitchModelIcon
                 modelOptions={modelOptions}
                 onPick={onRegenerateWithModel}
+                onOpenChange={setModelListOpen}
               />
             </>
           )}
@@ -183,18 +198,18 @@ export function AssistantMessage({
 }
 
 /**
- * The hover-revealed action row under a message. It is a blank strip until the
- * mouse is over the message, then its icon buttons appear; they hide again as
- * soon as the mouse leaves.
+ * The hover-revealed action row under a message.
  *
- * Reveal is hover-only on purpose: `focus-within` would pin the row open after
- * a click (a button keeps focus, the "@" popover keeps its trigger focused), so
- * the icons would stay visible after the mouse moved away.
+ * The icons are *unmounted* when hidden rather than made transparent: an
+ * `opacity-0` row still answers the mouse, so its buttons stayed clickable and
+ * its tooltip could linger in its portal after the pointer had left — which read
+ * as icons that never went away. The row keeps its height either way, so
+ * revealing them does not shift the transcript.
  */
-function ActionRow({ children }: { children: React.ReactNode }) {
+function ActionRow({ visible, children }: { visible: boolean; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-0.5 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-      {children}
+    <div className="flex h-7 items-center gap-0.5 pt-1">
+      {visible ? children : null}
     </div>
   );
 }
@@ -235,16 +250,30 @@ function ActionIcon({
  * The "@" switch-model action: regenerate the reply on a different model. Clicking
  * it opens the model list; picking one regenerates with that model. The glyph
  * distinguishes it from the plain "Regenerate" arrow next to it.
+ *
+ * `onOpenChange` is reported upwards because the list is portaled outside the
+ * message: without it, moving the mouse onto the list would count as leaving the
+ * message and unmount the row — taking the list with it before a model could be
+ * picked.
  */
 function SwitchModelIcon({
   modelOptions,
-  onPick
+  onPick,
+  onOpenChange
 }: {
   modelOptions: ModelActionOption[];
   onPick: (modelId: string) => void;
+  onOpenChange: (open: boolean) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
+  const change = (next: boolean) => {
+    setOpen(next);
+    onOpenChange(next);
+  };
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={change}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -269,7 +298,10 @@ function SwitchModelIcon({
               <button
                 key={option.id}
                 type="button"
-                onClick={() => onPick(option.id)}
+                onClick={() => {
+                  change(false);
+                  onPick(option.id);
+                }}
                 className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-left text-sm hover:bg-accent"
               >
                 <span className="truncate font-mono text-xs">{option.modelId}</span>
