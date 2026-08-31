@@ -11,47 +11,49 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { useCreateLlmProvider } from "@/hooks/useLlmConfig";
-import type { LlmProviderKind } from "@/types/domain";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import { useCreateLlmProvider, useDuplicateLlmProvider } from "@/hooks/useLlmConfig";
+import { LLM_PROTOCOLS } from "@/services/llmProtocols";
+import type { LlmProtocol, LlmProvider } from "@/types/domain";
 
 /**
- * Providers are entirely user-defined — the app hardcodes no gateway names.
- * The only structural choice is the API shape, since that decides how requests
- * are built and authenticated.
+ * Adds a provider, or duplicates one under a new name.
+ *
+ * Duplicating is the fast path for a second account on the same gateway: the copy
+ * keeps the protocol, address, header names, and model list, and needs only its
+ * own key. So when duplicating there is nothing to ask but the name.
  */
-const KINDS: Array<{ value: LlmProviderKind; label: string; hint: string }> = [
-  {
-    value: "openai",
-    label: "OpenAI-compatible",
-    hint: "/chat/completions with a Bearer token. Most gateways speak this."
-  },
-  {
-    value: "anthropic",
-    label: "Anthropic",
-    hint: "/messages with an x-api-key header."
-  }
-];
-
 export function ProviderFormDialog({
+  duplicateOf,
   open,
   onOpenChange,
   onCreated
 }: {
+  /** When set, the dialog duplicates this provider instead of creating a blank one. */
+  duplicateOf?: LlmProvider | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (providerId: string) => void;
 }) {
   const createProvider = useCreateLlmProvider();
+  const duplicateProvider = useDuplicateLlmProvider();
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<LlmProviderKind>("openai");
+  const [protocol, setProtocol] = useState<LlmProtocol>("openai");
+  const duplicating = duplicateOf != null;
 
   useEffect(() => {
-    if (open) {
-      setName("");
-      setKind("openai");
-    }
-  }, [open]);
+    if (!open) return;
+    // A copy suggests a name derived from its source, so the user only has to
+    // amend it.
+    setName(duplicateOf ? `${duplicateOf.name} copy` : "");
+    setProtocol(duplicateOf?.protocol ?? "openai");
+  }, [open, duplicateOf]);
 
   const submit = () => {
     const trimmed = name.trim();
@@ -59,26 +61,34 @@ export function ProviderFormDialog({
       toast.error("Enter a name for this provider.");
       return;
     }
-    createProvider.mutate(
-      { name: trimmed, kind },
-      {
-        onSuccess: (providerId) => {
-          toast.success(`${trimmed} added`);
-          onOpenChange(false);
-          onCreated(providerId);
-        },
-        onError: (error: Error) => toast.error(error.message || "Failed to add the provider")
-      }
-    );
+
+    const handlers = {
+      onSuccess: (providerId: string) => {
+        toast.success(`${trimmed} added`);
+        onOpenChange(false);
+        onCreated(providerId);
+      },
+      onError: (error: Error) => toast.error(error.message || "Failed to add the provider")
+    };
+
+    if (duplicateOf) {
+      duplicateProvider.mutate({ id: duplicateOf.id, name: trimmed }, handlers);
+      return;
+    }
+    createProvider.mutate({ name: trimmed, protocol }, handlers);
   };
+
+  const pending = createProvider.isPending || duplicateProvider.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add provider</DialogTitle>
+          <DialogTitle>{duplicating ? "Duplicate provider" : "Add provider"}</DialogTitle>
           <DialogDescription>
-            Name it whatever you call it. You will add its API endpoint and key next.
+            {duplicating
+              ? "The copy keeps the protocol, address, custom header names, and models. It gets no API key — add its own."
+              : "Name it whatever you call it, then fill in its address and key."}
           </DialogDescription>
         </DialogHeader>
 
@@ -100,34 +110,33 @@ export function ProviderFormDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label>API shape</Label>
-            <RadioGroup
-              value={kind}
-              onValueChange={(value) => setKind(value as LlmProviderKind)}
-              className="gap-2"
-            >
-              {KINDS.map((option) => (
-                <label
-                  key={option.value}
-                  className="flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm hover:bg-muted/50"
-                >
-                  <RadioGroupItem value={option.value} className="mt-0.5" />
-                  <span className="space-y-0.5">
-                    <span className="block font-medium">{option.label}</span>
-                    <span className="block text-xs text-muted-foreground">{option.hint}</span>
-                  </span>
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
+          {!duplicating && (
+            <div className="space-y-2">
+              <Label htmlFor="provider-protocol">Protocol</Label>
+              <Select value={protocol} onValueChange={(value) => setProtocol(value as LlmProtocol)}>
+                <SelectTrigger id="provider-protocol">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LLM_PROTOCOLS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {LLM_PROTOCOLS.find((option) => option.value === protocol)?.hint}
+              </p>
+            </div>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={createProvider.isPending}>
-              {createProvider.isPending ? "Adding..." : "Add provider"}
+            <Button type="submit" disabled={pending}>
+              {pending ? "Adding..." : duplicating ? "Duplicate" : "Add provider"}
             </Button>
           </DialogFooter>
         </form>

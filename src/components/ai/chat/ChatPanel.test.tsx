@@ -86,35 +86,48 @@ function provider(): LlmProvider {
   return {
     id: "p1",
     name: "agentrouter",
-    kind: "openai",
+    protocol: "openai",
+    baseUrl: "https://gw.example/v1",
     enabled: true,
+    builtIn: false,
+    headerNames: [],
     sortOrder: 0,
     createdAt: "2026-08-29T00:00:00Z",
     updatedAt: "2026-08-29T00:00:00Z",
-    endpoints: [
+    apiKeys: [
       {
-        id: "e1",
+        id: "k1",
         providerId: "p1",
-        name: "default",
-        baseUrl: "https://gw.example/v1",
+        label: null,
+        masked: "sk-••••abcd",
+        status: "healthy",
+        statusMessage: null,
+        checkedAt: null,
+        sortOrder: 0,
+        createdAt: "2026-08-29T00:00:00Z"
+      }
+    ],
+    models: [
+      {
+        id: "m1",
+        providerId: "p1",
+        modelId: "claude-opus-4-8",
+        series: "claude-opus",
+        displayName: null,
+        modelType: "chat",
+        capabilities: {
+          reasoning: false,
+          toolCalling: true,
+          text: true,
+          vision: false,
+          audio: false,
+          video: false
+        },
         isDefault: true,
-        hasApiKey: true,
-        apiKeyMasked: "sk-••••abcd",
-        createdAt: "2026-08-29T00:00:00Z",
-        updatedAt: "2026-08-29T00:00:00Z",
-        models: [
-          {
-            id: "m1",
-            endpointId: "e1",
-            modelId: "claude-opus-4-8",
-            series: "claude-opus",
-            displayName: null,
-            isDefault: true,
-            contextWindow: null,
-            maxOutputTokens: null,
-            createdAt: "2026-08-29T00:00:00Z"
-          }
-        ]
+        contextWindow: null,
+        maxInputTokens: null,
+        maxOutputTokens: null,
+        createdAt: "2026-08-29T00:00:00Z"
       }
     ]
   };

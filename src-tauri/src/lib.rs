@@ -28,6 +28,18 @@ fn emit_to_frontend(app: &tauri::AppHandle, event: &str) {
     let _ = app.emit(event, ());
 }
 
+/// Removes keychain entries orphaned when the LLM tables were rebuilt.
+///
+/// The rebuild itself happens in `db::llm::migrate`, on the first pool open; that
+/// layer records which secrets it stranded but cannot delete them, having no
+/// `AppHandle`. See `chat::providers::purge_orphaned_secrets`.
+#[cfg(desktop)]
+async fn purge_orphaned_llm_secrets(app: &tauri::AppHandle) -> error::AppResult<()> {
+    let pool = db::repository::pool().await?;
+    chat::providers::purge_orphaned_secrets(app, &pool).await?;
+    Ok(())
+}
+
 pub fn run() {
     diagnostics::install_panic_hook();
 
@@ -115,11 +127,14 @@ pub fn run() {
             commands::llm::list_llm_providers,
             commands::llm::create_llm_provider,
             commands::llm::update_llm_provider,
+            commands::llm::duplicate_llm_provider,
             commands::llm::delete_llm_provider,
-            commands::llm::create_llm_endpoint,
-            commands::llm::update_llm_endpoint,
-            commands::llm::delete_llm_endpoint,
-            commands::llm::test_llm_endpoint,
+            commands::llm::set_llm_provider_headers,
+            commands::llm::add_llm_api_key,
+            commands::llm::update_llm_api_key,
+            commands::llm::delete_llm_api_key,
+            commands::llm::probe_llm_api_keys,
+            commands::llm::test_llm_provider,
             commands::llm::sync_llm_models,
             commands::llm::add_llm_models,
             commands::llm::update_llm_model,
@@ -152,6 +167,17 @@ pub fn run() {
                     diagnostics::append_log_line(
                         "WARN",
                         &format!("Failed to migrate the legacy credential store: {error}"),
+                    );
+                }
+                // Blocking, and deliberately so: `db::llm::migrate` may have just
+                // dropped tables from an older schema, and the API keys they
+                // stranded must not outlive the configuration the user can see.
+                if let Err(error) =
+                    tauri::async_runtime::block_on(purge_orphaned_llm_secrets(app.handle()))
+                {
+                    diagnostics::append_log_line(
+                        "WARN",
+                        &format!("Failed to remove orphaned LLM secrets: {error}"),
                     );
                 }
                 if distribution::is_portable() {

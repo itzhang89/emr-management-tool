@@ -8,9 +8,10 @@
 use super::protocol::{parse_tool_arguments, StreamEvent, ToolDefinition, Turn, Usage};
 use super::providers;
 use crate::error::{AppError, AppResult};
-use crate::models::{ChatMessage, ChatRole, ChatToolCall, LlmProviderKind};
+use crate::models::{ChatMessage, ChatRole, ChatToolCall, LlmProtocol};
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::BTreeMap;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
@@ -90,9 +91,16 @@ pub const EVENT_TITLE: &str = "chat:title";
 
 /// Everything needed to talk to a provider for one session.
 pub struct ResolvedTarget {
-    pub kind: LlmProviderKind,
+    pub protocol: LlmProtocol,
     pub base_url: String,
+    /// Which provider this came from, so a refused key can be retired and the
+    /// next one tried.
+    pub provider_id: String,
+    /// The key currently in use, by row id.
+    pub api_key_id: String,
     pub api_key: String,
+    /// Custom request headers configured on the provider.
+    pub headers: BTreeMap<String, String>,
     /// The id the API expects, e.g. "claude-opus-4-8".
     pub model_id: String,
     pub system_prompt: Option<String>,
@@ -131,46 +139,59 @@ pub async fn resolve_target(
         .or_else(|| session.model_id.clone())
         .or_else(|| assistant.default_model_id.clone());
 
-    // Walk the provider tree to find the model, its endpoint, and its provider.
+    // Walk the provider tree to find the model and the provider that offers it.
     let providers_tree = crate::db::llm::list_providers(pool).await?;
-    let mut chosen: Option<(LlmProviderKind, String, String, String)> = None;
-    let mut fallback: Option<(LlmProviderKind, String, String, String)> = None;
+    let mut chosen: Option<Candidate> = None;
+    let mut fallback: Option<Candidate> = None;
 
     for provider in &providers_tree {
+        // A disabled provider is configuration the user parked; it must not be
+        // silently sent to.
         if !provider.enabled {
             continue;
         }
-        for endpoint in &provider.endpoints {
-            for model in &endpoint.models {
-                let candidate = (
-                    provider.kind,
-                    endpoint.base_url.clone(),
-                    endpoint.id.clone(),
-                    model.model_id.clone(),
-                );
-                if Some(&model.id) == wanted_model_id.as_ref() {
-                    chosen = Some(candidate);
-                } else if model.is_default && fallback.is_none() {
-                    fallback = Some(candidate);
-                }
+        for model in &provider.models {
+            let candidate = Candidate {
+                protocol: provider.protocol,
+                base_url: provider.base_url.clone(),
+                provider_id: provider.id.clone(),
+                model_id: model.model_id.clone(),
+            };
+            if Some(&model.id) == wanted_model_id.as_ref() {
+                chosen = Some(candidate);
+            } else if model.is_default && fallback.is_none() {
+                fallback = Some(candidate);
             }
         }
     }
 
-    let (kind, base_url, endpoint_id, model_id) = chosen.or(fallback).ok_or_else(|| {
+    let candidate = chosen.or(fallback).ok_or_else(|| {
         AppError::validation(
-            "No model is configured. Add a provider, endpoint, and model in LLM Setting first.",
+            "No model is configured. Add a provider and a model in LLM Setting first.",
         )
     })?;
 
+    let credentials = providers::resolve_credentials(app, pool, &candidate.provider_id).await?;
+
     Ok(ResolvedTarget {
-        kind,
-        base_url,
-        api_key: providers::read_api_key(app, &endpoint_id)?,
-        model_id,
+        protocol: candidate.protocol,
+        base_url: candidate.base_url,
+        provider_id: candidate.provider_id,
+        api_key_id: credentials.key_id,
+        api_key: credentials.api_key,
+        headers: credentials.headers,
+        model_id: candidate.model_id,
         system_prompt: assistant.system_prompt,
         enabled_tools: assistant.enabled_tools,
     })
+}
+
+/// A model found while walking the tree, before its credentials are read.
+struct Candidate {
+    protocol: LlmProtocol,
+    base_url: String,
+    provider_id: String,
+    model_id: String,
 }
 
 /// Rebuilds the conversation the provider should see from stored messages.
@@ -366,7 +387,8 @@ pub async fn answer_current_turn(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> AppResult<String> {
     let started = Instant::now();
-    let target = resolve_target(app, pool, session_id, model_override).await?;
+    // Mutable because a refused API key is swapped for the next one mid-run.
+    let mut target = resolve_target(app, pool, session_id, model_override).await?;
 
     // Created before the first request so deltas have an id to attach to.
     let assistant = crate::db::chat::append_message(
@@ -386,7 +408,7 @@ pub async fn answer_current_turn(
         in_process,
         session_id,
         &assistant.id,
-        &target,
+        &mut target,
         cancel,
     )
     .await;
@@ -499,7 +521,7 @@ async fn run_rounds(
     in_process: &crate::mcp::in_process::InProcessClient,
     session_id: &str,
     message_id: &str,
-    target: &ResolvedTarget,
+    target: &mut ResolvedTarget,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> AppResult<RoundsOutcome> {
     let advertised = tool_definitions(app, in_process).await?;
@@ -517,8 +539,10 @@ async fn run_rounds(
             break;
         }
 
-        let (events, round_usage) =
-            stream_round(app, target, &tools, &turns, session_id, message_id, cancel).await?;
+        let (events, round_usage) = stream_round(
+            app, pool, target, &tools, &turns, session_id, message_id, cancel,
+        )
+        .await?;
         if round_usage.input_tokens.is_some() {
             usage.input_tokens = round_usage.input_tokens;
         }
@@ -576,7 +600,45 @@ async fn run_rounds(
 }
 
 /// One provider round-trip, streaming text deltas to the UI as they arrive.
+///
+/// When the provider holds several API keys and the one in use is refused, the
+/// next key is tried once. That is where "which key works" is actually decided —
+/// the detect button only makes the same discovery ahead of time.
+#[allow(clippy::too_many_arguments)]
 async fn stream_round(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    target: &mut ResolvedTarget,
+    tools: &[ToolDefinition],
+    turns: &[Turn],
+    session_id: &str,
+    message_id: &str,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> AppResult<(Vec<StreamEvent>, Usage)> {
+    match stream_once(app, target, tools, turns, session_id, message_id, cancel).await {
+        Ok(outcome) => Ok(outcome),
+        Err(error) if providers::error_retires_key(&error) => {
+            providers::mark_unhealthy(pool, &target.api_key_id, error.message.as_ref()).await?;
+
+            let keys = providers::list_api_keys(pool, &target.provider_id).await?;
+            let Some(next) = providers::next_api_key_after(&keys, &target.api_key_id) else {
+                return Err(error);
+            };
+            target.api_key_id = next.id.clone();
+            target.api_key = providers::read_api_key_value(app, &next.id)?;
+
+            let outcome =
+                stream_once(app, target, tools, turns, session_id, message_id, cancel).await?;
+            // It answered, so record that rather than leaving it "unknown".
+            providers::mark_healthy(pool, &target.api_key_id).await?;
+            Ok(outcome)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// One attempt with the credentials the target currently holds.
+async fn stream_once(
     app: &AppHandle,
     target: &ResolvedTarget,
     tools: &[ToolDefinition],
@@ -603,20 +665,21 @@ async fn stream_round(
         events.push(event);
     };
 
-    let usage = match target.kind {
-        LlmProviderKind::Openai => {
+    let usage = match target.protocol {
+        LlmProtocol::Openai => {
             let body =
                 super::openai::build_request(&target.model_id, system_prompt, tools, turns);
             super::openai::stream_response(
                 &target.base_url,
                 &target.api_key,
+                &target.headers,
                 &body,
                 cancel,
                 on_event,
             )
             .await?
         }
-        LlmProviderKind::Anthropic => {
+        LlmProtocol::Anthropic => {
             let body = super::anthropic::build_request(
                 &target.model_id,
                 system_prompt,
@@ -627,6 +690,21 @@ async fn stream_round(
             super::anthropic::stream_response(
                 &target.base_url,
                 &target.api_key,
+                &target.headers,
+                &body,
+                cancel,
+                on_event,
+            )
+            .await?
+        }
+        LlmProtocol::Gemini => {
+            // The model id goes in the URL for this shape, not the body.
+            let body = super::gemini::build_request(system_prompt, tools, turns);
+            super::gemini::stream_response(
+                &target.base_url,
+                &target.model_id,
+                &target.api_key,
+                &target.headers,
                 &body,
                 cancel,
                 on_event,

@@ -128,7 +128,7 @@ describe("MessageList", () => {
       list({
         onRegenerate,
         onRegenerateWithModel,
-        modelOptions: [{ id: "m1", modelId: "claude-opus-5", providerName: "p", endpointName: "e" }],
+        modelOptions: [{ id: "m1", modelId: "claude-opus-5", providerName: "p" }],
         messages: [
           message({ role: "user", content: "why?" }),
           message({ id: "m2", seq: 1, role: "assistant", content: "driver OOM" })

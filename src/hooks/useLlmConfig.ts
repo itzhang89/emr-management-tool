@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tauriClient } from "@/services/tauriClient";
 import type {
+  AddLlmApiKeyRequest,
   AddLlmModelsRequest,
-  CreateLlmEndpointRequest,
   CreateLlmProviderRequest,
-  UpdateLlmEndpointRequest,
+  DuplicateLlmProviderRequest,
+  SetLlmProviderHeadersRequest,
+  UpdateLlmApiKeyRequest,
   UpdateLlmModelRequest,
   UpdateLlmProviderRequest
 } from "@/types/domain";
@@ -12,9 +14,9 @@ import type {
 export const LLM_PROVIDERS_QUERY_KEY = ["llm-providers"] as const;
 
 /**
- * The whole provider → endpoint → model tree in one query. It is a few dozen
- * rows at most, so every mutation just invalidates the lot rather than patching
- * the cache — simpler, and the tree is small enough that refetching is cheap.
+ * The whole provider → model tree in one query. It is a few dozen rows at most,
+ * so every mutation just invalidates the lot rather than patching the cache —
+ * simpler, and the tree is small enough that refetching is cheap.
  */
 export function useLlmProviders() {
   return useQuery({
@@ -41,20 +43,42 @@ export function useUpdateLlmProvider() {
   return useTreeMutation((request: UpdateLlmProviderRequest) => tauriClient.updateLlmProvider(request));
 }
 
+export function useDuplicateLlmProvider() {
+  return useTreeMutation((request: DuplicateLlmProviderRequest) =>
+    tauriClient.duplicateLlmProvider(request)
+  );
+}
+
 export function useDeleteLlmProvider() {
   return useTreeMutation((id: string) => tauriClient.deleteLlmProvider(id));
 }
 
-export function useCreateLlmEndpoint() {
-  return useTreeMutation((request: CreateLlmEndpointRequest) => tauriClient.createLlmEndpoint(request));
+/** Header names live on the provider, so the tree is refetched after a change. */
+export function useSetLlmProviderHeaders() {
+  return useTreeMutation((request: SetLlmProviderHeadersRequest) =>
+    tauriClient.setLlmProviderHeaders(request)
+  );
 }
 
-export function useUpdateLlmEndpoint() {
-  return useTreeMutation((request: UpdateLlmEndpointRequest) => tauriClient.updateLlmEndpoint(request));
+export function useAddLlmApiKey() {
+  return useTreeMutation((request: AddLlmApiKeyRequest) => tauriClient.addLlmApiKey(request));
 }
 
-export function useDeleteLlmEndpoint() {
-  return useTreeMutation((id: string) => tauriClient.deleteLlmEndpoint(id));
+export function useUpdateLlmApiKey() {
+  return useTreeMutation((request: UpdateLlmApiKeyRequest) => tauriClient.updateLlmApiKey(request));
+}
+
+export function useDeleteLlmApiKey() {
+  return useTreeMutation((id: string) => tauriClient.deleteLlmApiKey(id));
+}
+
+/**
+ * Probes every key on a provider. A tree mutation, unlike the connection test:
+ * it writes each key's health back to the database, so the cached tree is stale
+ * once it returns.
+ */
+export function useProbeLlmApiKeys() {
+  return useTreeMutation((providerId: string) => tauriClient.probeLlmApiKeys(providerId));
 }
 
 export function useAddLlmModels() {
@@ -70,12 +94,12 @@ export function useDeleteLlmModel() {
 }
 
 /**
- * Connection test. Not a tree mutation: it changes nothing, and its result is
- * shown inline next to the endpoint form rather than cached.
+ * Connection test. Not a tree mutation: its result is shown inline next to the
+ * provider form rather than cached.
  */
-export function useTestLlmEndpoint() {
+export function useTestLlmProvider() {
   return useMutation({
-    mutationFn: (endpointId: string) => tauriClient.testLlmEndpoint(endpointId)
+    mutationFn: (providerId: string) => tauriClient.testLlmProvider(providerId)
   });
 }
 
@@ -86,6 +110,6 @@ export function useTestLlmEndpoint() {
  */
 export function useSyncLlmModels() {
   return useMutation({
-    mutationFn: (endpointId: string) => tauriClient.syncLlmModels(endpointId)
+    mutationFn: (providerId: string) => tauriClient.syncLlmModels(providerId)
   });
 }

@@ -1,5 +1,17 @@
 import { useState } from "react";
-import { ChevronDown, Plus, Star, Trash2 } from "lucide-react";
+import {
+  AudioLines,
+  ChevronDown,
+  Eye,
+  Lightbulb,
+  Plus,
+  RefreshCw,
+  Settings2,
+  Star,
+  Trash2,
+  Video,
+  Wrench
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,24 +19,39 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useDeleteLlmModel, useUpdateLlmModel } from "@/hooks/useLlmConfig";
 import { groupBySeries } from "@/services/llmModelSeries";
 import { cn } from "@/lib/utils";
-import type { LlmModel } from "@/types/domain";
+import type { LlmModel, LlmModelCapabilities } from "@/types/domain";
+
+/** Only the abilities a model has are shown, so a row reads as a summary. */
+const CAPABILITY_ICONS: Array<{
+  key: keyof LlmModelCapabilities;
+  label: string;
+  Icon: typeof Lightbulb;
+}> = [
+  { key: "reasoning", label: "Reasoning", Icon: Lightbulb },
+  { key: "toolCalling", label: "Tool calling", Icon: Wrench },
+  { key: "vision", label: "Vision", Icon: Eye },
+  { key: "audio", label: "Audio", Icon: AudioLines },
+  { key: "video", label: "Video", Icon: Video }
+];
 
 /**
- * Level three: the endpoint's models, grouped by series.
+ * The provider's models, grouped by the group label.
  *
- * Series are collapsible because a synced gateway can contribute dozens of
- * models across a handful of families, and the flat list buries the two or three
- * a user actually picks between.
+ * Groups are collapsible because a synced gateway can contribute dozens of models
+ * across a handful of families, and the flat list buries the two or three a user
+ * actually picks between.
  */
 export function ModelTree({
   models,
   onAddModel,
+  onEditModel,
   onSyncModels,
   canSync,
   syncing
 }: {
   models: LlmModel[];
   onAddModel: () => void;
+  onEditModel: (model: LlmModel) => void;
   onSyncModels: () => void;
   canSync: boolean;
   syncing: boolean;
@@ -32,13 +59,13 @@ export function ModelTree({
   const grouped = groupBySeries(models);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  const toggleSeries = (series: string) => {
+  const toggleGroup = (group: string) => {
     setCollapsed((current) => {
       const next = new Set(current);
-      if (next.has(series)) {
-        next.delete(series);
+      if (next.has(group)) {
+        next.delete(group);
       } else {
-        next.add(series);
+        next.add(group);
       }
       return next;
     });
@@ -58,52 +85,52 @@ export function ModelTree({
                 onClick={onSyncModels}
                 disabled={!canSync || syncing}
               >
-                {syncing ? "Syncing..." : "Sync"}
+                <RefreshCw className={cn("mr-1.5 size-3.5", syncing && "animate-spin")} />
+                {syncing ? "Fetching..." : "Fetch model list"}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
               {canSync
-                ? "Fetch the model list from this endpoint"
-                : "Add an API key to this endpoint first"}
+                ? "Fetch the model list from this provider"
+                : "Add an API address and key to this provider first"}
             </TooltipContent>
           </Tooltip>
-          <Button type="button" variant="ghost" size="sm" onClick={onAddModel}>
-            <Plus className="mr-1 size-3.5" />
-            Add model
+          <Button type="button" variant="ghost" size="sm" onClick={onAddModel} aria-label="Add model">
+            <Plus className="size-3.5" />
           </Button>
         </div>
       </div>
 
       {models.length === 0 ? (
         <p className="rounded-md border border-dashed p-4 text-xs text-muted-foreground">
-          No models yet. Sync to fetch what this endpoint offers, or add one by name.
+          No models yet. Fetch the list this provider offers, or add one by name.
         </p>
       ) : (
         <div className="divide-y rounded-md border">
-          {grouped.map(([series, seriesModels]) => (
-            <div key={series}>
+          {grouped.map(([group, groupModels]) => (
+            <div key={group}>
               <button
                 type="button"
-                onClick={() => toggleSeries(series)}
-                aria-expanded={!collapsed.has(series)}
+                onClick={() => toggleGroup(group)}
+                aria-expanded={!collapsed.has(group)}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/50"
               >
                 <ChevronDown
                   className={cn(
                     "size-3.5 text-muted-foreground transition-transform",
-                    collapsed.has(series) && "-rotate-90"
+                    collapsed.has(group) && "-rotate-90"
                   )}
                 />
-                <span className="font-medium">{series}</span>
+                <span className="font-medium">{group}</span>
                 <Badge variant="secondary" className="text-[10px]">
-                  {seriesModels.length}
+                  {groupModels.length}
                 </Badge>
               </button>
 
-              {!collapsed.has(series) && (
+              {!collapsed.has(group) && (
                 <div className="divide-y border-t bg-muted/20">
-                  {seriesModels.map((model) => (
-                    <ModelRow key={model.id} model={model} />
+                  {groupModels.map((model) => (
+                    <ModelRow key={model.id} model={model} onEdit={() => onEditModel(model)} />
                   ))}
                 </div>
               )}
@@ -115,7 +142,7 @@ export function ModelTree({
   );
 }
 
-function ModelRow({ model }: { model: LlmModel }) {
+function ModelRow({ model, onEdit }: { model: LlmModel; onEdit: () => void }) {
   const updateModel = useUpdateLlmModel();
   const deleteModel = useDeleteLlmModel();
 
@@ -125,6 +152,17 @@ function ModelRow({ model }: { model: LlmModel }) {
       {model.displayName && (
         <span className="hidden truncate text-xs text-muted-foreground sm:block">{model.displayName}</span>
       )}
+
+      <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+        {CAPABILITY_ICONS.filter(({ key }) => model.capabilities[key]).map(({ key, label, Icon }) => (
+          <Tooltip key={key}>
+            <TooltipTrigger asChild>
+              <Icon aria-label={label} className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipContent>{label}</TooltipContent>
+          </Tooltip>
+        ))}
+      </span>
 
       {model.isDefault ? (
         <Badge variant="secondary" className="shrink-0 text-[10px]">
@@ -163,6 +201,22 @@ function ModelRow({ model }: { model: LlmModel }) {
             type="button"
             variant="ghost"
             size="icon"
+            className="size-7 shrink-0"
+            aria-label={`Edit ${model.modelId}`}
+            onClick={onEdit}
+          >
+            <Settings2 className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Edit capabilities and token limits</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
             className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
             aria-label={`Remove ${model.modelId}`}
             disabled={deleteModel.isPending}
@@ -175,7 +229,7 @@ function ModelRow({ model }: { model: LlmModel }) {
             <Trash2 className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Remove from this endpoint</TooltipContent>
+        <TooltipContent>Remove from this provider</TooltipContent>
       </Tooltip>
     </div>
   );

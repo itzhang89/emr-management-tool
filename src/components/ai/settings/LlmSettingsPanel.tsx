@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { LoaderCircle, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { Copy, LoaderCircle, ShieldAlert, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,87 +10,69 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AddModelDialog } from "@/components/ai/settings/AddModelDialog";
-import { EndpointForm } from "@/components/ai/settings/EndpointForm";
-import { EndpointFormDialog } from "@/components/ai/settings/EndpointFormDialog";
+import { CommitInput } from "@/components/ai/settings/CommitInput";
+import { ModelFormDialog } from "@/components/ai/settings/ModelFormDialog";
 import { ModelTree } from "@/components/ai/settings/ModelTree";
+import { ProviderCard } from "@/components/ai/settings/ProviderCard";
 import { ProviderFormDialog } from "@/components/ai/settings/ProviderFormDialog";
 import { ProviderList } from "@/components/ai/settings/ProviderList";
 import { SyncModelsDialog } from "@/components/ai/settings/SyncModelsDialog";
 import { useDeleteAllChatSessions } from "@/hooks/useChat";
 import {
-  useDeleteLlmEndpoint,
   useDeleteLlmProvider,
   useLlmProviders,
   useSyncLlmModels,
   useUpdateLlmProvider
 } from "@/hooks/useLlmConfig";
-import { cn } from "@/lib/utils";
-import type { LlmModelCandidate } from "@/types/domain";
+import type { LlmModel, LlmModelCandidate, LlmProvider } from "@/types/domain";
 
 /**
- * Provider → endpoint → model, as three nested levels: the provider list picks
- * what the right column configures, and inside that column an endpoint selector
- * picks whose key, URL, and models are shown.
+ * Provider → model, two levels: the provider list picks what the right column
+ * configures, and that column holds the one address, the keys that open it, and
+ * the models it offers.
  *
- * Models hang off the endpoint rather than the provider, so two endpoints of one
- * provider can offer different model sets and "Sync" always means "ask this
- * endpoint".
+ * There is no endpoint level. A second address is a second provider — the
+ * duplicate action copies everything but the key, which is the only thing that
+ * actually differs between two accounts on one gateway.
+ *
+ * OpenAI, Anthropic, and Gemini are seeded as disabled presets, so the common case
+ * is pasting a key into a row that already knows the right address.
  */
 export function LlmSettingsPanel() {
   const providers = useLlmProviders();
   const updateProvider = useUpdateLlmProvider();
   const deleteProvider = useDeleteLlmProvider();
-  const deleteEndpoint = useDeleteLlmEndpoint();
   const syncModels = useSyncLlmModels();
 
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
-  const [providerDialogOpen, setProviderDialogOpen] = useState(false);
-  const [endpointDialogOpen, setEndpointDialogOpen] = useState(false);
-  const [addModelOpen, setAddModelOpen] = useState(false);
+  const [providerDialog, setProviderDialog] = useState<{ duplicateOf: LlmProvider | null } | null>(
+    null
+  );
+  const [modelDialog, setModelDialog] = useState<{ model: LlmModel | null } | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [candidates, setCandidates] = useState<LlmModelCandidate[]>([]);
-  const [deleteTarget, setDeleteTarget] = useState<
-    { kind: "provider" | "endpoint"; id: string; name: string } | null
-  >(null);
+  const [deleteTarget, setDeleteTarget] = useState<LlmProvider | null>(null);
 
   const providerList = providers.data ?? [];
-  const selectedProvider = useMemo(
+  const selected = useMemo(
     () => providerList.find((provider) => provider.id === selectedProviderId) ?? providerList[0] ?? null,
     [providerList, selectedProviderId]
   );
-  const selectedEndpoint = useMemo(() => {
-    if (!selectedProvider) return null;
-    return (
-      selectedProvider.endpoints.find((endpoint) => endpoint.id === selectedEndpointId) ??
-      selectedProvider.endpoints.find((endpoint) => endpoint.isDefault) ??
-      selectedProvider.endpoints[0] ??
-      null
-    );
-  }, [selectedProvider, selectedEndpointId]);
 
-  // Keep the selections pointing at rows that still exist after a delete.
+  // Keep the selection pointing at a row that still exists after a delete.
   useEffect(() => {
-    if (selectedProvider && selectedProvider.id !== selectedProviderId) {
-      setSelectedProviderId(selectedProvider.id);
+    if (selected && selected.id !== selectedProviderId) {
+      setSelectedProviderId(selected.id);
     }
-  }, [selectedProvider, selectedProviderId]);
-  useEffect(() => {
-    if (selectedEndpoint && selectedEndpoint.id !== selectedEndpointId) {
-      setSelectedEndpointId(selectedEndpoint.id);
-    }
-  }, [selectedEndpoint, selectedEndpointId]);
+  }, [selected, selectedProviderId]);
 
   const startSync = () => {
-    if (!selectedEndpoint) return;
+    if (!selected) return;
     setCandidates([]);
     setSyncOpen(true);
-    syncModels.mutate(selectedEndpoint.id, {
-      onSuccess: (result) => setCandidates(result),
+    syncModels.mutate(selected.id, {
+      onSuccess: setCandidates,
       onError: (error: Error) => {
         setSyncOpen(false);
         toast.error(error.message || "Could not fetch the model list. Add models manually instead.");
@@ -100,14 +82,10 @@ export function LlmSettingsPanel() {
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
-    const mutation = deleteTarget.kind === "provider" ? deleteProvider : deleteEndpoint;
-    mutation.mutate(deleteTarget.id, {
+    deleteProvider.mutate(deleteTarget.id, {
       onSuccess: () => {
         toast.success(`${deleteTarget.name} deleted`);
-        if (deleteTarget.kind === "provider") {
-          setSelectedProviderId(null);
-        }
-        setSelectedEndpointId(null);
+        setSelectedProviderId(null);
         setDeleteTarget(null);
       },
       onError: (error: Error) => toast.error(error.message || "Failed to delete")
@@ -131,173 +109,98 @@ export function LlmSettingsPanel() {
       <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <p>
-          Chat sends your messages and tool results — including log excerpts — to the provider you configure
-          here. API keys are stored in your OS keychain and never sent to this UI. No provider is configured by
-          default.
+          Chat sends your messages and tool results — including log excerpts — to the provider you enable
+          here. API keys and custom header values are stored in your OS keychain and never sent back to this
+          UI. No provider is enabled by default.
         </p>
       </div>
 
       <div className="grid min-h-0 min-w-0 flex-1 gap-6 overflow-hidden lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]">
         <ProviderList
           providers={providerList}
-          selectedId={selectedProvider?.id ?? null}
-          onSelect={(id) => {
-            setSelectedProviderId(id);
-            setSelectedEndpointId(null);
-          }}
-          onAdd={() => setProviderDialogOpen(true)}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelectedProviderId}
+          onAdd={() => setProviderDialog({ duplicateOf: null })}
         />
 
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto">
-          {!selectedProvider ? (
+          {!selected ? (
             <p className="text-sm text-muted-foreground">
-              Add a provider to configure an API endpoint and its models.
+              Add a provider to configure its API address and models.
             </p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold">{selectedProvider.name}</h3>
-                <div className="flex items-center gap-3">
-                  <Label htmlFor="provider-enabled" className="text-xs text-muted-foreground">
-                    {selectedProvider.enabled ? "Enabled" : "Disabled"}
-                  </Label>
-                  <Switch
-                    id="provider-enabled"
-                    checked={selectedProvider.enabled}
-                    disabled={updateProvider.isPending}
-                    onCheckedChange={(enabled) =>
-                      updateProvider.mutate(
-                        { id: selectedProvider.id, enabled },
-                        {
-                          onError: (error: Error) =>
-                            toast.error(error.message || "Failed to update the provider")
-                        }
-                      )
-                    }
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8 text-muted-foreground hover:text-destructive"
-                        aria-label={`Delete ${selectedProvider.name}`}
-                        onClick={() =>
-                          setDeleteTarget({
-                            kind: "provider",
-                            id: selectedProvider.id,
-                            name: selectedProvider.name
-                          })
-                        }
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Delete this provider</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  {selectedProvider.endpoints.map((endpoint) => (
-                    <Button
-                      key={endpoint.id}
-                      type="button"
-                      size="sm"
-                      variant={endpoint.id === selectedEndpoint?.id ? "default" : "outline"}
-                      onClick={() => setSelectedEndpointId(endpoint.id)}
-                      className={cn(!endpoint.hasApiKey && "border-dashed")}
-                    >
-                      {endpoint.name}
-                      {endpoint.isDefault && " ★"}
-                    </Button>
-                  ))}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setEndpointDialogOpen(true)}
-                  >
-                    <Plus className="mr-1 size-3.5" />
-                    Add endpoint
-                  </Button>
-                </div>
-
-                {selectedEndpoint ? (
-                  <>
-                    <EndpointForm endpoint={selectedEndpoint} />
-                    {selectedProvider.endpoints.length > 1 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() =>
-                          setDeleteTarget({
-                            kind: "endpoint",
-                            id: selectedEndpoint.id,
-                            name: selectedEndpoint.name
-                          })
-                        }
-                      >
-                        <Trash2 className="mr-1 size-3.5" />
-                        Delete this endpoint
-                      </Button>
-                    )}
-                  </>
-                ) : (
-                  <p className="rounded-md border border-dashed p-4 text-xs text-muted-foreground">
-                    No endpoints yet. Add one with this provider's base URL and API key.
-                  </p>
-                )}
-              </div>
-
-              {selectedEndpoint && (
-                <ModelTree
-                  models={selectedEndpoint.models}
-                  onAddModel={() => setAddModelOpen(true)}
-                  onSyncModels={startSync}
-                  canSync={selectedEndpoint.hasApiKey}
-                  syncing={syncModels.isPending}
+              <div className="flex items-center gap-2">
+                <CommitInput
+                  value={selected.name}
+                  onCommit={(name) => updateProvider.mutateAsync({ id: selected.id, name })}
+                  aria-label="Provider name"
+                  className="h-9 min-w-0 flex-1 text-base font-semibold"
                 />
-              )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 shrink-0"
+                      aria-label={`Duplicate ${selected.name}`}
+                      onClick={() => setProviderDialog({ duplicateOf: selected })}
+                    >
+                      <Copy className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Duplicate for another account or gateway</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-9 shrink-0 text-muted-foreground hover:text-destructive"
+                      aria-label={`Delete ${selected.name}`}
+                      onClick={() => setDeleteTarget(selected)}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Delete this provider</TooltipContent>
+                </Tooltip>
+              </div>
+
+              <ProviderCard provider={selected} />
+
+              <ModelTree
+                models={selected.models}
+                onAddModel={() => setModelDialog({ model: null })}
+                onEditModel={(model) => setModelDialog({ model })}
+                onSyncModels={startSync}
+                canSync={selected.apiKeys.length > 0 && selected.baseUrl.length > 0}
+                syncing={syncModels.isPending}
+              />
             </>
           )}
         </div>
       </div>
 
       <ProviderFormDialog
-        open={providerDialogOpen}
-        onOpenChange={setProviderDialogOpen}
-        onCreated={(providerId) => {
-          setSelectedProviderId(providerId);
-          setSelectedEndpointId(null);
-          // A provider with no endpoint cannot do anything, so go straight on to
-          // adding one rather than leaving an empty shell selected.
-          setEndpointDialogOpen(true);
-        }}
+        duplicateOf={providerDialog?.duplicateOf ?? null}
+        open={providerDialog !== null}
+        onOpenChange={(open) => !open && setProviderDialog(null)}
+        onCreated={setSelectedProviderId}
       />
 
-      {selectedProvider && (
-        <EndpointFormDialog
-          provider={selectedProvider}
-          open={endpointDialogOpen}
-          onOpenChange={setEndpointDialogOpen}
-          onCreated={setSelectedEndpointId}
-        />
-      )}
-
-      {selectedEndpoint && (
+      {selected && (
         <>
-          <AddModelDialog
-            endpointId={selectedEndpoint.id}
-            open={addModelOpen}
-            onOpenChange={setAddModelOpen}
+          <ModelFormDialog
+            providerId={selected.id}
+            model={modelDialog?.model ?? null}
+            open={modelDialog !== null}
+            onOpenChange={(open) => !open && setModelDialog(null)}
           />
           <SyncModelsDialog
-            endpointId={selectedEndpoint.id}
+            providerId={selected.id}
             candidates={candidates}
             loading={syncModels.isPending}
             open={syncOpen}
@@ -309,13 +212,11 @@ export function LlmSettingsPanel() {
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              Delete {deleteTarget?.kind === "provider" ? "provider" : "endpoint"}?
-            </DialogTitle>
+            <DialogTitle>Delete provider?</DialogTitle>
             <DialogDescription>
-              This removes <span className="font-medium text-foreground">{deleteTarget?.name}</span>
-              {deleteTarget?.kind === "provider" ? ", its endpoints," : ""} its models, and its stored API
-              key from this app. This cannot be undone.
+              This removes <span className="font-medium text-foreground">{deleteTarget?.name}</span>, its
+              models, and its stored API keys from this app. This cannot be undone.
+              {deleteTarget?.builtIn && " A deleted preset is not restored on the next start."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -325,7 +226,7 @@ export function LlmSettingsPanel() {
             <Button
               type="button"
               variant="destructive"
-              disabled={deleteProvider.isPending || deleteEndpoint.isPending}
+              disabled={deleteProvider.isPending}
               onClick={confirmDelete}
             >
               Delete

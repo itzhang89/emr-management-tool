@@ -6,9 +6,9 @@
 //! is the fallback, so an offline or failing provider still produces something
 //! better than the default.
 
-use super::session::ResolvedTarget;
 use super::protocol::{StreamEvent, Turn};
-use crate::models::LlmProviderKind;
+use super::session::ResolvedTarget;
+use crate::models::LlmProtocol;
 
 /// Titles are shown in a narrow sidebar column, so anything longer is noise.
 const MAX_TITLE_CHARS: usize = 48;
@@ -56,8 +56,8 @@ pub async fn generate(
 
     // No tools: naming needs nothing from AWS, and advertising them invites the
     // model to start an investigation instead of answering.
-    let outcome = match target.kind {
-        LlmProviderKind::Openai => {
+    let outcome = match target.protocol {
+        LlmProtocol::Openai => {
             let body = super::openai::build_request(
                 &target.model_id,
                 Some(TITLE_SYSTEM_PROMPT),
@@ -67,13 +67,14 @@ pub async fn generate(
             super::openai::stream_response(
                 &target.base_url,
                 &target.api_key,
+                &target.headers,
                 &body,
                 cancel,
                 &mut collect,
             )
             .await
         }
-        LlmProviderKind::Anthropic => {
+        LlmProtocol::Anthropic => {
             let body = super::anthropic::build_request(
                 &target.model_id,
                 Some(TITLE_SYSTEM_PROMPT),
@@ -84,6 +85,20 @@ pub async fn generate(
             super::anthropic::stream_response(
                 &target.base_url,
                 &target.api_key,
+                &target.headers,
+                &body,
+                cancel,
+                &mut collect,
+            )
+            .await
+        }
+        LlmProtocol::Gemini => {
+            let body = super::gemini::build_request(Some(TITLE_SYSTEM_PROMPT), &[], &turns);
+            super::gemini::stream_response(
+                &target.base_url,
+                &target.model_id,
+                &target.api_key,
+                &target.headers,
                 &body,
                 cancel,
                 &mut collect,

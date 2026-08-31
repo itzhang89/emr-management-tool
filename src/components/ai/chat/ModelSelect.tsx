@@ -17,16 +17,16 @@ export type ModelOption = {
   modelId: string;
   series: string;
   providerName: string;
-  endpointName: string;
   isDefault: boolean;
 };
 
 /**
  * Flattens the provider tree into selectable models.
  *
- * Only enabled providers and endpoints holding an API key are offered: a model
- * behind a keyless endpoint cannot answer, so listing it would only produce a
- * failure at send time.
+ * Only enabled providers holding an API key are offered, and only chat models: a
+ * model behind a disabled or keyless provider cannot answer, and an image or
+ * embedding model cannot hold a conversation, so listing either would only produce
+ * a failure at send time.
  */
 export function useModelOptions(): ModelOption[] {
   const providers = useLlmProviders();
@@ -34,18 +34,16 @@ export function useModelOptions(): ModelOption[] {
     const options: ModelOption[] = [];
     for (const provider of providers.data ?? []) {
       if (!provider.enabled) continue;
-      for (const endpoint of provider.endpoints) {
-        if (!endpoint.hasApiKey) continue;
-        for (const model of endpoint.models) {
-          options.push({
-            id: model.id,
-            modelId: model.modelId,
-            series: model.series,
-            providerName: provider.name,
-            endpointName: endpoint.name,
-            isDefault: model.isDefault
-          });
-        }
+      if (provider.apiKeys.length === 0) continue;
+      for (const model of provider.models) {
+        if (model.modelType !== "chat") continue;
+        options.push({
+          id: model.id,
+          modelId: model.modelId,
+          series: model.series,
+          providerName: provider.name,
+          isDefault: model.isDefault
+        });
       }
     }
     return options;
@@ -86,12 +84,11 @@ export function ModelSelect({
   const grouped = useMemo(() => {
     const byProvider = new Map<string, ModelOption[]>();
     for (const option of options) {
-      const key = `${option.providerName} · ${option.endpointName}`;
-      const existing = byProvider.get(key);
+      const existing = byProvider.get(option.providerName);
       if (existing) {
         existing.push(option);
       } else {
-        byProvider.set(key, [option]);
+        byProvider.set(option.providerName, [option]);
       }
     }
     return [...byProvider.entries()];

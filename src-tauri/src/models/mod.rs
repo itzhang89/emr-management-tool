@@ -770,25 +770,31 @@ pub struct McpAuditQuery {
 }
 
 // --- LLM provider configuration -------------------------------------------
-// A three-level structure: provider → endpoint → model. API keys live on the
-// endpoint (alongside its base URL) and never enter SQLite or the WebView —
-// they go to the OS keychain via `secrets`, and the frontend only ever sees a
-// masked value it can replace but not read.
+// Two levels: provider → model. A provider is one place to send requests —
+// protocol, address, API keys, custom headers — and its models hang directly off
+// it. There is no endpoint level: a second address means a second provider, and
+// the "duplicate" action makes that cheap.
+//
+// Secrets (API key values and custom header values) never enter SQLite or the
+// WebView: they go to the OS keychain via `secrets`, and the frontend only ever
+// sees masked values it can replace but not read.
 
-/// Which request/response shape an endpoint speaks. Not a vendor name: an
+/// Which request/response shape a provider speaks. Not a vendor name: an
 /// OpenAI-compatible gateway is `Openai` regardless of who runs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum LlmProviderKind {
+pub enum LlmProtocol {
     Openai,
     Anthropic,
+    Gemini,
 }
 
-impl LlmProviderKind {
+impl LlmProtocol {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Openai => "openai",
             Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
         }
     }
 
@@ -796,72 +802,201 @@ impl LlmProviderKind {
         match value {
             "openai" => Some(Self::Openai),
             "anthropic" => Some(Self::Anthropic),
+            "gemini" => Some(Self::Gemini),
             _ => None,
         }
     }
 
-    /// Suggested base URL for a brand-new endpoint. Editable, so
-    /// OpenAI-compatible gateways and self-hosted endpoints work too.
+    /// Suggested base URL for a brand-new provider. Editable, so
+    /// OpenAI-compatible gateways and self-hosted addresses work too.
+    ///
+    /// Gemini's includes `/v1beta` so that `{base}/models` is the listing path
+    /// for all three shapes and only the response parsing differs.
     pub fn default_base_url(self) -> &'static str {
         match self {
             Self::Openai => "https://api.openai.com/v1",
             Self::Anthropic => "https://api.anthropic.com/v1",
+            Self::Gemini => "https://generativelanguage.googleapis.com/v1beta",
+        }
+    }
+
+    /// Header names this protocol sets itself. Custom headers may not override
+    /// them: silently shadowing the auth header would make "the key is wrong"
+    /// impossible to diagnose.
+    pub fn reserved_header_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Openai => &["authorization"],
+            Self::Anthropic => &["x-api-key", "anthropic-version"],
+            Self::Gemini => &["x-goog-api-key"],
         }
     }
 }
 
-/// One model offered by an endpoint. `model_id` is the value sent to the API;
-/// `series` groups models in the UI ("claude-opus" for "claude-opus-4-8").
+/// What a model can do. Stored as one JSON column rather than seven boolean
+/// ones: it is written as a unit by the edit dialog, and adding a modality
+/// later should not be a schema change.
+///
+/// These flags are recorded and displayed but do **not** shape outgoing
+/// requests yet — the values come from user input or a gateway's guess, and
+/// using them to trim a request would turn one mis-set checkbox into "the model
+/// suddenly cannot call tools".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LlmModelCapabilities {
+    pub reasoning: bool,
+    pub tool_calling: bool,
+    pub text: bool,
+    pub vision: bool,
+    pub audio: bool,
+    pub video: bool,
+}
+
+impl LlmModelCapabilities {
+    /// What a freshly added chat model is assumed to do. Text is table stakes,
+    /// and a model that cannot call tools is the exception rather than the rule
+    /// for the gateways this app talks to.
+    pub fn chat_defaults() -> Self {
+        Self {
+            reasoning: false,
+            tool_calling: true,
+            text: true,
+            vision: false,
+            audio: false,
+            video: false,
+        }
+    }
+}
+
+/// Only `Chat` has behaviour today. The other two are storable so a synced
+/// catalogue can be labelled honestly, but they are kept out of Chat's model
+/// picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmModelType {
+    Chat,
+    Image,
+    Embed,
+}
+
+impl LlmModelType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Image => "image",
+            Self::Embed => "embed",
+        }
+    }
+
+    /// Unknown values read back as `Chat`: a row whose type could not be parsed
+    /// is more useful listed than dropped.
+    pub fn parse_or_chat(value: &str) -> Self {
+        match value {
+            "image" => Self::Image,
+            "embed" => Self::Embed,
+            _ => Self::Chat,
+        }
+    }
+}
+
+/// One model offered by a provider. `model_id` is the value sent to the API;
+/// `series` groups models in the UI, where it is labelled "group".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmModel {
     pub id: String,
-    pub endpoint_id: String,
+    pub provider_id: String,
     pub model_id: String,
     pub series: String,
     pub display_name: Option<String>,
+    pub model_type: LlmModelType,
+    pub capabilities: LlmModelCapabilities,
     pub is_default: bool,
     pub context_window: Option<i64>,
+    pub max_input_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
     pub created_at: DateTime<Utc>,
 }
 
-/// An API endpoint of a provider. Carries the base URL and — in the keychain,
-/// never here — the API key. `has_api_key` and `api_key_masked` are what the
-/// frontend gets instead of the secret.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmEndpoint {
-    pub id: String,
-    pub provider_id: String,
-    pub name: String,
-    pub base_url: String,
-    pub is_default: bool,
-    pub has_api_key: bool,
-    pub api_key_masked: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub models: Vec<LlmModel>,
+/// Whether a stored API key is usable. `Unknown` means nothing has probed it
+/// yet — distinct from `Unhealthy`, which means something tried and was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmApiKeyStatus {
+    Unknown,
+    Healthy,
+    Unhealthy,
 }
 
+impl LlmApiKeyStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Healthy => "healthy",
+            Self::Unhealthy => "unhealthy",
+        }
+    }
+
+    pub fn parse_or_unknown(value: &str) -> Self {
+        match value {
+            "healthy" => Self::Healthy,
+            "unhealthy" => Self::Unhealthy,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// One API key of a provider — its metadata only. The value itself lives in the
+/// keychain under `llm/key/{id}`; `masked` is what the WebView gets.
+///
+/// The health status is deliberately in SQLite rather than beside the value: it
+/// is not a secret, and rewriting a keychain entry on every probe would be the
+/// wrong use of that store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmApiKey {
+    pub id: String,
+    pub provider_id: String,
+    pub label: Option<String>,
+    /// e.g. "sk-••••abcd". Display only — the real key is never returned.
+    pub masked: String,
+    pub status: LlmApiKeyStatus,
+    /// Why a probe failed, when it did.
+    pub status_message: Option<String>,
+    pub checked_at: Option<DateTime<Utc>>,
+    pub sort_order: i64,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One place to send requests: a protocol, an address, the keys that open it,
+/// and the models it offers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmProvider {
     pub id: String,
     pub name: String,
-    pub kind: LlmProviderKind,
+    pub protocol: LlmProtocol,
+    /// Empty until the user fills it in. A provider with no address cannot be
+    /// enabled, since enabling means "requests may go here".
+    pub base_url: String,
     pub enabled: bool,
+    /// True for a seeded preset the user has not replaced. Presets exist to be
+    /// filled in or duplicated; the flag only labels them in the UI.
+    pub built_in: bool,
+    /// Names of the custom request headers configured here. The values are in
+    /// the keychain, so only the names cross to the WebView.
+    pub header_names: Vec<String>,
     pub sort_order: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub endpoints: Vec<LlmEndpoint>,
+    pub api_keys: Vec<LlmApiKey>,
+    pub models: Vec<LlmModel>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateLlmProviderRequest {
     pub name: String,
-    pub kind: LlmProviderKind,
+    pub protocol: Option<LlmProtocol>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -869,51 +1004,69 @@ pub struct CreateLlmProviderRequest {
 pub struct UpdateLlmProviderRequest {
     pub id: String,
     pub name: Option<String>,
+    pub protocol: Option<LlmProtocol>,
+    pub base_url: Option<String>,
     pub enabled: Option<bool>,
     pub sort_order: Option<i64>,
 }
 
+/// One custom header. `value: None` on a submit means "keep what is stored",
+/// so editing one header does not require retyping the others.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateLlmEndpointRequest {
-    pub provider_id: String,
+pub struct LlmHeaderInput {
     pub name: String,
-    pub base_url: String,
-    pub api_key: Option<String>,
-    pub is_default: Option<bool>,
+    pub value: Option<String>,
 }
 
-/// `api_key: None` leaves the stored key untouched — the frontend cannot read
-/// it back, so "unchanged" has to be expressible as an absent field rather
-/// than a round-trip of the current value.
+/// The whole header set for a provider, submitted as a unit: names absent from
+/// the list are removed.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateLlmEndpointRequest {
+pub struct SetLlmProviderHeadersRequest {
+    pub provider_id: String,
+    pub headers: Vec<LlmHeaderInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLlmApiKeyRequest {
+    pub provider_id: String,
+    pub value: String,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLlmApiKeyRequest {
     pub id: String,
-    pub name: Option<String>,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
-    pub is_default: Option<bool>,
+    pub label: Option<String>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LlmEndpointTestResult {
+pub struct LlmProviderTestResult {
     pub ok: bool,
     pub message: String,
     pub latency_ms: i64,
-    /// How many models the endpoint advertised, when it answered at all.
+    /// How many models the provider advertised, when it answered at all.
     pub model_count: Option<usize>,
 }
 
-/// A model the endpoint advertises, before the user chooses to import it.
+/// A model the provider advertises, before the user chooses to import it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmModelCandidate {
     pub model_id: String,
     pub series: String,
     pub display_name: Option<String>,
-    /// True when this endpoint already has the model stored, so the import
+    /// Token limits, for the shapes that report them honestly. Gemini does;
+    /// the other two do not, and are left `None` rather than guessed at.
+    pub context_window: Option<i64>,
+    pub max_input_tokens: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+    /// True when this provider already has the model stored, so the import
     /// dialog can pre-check it and label it as already added.
     pub already_added: bool,
 }
@@ -921,7 +1074,7 @@ pub struct LlmModelCandidate {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddLlmModelsRequest {
-    pub endpoint_id: String,
+    pub provider_id: String,
     pub models: Vec<AddLlmModelInput>,
 }
 
@@ -931,7 +1084,10 @@ pub struct AddLlmModelInput {
     pub model_id: String,
     pub series: Option<String>,
     pub display_name: Option<String>,
+    pub model_type: Option<LlmModelType>,
+    pub capabilities: Option<LlmModelCapabilities>,
     pub context_window: Option<i64>,
+    pub max_input_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
 }
 
@@ -939,10 +1095,14 @@ pub struct AddLlmModelInput {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateLlmModelRequest {
     pub id: String,
+    pub model_id: Option<String>,
     pub series: Option<String>,
     pub display_name: Option<String>,
+    pub model_type: Option<LlmModelType>,
+    pub capabilities: Option<LlmModelCapabilities>,
     pub is_default: Option<bool>,
     pub context_window: Option<i64>,
+    pub max_input_tokens: Option<i64>,
     pub max_output_tokens: Option<i64>,
 }
 
@@ -957,8 +1117,8 @@ pub struct LlmIdRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LlmEndpointIdRequest {
-    pub endpoint_id: String,
+pub struct LlmProviderIdRequest {
+    pub provider_id: String,
 }
 
 // --- Chat -----------------------------------------------------------------

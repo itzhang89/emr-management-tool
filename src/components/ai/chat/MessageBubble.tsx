@@ -35,7 +35,6 @@ export type ModelActionOption = {
   id: string;
   modelId: string;
   providerName: string;
-  endpointName: string;
 };
 
 export function UserMessage({

@@ -1,10 +1,31 @@
 //! The provider-shape abstraction the chat loop is written against.
 //!
-//! One conversation, two wire formats. Everything above this module works in
-//! terms of `Turn` / `StreamEvent` / `ToolDefinition`; `openai.rs` and
-//! `anthropic.rs` translate to and from their own JSON.
+//! One conversation, three wire formats. Everything above this module works in
+//! terms of `Turn` / `StreamEvent` / `ToolDefinition`; `openai.rs`,
+//! `anthropic.rs`, and `gemini.rs` translate to and from their own JSON.
 
+use crate::error::AppError;
 use crate::models::ChatToolCall;
+
+/// Error code marking a response that means "this API key is no good", as
+/// opposed to "this request was bad".
+///
+/// It travels on the error rather than being re-derived from a status further
+/// up, so the one place that knows an HTTP code was 401 is the place that saw
+/// it. `chat::providers::error_retires_key` is what reads it.
+pub const AUTH_REJECTED_CODE: &str = "LlmAuthRejected";
+
+/// Turns a non-2xx response into an `AppError`, tagging the auth failures so a
+/// caller holding several API keys can retire the one it used and try the next.
+///
+/// 429 is deliberately *not* tagged: being rate limited proves the key works.
+pub fn http_failure(status: u16, message: String) -> AppError {
+    let mut error = AppError::validation(message);
+    if matches!(status, 401 | 403) {
+        error.code = AUTH_REJECTED_CODE.into();
+    }
+    error
+}
 
 /// A tool the model may call, in provider-neutral form. Built from the MCP
 /// server's advertised tools.
@@ -177,6 +198,37 @@ pub fn parse_tool_arguments(arguments: &str) -> Result<serde_json::Value, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_failures_are_tagged_so_a_key_can_be_retired() {
+        assert_eq!(
+            http_failure(401, "bad key".to_string()).code.as_ref(),
+            AUTH_REJECTED_CODE
+        );
+        assert_eq!(
+            http_failure(403, "forbidden".to_string()).code.as_ref(),
+            AUTH_REJECTED_CODE
+        );
+        // Rate limiting proves the key works, so it must not retire it.
+        assert_ne!(
+            http_failure(429, "slow down".to_string()).code.as_ref(),
+            AUTH_REJECTED_CODE
+        );
+        assert_ne!(
+            http_failure(500, "oops".to_string()).code.as_ref(),
+            AUTH_REJECTED_CODE
+        );
+    }
+
+    #[test]
+    fn the_failure_message_is_preserved_verbatim() {
+        assert_eq!(
+            http_failure(401, "Authentication failed (401).".to_string())
+                .message
+                .as_ref(),
+            "Authentication failed (401)."
+        );
+    }
 
     #[test]
     fn assembles_a_call_from_fragments() {

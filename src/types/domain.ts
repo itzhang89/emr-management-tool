@@ -625,96 +625,157 @@ export interface McpAuditEntry {
 }
 
 // --- LLM provider configuration -------------------------------------------
-// A three-level structure: provider → endpoint → model. API keys are never part
-// of these types — an endpoint reports `hasApiKey` plus a masked value that can
-// be replaced but not read back.
+// Two levels: provider → model. A provider is one place to send requests —
+// protocol, address, API keys, custom headers — and its models hang directly off
+// it. There is no endpoint level: a second address means a second provider, and
+// duplicating one makes that cheap.
+//
+// Secrets are never part of these types. An API key reports a masked value that
+// can be replaced but not read back, and custom headers report only their names.
 
 /**
- * Which request/response shape an endpoint speaks — not a vendor name. An
+ * Which request/response shape a provider speaks — not a vendor name. An
  * OpenAI-compatible gateway is "openai" no matter who runs it.
  */
-export type LlmProviderKind = "openai" | "anthropic";
+export type LlmProtocol = "openai" | "anthropic" | "gemini";
+
+/** Only "chat" participates in Chat's model picker. */
+export type LlmModelType = "chat" | "image" | "embed";
+
+/**
+ * What a model can do. Recorded and displayed, but not yet used to shape
+ * outgoing requests — the values come from user input or a gateway's guess, and
+ * trimming a request by them would turn one mis-set checkbox into "the model
+ * suddenly cannot call tools".
+ */
+export interface LlmModelCapabilities {
+  reasoning: boolean;
+  toolCalling: boolean;
+  text: boolean;
+  vision: boolean;
+  audio: boolean;
+  video: boolean;
+}
 
 export interface LlmModel {
   id: string;
-  endpointId: string;
+  providerId: string;
   /** The value sent to the API, e.g. "claude-opus-4-8". */
   modelId: string;
-  /** Grouping label in the model tree, e.g. "claude-opus". */
+  /** Grouping label in the model tree, shown as "group" in the UI. */
   series: string;
   displayName?: string | null;
+  modelType: LlmModelType;
+  capabilities: LlmModelCapabilities;
   isDefault: boolean;
   contextWindow?: number | null;
+  maxInputTokens?: number | null;
   maxOutputTokens?: number | null;
   createdAt: string;
 }
 
-export interface LlmEndpoint {
+/**
+ * Whether a stored API key is usable. "unknown" means nothing has probed it yet
+ * — distinct from "unhealthy", which means something tried and was refused.
+ */
+export type LlmApiKeyStatus = "unknown" | "healthy" | "unhealthy";
+
+export interface LlmApiKey {
   id: string;
   providerId: string;
-  name: string;
-  baseUrl: string;
-  isDefault: boolean;
-  hasApiKey: boolean;
+  label?: string | null;
   /** e.g. "sk-••••abcd". Display only — the real key stays in the keychain. */
-  apiKeyMasked?: string | null;
+  masked: string;
+  status: LlmApiKeyStatus;
+  /** Why a probe failed, when it did. */
+  statusMessage?: string | null;
+  checkedAt?: string | null;
+  sortOrder: number;
   createdAt: string;
-  updatedAt: string;
-  models: LlmModel[];
 }
 
+/**
+ * One place to send requests: a protocol, an address, the keys that open it, and
+ * the models it offers.
+ */
 export interface LlmProvider {
   id: string;
   name: string;
-  kind: LlmProviderKind;
+  protocol: LlmProtocol;
+  /** Empty until filled in. A provider with no address cannot be enabled. */
+  baseUrl: string;
   enabled: boolean;
+  /** True for a seeded preset the user has not replaced. */
+  builtIn: boolean;
+  /** Names of the configured custom headers; the values stay in the keychain. */
+  headerNames: string[];
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
-  endpoints: LlmEndpoint[];
+  apiKeys: LlmApiKey[];
+  models: LlmModel[];
 }
 
 export interface CreateLlmProviderRequest {
   name: string;
-  kind: LlmProviderKind;
+  protocol?: LlmProtocol;
 }
 
 export interface UpdateLlmProviderRequest {
   id: string;
   name?: string;
+  protocol?: LlmProtocol;
+  baseUrl?: string;
   enabled?: boolean;
   sortOrder?: number;
 }
 
-export interface CreateLlmEndpointRequest {
-  providerId: string;
-  name: string;
-  baseUrl: string;
-  apiKey?: string;
-  isDefault?: boolean;
-}
-
-/** Omit `apiKey` to leave the stored key untouched; pass "" to clear it. */
-export interface UpdateLlmEndpointRequest {
+/** Copies settings and models under a new name — never the API keys. */
+export interface DuplicateLlmProviderRequest {
   id: string;
-  name?: string;
-  baseUrl?: string;
-  apiKey?: string;
-  isDefault?: boolean;
+  name: string;
 }
 
-export interface LlmEndpointTestResult {
+/** Omit `value` to keep the stored one — the UI cannot read it back. */
+export interface LlmHeaderInput {
+  name: string;
+  value?: string;
+}
+
+/** Submitted as a unit: names absent from the list are removed. */
+export interface SetLlmProviderHeadersRequest {
+  providerId: string;
+  headers: LlmHeaderInput[];
+}
+
+export interface AddLlmApiKeyRequest {
+  providerId: string;
+  value: string;
+  label?: string;
+}
+
+export interface UpdateLlmApiKeyRequest {
+  id: string;
+  label?: string;
+  sortOrder?: number;
+}
+
+export interface LlmProviderTestResult {
   ok: boolean;
   message: string;
   latencyMs: number;
   modelCount?: number | null;
 }
 
-/** A model the endpoint advertises, before the user chooses to import it. */
+/** A model the provider advertises, before the user chooses to import it. */
 export interface LlmModelCandidate {
   modelId: string;
   series: string;
   displayName?: string | null;
+  /** Reported by Gemini's listing; null for the shapes that do not report them. */
+  contextWindow?: number | null;
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
   alreadyAdded: boolean;
 }
 
@@ -722,21 +783,28 @@ export interface AddLlmModelInput {
   modelId: string;
   series?: string;
   displayName?: string;
+  modelType?: LlmModelType;
+  capabilities?: LlmModelCapabilities;
   contextWindow?: number;
+  maxInputTokens?: number;
   maxOutputTokens?: number;
 }
 
 export interface AddLlmModelsRequest {
-  endpointId: string;
+  providerId: string;
   models: AddLlmModelInput[];
 }
 
 export interface UpdateLlmModelRequest {
   id: string;
+  modelId?: string;
   series?: string;
   displayName?: string;
+  modelType?: LlmModelType;
+  capabilities?: LlmModelCapabilities;
   isDefault?: boolean;
   contextWindow?: number;
+  maxInputTokens?: number;
   maxOutputTokens?: number;
 }
 

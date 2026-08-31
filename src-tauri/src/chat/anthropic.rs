@@ -260,6 +260,7 @@ pub fn describe_failure(status: u16, body: &str) -> String {
 pub async fn stream_response(
     base_url: &str,
     api_key: &str,
+    headers: &std::collections::BTreeMap<String, String>,
     body: &serde_json::Value,
     cancel: &tokio_util::sync::CancellationToken,
     mut on_event: impl FnMut(StreamEvent),
@@ -271,24 +272,26 @@ pub async fn stream_response(
         .build()
         .map_err(|error| AppError::internal(error.to_string()))?;
 
-    let response = client
+    let mut request = client
         .post(&url)
         .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .json(body)
-        .send()
-        .await
-        .map_err(|error| {
-            AppError::internal(super::openai::describe_transport_failure(&url, &error))
-        })?;
+        .header("anthropic-version", "2023-06-01");
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+
+    let response = request.json(body).send().await.map_err(|error| {
+        AppError::internal(super::openai::describe_transport_failure(&url, &error))
+    })?;
 
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
-        return Err(AppError::validation(describe_failure(
+        // Tagged so a caller holding several keys can retire this one and retry.
+        return Err(super::protocol::http_failure(
             status.as_u16(),
-            &text,
-        )));
+            describe_failure(status.as_u16(), &text),
+        ));
     }
 
     let mut parser = super::sse::SseParser::new();

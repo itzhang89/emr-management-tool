@@ -18,7 +18,7 @@ import { groupBySeries } from "@/services/llmModelSeries";
 import type { LlmModelCandidate } from "@/types/domain";
 
 /**
- * Multi-select over what the endpoint's /models reported.
+ * Multi-select over what the provider's /models reported.
  *
  * Gateways routinely advertise hundreds of models, so nothing is imported until
  * the user picks — otherwise one sync would bury the two or three models they
@@ -26,13 +26,13 @@ import type { LlmModelCandidate } from "@/types/domain";
  * them is a no-op, and leaving them out of the list would look like data loss.
  */
 export function SyncModelsDialog({
-  endpointId,
+  providerId,
   candidates,
   loading,
   open,
   onOpenChange
 }: {
-  endpointId: string;
+  providerId: string;
   candidates: LlmModelCandidate[];
   loading: boolean;
   open: boolean;
@@ -92,11 +92,16 @@ export function SyncModelsDialog({
 
     addModels.mutate(
       {
-        endpointId,
+        providerId,
         models: chosen.map((candidate) => ({
           modelId: candidate.modelId,
           series: candidate.series,
-          displayName: candidate.displayName ?? undefined
+          displayName: candidate.displayName ?? undefined,
+          // Carried through when the provider reported them, which only the
+          // Gemini shape does; the others leave these for the edit dialog.
+          contextWindow: candidate.contextWindow ?? undefined,
+          maxInputTokens: candidate.maxInputTokens ?? undefined,
+          maxOutputTokens: candidate.maxOutputTokens ?? undefined
         }))
       },
       {
@@ -117,7 +122,7 @@ export function SyncModelsDialog({
           <DialogTitle>Import models</DialogTitle>
           <DialogDescription>
             {loading
-              ? "Asking the endpoint what models it offers..."
+              ? "Asking the provider what models it offers..."
               : `${candidates.length} models reported. Pick the ones you want.`}
           </DialogDescription>
         </DialogHeader>
