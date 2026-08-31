@@ -359,6 +359,41 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("button", { name: "New conversation" })).not.toBeInTheDocument();
   });
 
+  it("shows a failed send once, not twice", async () => {
+    const user = userEvent.setup();
+    chatSend.mockResolvedValue("msg-assistant");
+    // The backend records the error on the assistant row and also emits
+    // chat:error. Rendering both the persisted row and the streaming turn would
+    // print the same stack twice.
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({
+        id: "msg2",
+        seq: 1,
+        role: "assistant",
+        content: null,
+        modelId: "qwen3.8-flash",
+        durationMs: 388,
+        error: "Could not reach https://api.b.ai/v1/chat/completions: dns error"
+      })
+    ]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    await waitFor(() => expect(streamHandlers).not.toBeNull());
+
+    streamHandlers!.onError({
+      sessionId: "s1",
+      messageId: "msg2",
+      message: "Could not reach https://api.b.ai/v1/chat/completions: dns error"
+    });
+
+    const shown = await screen.findAllByText(/Could not reach/);
+    expect(shown).toHaveLength(1);
+    // And no "Thinking" bubble is left behind under it.
+    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+  });
+
   it("changes the conversation's model", async () => {
     const user = userEvent.setup();
     renderPanel();

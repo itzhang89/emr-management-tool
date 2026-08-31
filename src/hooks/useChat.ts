@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tauriClient } from "@/services/tauriClient";
 import {
   applyDelta,
-  applyError,
   applyToolEvent,
   bindChatStreamEvents,
   emptyStreamingTurn,
@@ -152,7 +151,13 @@ export function useChatConversation(sessionId: string | null) {
       },
       onError: (event) => {
         if (!forCurrentSession(event.sessionId)) return;
-        setStreaming((turn) => applyError(turn ?? emptyStreamingTurn(event.sessionId), event));
+        // An error ends the turn, so the streaming bubble is dropped rather than
+        // left showing "Thinking" beside its own copy of the message: the
+        // assistant row was already persisted carrying this error, and the
+        // refreshed transcript renders it once.
+        setStreaming(null);
+        void queryClient.invalidateQueries({ queryKey: chatMessagesKey(event.sessionId) });
+        void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       },
       // Not filtered by session: a conversation can be named while the user has
       // already switched away, and the sidebar shows every session's title.

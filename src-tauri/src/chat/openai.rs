@@ -201,6 +201,29 @@ impl StreamFolder {
     }
 }
 
+/// Turns a failure to reach the endpoint at all into one readable line.
+///
+/// `reqwest`'s own `Display` already echoes the URL ("error sending request for
+/// url (https://...)"), so naming the URL again produces the same address twice
+/// in one sentence. This keeps the URL once and appends only the underlying
+/// cause, which is the part that says *why* — DNS, TLS, refused connection.
+pub fn describe_transport_failure(url: &str, error: &reqwest::Error) -> String {
+    // Walk to the innermost source: the outer layers restate the request, the
+    // root says what actually went wrong.
+    let mut cause: &dyn std::error::Error = error;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    let detail = cause.to_string();
+
+    // A root cause that just repeats the wrapper adds nothing.
+    if detail.is_empty() || detail.contains(url) {
+        format!("Could not reach {url}.")
+    } else {
+        format!("Could not reach {url}: {detail}")
+    }
+}
+
 /// Turns a non-2xx response into something the user can act on. A 401 is almost
 /// always a wrong key; a 404 almost always a base URL with or without `/v1`.
 pub fn describe_failure(status: u16, body: &str) -> String {
@@ -247,7 +270,7 @@ pub async fn stream_response(
         .json(body)
         .send()
         .await
-        .map_err(|error| AppError::internal(format!("Could not reach {url}: {error}")))?;
+        .map_err(|error| AppError::internal(describe_transport_failure(&url, &error)))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -496,5 +519,27 @@ mod tests {
         assert!(unauthorized.contains("bad key"), "{unauthorized}");
         assert!(describe_failure(404, "").contains("/v1"));
         assert!(describe_failure(500, "boom").contains("500"));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_endpoint_names_the_url_once() {
+        // A domain that cannot resolve is the common shape of this failure: a
+        // typo'd base URL, or no network.
+        let url = "https://unreachable.invalid/v1/chat/completions";
+        let error = reqwest::Client::new()
+            .post(url)
+            .send()
+            .await
+            .expect_err("an unresolvable host must fail");
+
+        let message = describe_transport_failure(url, &error);
+
+        // reqwest's own Display already carries the URL, so naming it again used
+        // to print the same address twice in one sentence.
+        assert_eq!(message.matches(url).count(), 1, "{message}");
+        assert!(message.starts_with("Could not reach"), "{message}");
+        // And the wrapper's "error sending request" restatement is dropped in
+        // favour of the root cause.
+        assert!(!message.contains("error sending request"), "{message}");
     }
 }

@@ -278,7 +278,9 @@ pub async fn stream_response(
         .json(body)
         .send()
         .await
-        .map_err(|error| AppError::internal(format!("Could not reach {url}: {error}")))?;
+        .map_err(|error| {
+            AppError::internal(super::openai::describe_transport_failure(&url, &error))
+        })?;
 
     let status = response.status();
     if !status.is_success() {

@@ -87,6 +87,15 @@ export function applyToolEvent(turn: StreamingTurn, event: ChatToolEvent): Strea
   return { ...turn, messageId: event.messageId || turn.messageId, toolCalls };
 }
 
+/**
+ * Attaches a failure to the in-flight turn.
+ *
+ * The chat panel does not use this: `chat:error` ends the turn, and the assistant
+ * row persisted by the backend already carries the error, so the panel drops the
+ * streaming turn and lets the refreshed transcript show it once. Kept because a
+ * caller that wants to render a partial answer plus its failure reason without
+ * re-reading the transcript needs exactly this.
+ */
 export function applyError(turn: StreamingTurn, event: ChatErrorEvent): StreamingTurn {
   return { ...turn, messageId: event.messageId || turn.messageId, error: event.message };
 }
