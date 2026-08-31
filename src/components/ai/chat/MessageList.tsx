@@ -3,7 +3,8 @@ import { LoaderCircle } from "lucide-react";
 import {
   AssistantMessage,
   ContextResetDivider,
-  UserMessage
+  UserMessage,
+  type ModelActionOption
 } from "@/components/ai/chat/MessageBubble";
 import { toolStepFromEvent, toolStepFromStored } from "@/components/ai/chat/ToolCallStep";
 import type { StreamingTurn } from "@/services/chatStream";
@@ -32,7 +33,13 @@ export function MessageList({
   assistant,
   streaming,
   isLoading,
-  emptyHint
+  emptyHint,
+  modelOptions,
+  onCopy,
+  onEdit,
+  onDelete,
+  onRegenerate,
+  onRegenerateWithModel
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
@@ -40,6 +47,12 @@ export function MessageList({
   streaming: StreamingTurn | null;
   isLoading: boolean;
   emptyHint: React.ReactNode;
+  modelOptions: ModelActionOption[];
+  onCopy: (message: ChatMessage) => void;
+  onEdit: (message: ChatMessage, newText: string) => void;
+  onDelete: (message: ChatMessage) => void;
+  onRegenerate: (message: ChatMessage) => void;
+  onRegenerateWithModel: (message: ChatMessage, modelId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const assistantName = assistant?.name ?? "Assistant";
@@ -93,7 +106,15 @@ export function MessageList({
               return <ContextResetDivider key={message.id} />;
             }
             if (message.role === "user") {
-              return <UserMessage key={message.id} text={message.content ?? ""} />;
+              return (
+                <UserMessage
+                  key={message.id}
+                  text={message.content ?? ""}
+                  onCopy={() => onCopy(message)}
+                  onEdit={(newText) => onEdit(message, newText)}
+                  onDelete={() => onDelete(message)}
+                />
+              );
             }
             if (message.role === "assistant") {
               return (
@@ -106,6 +127,11 @@ export function MessageList({
                   toolSteps={message.toolCalls.map(toolStepFromStored)}
                   durationMs={message.durationMs}
                   error={message.error}
+                  modelOptions={modelOptions}
+                  onCopy={() => onCopy(message)}
+                  onRegenerate={() => onRegenerate(message)}
+                  onRegenerateWithModel={(modelId) => onRegenerateWithModel(message, modelId)}
+                  onDelete={() => onDelete(message)}
                 />
               );
             }
@@ -121,6 +147,11 @@ export function MessageList({
               toolSteps={streaming.toolCalls.map(toolStepFromEvent)}
               error={streaming.error}
               streaming
+              modelOptions={modelOptions}
+              onCopy={() => {}}
+              onRegenerate={() => {}}
+              onRegenerateWithModel={() => {}}
+              onDelete={() => {}}
             />
           )}
         </div>

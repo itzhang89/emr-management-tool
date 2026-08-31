@@ -45,8 +45,9 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * One collapsible tool step. Collapsed it is a single line — name, duration,
- * status; expanded it shows the arguments and result.
+ * One collapsible tool step. Collapsed it is a single, quiet line — an automatic
+ * step the model took, no louder than needed; expanded it shows the arguments
+ * and result.
  *
  * Tool activity is deliberately visible rather than hidden: the model reaches
  * into the user's AWS accounts, and they should be able to see which reads it
@@ -58,38 +59,38 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
   const failed = Boolean(step.error);
 
   return (
-    <div className="overflow-hidden rounded-md border bg-muted/30">
+    <div className="overflow-hidden rounded-md border bg-muted/25">
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted/60"
+        className="flex w-full items-center gap-1.5 px-1.5 py-1 text-left text-sm hover:bg-muted/60"
       >
         <ChevronRight
           className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
+            "size-3 shrink-0 text-muted-foreground/70 transition-transform",
             expanded && "rotate-90"
           )}
         />
         {step.running ? (
-          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+          <LoaderCircle className="size-3 shrink-0 animate-spin text-muted-foreground/70" />
         ) : failed ? (
-          <CircleAlert className="size-3.5 shrink-0 text-destructive" />
+          <CircleAlert className="size-3 shrink-0 text-destructive/80" />
         ) : (
-          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+          <Wrench className="size-3 shrink-0 text-muted-foreground/70" />
         )}
-        <span className="min-w-0 flex-1 truncate font-mono">{step.tool}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{step.tool}</span>
         {step.durationMs != null && (
-          <span className="shrink-0 text-muted-foreground">{formatDuration(step.durationMs)}</span>
+          <span className="shrink-0 text-xs text-muted-foreground/70">{formatDuration(step.durationMs)}</span>
         )}
         <span
           className={cn(
             "shrink-0 text-[10px] uppercase tracking-wide",
             step.running
-              ? "text-muted-foreground"
+              ? "text-muted-foreground/70"
               : failed
-                ? "text-destructive"
-                : "text-green-600 dark:text-green-500"
+                ? "text-destructive/80"
+                : "text-muted-foreground/50"
           )}
         >
           {step.running ? "Running" : failed ? "Failed" : "Done"}
@@ -97,7 +98,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
       </button>
 
       {expanded && (
-        <div className="space-y-2 border-t px-2 py-2">
+        <div className="space-y-2 border-t px-1.5 py-1.5">
           <div className="space-y-1">
             <div className="flex h-6 items-center justify-between gap-2">
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -105,7 +106,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
               </p>
               <CopyJsonButton value={step.args} label="Arguments" />
             </div>
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
               {formatJson(step.args)}
             </pre>
           </div>
@@ -113,7 +114,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
           {step.error ? (
             <div className="space-y-1">
               <p className="text-[10px] font-medium uppercase tracking-wide text-destructive">Error</p>
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-destructive/10 p-2 text-xs text-destructive">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-destructive/10 p-2 font-mono text-xs leading-relaxed text-destructive">
                 {step.error}
               </pre>
             </div>
@@ -125,7 +126,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
                 </p>
                 <CopyJsonButton value={step.result} label="Result" />
               </div>
-              <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">
+              <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
                 {formatJson(step.result)}
               </pre>
             </div>

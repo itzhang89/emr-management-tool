@@ -1,5 +1,12 @@
-import { Bot, CircleAlert, LoaderCircle, User } from "lucide-react";
+import { AtSign, Bot, CircleAlert, Copy, LoaderCircle, Pencil, RefreshCw, Trash2, User } from "lucide-react";
+import { Markdown } from "@/components/ai/chat/Markdown";
 import { ToolCallStep, type ToolStep } from "@/components/ai/chat/ToolCallStep";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger
+} from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /** Tailwind classes per assistant accent, so avatars are distinguishable. */
@@ -22,9 +29,27 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-export function UserMessage({ text }: { text: string }) {
+/** A model option offered in the assistant's switch-model submenu. */
+export type ModelActionOption = {
+  id: string;
+  modelId: string;
+  providerName: string;
+  endpointName: string;
+};
+
+export function UserMessage({
+  text,
+  onCopy,
+  onEdit,
+  onDelete
+}: {
+  text: string;
+  onCopy: () => void;
+  onEdit: (text: string) => void;
+  onDelete: () => void;
+}) {
   return (
-    <div className="flex gap-3">
+    <div className="group flex gap-3">
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
         <User className="size-4 text-muted-foreground" />
       </div>
@@ -32,17 +57,29 @@ export function UserMessage({ text }: { text: string }) {
         <p className="text-xs font-medium text-muted-foreground">You</p>
         {/* Preserve the user's own line breaks. */}
         <p className="whitespace-pre-wrap break-words text-sm">{text}</p>
+        <ActionRow>
+          <ActionIcon label="Copy" onClick={onCopy}>
+            <Copy className="size-3.5" />
+          </ActionIcon>
+          <ActionIcon label="Edit" onClick={() => onEdit(text)}>
+            <Pencil className="size-3.5" />
+          </ActionIcon>
+          <ActionIcon label="Delete" destructive onClick={onDelete}>
+            <Trash2 className="size-3.5" />
+          </ActionIcon>
+        </ActionRow>
       </div>
     </div>
   );
 }
 
 /**
- * One assistant turn: who answered, the tools it used, and its text.
+ * One assistant turn: who answered, the tools it used, and its markdown-rendered
+ * answer.
  *
  * Tool steps render above the answer because that is the order they happened —
  * the model reads before it concludes, and showing the reads first makes the
- * conclusion checkable.
+ * conclusion checkable. The hover-revealed action row sits below everything.
  */
 export function AssistantMessage({
   assistantName,
@@ -52,7 +89,12 @@ export function AssistantMessage({
   toolSteps,
   durationMs,
   error,
-  streaming
+  streaming,
+  modelOptions,
+  onCopy,
+  onRegenerate,
+  onRegenerateWithModel,
+  onDelete
 }: {
   assistantName: string;
   accent?: string | null;
@@ -62,11 +104,16 @@ export function AssistantMessage({
   durationMs?: number | null;
   error?: string | null;
   streaming?: boolean;
+  modelOptions: ModelActionOption[];
+  onCopy: () => void;
+  onRegenerate: () => void;
+  onRegenerateWithModel: (modelId: string) => void;
+  onDelete: () => void;
 }) {
   const hasBody = Boolean(text) || toolSteps.length > 0 || Boolean(error);
 
   return (
-    <div className="flex gap-3">
+    <div className="group flex gap-3">
       <div
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-full",
@@ -98,7 +145,7 @@ export function AssistantMessage({
           </div>
         )}
 
-        {text && <p className="whitespace-pre-wrap break-words text-sm">{text}</p>}
+        {text && <Markdown text={text} />}
 
         {error && (
           <div className="flex items-start gap-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">
@@ -108,8 +155,130 @@ export function AssistantMessage({
         )}
 
         {!hasBody && !streaming && <p className="text-xs text-muted-foreground">No response.</p>}
+
+        <ActionRow>
+          <ActionIcon label="Copy" onClick={onCopy}>
+            <Copy className="size-3.5" />
+          </ActionIcon>
+          {/* Regenerating a still-streaming reply would fight the user, so that
+              action waits until the turn has settled. */}
+          {!streaming && (
+            <>
+              <ActionIcon label="Regenerate" onClick={onRegenerate}>
+                <RefreshCw className="size-3.5" />
+              </ActionIcon>
+              <SwitchModelIcon
+                modelOptions={modelOptions}
+                onPick={onRegenerateWithModel}
+              />
+            </>
+          )}
+          <ActionIcon label="Delete" destructive onClick={onDelete}>
+            <Trash2 className="size-3.5" />
+          </ActionIcon>
+        </ActionRow>
       </div>
     </div>
+  );
+}
+
+/**
+ * The hover-revealed action row under a message. It is a blank strip until the
+ * mouse is over the message, then its icon buttons appear; they hide again as
+ * soon as the mouse leaves.
+ *
+ * Reveal is hover-only on purpose: `focus-within` would pin the row open after
+ * a click (a button keeps focus, the "@" popover keeps its trigger focused), so
+ * the icons would stay visible after the mouse moved away.
+ */
+function ActionRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-0.5 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+      {children}
+    </div>
+  );
+}
+
+/** A single small ghost icon button in the action row, with a tooltip. */
+function ActionIcon({
+  label,
+  destructive,
+  onClick,
+  children
+}: {
+  label: string;
+  destructive?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={label}
+          className={cn(
+            "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
+            destructive ? "hover:text-destructive" : ""
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * The "@" switch-model action: regenerate the reply on a different model. Clicking
+ * it opens the model list; picking one regenerates with that model. The glyph
+ * distinguishes it from the plain "Regenerate" arrow next to it.
+ */
+function SwitchModelIcon({
+  modelOptions,
+  onPick
+}: {
+  modelOptions: ModelActionOption[];
+  onPick: (modelId: string) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Regenerate with a different model"
+          className={cn(
+            "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
+            modelOptions.length === 0 && "pointer-events-none opacity-50"
+          )}
+        >
+          <AtSign className="size-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto min-w-48 p-1">
+        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">Switch model</p>
+        {modelOptions.length === 0 ? (
+          <p className="px-2 py-1 text-xs text-muted-foreground">
+            No models configured. Open LLM Setting to add one.
+          </p>
+        ) : (
+          <div className="max-h-64 overflow-y-auto">
+            {modelOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => onPick(option.id)}
+                className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-left text-sm hover:bg-accent"
+              >
+                <span className="truncate font-mono text-xs">{option.modelId}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 

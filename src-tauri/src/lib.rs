@@ -137,6 +137,10 @@ pub fn run() {
             commands::chat::clear_chat_context,
             commands::chat::chat_send,
             commands::chat::chat_cancel,
+            commands::chat::delete_chat_message,
+            commands::chat::delete_chat_messages_from,
+            commands::chat::regenerate_chat_message,
+            commands::chat::update_chat_message,
         ]);
 
     #[cfg(desktop)]

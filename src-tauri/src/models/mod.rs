@@ -1124,3 +1124,28 @@ pub struct ChatSendRequest {
     pub session_id: String,
     pub text: String,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageIdRequest {
+    pub session_id: String,
+    pub message_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatRegenerateRequest {
+    pub session_id: String,
+    pub message_id: String,
+    /// The model to regenerate with. `None` reuses the message's own model, so
+    /// the session's default is left untouched when a user only picks a model.
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatUpdateMessageRequest {
+    pub session_id: String,
+    pub message_id: String,
+    pub content: String,
+}

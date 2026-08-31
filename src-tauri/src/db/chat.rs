@@ -510,6 +510,119 @@ async fn touch_session(pool: &SqlitePool, id: &str) -> AppResult<()> {
 
 // --- Messages --------------------------------------------------------------
 
+/// Removes one message and any others with a later `seq`.
+///
+/// This is the backend for both "delete this message" and "delete this and
+/// everything after". A `tool_use` block and its `tool_result` live in the same
+/// thin row, so truncating rows can never orphan a tool call — splitting them
+/// across rows would.
+pub async fn delete_messages_from(
+    pool: &SqlitePool,
+    session_id: &str,
+    from_seq: i64,
+) -> AppResult<u64> {
+    let affected = sqlx::query("delete from chat_messages where session_id = ?1 and seq >= ?2")
+        .bind(session_id)
+        .bind(from_seq)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .rows_affected();
+    touch_session(pool, session_id).await?;
+    Ok(affected)
+}
+
+/// Deletes a single message. Refuses when that would leave the transcript
+/// starting with an assistant turn — the providers require the first message to
+/// be from the user.
+pub async fn delete_message(
+    pool: &SqlitePool,
+    session_id: &str,
+    message_id: &str,
+) -> AppResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    let exists: i64 = sqlx::query("select count(*) from chat_messages where id = ?1")
+        .bind(message_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .get(0);
+    if exists == 0 {
+        return Err(AppError::validation(format!(
+            "Chat message {message_id} was not found."
+        )));
+    }
+
+    // A single-row delete could leave the first visible message as an assistant
+    // turn, which every provider rejects. Simulate the delete by checking the
+    // message that would surface as first — if it is an assistant turn, refuse.
+    let would_be_first = sqlx::query(
+        "select role from chat_messages
+         where session_id = ?1 and id != ?2
+         order by seq
+         limit 1",
+    )
+    .bind(session_id)
+    .bind(message_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    if let Some(row) = would_be_first {
+        let role: String = row.get("role");
+        if role == ChatRole::Assistant.as_str() {
+            return Err(AppError::validation(
+                "This message cannot be deleted on its own, since the conversation would then start with an assistant turn. Delete your last question instead.",
+            ));
+        }
+    }
+
+    // The guard passed, so the deletion leaves a valid transcript: commit it.
+    sqlx::query("delete from chat_messages where id = ?1")
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    touch_session(pool, session_id).await?;
+    Ok(())
+}
+
+/// Overwrites a message's text. Used when the user edits a past question: the
+/// question is corrected, then the conversation is truncated past it and re-sent.
+pub async fn update_message_content(
+    pool: &SqlitePool,
+    message_id: &str,
+    content: &str,
+) -> AppResult<()> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(AppError::validation("Enter a message to save."));
+    }
+
+    let affected = sqlx::query("update chat_messages set content = ?1 where id = ?2")
+        .bind(content)
+        .bind(message_id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::validation(format!(
+            "Chat message {message_id} was not found."
+        )));
+    }
+    Ok(())
+}
+
 fn row_to_message(row: &sqlx::sqlite::SqliteRow) -> AppResult<ChatMessage> {
     let role_text: String = row.get("role");
     let tool_calls: Option<String> = row.get("tool_calls");
@@ -541,6 +654,31 @@ pub async fn list_messages(pool: &SqlitePool, session_id: &str) -> AppResult<Vec
         .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.iter().map(row_to_message).collect()
+}
+
+/// One message by id, or an error when it is not in the given session.
+pub async fn get_message(
+    pool: &SqlitePool,
+    session_id: &str,
+    message_id: &str,
+) -> AppResult<ChatMessage> {
+    sqlx::query(
+        "select * from chat_messages where id = ?1 and session_id = ?2",
+    )
+    .bind(message_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    // `fetch_optional` hands back an owned row; the shared converter reads a
+    // borrowed one, so wrap it rather than pass the function by value.
+    .map(|row| row_to_message(&row))
+    .transpose()?
+    .ok_or_else(|| {
+        AppError::validation(format!(
+            "Chat message {message_id} was not found in this conversation."
+        ))
+    })
 }
 
 /// The messages that make up the next request's conversation history: everything
@@ -1146,5 +1284,125 @@ mod tests {
 
         // Deleting what is not there is not an error — the end state matches.
         assert!(delete_session(&pool, "nope").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_single_message_can_be_deleted() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        user_message(&pool, &session_id, "why?").await;
+        let reply = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                content: Some("driver OOM"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        delete_message(&pool, &session_id, &reply.id).await.unwrap();
+
+        let remaining = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].role, ChatRole::User);
+        // The conversation keeps working: a fresh send starts on a user turn.
+        assert_eq!(remaining[0].content.as_deref(), Some("why?"));
+    }
+
+    #[tokio::test]
+    async fn deleting_the_only_user_turn_leaves_it_as_the_last_message() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        let q = append_message(
+            &pool,
+            &session_id,
+            ChatRole::User,
+            NewMessage::text("only question"),
+        )
+        .await
+        .unwrap();
+
+        delete_message(&pool, &session_id, &q.id).await.unwrap();
+
+        // No messages remain — which is fine, nothing to start on.
+        assert!(list_messages(&pool, &session_id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_message_before_the_last_user_turn_cannot_be_isolated_as_first() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        let first_user = append_message(
+            &pool,
+            &session_id,
+            ChatRole::User,
+            NewMessage::text("first"),
+        )
+        .await
+        .unwrap();
+        let reply = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                content: Some("first reply"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // Deleting the first user turn would leave the reply opening the
+        // conversation — refusing keeps the transcript valid.
+        let err = delete_message(&pool, &session_id, &first_user.id)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("assistant turn"));
+
+        // The non-corrupting half is still achievable: deleting the reply.
+        delete_message(&pool, &session_id, &reply.id).await.unwrap();
+        assert_eq!(list_messages(&pool, &session_id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn deleting_from_a_point_truncates_everything_after_it() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        user_message(&pool, &session_id, "first").await;
+        user_message(&pool, &session_id, "second").await;
+        user_message(&pool, &session_id, "third").await;
+
+        let second = list_messages(&pool, &session_id).await.unwrap()[1].clone();
+        delete_messages_from(&pool, &session_id, second.seq).await.unwrap();
+
+        let remaining = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].content.as_deref(), Some("first"));
+    }
+
+    #[tokio::test]
+    async fn editing_updates_the_content_of_a_message() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        let q = append_message(
+            &pool,
+            &session_id,
+            ChatRole::User,
+            NewMessage::text("why did it fail?"),
+        )
+        .await
+        .unwrap();
+
+        update_message_content(&pool, &q.id, "why did it fail on 8G?").await.unwrap();
+
+        let messages = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(messages[0].content.as_deref(), Some("why did it fail on 8G?"));
+
+        // A blank revision and a missing row are both rejected.
+        assert!(update_message_content(&pool, &q.id, "   ").await.is_err());
+        assert!(update_message_content(&pool, "nope", "x").await.is_err());
     }
 }

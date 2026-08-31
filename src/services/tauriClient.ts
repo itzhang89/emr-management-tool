@@ -219,7 +219,23 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
      * id. Progress arrives meanwhile on the CHAT_EVENTS channels.
      */
     chatSend: (sessionId: string, text: string) => call<string>("chat_send", { sessionId, text }),
-    chatCancel: (sessionId: string) => call<boolean>("chat_cancel", { sessionId })
+    chatCancel: (sessionId: string) => call<boolean>("chat_cancel", { sessionId }),
+    deleteChatMessage: (sessionId: string, messageId: string) =>
+      call<void>("delete_chat_message", { sessionId, messageId }),
+    deleteChatMessagesFrom: (sessionId: string, messageId: string) =>
+      call<number>("delete_chat_messages_from", { sessionId, messageId }),
+    /**
+     * Re-answers the asked question, optionally on a different model. Resolves
+     * when the exchange finishes, streaming on the CHAT_EVENTS channels.
+     */
+    regenerateChatMessage: (sessionId: string, messageId: string, modelId?: string) =>
+      call<string>("regenerate_chat_message", { sessionId, messageId, modelId }),
+    /**
+     * Replaces a past question and re-answers it. Resolves when the exchange
+     * finishes, streaming on the CHAT_EVENTS channels.
+     */
+    updateChatMessage: (sessionId: string, messageId: string, content: string) =>
+      call<string>("update_chat_message", { sessionId, messageId, content })
   };
 }
 

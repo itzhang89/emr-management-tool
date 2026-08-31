@@ -11,6 +11,7 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AssistantFormDialog } from "@/components/ai/chat/AssistantFormDialog";
 import { AssistantSidebar } from "@/components/ai/chat/AssistantSidebar";
@@ -31,7 +32,7 @@ import {
   useUpdateChatSession
 } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
-import type { ChatAssistant, ChatSession } from "@/types/domain";
+import type { ChatAssistant, ChatMessage, ChatSession } from "@/types/domain";
 
 /**
  * The Chat tab: assistants and conversations on the left, the selected
@@ -60,6 +61,11 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
   const [deleteTarget, setDeleteTarget] = useState<
     { kind: "session" | "assistant"; id: string; name: string } | null
   >(null);
+  // A message queued for deletion, or null when the confirm dialog is closed.
+  const [messageDeleteTarget, setMessageDeleteTarget] = useState<ChatMessage | null>(null);
+  // A message being reworded; the confirm dialog holds the new text.
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editText, setEditText] = useState("");
 
   const sessionList = sessions.data ?? [];
   const assistantList = assistants.data ?? [];
@@ -129,6 +135,68 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
         onError: (error: Error) => toast.error(error.message || "Failed to rename")
       }
     );
+  };
+
+  // Per-message actions, kept in handlers here so MessageList stays presentational.
+  const handleCopy = (message: ChatMessage) => {
+    const text = message.content;
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(
+      () => toast.success("Copied to clipboard"),
+      () => toast.error("Failed to copy to clipboard")
+    );
+  };
+
+  const handleEdit = async (message: ChatMessage, newText: string) => {
+    try {
+      await conversation.edit(message.id, newText);
+      toast.success("Question updated and answered again");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update the message");
+    }
+  };
+
+  const handleRegenerate = async (message: ChatMessage) => {
+    try {
+      await conversation.regenerate(message.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to regenerate the answer");
+    }
+  };
+
+  const handleRegenerateWithModel = async (message: ChatMessage, modelId: string) => {
+    try {
+      await conversation.regenerate(message.id, modelId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to regenerate the answer");
+    }
+  };
+
+  const handleMessageDelete = async () => {
+    if (!messageDeleteTarget) return;
+    try {
+      await conversation.deleteMessage(messageDeleteTarget.id);
+      toast.success("Message deleted");
+      setMessageDeleteTarget(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete the message");
+    }
+  };
+
+  const openEditor = (message: ChatMessage) => {
+    setEditText(message.content ?? "");
+    setEditingMessage(message);
+  };
+
+  const confirmEdit = async () => {
+    if (!editingMessage) return;
+    const text = editText.trim();
+    if (!text) {
+      toast.error("Enter a message to save.");
+      return;
+    }
+    setEditingMessage(null);
+    await handleEdit(editingMessage, text);
   };
 
   if (assistants.isLoading || sessions.isLoading) {
@@ -235,6 +303,12 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
           assistant={activeAssistant}
           streaming={conversation.streaming}
           isLoading={conversation.isLoading}
+          modelOptions={modelOptions}
+          onCopy={handleCopy}
+          onEdit={openEditor}
+          onDelete={setMessageDeleteTarget}
+          onRegenerate={handleRegenerate}
+          onRegenerateWithModel={handleRegenerateWithModel}
           emptyHint={
             noModels ? (
               <div className="space-y-3 text-sm">
@@ -338,6 +412,62 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
             >
               Delete
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={messageDeleteTarget !== null}
+        onOpenChange={(open) => !open && setMessageDeleteTarget(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete this message?</DialogTitle>
+            <DialogDescription>
+              The message and any answer it produced are removed. Tool results that read job logs
+              are stored locally, so this also clears whatever they brought back. This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setMessageDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void handleMessageDelete()}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editingMessage !== null} onOpenChange={(open) => !open && setEditingMessage(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit question</DialogTitle>
+            <DialogDescription>
+              Changing a question removes its answer and everything after it, then re-answers with
+              the new wording.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={editText}
+            onChange={(event) => setEditText(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter sends, mirroring the composer; Shift+Enter adds a line break.
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void confirmEdit();
+              }
+            }}
+            aria-label="Edited question"
+            autoFocus
+            className="min-h-24"
+          />
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditingMessage(null)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void confirmEdit()}>Save &amp; re-answer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

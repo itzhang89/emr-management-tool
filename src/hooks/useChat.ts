@@ -202,6 +202,61 @@ export function useChatConversation(sessionId: string | null) {
     await tauriClient.chatCancel(sessionId);
   }, [sessionId]);
 
+  // Each mutation re-runs the send plumbing afterwards so the stream events
+  // update the transcript the same way an ordinary send does. The persisted rows
+  // are invalidated on completion.
+  const deleteMessage = useCallback(
+    async (messageId: string) => {
+      if (!sessionId) return;
+      await tauriClient.deleteChatMessage(sessionId, messageId);
+      void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+    },
+    [queryClient, sessionId]
+  );
+
+  const deleteFrom = useCallback(
+    async (messageId: string) => {
+      if (!sessionId) return;
+      await tauriClient.deleteChatMessagesFrom(sessionId, messageId);
+      void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+    },
+    [queryClient, sessionId]
+  );
+
+  const regenerate = useCallback(
+    async (messageId: string, modelId?: string) => {
+      if (!sessionId) return;
+      setSending(true);
+      // Reuse the streaming turn so the reply shows a thinking indicator while
+      // the model re-answers; regeneration re-emits the usual chat events.
+      setStreaming(emptyStreamingTurn(sessionId));
+      try {
+        await tauriClient.regenerateChatMessage(sessionId, messageId, modelId);
+      } finally {
+        setSending(false);
+        void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+        void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
+      }
+    },
+    [queryClient, sessionId]
+  );
+
+  const edit = useCallback(
+    async (messageId: string, newText: string) => {
+      if (!sessionId) return;
+      setSending(true);
+      setStreaming(emptyStreamingTurn(sessionId));
+      try {
+        await tauriClient.updateChatMessage(sessionId, messageId, newText);
+      } finally {
+        setSending(false);
+        void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+        void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
+      }
+    },
+    [queryClient, sessionId]
+  );
+
   const clearContext = useCallback(async () => {
     if (!sessionId) return false;
     const cleared = await tauriClient.clearChatContext(sessionId);
@@ -219,8 +274,24 @@ export function useChatConversation(sessionId: string | null) {
       sending,
       send,
       cancel,
+      deleteMessage,
+      deleteFrom,
+      regenerate,
+      edit,
       clearContext
     }),
-    [messages.data, messages.isLoading, streaming, sending, send, cancel, clearContext]
+    [
+      messages.data,
+      messages.isLoading,
+      streaming,
+      sending,
+      send,
+      cancel,
+      deleteMessage,
+      deleteFrom,
+      regenerate,
+      edit,
+      clearContext
+    ]
   );
 }

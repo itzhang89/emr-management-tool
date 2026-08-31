@@ -100,13 +100,15 @@ pub struct ResolvedTarget {
     pub enabled_tools: Option<Vec<String>>,
 }
 
-/// Picks the model for a session: its own override, else its assistant's default,
-/// else the globally-default model. Each fallback is a deliberate step rather
-/// than an arbitrary pick, so a user who set a default gets it everywhere.
+/// Picks the model for a session: an explicit override for this one send, else
+/// the session's own choice, else its assistant's default, else the
+/// globally-default model. Each fallback is a deliberate step rather than an
+/// arbitrary pick, so a user who set a default gets it everywhere.
 pub async fn resolve_target(
     app: &AppHandle,
     pool: &SqlitePool,
     session_id: &str,
+    model_override: Option<&str>,
 ) -> AppResult<ResolvedTarget> {
     let sessions = crate::db::chat::list_sessions(pool).await?;
     let session = sessions
@@ -122,8 +124,11 @@ pub async fn resolve_target(
         .find(|assistant| assistant.id == session.assistant_id)
         .ok_or_else(|| AppError::validation("This session's assistant no longer exists."))?;
 
-    let wanted_model_id = session
-        .model_id
+    // An override for a single send (a regenerate with a picked model) precedes
+    // the session's stored choice, which itself precedes every fallback.
+    let wanted_model_id = model_override
+        .map(ToString::to_string)
+        .or_else(|| session.model_id.clone())
         .or_else(|| assistant.default_model_id.clone());
 
     // Walk the provider tree to find the model, its endpoint, and its provider.
@@ -287,12 +292,10 @@ fn emit<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: T) {
 
 // --- The loop -------------------------------------------------------------
 
-/// Runs one send to completion: persist the user turn, then alternate between
-/// streaming a response and running the tools it asks for.
+/// Runs one send to completion, for a conversation that uses its own model.
 ///
-/// Returns the assistant message id. Errors are both returned and recorded on the
-/// assistant row, so a failed send leaves a visible trace in the transcript
-/// rather than a silently missing reply.
+/// Thin wrapper over [`send_with_model`] with no per-send override, so ordinary
+/// sends read the same way they always have.
 pub async fn send(
     app: &AppHandle,
     pool: &SqlitePool,
@@ -301,9 +304,27 @@ pub async fn send(
     text: &str,
     cancel: tokio_util::sync::CancellationToken,
 ) -> AppResult<String> {
-    let started = Instant::now();
-    let target = resolve_target(app, pool, session_id).await?;
+    send_with_model(app, pool, in_process, session_id, text, None, cancel).await
+}
 
+/// Runs one send to completion: persist the user turn, then alternate between
+/// streaming a response and running the tools it asks for.
+///
+/// `model_override` switches the model for this single send — a regenerate on a
+/// different model — without touching the session's stored choice.
+///
+/// Returns the assistant message id. Errors are both returned and recorded on the
+/// assistant row, so a failed send leaves a visible trace in the transcript
+/// rather than a silently missing reply.
+pub async fn send_with_model(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    in_process: &crate::mcp::in_process::InProcessClient,
+    session_id: &str,
+    text: &str,
+    model_override: Option<&str>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> AppResult<String> {
     // Read before the user turn is stored: "no messages yet" is what marks this
     // as the first send, and appending would make it false.
     let needs_title = crate::db::chat::awaiting_first_title(pool, session_id).await?;
@@ -315,6 +336,37 @@ pub async fn send(
         crate::db::chat::NewMessage::text(text),
     )
     .await?;
+
+    // Naming runs alongside the answer rather than before it: the user is waiting
+    // on the reply, not the title, and the two requests touch nothing in common.
+    let (assistant_id, ()) = tokio::join!(
+        answer_current_turn(app, pool, in_process, session_id, model_override, &cancel),
+        async {
+            if needs_title {
+                name_session(app, pool, session_id, text, model_override, &cancel).await;
+            }
+        }
+    );
+
+    assistant_id
+}
+
+/// Creates an assistant placeholder and runs the answer loop against whatever
+/// the last stored user turn is. Used by a plain send (after appending the user
+/// turn) and by regenerate/edit (which re-answer an already-stored turn).
+///
+/// Persists the finished reply and streams its progress. Returns the assistant
+/// message id.
+pub async fn answer_current_turn(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    in_process: &crate::mcp::in_process::InProcessClient,
+    session_id: &str,
+    model_override: Option<&str>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> AppResult<String> {
+    let started = Instant::now();
+    let target = resolve_target(app, pool, session_id, model_override).await?;
 
     // Created before the first request so deltas have an id to attach to.
     let assistant = crate::db::chat::append_message(
@@ -328,24 +380,16 @@ pub async fn send(
     )
     .await?;
 
-    // Naming runs alongside the answer rather than before it: the user is waiting
-    // on the reply, not the title, and the two requests touch nothing in common.
-    let (outcome, ()) = tokio::join!(
-        run_rounds(
-            app,
-            pool,
-            in_process,
-            session_id,
-            &assistant.id,
-            &target,
-            &cancel,
-        ),
-        async {
-            if needs_title {
-                name_session(app, pool, session_id, text, &target, &cancel).await;
-            }
-        }
-    );
+    let outcome = run_rounds(
+        app,
+        pool,
+        in_process,
+        session_id,
+        &assistant.id,
+        &target,
+        cancel,
+    )
+    .await;
 
     let duration_ms = started.elapsed().as_millis() as i64;
 
@@ -414,10 +458,15 @@ async fn name_session(
     pool: &SqlitePool,
     session_id: &str,
     first_message: &str,
-    target: &ResolvedTarget,
+    model_override: Option<&str>,
     cancel: &tokio_util::sync::CancellationToken,
 ) {
-    let title = super::title::generate(target, first_message, cancel).await;
+    let target = match resolve_target(app, pool, session_id, model_override).await {
+        Ok(target) => target,
+        // No model to name with yet is not worth failing the send over.
+        Err(_) => return,
+    };
+    let title = super::title::generate(&target, first_message, cancel).await;
     match crate::db::chat::rename_if_untitled(pool, session_id, &title).await {
         Ok(true) => emit(
             app,
