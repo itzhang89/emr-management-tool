@@ -274,8 +274,19 @@ pub fn allowed_tools(
     }
 }
 
+/// A call the model asked for, before it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCall {
+    pub call_id: String,
+    pub tool: String,
+    pub arguments: String,
+    /// Carried through to the stored `ChatToolCall`, because the next request in
+    /// the same turn has to echo it back.
+    pub signature: Option<String>,
+}
+
 /// Whether the round produced tool calls that must be run before continuing.
-pub fn pending_calls(events: &[StreamEvent]) -> Vec<(String, String, String)> {
+pub fn pending_calls(events: &[StreamEvent]) -> Vec<PendingCall> {
     events
         .iter()
         .filter_map(|event| match event {
@@ -283,7 +294,13 @@ pub fn pending_calls(events: &[StreamEvent]) -> Vec<(String, String, String)> {
                 call_id,
                 tool,
                 arguments,
-            } => Some((call_id.clone(), tool.clone(), arguments.clone())),
+                signature,
+            } => Some(PendingCall {
+                call_id: call_id.clone(),
+                tool: tool.clone(),
+                arguments: arguments.clone(),
+                signature: signature.clone(),
+            }),
             _ => None,
         })
         .collect()
@@ -743,12 +760,18 @@ async fn run_tools(
     in_process: &crate::mcp::in_process::InProcessClient,
     session_id: &str,
     message_id: &str,
-    calls: &[(String, String, String)],
+    calls: &[PendingCall],
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Vec<ChatToolCall> {
     let mut executed = Vec::with_capacity(calls.len());
 
-    for (call_id, tool, arguments) in calls {
+    for PendingCall {
+        call_id,
+        tool,
+        arguments,
+        signature,
+    } in calls
+    {
         if cancel.is_cancelled() {
             break;
         }
@@ -765,6 +788,10 @@ async fn run_tools(
                     result: None,
                     error: Some(message.clone()),
                     duration_ms: Some(0),
+                    // Kept even for a call that could not run: the model still
+                    // asked for it, so it goes back into the history and has to
+                    // carry its signature.
+                    signature: signature.clone(),
                 };
                 emit_tool_end(app, session_id, message_id, &call);
                 executed.push(call);
@@ -800,6 +827,7 @@ async fn run_tools(
                 result: Some(result),
                 error: None,
                 duration_ms: Some(duration_ms),
+                signature: signature.clone(),
             },
             Err(error) => ChatToolCall {
                 call_id: call_id.clone(),
@@ -808,6 +836,7 @@ async fn run_tools(
                 result: None,
                 error: Some(error),
                 duration_ms: Some(duration_ms),
+                signature: signature.clone(),
             },
         };
 
@@ -934,6 +963,7 @@ mod tests {
             result,
             error: error.map(ToString::to_string),
             duration_ms: Some(10),
+            signature: None,
         }
     }
 
@@ -1076,6 +1106,7 @@ mod tests {
                 call_id: "c1".to_string(),
                 tool: "find_job".to_string(),
                 arguments: "{\"jobId\":\"abc\"}".to_string(),
+                signature: Some("sig-1".to_string()),
             },
             StreamEvent::Done {
                 stop_reason: Some("tool_calls".to_string()),
@@ -1085,12 +1116,37 @@ mod tests {
         assert_eq!(collected_text(&events).as_deref(), Some("Checking"));
         assert_eq!(
             pending_calls(&events),
-            vec![(
-                "c1".to_string(),
-                "find_job".to_string(),
-                "{\"jobId\":\"abc\"}".to_string()
-            )]
+            vec![PendingCall {
+                call_id: "c1".to_string(),
+                tool: "find_job".to_string(),
+                arguments: "{\"jobId\":\"abc\"}".to_string(),
+                // Carried through so the next request can echo it back.
+                signature: Some("sig-1".to_string()),
+            }]
         );
+    }
+
+    #[test]
+    fn a_signature_survives_the_transcript_into_the_next_request() {
+        // The whole chain the "missing a thought_signature" 400 broke: the model
+        // attaches one, it is stored with the assistant row, and the follow-up
+        // request has to carry it back — beside the call, not inside it. Each hop is
+        // covered on its own; this checks they are actually wired to each other.
+        let mut stored = call("c1", Some(serde_json::json!({"found": true})), None);
+        stored.signature = Some("Ct4BAV".to_string());
+        let history = [message(ChatRole::Assistant, None, vec![stored])];
+
+        let turns = history_to_turns(&history);
+        let body = crate::chat::gemini::build_request(None, &[], &turns);
+
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thoughtSignature"], "Ct4BAV");
+        assert!(parts[0]["functionCall"].get("thoughtSignature").is_none());
+        // The result follows in its own user content, after the call.
+        assert_eq!(body["contents"][1]["role"], "user");
+        assert!(body["contents"][1]["parts"][0]
+            .get("thoughtSignature")
+            .is_none());
     }
 
     #[test]

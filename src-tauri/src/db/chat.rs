@@ -1012,6 +1012,7 @@ mod tests {
             result: Some(serde_json::json!({"found": true})),
             error: None,
             duration_ms: Some(120),
+            signature: None,
         }];
         let assistant = append_message(
             &pool,
@@ -1120,6 +1121,7 @@ mod tests {
                 result: None,
                 error: Some("timed out".to_string()),
                 duration_ms: Some(20_000),
+                signature: None,
             }],
             Some(21_000),
             None,

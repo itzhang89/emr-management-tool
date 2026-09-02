@@ -379,6 +379,7 @@ mod tests {
             result: None,
             error: None,
             duration_ms: None,
+            signature: None,
         };
         let body = build_request(
             "gpt-4o",
@@ -471,7 +472,8 @@ mod tests {
                 StreamEvent::ToolCall {
                     call_id: "c1".to_string(),
                     tool: "find_job".to_string(),
-                    arguments: "{\"jobId\":\"abc\"}".to_string()
+                    arguments: "{\"jobId\":\"abc\"}".to_string(),
+                    signature: None
                 },
                 StreamEvent::Done {
                     stop_reason: Some("tool_calls".to_string())

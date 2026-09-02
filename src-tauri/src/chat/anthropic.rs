@@ -387,6 +387,7 @@ mod tests {
             result: None,
             error: None,
             duration_ms: None,
+            signature: None,
         };
         let body = build_request(
             "claude-opus-4-8",
@@ -488,7 +489,8 @@ mod tests {
             vec![StreamEvent::ToolCall {
                 call_id: "toolu_1".to_string(),
                 tool: "find_job".to_string(),
-                arguments: "{\"jobId\":\"abc\"}".to_string()
+                arguments: "{\"jobId\":\"abc\"}".to_string(),
+                signature: None
             }]
         );
     }

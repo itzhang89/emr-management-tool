@@ -852,6 +852,12 @@ export interface ChatToolCall {
   result?: Record<string, unknown> | null;
   error?: string | null;
   durationMs?: number | null;
+  /**
+   * Opaque provider token the backend echoes back on the next request — Gemini
+   * rejects a follow-up whose function calls arrive without it. Present here only
+   * because it is on the wire; nothing in the UI reads it.
+   */
+  signature?: string | null;
 }
 
 export interface ChatMessage {

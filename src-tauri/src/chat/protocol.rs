@@ -137,6 +137,9 @@ pub enum StreamEvent {
         call_id: String,
         tool: String,
         arguments: String,
+        /// Opaque token to echo back with this call — see
+        /// `ChatToolCall::signature`. Only Gemini mints these.
+        signature: Option<String>,
     },
     /// The response ended. `stop_reason` is the provider's own wording, kept for
     /// diagnostics rather than control flow.
@@ -239,6 +242,9 @@ fn finished(slot: ToolCallSlot) -> StreamEvent {
         } else {
             slot.arguments
         },
+        // Only Gemini mints signatures, and it does not stream calls in fragments,
+        // so nothing that reaches this accumulator ever has one.
+        signature: None,
     }
 }
 
@@ -352,7 +358,8 @@ mod tests {
             vec![StreamEvent::ToolCall {
                 call_id: "call_1".to_string(),
                 tool: "find_job".to_string(),
-                arguments: "{\"jobId\":\"abc\"}".to_string()
+                arguments: "{\"jobId\":\"abc\"}".to_string(),
+                signature: None
             }]
         );
     }
@@ -426,7 +433,8 @@ mod tests {
             vec![StreamEvent::ToolCall {
                 call_id: "c0".to_string(),
                 tool: "list_accounts".to_string(),
-                arguments: "{}".to_string()
+                arguments: "{}".to_string(),
+                signature: None
             }]
         );
     }

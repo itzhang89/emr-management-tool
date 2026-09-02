@@ -1206,6 +1206,17 @@ pub struct ChatToolCall {
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
     pub duration_ms: Option<i64>,
+    /// Opaque provider token that must be echoed back with this call, verbatim.
+    ///
+    /// Gemini 3 mints one on the *first* function call of each step and rejects
+    /// the follow-up request if it does not come back — so it is persisted rather
+    /// than kept only for the round in flight. `None` for the other protocols,
+    /// and for parallel calls after the first, which never carry one.
+    ///
+    /// Optional on the wire so assistant rows written before this field existed
+    /// still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

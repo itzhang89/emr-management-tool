@@ -189,9 +189,20 @@ fn append_turn(contents: &mut Vec<serde_json::Value>, turn: &Turn) {
             }
             for call in tool_calls {
                 // No id field exists here: a call is identified by its name.
-                parts.push(json!({
+                let mut part = json!({
                     "functionCall": { "name": call.tool, "args": call.args },
-                }));
+                });
+                // Echoed back verbatim, as a *sibling* of `functionCall`: the
+                // signature is a field of `Part`, and `FunctionCall` itself rejects
+                // it ("Unknown name thoughtSignature at …function_call").
+                //
+                // Per call, not per turn: Gemini 3 refuses a request whose first
+                // call of a step lost its signature, and copying one onto a call
+                // that never had it is equally wrong.
+                if let Some(signature) = &call.signature {
+                    part["thoughtSignature"] = json!(signature);
+                }
+                parts.push(part);
             }
             // The assistant role is called "model".
             if !parts.is_empty() {
@@ -212,12 +223,48 @@ fn append_turn(contents: &mut Vec<serde_json::Value>, turn: &Turn) {
             } else {
                 json!({ "result": content })
             };
-            contents.push(json!({
-                "role": "user",
-                "parts": [{ "functionResponse": { "name": tool, "response": response } }],
-            }));
+            let part = json!({ "functionResponse": { "name": tool, "response": response } });
+
+            // Results for one step belong in a single user content, alongside each
+            // other. The caller hands them over one at a time, and emitting a
+            // content per result would interleave the round as
+            // `[FC1, FC2] [FR1] [FR2]` — the API wants `[FC1, FC2] [FR1, FR2]`.
+            if let Some(previous) = contents.last_mut().filter(|content| is_results(content)) {
+                previous["parts"]
+                    .as_array_mut()
+                    .expect("a results content always has a parts array")
+                    .push(part);
+                return;
+            }
+            contents.push(json!({ "role": "user", "parts": [part] }));
         }
     }
+}
+
+/// Whether a content is a user turn holding nothing but function results, and so
+/// can absorb one more.
+fn is_results(content: &serde_json::Value) -> bool {
+    content.get("role").and_then(|role| role.as_str()) == Some("user")
+        && content
+            .get("parts")
+            .and_then(|parts| parts.as_array())
+            .is_some_and(|parts| {
+                !parts.is_empty() && parts.iter().all(|part| part.get("functionResponse").is_some())
+            })
+}
+
+/// Reads a thought signature, accepting either spelling.
+///
+/// REST answers in camelCase, but the proto field is `thought_signature` and some
+/// gateways pass the snake_case name straight through. Reading both costs one
+/// lookup; guessing wrong costs every tool call after the first.
+fn thought_signature(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("thoughtSignature")
+        .or_else(|| value.get("thought_signature"))
+        .and_then(|signature| signature.as_str())
+        .filter(|signature| !signature.is_empty())
+        .map(ToString::to_string)
 }
 
 /// Folds SSE frames into provider-neutral stream events.
@@ -292,6 +339,12 @@ impl StreamFolder {
                                 .get("args")
                                 .map(|args| args.to_string())
                                 .unwrap_or_else(|| "{}".to_string()),
+                            // Kept because the next request must carry it back. The
+                            // API puts it on the part, but some builds nest it inside
+                            // `functionCall`, so both places are read. Only the first
+                            // call of a step has one; the rest stay `None`.
+                            signature: thought_signature(part)
+                                .or_else(|| thought_signature(call)),
                         });
                     }
                 }
@@ -459,6 +512,20 @@ mod tests {
                 "additionalProperties": false,
                 "properties": {"jobId": {"type": "string"}}
             }),
+        }
+    }
+
+    /// A stored call as the transcript holds it. `signature` is what the model
+    /// attached, which only the first call of a step ever has.
+    fn call(tool: &str, signature: Option<&str>) -> ChatToolCall {
+        ChatToolCall {
+            call_id: format!("c-{tool}"),
+            tool: tool.to_string(),
+            args: json!({}),
+            result: None,
+            error: None,
+            duration_ms: None,
+            signature: signature.map(ToString::to_string),
         }
     }
 
@@ -699,6 +766,7 @@ mod tests {
                     result: None,
                     error: None,
                     duration_ms: None,
+                    signature: None,
                 }],
             }],
         );
@@ -747,14 +815,126 @@ mod tests {
                 },
             ],
         );
-        let ok = &body["contents"][0]["parts"][0]["functionResponse"];
+
+        // Both results belong to one step, so they share a single user content
+        // rather than getting one each — the API reads `[FR1, FR2]`, not
+        // `[FR1] [FR2]`.
+        assert_eq!(body["contents"].as_array().unwrap().len(), 1);
         assert_eq!(body["contents"][0]["role"], "user");
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+
+        let ok = &parts[0]["functionResponse"];
         assert_eq!(ok["name"], "find_job");
         assert_eq!(ok["response"]["result"], "{\"id\":\"abc\"}");
 
         // The model is told the call failed rather than being handed a blank.
-        let failed = &body["contents"][1]["parts"][0]["functionResponse"];
+        let failed = &parts[1]["functionResponse"];
+        assert_eq!(failed["name"], "get_job_log_text");
         assert_eq!(failed["response"]["error"], "no such log");
+    }
+
+    #[test]
+    fn a_round_sends_every_call_then_every_result() {
+        // The shape the API insists on: `[FC1, FC2] [FR1, FR2]`. Interleaving them
+        // as `[FC1] [FR1] [FC2] [FR2]` is a 400.
+        let calls = vec![
+            call("list_accounts", Some("sig-1")),
+            call("find_job", None),
+        ];
+        let body = build_request(
+            None,
+            &[],
+            &[
+                Turn::User {
+                    text: "why did it fail?".to_string(),
+                },
+                Turn::Assistant {
+                    text: None,
+                    tool_calls: calls.clone(),
+                },
+                Turn::ToolResult {
+                    call_id: calls[0].call_id.clone(),
+                    tool: "list_accounts".to_string(),
+                    content: "[]".to_string(),
+                    is_error: false,
+                },
+                Turn::ToolResult {
+                    call_id: calls[1].call_id.clone(),
+                    tool: "find_job".to_string(),
+                    content: "{}".to_string(),
+                    is_error: false,
+                },
+                // A second step, whose results must not join the first step's.
+                Turn::Assistant {
+                    text: None,
+                    tool_calls: vec![call("get_job_log_text", Some("sig-2"))],
+                },
+                Turn::ToolResult {
+                    call_id: "c-3".to_string(),
+                    tool: "get_job_log_text".to_string(),
+                    content: "log".to_string(),
+                    is_error: false,
+                },
+            ],
+        );
+
+        let contents = body["contents"].as_array().unwrap();
+        let shape: Vec<(String, usize)> = contents
+            .iter()
+            .map(|content| {
+                (
+                    content["role"].as_str().unwrap().to_string(),
+                    content["parts"].as_array().unwrap().len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("user".to_string(), 1),   // the question
+                ("model".to_string(), 2),  // both calls together
+                ("user".to_string(), 2),   // both results together
+                ("model".to_string(), 1),  // the next step's call
+                ("user".to_string(), 1),   // and its result
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stored_signature_goes_back_beside_the_call_it_came_from() {
+        // Two 400s live here. Omitting the signature is "Function call is missing a
+        // thought_signature in functionCall parts"; putting it *inside*
+        // `functionCall` is "Unknown name thoughtSignature at …function_call:
+        // Cannot find field". It is a field of `Part`, so it sits next to
+        // `functionCall`, not in it.
+        let body = build_request(
+            None,
+            &[],
+            &[Turn::Assistant {
+                text: None,
+                tool_calls: vec![
+                    call("list_accounts", Some("Ct4BAV")),
+                    call("find_job", None),
+                ],
+            }],
+        );
+
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thoughtSignature"], "Ct4BAV");
+        assert!(parts[0]["functionCall"].get("thoughtSignature").is_none());
+        // The call itself carries only what `FunctionCall` accepts.
+        let fields: Vec<&str> = parts[0]["functionCall"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, vec!["args", "name"]);
+
+        // Only the first call of the step had one, so only that part carries it
+        // back — copying it onto the second is its own rejection.
+        assert!(parts[1].get("thoughtSignature").is_none());
     }
 
     #[test]
@@ -781,13 +961,73 @@ mod tests {
                 call_id,
                 tool,
                 arguments,
+                signature,
             } => {
                 assert_eq!(tool, "find_job");
                 assert_eq!(arguments, r#"{"jobId":"abc"}"#);
                 // The wire format has no id, so one is minted to correlate the
                 // result.
                 assert!(!call_id.is_empty());
+                // Nothing to echo back when the model sent no signature — and
+                // inventing one is a 400 of its own.
+                assert_eq!(signature, &None);
             }
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_thought_signature_is_captured_from_the_part_that_carried_it() {
+        // Gemini 3 attaches one to the *first* function call of a step and rejects
+        // the follow-up request if it does not come back. Parallel calls after the
+        // first carry none, and must stay that way.
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts","args":{}},"thoughtSignature":"Ct4BAV"},
+                {"functionCall":{"name":"find_job","args":{"jobId":"abc"}}}
+            ]}}]}"#,
+        );
+
+        let signatures: Vec<Option<&str>> = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::ToolCall { signature, .. } => Some(signature.as_deref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(signatures, vec![Some("Ct4BAV"), None]);
+    }
+
+    #[test]
+    fn a_signature_is_read_from_either_spelling_or_nesting() {
+        // REST answers camelCase on the part; some gateways pass the proto's
+        // snake_case name through, or nest it inside functionCall.
+        for payload in [
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts"},"thought_signature":"sig"}]}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts","thoughtSignature":"sig"}}]}}]}"#,
+        ] {
+            let mut folder = StreamFolder::new();
+            let events = folder.push_payload(payload);
+            match &events[0] {
+                StreamEvent::ToolCall { signature, .. } => {
+                    assert_eq!(signature.as_deref(), Some("sig"), "{payload}")
+                }
+                other => panic!("expected a tool call, got {other:?}"),
+            }
+        }
+
+        // An empty string is not a signature; sending one back is not better than
+        // sending nothing.
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts"},"thoughtSignature":""}]}}]}"#,
+        );
+        match &events[0] {
+            StreamEvent::ToolCall { signature, .. } => assert_eq!(signature, &None),
             other => panic!("expected a tool call, got {other:?}"),
         }
     }
@@ -806,6 +1046,7 @@ mod tests {
                 },
                 tool: "list_accounts".to_string(),
                 arguments: "{}".to_string(),
+                signature: None,
             }]
         );
     }
