@@ -16,14 +16,21 @@ vi.mock("@/components/ai/server/McpAuditPanel", () => ({
 }));
 
 vi.mock("@/components/ai/settings/LlmSettingsPanel", () => ({
-  LlmSettingsPanel: () => <div data-testid="llm-settings-panel">Settings</div>
+  LlmSettingsPanel: ({ preselectProviderId }: { preselectProviderId?: string | null }) => (
+    <div data-testid="llm-settings-panel" data-preselect={preselectProviderId ?? ""}>
+      Settings
+    </div>
+  )
 }));
 
 vi.mock("@/components/ai/chat/ChatPanel", () => ({
-  ChatPanel: ({ onConfigureModels }: { onConfigureModels: () => void }) => (
+  ChatPanel: ({ onConfigureModels }: { onConfigureModels: (providerId?: string) => void }) => (
     <div data-testid="chat-panel">
-      <button type="button" onClick={onConfigureModels}>
+      <button type="button" onClick={() => onConfigureModels()}>
         Configure a provider
+      </button>
+      <button type="button" onClick={() => onConfigureModels("prov-1")}>
+        Fix an errored provider
       </button>
     </div>
   )
@@ -80,5 +87,15 @@ describe("AiAssistantPage", () => {
 
     expect(screen.getByRole("tab", { name: "LLM Setting", selected: true })).toBeInTheDocument();
     expect(screen.getByTestId("llm-settings-panel")).toBeInTheDocument();
+  });
+
+  it("routes an errored reply to the provider settings with that provider preselected", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Fix an errored provider" }));
+
+    expect(screen.getByRole("tab", { name: "LLM Setting", selected: true })).toBeInTheDocument();
+    expect(screen.getByTestId("llm-settings-panel")).toHaveAttribute("data-preselect", "prov-1");
   });
 });

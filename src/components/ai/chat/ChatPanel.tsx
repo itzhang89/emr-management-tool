@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, PanelLeftClose, PanelLeftOpen, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ import {
   ModelSelect,
   useModelOptions
 } from "@/components/ai/chat/ModelSelect";
+import { useLlmProviders } from "@/hooks/useLlmConfig";
+import { isClearContextKey } from "@/lib/keyboardShortcut";
 import {
   useChatAssistants,
   useChatConversation,
@@ -41,7 +43,12 @@ import type { ChatAssistant, ChatMessage, ChatSession } from "@/types/domain";
  * reach over HTTP, so what the model can see here is exactly what the Audit tab
  * would show for an outside client.
  */
-export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void }) {
+export function ChatPanel({
+  onConfigureModels
+}: {
+  /** Jump to LLM Setting, optionally with a specific provider preselected. */
+  onConfigureModels: (providerId?: string) => void;
+}) {
   const assistants = useChatAssistants();
   const sessions = useChatSessions();
   const createSession = useCreateChatSession();
@@ -49,6 +56,21 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
   const deleteSession = useDeleteChatSession();
   const deleteAssistant = useDeleteChatAssistant();
   const modelOptions = useModelOptions();
+  const llmProviders = useLlmProviders();
+  const noModels = modelOptions.length === 0;
+
+  // A message's modelId is the API-facing id (e.g. "claude-opus-4-8"), not the
+  // provider's local row id. To send an errored reply to the right provider
+  // settings, map each API model id back to the provider that offers it.
+  const providerIdByModelId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const provider of llmProviders.data ?? []) {
+      for (const model of provider.models) {
+        map.set(model.modelId, provider.id);
+      }
+    }
+    return map;
+  }, [llmProviders.data]);
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -62,6 +84,12 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
   >(null);
   // A message queued for deletion, or null when the confirm dialog is closed.
   const [messageDeleteTarget, setMessageDeleteTarget] = useState<ChatMessage | null>(null);
+  // The composer's draft, owned here so "Edit" on a past question can load its
+  // text into the same box that sends new messages.
+  const [composerText, setComposerText] = useState("");
+  // The user message being edited through the composer (greyed out in the
+  // transcript), or null when the composer is just composing.
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 
   const sessionList = sessions.data ?? [];
   const assistantList = assistants.data ?? [];
@@ -83,6 +111,18 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
       setActiveSessionId(null);
     }
   }, [sessionList, activeSessionId]);
+
+  // An in-progress edit belongs to one conversation; switching conversations
+  // abandons it so the next conversation does not open mid-edit.
+  const previousSessionRef = useRef(activeSession?.id ?? null);
+  useEffect(() => {
+    const sessionId = activeSession?.id ?? null;
+    if (previousSessionRef.current !== sessionId) {
+      previousSessionRef.current = sessionId;
+      setEditingMessage(null);
+      setComposerText("");
+    }
+  }, [activeSession]);
 
   const startSession = useCallback(
     (assistantId: string) => {
@@ -117,6 +157,30 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
     );
   };
 
+  // Cmd+K clears the context from anywhere on the chat page. The listener is
+  // bound once and reads the latest handler and streaming/session state through
+  // refs, so re-rendering never churns the DOM listener. Clearing mid-reply or
+  // with nothing to work on would be confusing, so the shortcut stays quiet in
+  // those cases — the same cases that disable the toolbar button.
+  const handleClearContextRef = useRef(handleClearContext);
+  handleClearContextRef.current = handleClearContext;
+  const isStreamingRef = useRef(conversation.streaming !== null || conversation.sending);
+  isStreamingRef.current = conversation.streaming !== null || conversation.sending;
+  const noModelsRef = useRef(noModels);
+  noModelsRef.current = noModels;
+  const activeSessionRef = useRef(activeSession);
+  activeSessionRef.current = activeSession;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isClearContextKey(event)) return;
+      if (isStreamingRef.current || noModelsRef.current || !activeSessionRef.current) return;
+      event.preventDefault();
+      void handleClearContextRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const handleRename = () => {
     if (!renaming) return;
     const title = renaming.title.trim();
@@ -143,13 +207,49 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
     );
   };
 
-  const handleEdit = async (message: ChatMessage, newText: string) => {
-    try {
-      await conversation.edit(message.id, newText);
-      toast.success("Question updated and answered again");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update the message");
+  /** Edit clicked on a past question: pull its text into the composer and grey it out. */
+  const handleEditRequest = (message: ChatMessage) => {
+    setEditingMessage(message);
+    setComposerText(message.content ?? "");
+  };
+
+  /** Esc or the composer's ✕: leave edit mode without touching the message. */
+  const handleCancelEdit = () => {
+    setEditingMessage(null);
+    setComposerText("");
+  };
+
+  /**
+   * The composer's send. While a past question is being edited, the box re-answers
+   * that question instead of sending a new one — mirroring the old inline editor.
+   * An unchanged or empty edit just closes the editor, no re-answer.
+   */
+  const handleComposerSend = async (text: string) => {
+    if (editingMessage) {
+      const original = editingMessage.content?.trim() ?? "";
+      const target = text.trim();
+      const message = editingMessage;
+      setEditingMessage(null);
+      setComposerText("");
+      if (!target || target === original) return;
+      try {
+        await conversation.edit(message.id, target);
+        toast.success("Question updated and answered again");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to update the message");
+      }
+      return;
     }
+    try {
+      await conversation.send(text);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to send the message");
+    }
+  };
+
+  /** Jump to LLM Setting with the provider of an errored reply preselected. */
+  const handleConfigureProvider = (providerId: string) => {
+    onConfigureModels(providerId);
   };
 
   const handleRegenerate = async (message: ChatMessage) => {
@@ -188,7 +288,6 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
     );
   }
 
-  const noModels = modelOptions.length === 0;
   const effectiveModelId =
     activeSession?.modelId ??
     activeAssistant?.defaultModelId ??
@@ -284,8 +383,15 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
           streaming={conversation.streaming}
           isLoading={conversation.isLoading}
           modelOptions={modelOptions}
+          editingMessageId={editingMessage?.id ?? null}
+          // A message's modelId is API-facing; resolve it back to the provider
+          // that offers it so an errored reply can link to the right settings.
+          resolveProviderId={(message) =>
+            message.modelId ? providerIdByModelId.get(message.modelId) ?? null : null
+          }
           onCopy={handleCopy}
-          onEdit={handleEdit}
+          onEdit={handleEditRequest}
+          onConfigureProvider={(providerId) => void handleConfigureProvider(providerId)}
           onDelete={setMessageDeleteTarget}
           onRegenerate={handleRegenerate}
           onRegenerateWithModel={handleRegenerateWithModel}
@@ -300,7 +406,7 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
                     sent nothing anywhere except AWS.
                   </p>
                 </div>
-                <Button type="button" size="sm" onClick={onConfigureModels}>
+                <Button type="button" size="sm" onClick={() => onConfigureModels()}>
                   Configure a provider
                 </Button>
               </div>
@@ -319,13 +425,13 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
         <Composer
           disabled={!activeSession || noModels}
           streaming={conversation.sending || conversation.streaming !== null}
-          onSend={(text) => {
-            void conversation.send(text).catch((error: Error) => {
-              toast.error(error.message || "Failed to send the message");
-            });
-          }}
+          value={composerText}
+          onValueChange={setComposerText}
+          editing={editingMessage !== null}
+          onSend={(text) => void handleComposerSend(text)}
           onCancel={() => void conversation.cancel()}
           onClearContext={() => void handleClearContext()}
+          onCancelEdit={handleCancelEdit}
         />
       </div>
 

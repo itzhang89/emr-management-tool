@@ -456,7 +456,7 @@ describe("ChatPanel", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
-  it("edits a past question in place and re-answers", async () => {
+  it("loads a past question into the composer and re-answers on Enter", async () => {
     const user = userEvent.setup();
     listChatMessages.mockResolvedValue([
       message({ content: "why did it fail?" }),
@@ -468,25 +468,22 @@ describe("ChatPanel", () => {
     await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
     await screen.findByText("why did it fail?");
 
-    // Edit turns the question into an inline textarea — no modal dialog.
+    // Edit loads the question into the composer rather than an inline textarea.
     fireEvent.mouseEnter(screen.getByText("why did it fail?"));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    const textarea = screen.getByLabelText("Edited question");
-    await user.clear(textarea);
-    await user.type(textarea, "why did the executors fail?{Enter}");
+    const composer = screen.getByLabelText("Message");
+    expect(composer).toHaveValue("why did it fail?");
+
+    await user.clear(composer);
+    await user.type(composer, "why did the executors fail?{Enter}");
 
     await waitFor(() =>
-      expect(updateChatMessage).toHaveBeenCalledWith(
-        "s1",
-        "msg1",
-        "why did the executors fail?"
-      )
+      expect(updateChatMessage).toHaveBeenCalledWith("s1", "msg1", "why did the executors fail?")
     );
   });
 
-  it("does not re-answer when an inline edit is left unchanged", async () => {
+  it("does not re-answer when an edit is left unchanged", async () => {
     const user = userEvent.setup();
     listChatMessages.mockResolvedValue([
       message({ content: "why did it fail?" }),
@@ -500,10 +497,54 @@ describe("ChatPanel", () => {
     fireEvent.mouseEnter(screen.getByText("why did it fail?"));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 
+    const composer = screen.getByLabelText("Message");
+    expect(composer).toHaveValue("why did it fail?");
+
     // Pressing Enter with the text untouched closes the editor without a request.
-    await user.type(screen.getByLabelText("Edited question"), "{Enter}");
+    await user.type(composer, "{Enter}");
     expect(updateChatMessage).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("Edited question")).not.toBeInTheDocument();
+    // The editing banner is gone and the composer is back to composing.
+    expect(screen.queryByText(/Editing a message/)).not.toBeInTheDocument();
+    expect(composer).toHaveValue("");
+  });
+
+  it("clears context with Cmd+K on the chat page", async () => {
+    const user = userEvent.setup();
+    clearChatContext.mockResolvedValue(true);
+    listChatMessages.mockResolvedValue([message()]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    await screen.findByText("why did it fail?");
+
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+
+    await waitFor(() => expect(clearChatContext).toHaveBeenCalledWith("s1"));
+    // Clearing context is not a deletion — the message stays on screen.
+    expect(screen.getByText("why did it fail?")).toBeInTheDocument();
+  });
+
+  it("opens provider settings for an errored reply", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({
+        id: "msg2",
+        seq: 1,
+        role: "assistant",
+        content: null,
+        modelId: "claude-opus-4-8",
+        error: "The provider returned HTTP 401."
+      })
+    ]);
+    const onConfigure = vi.fn();
+    renderPanel(onConfigure);
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+
+    // The errored reply is from p1's model, so the link carries that provider id.
+    await user.click(await screen.findByRole("button", { name: /open provider settings/i }));
+    expect(onConfigure).toHaveBeenCalledWith("p1");
   });
 
   it("clears the streaming bubble when regeneration rejects before a terminal event", async () => {

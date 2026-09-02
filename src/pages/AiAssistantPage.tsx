@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ChatPanel } from "@/components/ai/chat/ChatPanel";
@@ -13,8 +13,15 @@ import { McpAuditPanel } from "@/components/ai/server/McpAuditPanel";
  */
 export function AiAssistantPage() {
   // Controlled so Chat's empty state can send an unconfigured user straight to
-  // LLM Setting instead of telling them to find the tab themselves.
+  // LLM Setting instead of telling them to find the tab themselves. A providerId
+  // carries over which provider an errored reply belongs to, so the settings
+  // tab can open on that provider's row.
   const [tab, setTab] = useState("chat");
+  const [settingsProviderId, setSettingsProviderId] = useState<string | null>(null);
+
+  // The panel clears the request once applied, so asking for the same provider
+  // again still preselects it.
+  const clearSettingsProvider = useCallback(() => setSettingsProviderId(null), []);
 
   return (
     // Pinned to the viewport the same way Logs and S3 Browser are (3rem is the
@@ -32,11 +39,19 @@ export function AiAssistantPage() {
         </TabsList>
 
         <TabsContent value="chat" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <ChatPanel onConfigureModels={() => setTab("settings")} />
+          <ChatPanel
+            onConfigureModels={(providerId) => {
+              setSettingsProviderId(providerId ?? null);
+              setTab("settings");
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <LlmSettingsPanel />
+          <LlmSettingsPanel
+            preselectProviderId={settingsProviderId}
+            onPreselectHandled={clearSettingsProvider}
+          />
         </TabsContent>
 
         <TabsContent value="server" className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto">

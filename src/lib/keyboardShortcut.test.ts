@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   formatShortcutsHelpLabel,
   isAccountSwitchKey,
+  isClearContextKey,
   isFocusSearchKey,
   isPageCycleNextKey,
   isPageCyclePreviousKey,
@@ -173,6 +174,53 @@ describe("isFocusSearchKey", () => {
         metaKey: true,
         ctrlKey: false,
         shiftKey: true,
+        altKey: false
+      })
+    ).toBe(false);
+  });
+});
+
+describe("isClearContextKey", () => {
+  it("matches modifier plus K without shift", () => {
+    expect(
+      isClearContextKey({
+        key: "k",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
+  });
+
+  it("matches uppercase K and Ctrl as the primary modifier", () => {
+    expect(
+      isClearContextKey({
+        key: "K",
+        metaKey: false,
+        ctrlKey: true,
+        shiftKey: false,
+        altKey: false
+      })
+    ).toBe(true);
+  });
+
+  it("rejects shift-modified and unmodified K", () => {
+    expect(
+      isClearContextKey({
+        key: "k",
+        metaKey: true,
+        ctrlKey: false,
+        shiftKey: true,
+        altKey: false
+      })
+    ).toBe(false);
+    expect(
+      isClearContextKey({
+        key: "k",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
         altKey: false
       })
     ).toBe(false);

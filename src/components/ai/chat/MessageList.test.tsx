@@ -27,7 +27,8 @@ const noopCallbacks = {
   onEdit: vi.fn(),
   onDelete: vi.fn(),
   onRegenerate: vi.fn(),
-  onRegenerateWithModel: vi.fn()
+  onRegenerateWithModel: vi.fn(),
+  onConfigureProvider: vi.fn()
 };
 
 type MessageListProps = Partial<{
@@ -37,11 +38,14 @@ type MessageListProps = Partial<{
   isLoading: boolean;
   emptyHint: React.ReactNode;
   modelOptions: Parameters<typeof MessageList>[0]["modelOptions"];
+  editingMessageId: string | null;
   onCopy: (m: ChatMessage) => void;
-  onEdit: (m: ChatMessage, t: string) => void;
+  onEdit: (m: ChatMessage) => void;
   onDelete: (m: ChatMessage) => void;
   onRegenerate: (m: ChatMessage) => void;
   onRegenerateWithModel: (m: ChatMessage, id: string) => void;
+  resolveProviderId: (m: ChatMessage) => string | null;
+  onConfigureProvider: (providerId: string) => void;
 }>;
 
 function list({ messages, streaming, ...rest }: MessageListProps = {}) {
@@ -54,6 +58,8 @@ function list({ messages, streaming, ...rest }: MessageListProps = {}) {
         isLoading={false}
         emptyHint={null}
         modelOptions={[]}
+        editingMessageId={null}
+        resolveProviderId={() => null}
         {...noopCallbacks}
         {...rest}
       />
@@ -173,5 +179,75 @@ describe("MessageList", () => {
 
     await user.unhover(bubble);
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+  });
+
+  it("asks the parent to load an edit into the composer", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    render(list({ onEdit, messages: [message({ role: "user", content: "why did it fail?" })] }));
+
+    await user.hover(screen.getByText("why did it fail?"));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "m1" }));
+  });
+
+  it("dims the user message being edited", () => {
+    render(
+      list({
+        editingMessageId: "m1",
+        messages: [message({ role: "user", content: "why did it fail?" })]
+      })
+    );
+
+    expect(screen.getByText("why did it fail?").closest(".opacity-50")).not.toBeNull();
+  });
+
+  it("links an errored reply to its provider settings when the model resolves", async () => {
+    const user = userEvent.setup();
+    const onConfigureProvider = vi.fn();
+    render(
+      list({
+        onConfigureProvider,
+        resolveProviderId: () => "p1",
+        messages: [
+          message({ role: "user", content: "why?" }),
+          message({
+            id: "m2",
+            seq: 1,
+            role: "assistant",
+            content: null,
+            modelId: "claude-opus-4-8",
+            error: "The provider returned HTTP 401."
+          })
+        ]
+      })
+    );
+
+    await user.click(screen.getByRole("button", { name: /open provider settings/i }));
+    expect(onConfigureProvider).toHaveBeenCalledWith("p1");
+  });
+
+  it("hides the provider settings link when the model cannot be resolved", () => {
+    render(
+      list({
+        resolveProviderId: () => null,
+        messages: [
+          message({ role: "user", content: "why?" }),
+          message({
+            id: "m2",
+            seq: 1,
+            role: "assistant",
+            content: null,
+            modelId: "unknown-model",
+            error: "The provider returned HTTP 500."
+          })
+        ]
+      })
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /open provider settings/i })
+    ).not.toBeInTheDocument();
   });
 });

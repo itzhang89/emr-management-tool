@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, LoaderCircle, ShieldAlert, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,15 @@ import type { LlmModel, LlmModelCandidate, LlmProvider } from "@/types/domain";
  * OpenAI, Anthropic, and Gemini are seeded as disabled presets, so the common case
  * is pasting a key into a row that already knows the right address.
  */
-export function LlmSettingsPanel() {
+export function LlmSettingsPanel({
+  preselectProviderId,
+  onPreselectHandled
+}: {
+  /** A provider the Chat tab wants selected (the one behind an errored reply). */
+  preselectProviderId?: string | null;
+  /** Called once the preselection is applied, so the parent can clear it. */
+  onPreselectHandled?: () => void;
+}) {
   const providers = useLlmProviders();
   const updateProvider = useUpdateLlmProvider();
   const deleteProvider = useDeleteLlmProvider();
@@ -66,6 +74,22 @@ export function LlmSettingsPanel() {
       setSelectedProviderId(selected.id);
     }
   }, [selected, selectedProviderId]);
+
+  // The Chat tab can ask to arrive with a specific provider selected (the one
+  // behind an errored reply). Apply each distinct request once — cleared via
+  // onPreselectHandled so the same provider can be requested again later.
+  const appliedPreselectRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!preselectProviderId) {
+      appliedPreselectRef.current = null;
+      return;
+    }
+    if (appliedPreselectRef.current === preselectProviderId) return;
+    if (!providerList.some((provider) => provider.id === preselectProviderId)) return;
+    appliedPreselectRef.current = preselectProviderId;
+    setSelectedProviderId(preselectProviderId);
+    onPreselectHandled?.();
+  }, [preselectProviderId, providerList, onPreselectHandled]);
 
   const startSync = () => {
     if (!selected) return;

@@ -15,6 +15,7 @@ export const SHORTCUT_IDS = {
   LOGS_TREE_TOGGLE: "logs-tree-toggle",
   LOGS_FIND: "logs-find",
   LOGS_FOCUS_JOB_ID: "logs-focus-job-id",
+  CHAT_CLEAR_CONTEXT: "chat-clear-context",
   HISTORY_FOCUS_SEARCH: "history-focus-search",
   S3_LIST_MOVE: "s3-list-move",
   S3_LIST_ENTER: "s3-list-enter",
@@ -42,7 +43,8 @@ export type ShortcutCategoryId =
   | "history"
   | "logs"
   | "s3"
-  | "submit";
+  | "submit"
+  | "ai";
 
 export interface ShortcutCategory {
   id: ShortcutCategoryId;
@@ -66,7 +68,8 @@ export const shortcutCategories: ShortcutCategory[] = [
   { id: "history", label: "Job History", description: "Search and refresh job runs" },
   { id: "logs", label: "Job Logs", description: "Job log tree and viewer" },
   { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
-  { id: "submit", label: "Submit Job", description: "Template-driven job submission" }
+  { id: "submit", label: "Submit Job", description: "Template-driven job submission" },
+  { id: "ai", label: "AI Assistant", description: "Chat and model settings" }
 ];
 
 const navigationShortcuts: KeyboardShortcutEntry[] = navigationItems.map((item, index) => ({
@@ -148,6 +151,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Find in log",
     description: "Open or close the find bar when a log is open (same key focuses job id when closed)",
     keys: [formatModShortcut("F")]
+  },
+  {
+    id: SHORTCUT_IDS.CHAT_CLEAR_CONTEXT,
+    category: "ai",
+    label: "Clear chat context",
+    description: "Keep the history visible but stop sending it to the model",
+    keys: [formatModShortcut("K")]
   },
   {
     id: SHORTCUT_IDS.GLUE_RUN_QUERY,

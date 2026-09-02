@@ -91,3 +91,11 @@ export function isFocusSearchKey(
 
   return event.key === "f" || event.key === "F";
 }
+
+export function isClearContextKey(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">
+) {
+  if (!hasPrimaryModShortcutModifiers(event)) return false;
+
+  return event.key === "k" || event.key === "K";
+}

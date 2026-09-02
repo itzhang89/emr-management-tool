@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { AtSign, Bot, CircleAlert, Copy, LoaderCircle, Pencil, RefreshCw, Trash2, User } from "lucide-react";
+import {
+  AtSign,
+  Bot,
+  CircleAlert,
+  Copy,
+  LoaderCircle,
+  Pencil,
+  RefreshCw,
+  Settings2,
+  Trash2,
+  User
+} from "lucide-react";
 import { ErrorDetails } from "@/components/ai/chat/ErrorDetails";
 import { Markdown } from "@/components/ai/chat/Markdown";
 import { ToolCallStep, type ToolStep } from "@/components/ai/chat/ToolCallStep";
@@ -42,11 +53,14 @@ export type ModelActionOption = {
 
 export function UserMessage({
   text,
+  dimmed = false,
   onCopy,
   onEdit,
   onDelete
 }: {
   text: string;
+  /** Grey the message out while it is being edited through the composer. */
+  dimmed?: boolean;
   onCopy: () => void;
   onEdit: (text: string) => void;
   onDelete: () => void;
@@ -54,7 +68,7 @@ export function UserMessage({
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      className="group flex gap-3"
+      className={cn("group flex gap-3", dimmed && "opacity-50")}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -101,6 +115,7 @@ export function AssistantMessage({
   streaming,
   startedAt,
   modelOptions,
+  onConfigureProvider,
   onCopy,
   onRegenerate,
   onRegenerateWithModel,
@@ -119,6 +134,8 @@ export function AssistantMessage({
   /** When the streaming turn began (ms epoch); drives the live elapsed clock. */
   startedAt?: number | null;
   modelOptions: ModelActionOption[];
+  /** Open LLM Setting for this reply's provider, when one can be resolved. */
+  onConfigureProvider?: () => void;
   onCopy: () => void;
   onRegenerate: () => void;
   onRegenerateWithModel: (modelId: string) => void;
@@ -188,6 +205,16 @@ export function AssistantMessage({
               <span className="break-words">{error}</span>
             </div>
             <ErrorDetails details={errorDetails} />
+            {onConfigureProvider && (
+              <button
+                type="button"
+                onClick={onConfigureProvider}
+                className="mt-1.5 inline-flex items-center gap-1.5 rounded border border-destructive/30 px-2 py-1 text-[11px] font-medium hover:bg-destructive/10"
+              >
+                <Settings2 className="size-3.5" />
+                Open provider settings
+              </button>
+            )}
           </div>
         )}
 
