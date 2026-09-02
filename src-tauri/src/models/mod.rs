@@ -1233,6 +1233,10 @@ pub struct ChatMessage {
     pub model_id: Option<String>,
     pub duration_ms: Option<i64>,
     pub error: Option<String>,
+    /// Structured diagnostics for a failed turn (URL, status, response body, …),
+    /// shown behind a "details" disclosure in the Chat transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_details: Option<crate::error::ErrorDetails>,
     pub created_at: DateTime<Utc>,
 }
 

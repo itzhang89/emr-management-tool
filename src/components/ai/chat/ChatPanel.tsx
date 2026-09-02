@@ -11,7 +11,6 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AssistantFormDialog } from "@/components/ai/chat/AssistantFormDialog";
 import { AssistantSidebar } from "@/components/ai/chat/AssistantSidebar";
@@ -63,9 +62,6 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
   >(null);
   // A message queued for deletion, or null when the confirm dialog is closed.
   const [messageDeleteTarget, setMessageDeleteTarget] = useState<ChatMessage | null>(null);
-  // A message being reworded; the confirm dialog holds the new text.
-  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
-  const [editText, setEditText] = useState("");
 
   const sessionList = sessions.data ?? [];
   const assistantList = assistants.data ?? [];
@@ -183,22 +179,6 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
     }
   };
 
-  const openEditor = (message: ChatMessage) => {
-    setEditText(message.content ?? "");
-    setEditingMessage(message);
-  };
-
-  const confirmEdit = async () => {
-    if (!editingMessage) return;
-    const text = editText.trim();
-    if (!text) {
-      toast.error("Enter a message to save.");
-      return;
-    }
-    setEditingMessage(null);
-    await handleEdit(editingMessage, text);
-  };
-
   if (assistants.isLoading || sessions.isLoading) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -305,7 +285,7 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
           isLoading={conversation.isLoading}
           modelOptions={modelOptions}
           onCopy={handleCopy}
-          onEdit={openEditor}
+          onEdit={handleEdit}
           onDelete={setMessageDeleteTarget}
           onRegenerate={handleRegenerate}
           onRegenerateWithModel={handleRegenerateWithModel}
@@ -436,38 +416,6 @@ export function ChatPanel({ onConfigureModels }: { onConfigureModels: () => void
             <Button type="button" variant="destructive" onClick={() => void handleMessageDelete()}>
               Delete
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={editingMessage !== null} onOpenChange={(open) => !open && setEditingMessage(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit question</DialogTitle>
-            <DialogDescription>
-              Changing a question removes its answer and everything after it, then re-answers with
-              the new wording.
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            value={editText}
-            onChange={(event) => setEditText(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter sends, mirroring the composer; Shift+Enter adds a line break.
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void confirmEdit();
-              }
-            }}
-            aria-label="Edited question"
-            autoFocus
-            className="min-h-24"
-          />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditingMessage(null)}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void confirmEdit()}>Save &amp; re-answer</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

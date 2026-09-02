@@ -91,6 +91,101 @@ pub fn http_failure(status: u16, message: String) -> AppError {
     error
 }
 
+/// Pulls the provider's own message and code out of an error body. The three
+/// shapes nest differently (`error.error.message` on Anthropic, `error.message`
+/// elsewhere), so a few paths are tried. Returns `(message, code)`.
+pub fn envelope_fields(body: &str) -> (Option<String>, Option<String>) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return (None, None);
+    };
+    let error = value.get("error");
+    let message = error
+        .and_then(|inner| inner.get("error"))
+        .and_then(|inner| inner.get("message"))
+        .and_then(|message| message.as_str())
+        .or_else(|| error.and_then(|inner| inner.get("message")).and_then(|m| m.as_str()))
+        .or_else(|| value.get("message").and_then(|m| m.as_str()))
+        .map(|message| message.chars().take(300).collect::<String>());
+    let code = error
+        .and_then(|inner| inner.get("code"))
+        .or_else(|| error.and_then(|inner| inner.get("status")))
+        .or_else(|| error.and_then(|inner| inner.get("type")))
+        .and_then(|code| {
+            code.as_str()
+                .map(ToString::to_string)
+                .or_else(|| code.as_i64().map(|number| number.to_string()))
+        });
+    (message, code)
+}
+
+/// Assembles the structured diagnostics the transcript shows behind a failed
+/// reply. The API key is never included — it travels in a header, not the body —
+/// and response text is capped so a verbose provider cannot bloat the stored row.
+pub fn request_details(
+    method: &str,
+    url: &str,
+    request_body: Option<&serde_json::Value>,
+    http_status: Option<u16>,
+    response_body: Option<&str>,
+    error_kind: &str,
+    provider_reason: Option<String>,
+    error_code: Option<String>,
+    stack: Option<String>,
+) -> crate::error::ErrorDetails {
+    crate::error::ErrorDetails {
+        url: Some(url.to_string()),
+        method: Some(method.to_string()),
+        http_status,
+        request_body: request_body.cloned(),
+        response_body: response_body.and_then(|body| crate::error::capped(body, 8_000)),
+        provider_reason,
+        error_code,
+        error_kind: Some(error_kind.to_string()),
+        stack,
+    }
+}
+
+/// An error envelope the provider sent *mid-stream* (HTTP 200), carried by the
+/// folder up to `stream_response`, which owns the request context.
+#[derive(Debug, Clone)]
+pub struct StreamErrorPayload {
+    pub message: String,
+    pub error_code: Option<String>,
+    pub error_kind: Option<String>,
+    /// The raw provider error object, kept for the response body.
+    pub raw: Option<serde_json::Value>,
+}
+
+/// Turns a mid-stream error envelope into an `AppError` with diagnostics.
+pub fn stream_error(
+    url: &str,
+    request_body: Option<&serde_json::Value>,
+    payload: &StreamErrorPayload,
+) -> AppError {
+    let response_body = payload
+        .raw
+        .as_ref()
+        .map(|raw| raw.to_string())
+        .as_deref()
+        .and_then(|body| crate::error::capped(body, 8_000));
+    let details = crate::error::ErrorDetails {
+        url: Some(url.to_string()),
+        method: Some("POST".to_string()),
+        http_status: None,
+        request_body: request_body.cloned(),
+        response_body,
+        provider_reason: Some(payload.message.clone()),
+        error_code: payload.error_code.clone(),
+        error_kind: Some(payload.error_kind.clone().unwrap_or_else(|| "stream".to_string())),
+        stack: None,
+    };
+    AppError::validation(format!(
+        "The provider stopped the response: {}",
+        payload.message
+    ))
+    .with_details(details)
+}
+
 /// A tool the model may call, in provider-neutral form. Built from the MCP
 /// server's advertised tools.
 #[derive(Debug, Clone)]

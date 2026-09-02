@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { AtSign, Bot, CircleAlert, Copy, LoaderCircle, Pencil, RefreshCw, Trash2, User } from "lucide-react";
+import { ErrorDetails } from "@/components/ai/chat/ErrorDetails";
 import { Markdown } from "@/components/ai/chat/Markdown";
 import { ToolCallStep, type ToolStep } from "@/components/ai/chat/ToolCallStep";
+import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import {
   Popover,
   PopoverContent,
@@ -9,6 +11,7 @@ import {
 } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { ChatErrorDetails } from "@/types/domain";
 
 /** Tailwind classes per assistant accent, so avatars are distinguishable. */
 const ACCENTS: Record<string, string> = {
@@ -94,7 +97,9 @@ export function AssistantMessage({
   toolSteps,
   durationMs,
   error,
+  errorDetails,
   streaming,
+  startedAt,
   modelOptions,
   onCopy,
   onRegenerate,
@@ -108,7 +113,11 @@ export function AssistantMessage({
   toolSteps: ToolStep[];
   durationMs?: number | null;
   error?: string | null;
+  /** Structured diagnostics behind the error line, when the backend captured them. */
+  errorDetails?: ChatErrorDetails | null;
   streaming?: boolean;
+  /** When the streaming turn began (ms epoch); drives the live elapsed clock. */
+  startedAt?: number | null;
   modelOptions: ModelActionOption[];
   onCopy: () => void;
   onRegenerate: () => void;
@@ -120,6 +129,15 @@ export function AssistantMessage({
   // The model list is portaled outside the message, so hovering it no longer
   // counts as hovering the message; keep the row up while it is open.
   const [modelListOpen, setModelListOpen] = useState(false);
+
+  const clock = useLiveClock(Boolean(streaming && startedAt != null));
+  const elapsedMs =
+    streaming && startedAt != null && clock != null ? clock - startedAt : null;
+  const activity = toolSteps.some((step) => step.running)
+    ? "Running tools…"
+    : text
+      ? "Generating…"
+      : "Waiting for model…";
 
   return (
     <div
@@ -139,13 +157,16 @@ export function AssistantMessage({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
           <span className="font-medium">{assistantName}</span>
           {modelId && <span className="font-mono text-muted-foreground">{modelId}</span>}
-          {durationMs != null && (
+          {durationMs != null && !streaming && (
             <span className="text-muted-foreground">{formatDuration(durationMs)}</span>
           )}
           {streaming && (
             <span className="flex items-center gap-1 text-muted-foreground">
               <LoaderCircle className="size-3 animate-spin" />
-              {toolSteps.some((step) => step.running) ? "Running tools" : "Thinking"}
+              {activity}
+              {elapsedMs != null && (
+                <span className="tabular-nums text-muted-foreground/80">{formatElapsed(elapsedMs)}</span>
+              )}
             </span>
           )}
         </div>
@@ -161,9 +182,12 @@ export function AssistantMessage({
         {text && <Markdown text={text} />}
 
         {error && (
-          <div className="flex items-start gap-2 rounded-md bg-destructive/10 p-2 text-xs text-destructive">
-            <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <span className="break-words">{error}</span>
+          <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">
+            <div className="flex items-start gap-2">
+              <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+              <span className="break-words">{error}</span>
+            </div>
+            <ErrorDetails details={errorDetails} />
           </div>
         )}
 

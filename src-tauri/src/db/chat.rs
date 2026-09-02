@@ -62,6 +62,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             model_id text,
             duration_ms integer,
             error text,
+            error_details text,
             created_at text not null
         )",
         "create index if not exists idx_chat_sessions_assistant on chat_sessions(assistant_id)",
@@ -71,6 +72,19 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .execute(pool)
             .await
             .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+
+    // `error_details` (structured diagnostics for a failed turn) arrived after the
+    // column shipped. Fresh databases already have it via the CREATE above, so the
+    // duplicate-column error is expected there and tolerated; older databases get
+    // the column added now.
+    if let Err(error) = sqlx::query("alter table chat_messages add column error_details text")
+        .execute(pool)
+        .await
+    {
+        if !error.to_string().contains("duplicate column name") {
+            return Err(AppError::storage(error.to_string()));
+        }
     }
 
     seed_built_in_assistant(pool).await
@@ -626,6 +640,7 @@ pub async fn update_message_content(
 fn row_to_message(row: &sqlx::sqlite::SqliteRow) -> AppResult<ChatMessage> {
     let role_text: String = row.get("role");
     let tool_calls: Option<String> = row.get("tool_calls");
+    let error_details: Option<String> = row.get("error_details");
     Ok(ChatMessage {
         id: row.get("id"),
         session_id: row.get("session_id"),
@@ -640,6 +655,9 @@ fn row_to_message(row: &sqlx::sqlite::SqliteRow) -> AppResult<ChatMessage> {
         model_id: row.get("model_id"),
         duration_ms: row.get("duration_ms"),
         error: row.get("error"),
+        error_details: error_details
+            .as_deref()
+            .and_then(|json| serde_json::from_str(json).ok()),
         created_at: parse_timestamp(&row.get::<String, _>("created_at")),
     })
 }
@@ -713,6 +731,7 @@ pub struct NewMessage<'a> {
     pub model_id: Option<&'a str>,
     pub duration_ms: Option<i64>,
     pub error: Option<&'a str>,
+    pub error_details: Option<&'a crate::error::ErrorDetails>,
 }
 
 impl<'a> NewMessage<'a> {
@@ -740,6 +759,7 @@ pub async fn append_message(
         model_id,
         duration_ms,
         error,
+        error_details,
     } = message;
     ensure_session_exists(pool, session_id).await?;
 
@@ -762,11 +782,18 @@ pub async fn append_message(
                 .map_err(|error| AppError::storage(error.to_string()))?,
         )
     };
+    let error_details_json = match error_details {
+        Some(details) => Some(
+            serde_json::to_string(details)
+                .map_err(|error| AppError::storage(error.to_string()))?,
+        ),
+        None => None,
+    };
 
     sqlx::query(
         "insert into chat_messages
-            (id, session_id, seq, role, content, tool_calls, model_id, duration_ms, error, created_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            (id, session_id, seq, role, content, tool_calls, model_id, duration_ms, error, error_details, created_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
     )
     .bind(&id)
     .bind(session_id)
@@ -777,6 +804,7 @@ pub async fn append_message(
     .bind(model_id)
     .bind(duration_ms)
     .bind(error)
+    .bind(&error_details_json)
     .bind(&now)
     .execute(pool)
     .await
@@ -794,6 +822,7 @@ pub async fn append_message(
         model_id: model_id.map(ToString::to_string),
         duration_ms,
         error: error.map(ToString::to_string),
+        error_details: error_details.cloned(),
         created_at: parse_timestamp(&now),
     })
 }
@@ -808,6 +837,7 @@ pub async fn finish_assistant_message(
     tool_calls: &[ChatToolCall],
     duration_ms: Option<i64>,
     error: Option<&str>,
+    error_details: Option<&crate::error::ErrorDetails>,
 ) -> AppResult<()> {
     let tool_calls_json = if tool_calls.is_empty() {
         None
@@ -817,16 +847,24 @@ pub async fn finish_assistant_message(
                 .map_err(|error| AppError::storage(error.to_string()))?,
         )
     };
+    let error_details_json = match error_details {
+        Some(details) => Some(
+            serde_json::to_string(details)
+                .map_err(|error| AppError::storage(error.to_string()))?,
+        ),
+        None => None,
+    };
 
     let affected = sqlx::query(
         "update chat_messages
-         set content = ?1, tool_calls = ?2, duration_ms = ?3, error = ?4
-         where id = ?5",
+         set content = ?1, tool_calls = ?2, duration_ms = ?3, error = ?4, error_details = ?5
+         where id = ?6",
     )
     .bind(content)
     .bind(&tool_calls_json)
     .bind(duration_ms)
     .bind(error)
+    .bind(&error_details_json)
     .bind(message_id)
     .execute(pool)
     .await
@@ -1024,6 +1062,7 @@ mod tests {
                 model_id: Some("model-1"),
                 duration_ms: Some(1800),
                 error: None,
+                error_details: None,
             },
         )
         .await
@@ -1125,6 +1164,7 @@ mod tests {
             }],
             Some(21_000),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1140,7 +1180,7 @@ mod tests {
             Some("timed out")
         );
 
-        assert!(finish_assistant_message(&pool, "missing", None, &[], None, None)
+        assert!(finish_assistant_message(&pool, "missing", None, &[], None, None, None)
             .await
             .is_err());
     }

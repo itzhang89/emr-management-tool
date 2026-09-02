@@ -68,6 +68,9 @@ pub struct ErrorEvent {
     pub session_id: String,
     pub message_id: String,
     pub message: String,
+    /// Structured diagnostics for the failed call (URL, status, response body, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<crate::error::ErrorDetails>,
 }
 
 /// A conversation that just earned a name from its first message. Emitted as soon
@@ -405,7 +408,52 @@ pub async fn answer_current_turn(
 ) -> AppResult<String> {
     let started = Instant::now();
     // Mutable because a refused API key is swapped for the next one mid-run.
-    let mut target = resolve_target(app, pool, session_id, model_override).await?;
+    let mut target = match resolve_target(app, pool, session_id, model_override).await {
+        Ok(target) => target,
+        // A failure before any request is still a failed turn the user should see
+        // in the transcript, not just a toast: reserve a row and persist the error
+        // exactly the way a mid-stream failure below does. This is what keeps a
+        // model-switch regenerate from leaving nothing but a spinner behind.
+        Err(error) => {
+            let duration_ms = started.elapsed().as_millis() as i64;
+            let message = error.to_string();
+            let details = error.details.clone();
+            match crate::db::chat::append_message(
+                pool,
+                session_id,
+                ChatRole::Assistant,
+                crate::db::chat::NewMessage::default(),
+            )
+            .await
+            {
+                Ok(assistant) => {
+                    let _ = crate::db::chat::finish_assistant_message(
+                        pool,
+                        &assistant.id,
+                        None,
+                        &[],
+                        Some(duration_ms),
+                        Some(&message),
+                        details.as_ref(),
+                    )
+                    .await;
+                    emit(
+                        app,
+                        EVENT_ERROR,
+                        ErrorEvent {
+                            session_id: session_id.to_string(),
+                            message_id: assistant.id.clone(),
+                            message,
+                            details,
+                        },
+                    );
+                }
+                // Nothing to persist the failure into is worse than a bare error.
+                Err(_) => {}
+            }
+            return Err(error);
+        }
+    };
 
     // Created before the first request so deltas have an id to attach to.
     let assistant = crate::db::chat::append_message(
@@ -445,6 +493,7 @@ pub async fn answer_current_turn(
                 &tool_calls,
                 Some(duration_ms),
                 None,
+                None,
             )
             .await?;
             emit(
@@ -462,6 +511,7 @@ pub async fn answer_current_turn(
         }
         Err(error) => {
             let message = error.to_string();
+            let details = error.details.clone();
             // Persist whatever was streamed alongside the error: a partial answer
             // plus its failure reason is more useful than an empty bubble.
             let _ = crate::db::chat::finish_assistant_message(
@@ -471,6 +521,7 @@ pub async fn answer_current_turn(
                 &[],
                 Some(duration_ms),
                 Some(&message),
+                details.as_ref(),
             )
             .await;
             emit(
@@ -480,6 +531,7 @@ pub async fn answer_current_turn(
                     session_id: session_id.to_string(),
                     message_id: assistant.id.clone(),
                     message,
+                    details,
                 },
             );
             Err(error)
@@ -951,6 +1003,7 @@ mod tests {
             model_id: None,
             duration_ms: None,
             error: None,
+            error_details: None,
             created_at: Utc::now(),
         }
     }

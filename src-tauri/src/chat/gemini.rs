@@ -9,7 +9,7 @@
 //! The request builder and the frame folder are pure functions so they can be
 //! tested without a network; only `stream_response` touches HTTP.
 
-use super::protocol::{StreamEvent, ToolDefinition, Turn, Usage};
+use super::protocol::{StreamErrorPayload, StreamEvent, ToolDefinition, Turn, Usage};
 use crate::error::{AppError, AppResult};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -276,6 +276,8 @@ fn thought_signature(value: &serde_json::Value) -> Option<String> {
 pub struct StreamFolder {
     usage: Usage,
     finished: bool,
+    /// A mid-stream error envelope, if the provider sent one (HTTP was 200).
+    stream_error: Option<StreamErrorPayload>,
 }
 
 impl StreamFolder {
@@ -291,6 +293,12 @@ impl StreamFolder {
         self.finished
     }
 
+    /// Takes a mid-stream error envelope so `stream_response` can lift it into an
+    /// `AppError` with the request context the folder does not hold.
+    pub fn take_error(&mut self) -> Option<StreamErrorPayload> {
+        self.stream_error.take()
+    }
+
     /// Handles one frame's payload.
     pub fn push_payload(&mut self, payload: &str) -> Vec<StreamEvent> {
         let Ok(data) = serde_json::from_str::<serde_json::Value>(payload) else {
@@ -298,13 +306,30 @@ impl StreamFolder {
         };
 
         // An in-stream error arrives as a body rather than an HTTP status, so it
-        // must not be silently swallowed.
-        if let Some(message) = data
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(|message| message.as_str())
-        {
-            return self.finish(Some(format!("error: {message}")));
+        // must not be silently swallowed: record it for `stream_response` to turn
+        // into a real failure.
+        if let Some(error) = data.get("error") {
+            self.stream_error = Some(StreamErrorPayload {
+                message: error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(|message| message.chars().take(300).collect())
+                    .unwrap_or_else(|| "the provider reported a streaming error".to_string()),
+                error_code: error
+                    .get("code")
+                    .and_then(|code| code.as_i64())
+                    .map(|code| code.to_string())
+                    .or_else(|| {
+                        error
+                            .get("status")
+                            .and_then(|status| status.as_str())
+                            .map(ToString::to_string)
+                    }),
+                error_kind: Some("stream".to_string()),
+                raw: Some(error.clone()),
+            });
+            self.finished = true;
+            return Vec::new();
         }
 
         self.capture_usage(data.get("usageMetadata"));
@@ -450,17 +475,42 @@ pub async fn stream_response(
         .await
         .ok_or_else(super::protocol::cancelled)?
         .map_err(|error| {
+            let details = super::protocol::request_details(
+                "POST",
+                &url,
+                Some(body),
+                None,
+                None,
+                "transport",
+                None,
+                None,
+                Some(crate::error::source_chain(&error)),
+            );
             AppError::internal(super::openai::describe_transport_failure(&url, &error))
+                .with_details(details)
         })?;
 
     let status = response.status();
     if !status.is_success() {
+        let status_code = status.as_u16();
         let text = response.text().await.unwrap_or_default();
+        let (reason, code) = super::protocol::envelope_fields(&text);
+        let details = super::protocol::request_details(
+            "POST",
+            &url,
+            Some(body),
+            Some(status_code),
+            Some(&text),
+            "http",
+            reason,
+            code,
+            None,
+        );
         // Tagged so a caller holding several keys can retire this one and retry.
-        return Err(super::protocol::http_failure(
-            status.as_u16(),
-            describe_failure(status.as_u16(), &text),
-        ));
+        return Err(
+            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
+                .with_details(details),
+        );
     }
 
     let mut parser = super::sse::SseParser::new();
@@ -481,6 +531,9 @@ pub async fn stream_response(
                 on_event(produced);
             }
         }
+        if let Some(raw) = folder.take_error() {
+            return Err(super::protocol::stream_error(&url, Some(body), &raw));
+        }
         if folder.is_finished() {
             return Ok(folder.usage());
         }
@@ -493,6 +546,9 @@ pub async fn stream_response(
     }
     for produced in folder.finish(None) {
         on_event(produced);
+    }
+    if let Some(raw) = folder.take_error() {
+        return Err(super::protocol::stream_error(&url, Some(body), &raw));
     }
     Ok(folder.usage())
 }
@@ -1078,17 +1134,19 @@ mod tests {
     }
 
     #[test]
-    fn an_in_stream_error_ends_the_response_rather_than_being_ignored() {
+    fn an_in_stream_error_is_kept_for_the_stream_response_to_lift() {
         let mut folder = StreamFolder::new();
         let events =
             folder.push_payload(r#"{"error":{"code":429,"message":"quota exhausted"}}"#);
-        assert_eq!(
-            events,
-            vec![StreamEvent::Done {
-                stop_reason: Some("error: quota exhausted".to_string())
-            }]
-        );
+        // The envelope is surfaced, not folded into a silent Done.
+        assert!(events.is_empty());
         assert!(folder.is_finished());
+        let payload = folder.take_error().expect("error payload recorded");
+        assert_eq!(payload.message, "quota exhausted");
+        assert_eq!(payload.error_code.as_deref(), Some("429"));
+        assert!(matches!(payload.raw, Some(raw) if raw["code"] == 429));
+        // Taking clears it: a second read reports nothing.
+        assert!(folder.take_error().is_none());
     }
 
     #[test]

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { ChevronRight, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
 import { CopyJsonButton, formatJson } from "@/components/ai/server/McpAuditPanel";
+import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import { cn } from "@/lib/utils";
-import type { ChatToolCall, ChatToolEvent } from "@/types/domain";
+import type { ChatToolCall } from "@/types/domain";
+import type { LiveToolCall } from "@/services/chatStream";
 
 /** A tool step, from either a live stream event or a persisted message. */
 export type ToolStep = {
@@ -12,10 +14,12 @@ export type ToolStep = {
   result?: Record<string, unknown> | null;
   error?: string | null;
   durationMs?: number | null;
+  /** Stamped when the "start" event arrives, so a running step can show a clock. */
+  startedAt?: number | null;
   running: boolean;
 };
 
-export function toolStepFromEvent(event: ChatToolEvent): ToolStep {
+export function toolStepFromEvent(event: LiveToolCall): ToolStep {
   return {
     callId: event.callId,
     tool: event.tool,
@@ -23,6 +27,7 @@ export function toolStepFromEvent(event: ChatToolEvent): ToolStep {
     result: event.result,
     error: event.error,
     durationMs: event.durationMs,
+    startedAt: event.phase === "start" ? event.startedAt ?? Date.now() : null,
     running: event.phase === "start"
   };
 }
@@ -57,6 +62,9 @@ function formatDuration(ms: number): string {
 export function ToolCallStep({ step }: { step: ToolStep }) {
   const [expanded, setExpanded] = useState(false);
   const failed = Boolean(step.error);
+  const clock = useLiveClock(step.running && step.startedAt != null);
+  const runningMs =
+    step.running && step.startedAt != null && clock != null ? clock - step.startedAt : null;
 
   return (
     <div className="overflow-hidden rounded-md border bg-muted/25">
@@ -80,9 +88,13 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
           <Wrench className="size-3 shrink-0 text-muted-foreground/70" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{step.tool}</span>
-        {step.durationMs != null && (
+        {runningMs != null ? (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">
+            {formatElapsed(runningMs)}
+          </span>
+        ) : step.durationMs != null ? (
           <span className="shrink-0 text-xs text-muted-foreground/70">{formatDuration(step.durationMs)}</span>
-        )}
+        ) : null}
         <span
           className={cn(
             "shrink-0 text-[10px] uppercase tracking-wide",

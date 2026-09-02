@@ -7,7 +7,9 @@
 //! The request builder and the delta folder are pure functions so they can be
 //! tested without a network; only `stream_response` touches HTTP.
 
-use super::protocol::{StreamEvent, ToolCallAccumulator, ToolDefinition, Turn, Usage};
+use super::protocol::{
+    StreamErrorPayload, StreamEvent, ToolCallAccumulator, ToolDefinition, Turn, Usage,
+};
 use crate::error::{AppError, AppResult};
 use serde_json::json;
 
@@ -109,6 +111,8 @@ pub struct StreamFolder {
     calls: ToolCallAccumulator,
     usage: Usage,
     finished: bool,
+    /// A mid-stream error envelope, if the provider sent one (HTTP was 200).
+    stream_error: Option<StreamErrorPayload>,
 }
 
 impl StreamFolder {
@@ -120,6 +124,12 @@ impl StreamFolder {
         self.usage
     }
 
+    /// Takes a mid-stream error envelope so `stream_response` can lift it into an
+    /// `AppError` with the request context the folder does not hold.
+    pub fn take_error(&mut self) -> Option<StreamErrorPayload> {
+        self.stream_error.take()
+    }
+
     /// Handles one `data:` payload, returning the events it produced.
     pub fn push_payload(&mut self, payload: &str) -> Vec<StreamEvent> {
         if payload.trim() == "[DONE]" {
@@ -129,6 +139,26 @@ impl StreamFolder {
         let Ok(data) = serde_json::from_str::<serde_json::Value>(payload) else {
             return Vec::new();
         };
+
+        // Some gateways report a failure mid-stream as a body rather than an HTTP
+        // status; treat it as the real error it is, not as a silent end.
+        if let Some(error) = data.get("error").filter(|error| !error.is_null()) {
+            self.stream_error = Some(StreamErrorPayload {
+                message: error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(|message| message.chars().take(300).collect())
+                    .unwrap_or_else(|| "Unknown provider error".to_string()),
+                error_code: error
+                    .get("code")
+                    .and_then(|code| code.as_str())
+                    .map(ToString::to_string),
+                error_kind: Some("stream".to_string()),
+                raw: Some(error.clone()),
+            });
+            self.finished = true;
+            return Vec::new();
+        }
 
         let mut events = Vec::new();
 
@@ -276,16 +306,42 @@ pub async fn stream_response(
     let response = super::protocol::until_cancelled(cancel, request.json(body).send())
         .await
         .ok_or_else(super::protocol::cancelled)?
-        .map_err(|error| AppError::internal(describe_transport_failure(&url, &error)))?;
+        .map_err(|error| {
+            let details = super::protocol::request_details(
+                "POST",
+                &url,
+                Some(body),
+                None,
+                None,
+                "transport",
+                None,
+                None,
+                Some(crate::error::source_chain(&error)),
+            );
+            AppError::internal(describe_transport_failure(&url, &error)).with_details(details)
+        })?;
 
     let status = response.status();
     if !status.is_success() {
+        let status_code = status.as_u16();
         let text = response.text().await.unwrap_or_default();
+        let (reason, code) = super::protocol::envelope_fields(&text);
+        let details = super::protocol::request_details(
+            "POST",
+            &url,
+            Some(body),
+            Some(status_code),
+            Some(&text),
+            "http",
+            reason,
+            code,
+            None,
+        );
         // Tagged so a caller holding several keys can retire this one and retry.
-        return Err(super::protocol::http_failure(
-            status.as_u16(),
-            describe_failure(status.as_u16(), &text),
-        ));
+        return Err(
+            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
+                .with_details(details),
+        );
     }
 
     let mut parser = super::sse::SseParser::new();
@@ -306,6 +362,9 @@ pub async fn stream_response(
                 on_event(produced);
             }
         }
+        if let Some(raw) = folder.take_error() {
+            return Err(super::protocol::stream_error(&url, Some(body), &raw));
+        }
         if folder.is_finished() {
             return Ok(folder.usage());
         }
@@ -319,6 +378,9 @@ pub async fn stream_response(
     }
     for produced in folder.finish(None) {
         on_event(produced);
+    }
+    if let Some(raw) = folder.take_error() {
+        return Err(super::protocol::stream_error(&url, Some(body), &raw));
     }
     Ok(folder.usage())
 }
@@ -519,6 +581,20 @@ mod tests {
         assert!(folder.push_payload("not json").is_empty());
         assert!(folder.push_payload("{}").is_empty());
         assert!(!folder.is_finished());
+    }
+
+    #[test]
+    fn a_mid_stream_error_envelope_is_surfaced_not_swallowed() {
+        // OpenAI-compatible gateways can report a failure as a body with HTTP 200.
+        let mut folder = StreamFolder::new();
+        let events =
+            folder.push_payload(r#"{"error":{"message":"model overloaded","code":"overloaded_error"}}"#);
+        assert!(events.is_empty());
+        assert!(folder.is_finished());
+        let payload = folder.take_error().expect("error payload recorded");
+        assert_eq!(payload.message, "model overloaded");
+        assert_eq!(payload.error_code.as_deref(), Some("overloaded_error"));
+        assert!(folder.take_error().is_none());
     }
 
     #[test]

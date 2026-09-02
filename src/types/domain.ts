@@ -434,6 +434,32 @@ export interface AppError {
   requestId?: string;
   retryable?: boolean;
   accountId?: string;
+  /** Structured diagnostics for a failed request (e.g. an LLM call), if any. */
+  details?: ChatErrorDetails;
+}
+
+/**
+ * Structured diagnostics for a failed model request, shown behind the "details"
+ * disclosure on an errored reply. Fields present depend on where it failed: a
+ * transport failure has no HTTP status; a resolve (config) failure no request at
+ * all. Bodies are truncated on the backend; the UI truncates defensively too.
+ */
+export interface ChatErrorDetails {
+  url?: string;
+  /** HTTP method, e.g. "POST". */
+  method?: string;
+  httpStatus?: number;
+  /** The JSON body that was sent (never contains an API key — keys are headers). */
+  requestBody?: unknown;
+  /** What the provider returned. */
+  responseBody?: string;
+  /** The provider's own reported reason, when it gave one. */
+  providerReason?: string;
+  errorCode?: string;
+  /** "http" | "stream" | "transport" | "resolve" */
+  errorKind?: string;
+  /** The innermost cause chain for transport/resolve failures. */
+  stack?: string;
 }
 
 export interface GlueListRequest extends AwsCommandContext {
@@ -871,6 +897,8 @@ export interface ChatMessage {
   modelId?: string | null;
   durationMs?: number | null;
   error?: string | null;
+  /** Structured diagnostics behind the error line, when the backend captured them. */
+  errorDetails?: ChatErrorDetails | null;
   createdAt: string;
 }
 
@@ -940,6 +968,8 @@ export interface ChatErrorEvent {
   sessionId: string;
   messageId: string;
   message: string;
+  /** Structured diagnostics for the failed call, when the backend captured them. */
+  details?: ChatErrorDetails | null;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   type StreamingTurn
 } from "@/services/chatStream";
 import type {
+  ChatMessage,
   CreateChatAssistantRequest,
   CreateChatSessionRequest,
   UpdateChatAssistantRequest,
@@ -193,6 +194,12 @@ export function useChatConversation(sessionId: string | null) {
       setStreaming(emptyStreamingTurn(sessionId));
       try {
         await tauriClient.chatSend(sessionId, text);
+      } catch (error) {
+        // A rejection can reach us without a chat:error/chat:done (a failure that
+        // happens before the streaming loop), so clear the turn here — otherwise
+        // the "Thinking" bubble would spin forever under a toast.
+        setStreaming(null);
+        throw error;
       } finally {
         setSending(false);
         void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
@@ -250,11 +257,27 @@ export function useChatConversation(sessionId: string | null) {
       // Reuse the streaming turn so the reply shows a thinking indicator while
       // the model re-answers; regeneration re-emits the usual chat events.
       setStreaming(emptyStreamingTurn(sessionId));
+      const key = chatMessagesKey(sessionId);
+      const previous = queryClient.getQueryData<ChatMessage[]>(key);
+      // The backend discards the old reply and everything after it before
+      // re-answering; mirror that in the cache so the stale tail does not linger
+      // under the new "Thinking" bubble until chat:done refetches.
+      const targetSeq = previous?.find((message) => message.id === messageId)?.seq;
+      if (previous && targetSeq != null) {
+        queryClient.setQueryData(
+          key,
+          previous.filter((message) => message.seq < targetSeq)
+        );
+      }
       try {
         await tauriClient.regenerateChatMessage(sessionId, messageId, modelId);
+      } catch (error) {
+        if (previous) queryClient.setQueryData(key, previous); // roll back
+        setStreaming(null);
+        throw error;
       } finally {
         setSending(false);
-        void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+        void queryClient.invalidateQueries({ queryKey: key });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }
     },
@@ -266,11 +289,31 @@ export function useChatConversation(sessionId: string | null) {
       if (!sessionId) return;
       setSending(true);
       setStreaming(emptyStreamingTurn(sessionId));
+      const key = chatMessagesKey(sessionId);
+      const previous = queryClient.getQueryData<ChatMessage[]>(key);
+      // Optimistically adopt the new wording and drop everything after the edited
+      // question, so the transcript reads "re-answering" at once instead of
+      // showing the old reply under the new text until the turn finishes.
+      const targetSeq = previous?.find((message) => message.id === messageId)?.seq;
+      if (previous && targetSeq != null) {
+        queryClient.setQueryData(
+          key,
+          previous
+            .map((message) =>
+              message.id === messageId ? { ...message, content: newText.trim() } : message
+            )
+            .filter((message) => message.seq <= targetSeq)
+        );
+      }
       try {
         await tauriClient.updateChatMessage(sessionId, messageId, newText);
+      } catch (error) {
+        if (previous) queryClient.setQueryData(key, previous); // roll back
+        setStreaming(null);
+        throw error;
       } finally {
         setSending(false);
-        void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+        void queryClient.invalidateQueries({ queryKey: key });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }
     },

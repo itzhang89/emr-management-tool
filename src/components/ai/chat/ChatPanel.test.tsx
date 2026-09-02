@@ -17,6 +17,7 @@ const deleteChatAssistant = vi.fn();
 const chatSend = vi.fn();
 const chatCancel = vi.fn();
 const regenerateChatMessage = vi.fn();
+const updateChatMessage = vi.fn();
 const clearChatContext = vi.fn();
 
 vi.mock("@/services/tauriClient", () => ({
@@ -36,6 +37,8 @@ vi.mock("@/services/tauriClient", () => ({
     chatCancel: (sessionId: string) => chatCancel(sessionId),
     regenerateChatMessage: (sessionId: string, messageId: string, modelId?: string) =>
       regenerateChatMessage(sessionId, messageId, modelId),
+    updateChatMessage: (sessionId: string, messageId: string, content: string) =>
+      updateChatMessage(sessionId, messageId, content),
     clearChatContext: (sessionId: string) => clearChatContext(sessionId)
   }
 }));
@@ -406,8 +409,8 @@ describe("ChatPanel", () => {
 
     const shown = await screen.findAllByText(/Could not reach/);
     expect(shown).toHaveLength(1);
-    // And no "Thinking" bubble is left behind under it.
-    expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
+    // And no streaming bubble is left behind under it.
+    expect(screen.queryByText(/Waiting for model/)).not.toBeInTheDocument();
   });
 
   it("changes the conversation's model", async () => {
@@ -443,13 +446,120 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(regenerateChatMessage).toHaveBeenCalledWith("s1", "msg2", undefined));
 
     // The turn shows as in flight, so Stop replaces Send.
-    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    expect(screen.getByText("Waiting for model…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Stop" }));
 
     await waitFor(() => expect(chatCancel).toHaveBeenCalledWith("s1"));
     // Cleared here rather than on chat:done: the request may still be unwinding,
-    // and leaving "Thinking" up with no Stop button is the bug being fixed.
-    await waitFor(() => expect(screen.queryByText("Thinking")).not.toBeInTheDocument());
+    // and leaving the turn up with no Stop button is the bug being fixed.
+    await waitFor(() => expect(screen.queryByText(/Waiting for model/)).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("edits a past question in place and re-answers", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({ id: "msg2", seq: 1, role: "assistant", content: "driver OOM" })
+    ]);
+    updateChatMessage.mockResolvedValue("msg-assistant");
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    await screen.findByText("why did it fail?");
+
+    // Edit turns the question into an inline textarea — no modal dialog.
+    fireEvent.mouseEnter(screen.getByText("why did it fail?"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    const textarea = screen.getByLabelText("Edited question");
+    await user.clear(textarea);
+    await user.type(textarea, "why did the executors fail?{Enter}");
+
+    await waitFor(() =>
+      expect(updateChatMessage).toHaveBeenCalledWith(
+        "s1",
+        "msg1",
+        "why did the executors fail?"
+      )
+    );
+  });
+
+  it("does not re-answer when an inline edit is left unchanged", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({ id: "msg2", seq: 1, role: "assistant", content: "driver OOM" })
+    ]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    await screen.findByText("why did it fail?");
+
+    fireEvent.mouseEnter(screen.getByText("why did it fail?"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    // Pressing Enter with the text untouched closes the editor without a request.
+    await user.type(screen.getByLabelText("Edited question"), "{Enter}");
+    expect(updateChatMessage).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Edited question")).not.toBeInTheDocument();
+  });
+
+  it("clears the streaming bubble when regeneration rejects before a terminal event", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({ id: "msg2", seq: 1, role: "assistant", content: "driver OOM" })
+    ]);
+    // A pre-HTTP failure (e.g. the picked model is not on an enabled provider)
+    // rejects the invoke without a chat:error/chat:done terminal event.
+    regenerateChatMessage.mockRejectedValue(new Error("No model is configured."));
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    fireEvent.mouseEnter(await screen.findByText("driver OOM"));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+
+    await waitFor(() => expect(regenerateChatMessage).toHaveBeenCalledWith("s1", "msg2", undefined));
+    // The rejection must clear the in-flight turn — no spinner left spinning.
+    await waitFor(() => expect(screen.queryByText(/Waiting for model/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("shows a short error with an expandable diagnostics disclosure", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({
+        id: "msg2",
+        seq: 1,
+        role: "assistant",
+        content: null,
+        modelId: "gpt-x",
+        durationMs: 300,
+        error: "The provider returned HTTP 401.",
+        errorDetails: {
+          method: "POST",
+          url: "https://gw.example/v1/chat/completions",
+          httpStatus: 401,
+          providerReason: "invalid api key",
+          responseBody: '{"error":{"message":"invalid api key"}}'
+        }
+      })
+    ]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+    expect(await screen.findByText("The provider returned HTTP 401.")).toBeInTheDocument();
+
+    // Diagnostics are collapsed behind the short line by default.
+    expect(screen.queryByText(/https:\/\/gw\.example/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Details" }));
+
+    expect(screen.getByText(/POST/)).toBeInTheDocument();
+    expect(screen.getByText("Provider reason")).toBeInTheDocument();
+    expect(screen.getByText("invalid api key")).toBeInTheDocument();
+    expect(screen.getByText("HTTP status")).toBeInTheDocument();
   });
 });
