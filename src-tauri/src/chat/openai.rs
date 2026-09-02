@@ -261,9 +261,7 @@ pub async fn stream_response(
     use futures_util::StreamExt;
 
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|error| AppError::internal(error.to_string()))?;
+    let client = super::protocol::streaming_client()?;
 
     let mut request = client.post(&url).bearer_auth(api_key);
     // Custom headers are applied after the protocol's own; names that would
@@ -272,10 +270,12 @@ pub async fn stream_response(
         request = request.header(name, value);
     }
 
-    let response = request
-        .json(body)
-        .send()
+    // The request is raced against the token: establishing the stream can hang for
+    // as long as the provider holds the socket, and a stop pressed during that
+    // wait has to be observed here rather than after the first byte.
+    let response = super::protocol::until_cancelled(cancel, request.json(body).send())
         .await
+        .ok_or_else(super::protocol::cancelled)?
         .map_err(|error| AppError::internal(describe_transport_failure(&url, &error)))?;
 
     let status = response.status();

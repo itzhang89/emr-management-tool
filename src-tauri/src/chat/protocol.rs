@@ -6,6 +6,7 @@
 
 use crate::error::AppError;
 use crate::models::ChatToolCall;
+use std::time::Duration;
 
 /// Error code marking a response that means "this API key is no good", as
 /// opposed to "this request was bad".
@@ -14,6 +15,69 @@ use crate::models::ChatToolCall;
 /// up, so the one place that knows an HTTP code was 401 is the place that saw
 /// it. `chat::providers::error_retires_key` is what reads it.
 pub const AUTH_REJECTED_CODE: &str = "LlmAuthRejected";
+
+/// Ceiling on establishing the connection. A gateway that does not answer the
+/// handshake is unreachable, and waiting on it indefinitely is what made the
+/// stop button look broken.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Ceiling on the gap *between* bytes, not on the whole response.
+///
+/// A long answer with several tool rounds legitimately streams for minutes, so a
+/// total timeout would cut off working conversations. What is never normal is a
+/// connection that goes quiet for two minutes mid-stream — that is a dead socket,
+/// and without this the read simply hangs.
+const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The HTTP client every streaming protocol module uses.
+///
+/// Shared so all three shapes get the same timeout policy: a hung provider must
+/// not depend on which one the user picked.
+pub fn streaming_client() -> Result<reqwest::Client, AppError> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_IDLE_TIMEOUT)
+        .build()
+        .map_err(|error| AppError::internal(error.to_string()))
+}
+
+/// Runs `future` unless the token fires first, in which case it is dropped.
+///
+/// Every await on the send path goes through this. Checking the token only
+/// between steps is not enough: the request that establishes the stream can hang
+/// for as long as the provider keeps the socket open, and during that await a
+/// cancelled token was previously invisible — the stop button set it, the command
+/// returned success, and nothing ever observed it.
+///
+/// `None` means cancelled. Dropping is how both `reqwest` and `rmcp` requests are
+/// aborted; neither leaves shared state behind.
+pub async fn until_cancelled<T>(
+    cancel: &tokio_util::sync::CancellationToken,
+    future: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        // Biased so an already-cancelled token wins even when the future is
+        // immediately ready, making "stopped" unambiguous.
+        biased;
+        _ = cancel.cancelled() => None,
+        value = future => Some(value),
+    }
+}
+
+/// Error code marking work the user stopped, as opposed to work that failed.
+pub const CANCELLED_CODE: &str = "LlmCancelled";
+
+/// The error for an interrupted step. Kept distinguishable so the transcript can
+/// say "stopped" rather than reporting a failure the user caused deliberately.
+pub fn cancelled() -> AppError {
+    let mut error = AppError::validation("Stopped.");
+    error.code = CANCELLED_CODE.into();
+    error
+}
+
+pub fn is_cancelled(error: &AppError) -> bool {
+    error.code.as_ref() == CANCELLED_CODE
+}
 
 /// Turns a non-2xx response into an `AppError`, tagging the auth failures so a
 /// caller holding several API keys can retire the one it used and try the next.
@@ -198,6 +262,53 @@ pub fn parse_tool_arguments(arguments: &str) -> Result<serde_json::Value, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn an_already_cancelled_token_wins_over_a_ready_future() {
+        // The select is biased for exactly this: a stop pressed while a request was
+        // completing must read as stopped, not as a success the user did not see.
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+        assert_eq!(until_cancelled(&token, async { 1 }).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_future_that_finishes_first_returns_its_value() {
+        let token = tokio_util::sync::CancellationToken::new();
+        assert_eq!(until_cancelled(&token, async { 7 }).await, Some(7));
+    }
+
+    #[tokio::test]
+    async fn a_hanging_future_is_abandoned_when_the_token_fires() {
+        // This is the shape of the bug: a request the provider never answers. It
+        // has to be abandoned rather than awaited forever.
+        let token = tokio_util::sync::CancellationToken::new();
+        let fire = token.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            fire.cancel();
+        });
+
+        let outcome = until_cancelled(&token, std::future::pending::<()>()).await;
+        assert_eq!(outcome, None);
+    }
+
+    #[test]
+    fn stopping_is_distinguishable_from_failing() {
+        let stopped = cancelled();
+        assert!(is_cancelled(&stopped));
+        // The transcript reads this, so it must not look like a provider error.
+        assert_eq!(stopped.message.as_ref(), "Stopped.");
+
+        assert!(!is_cancelled(&AppError::internal("dns failure")));
+        assert!(!is_cancelled(&http_failure(401, "bad key".to_string())));
+    }
+
+    #[test]
+    fn the_streaming_client_builds_with_a_timeout_policy() {
+        // A client with no timeouts is what let a quiet socket hang forever.
+        assert!(streaming_client().is_ok());
+    }
 
     #[test]
     fn auth_failures_are_tagged_so_a_key_can_be_retired() {

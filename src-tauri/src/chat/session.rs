@@ -524,7 +524,11 @@ async fn run_rounds(
     target: &mut ResolvedTarget,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> AppResult<RoundsOutcome> {
-    let advertised = tool_definitions(app, in_process).await?;
+    // Listing tools connects the MCP client on first use, which can block; a stop
+    // pressed before the first request has to be observed here too.
+    let advertised = super::protocol::until_cancelled(cancel, tool_definitions(app, in_process))
+        .await
+        .ok_or_else(super::protocol::cancelled)??;
     let tools = allowed_tools(advertised, target.enabled_tools.as_deref());
 
     let stored = crate::db::chat::conversation_history(pool, session_id).await?;
@@ -538,11 +542,24 @@ async fn run_rounds(
         if cancel.is_cancelled() {
             break;
         }
-
-        let (events, round_usage) = stream_round(
+        let (events, round_usage) = match stream_round(
             app, pool, target, &tools, &turns, session_id, message_id, cancel,
         )
-        .await?;
+        .await
+        {
+            Ok(outcome) => outcome,
+            // Stopping is a user action, not a failure: the rounds end here and
+            // whatever streamed so far is kept, the same as when the byte loop
+            // itself saw the token fire.
+            Err(error) if super::protocol::is_cancelled(&error) => {
+                return Ok(RoundsOutcome {
+                    text: (!all_text.is_empty()).then(|| all_text.clone()),
+                    tool_calls: all_calls,
+                    usage,
+                })
+            }
+            Err(error) => return Err(error),
+        };
         if round_usage.input_tokens.is_some() {
             usage.input_tokens = round_usage.input_tokens;
         }
@@ -772,7 +789,7 @@ async fn run_tools(
         );
 
         let started = Instant::now();
-        let outcome = call_tool(app, in_process, tool, &args).await;
+        let outcome = call_tool(app, in_process, tool, &args, cancel).await;
         let duration_ms = started.elapsed().as_millis() as i64;
 
         let call = match outcome {
@@ -825,8 +842,14 @@ async fn call_tool(
     in_process: &crate::mcp::in_process::InProcessClient,
     tool: &str,
     args: &serde_json::Value,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<serde_json::Value, String> {
-    let guard = in_process.ensure(app.clone()).await?;
+    // Both awaits are raced against the token. A tool call is an AWS round-trip
+    // that can take a while, and connecting the MCP client takes a lock, so
+    // neither may swallow a stop.
+    let guard = super::protocol::until_cancelled(cancel, in_process.ensure(app.clone()))
+        .await
+        .ok_or_else(|| "Stopped.".to_string())??;
 
     // `CallToolRequestParams` is non-exhaustive, so it is built through its
     // constructor rather than a struct literal.
@@ -835,10 +858,9 @@ async fn call_tool(
         params = params.with_arguments(arguments);
     }
 
-    let result = guard
-        .client()
-        .call_tool(params)
+    let result = super::protocol::until_cancelled(cancel, guard.client().call_tool(params))
         .await
+        .ok_or_else(|| "Stopped.".to_string())?
         .map_err(|error| format!("tool {tool} failed: {error}"))?;
 
     if result.is_error.unwrap_or(false) {

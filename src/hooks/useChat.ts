@@ -202,10 +202,25 @@ export function useChatConversation(sessionId: string | null) {
     [queryClient, sessionId]
   );
 
+  /**
+   * Stops the in-flight turn.
+   *
+   * The streaming state is cleared here rather than waiting for `chat:done`: the
+   * whole point of the button is that the turn looks finished immediately, and a
+   * request the backend is still unwinding would otherwise leave "Thinking" on
+   * screen with no way to press Stop again. The transcript is refreshed so the
+   * partial reply the backend persisted takes over.
+   */
   const cancel = useCallback(async () => {
     if (!sessionId) return;
-    await tauriClient.chatCancel(sessionId);
-  }, [sessionId]);
+    setStreaming(null);
+    setSending(false);
+    try {
+      await tauriClient.chatCancel(sessionId);
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+    }
+  }, [queryClient, sessionId]);
 
   // Each mutation re-runs the send plumbing afterwards so the stream events
   // update the transcript the same way an ordinary send does. The persisted rows

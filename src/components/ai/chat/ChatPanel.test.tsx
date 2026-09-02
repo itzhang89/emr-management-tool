@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +16,7 @@ const deleteChatSession = vi.fn();
 const deleteChatAssistant = vi.fn();
 const chatSend = vi.fn();
 const chatCancel = vi.fn();
+const regenerateChatMessage = vi.fn();
 const clearChatContext = vi.fn();
 
 vi.mock("@/services/tauriClient", () => ({
@@ -33,6 +34,8 @@ vi.mock("@/services/tauriClient", () => ({
     deleteAllChatSessions: vi.fn(),
     chatSend: (sessionId: string, text: string) => chatSend(sessionId, text),
     chatCancel: (sessionId: string) => chatCancel(sessionId),
+    regenerateChatMessage: (sessionId: string, messageId: string, modelId?: string) =>
+      regenerateChatMessage(sessionId, messageId, modelId),
     clearChatContext: (sessionId: string) => clearChatContext(sessionId)
   }
 }));
@@ -414,5 +417,39 @@ describe("ChatPanel", () => {
     await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
     // The picker shows the model resolved for this session.
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("claude-opus-4-8");
+  });
+
+  it("stops a regeneration that has not produced anything yet", async () => {
+    const user = userEvent.setup();
+    listChatMessages.mockResolvedValue([
+      message({ content: "why did it fail?" }),
+      message({ id: "msg2", seq: 1, role: "assistant", content: "driver OOM" })
+    ]);
+    // A regenerate that never resolves — the provider accepted the connection and
+    // then went quiet, which is what made Stop look dead.
+    regenerateChatMessage.mockReturnValue(new Promise(() => {}));
+    chatCancel.mockResolvedValue(true);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "job-abc analysis" }));
+
+    // The action row only exists while the reply is hovered, and driving that with
+    // userEvent's pointer sequence unmounts the row mid-gesture. fireEvent keeps
+    // the hover state put, which is all this test needs — the row's own hover
+    // behaviour is covered in MessageList.test.tsx.
+    fireEvent.mouseEnter(await screen.findByText("driver OOM"));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+
+    await waitFor(() => expect(regenerateChatMessage).toHaveBeenCalledWith("s1", "msg2", undefined));
+
+    // The turn shows as in flight, so Stop replaces Send.
+    expect(screen.getByText("Thinking")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(chatCancel).toHaveBeenCalledWith("s1"));
+    // Cleared here rather than on chat:done: the request may still be unwinding,
+    // and leaving "Thinking" up with no Stop button is the bug being fixed.
+    await waitFor(() => expect(screen.queryByText("Thinking")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 });
