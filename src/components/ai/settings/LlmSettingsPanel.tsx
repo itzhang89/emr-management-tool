@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, LoaderCircle, ShieldAlert, Trash2 } from "lucide-react";
+import { Copy, LoaderCircle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -127,18 +127,6 @@ export function LlmSettingsPanel({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden">
-      {/* Until now this app sent nothing anywhere except AWS. Chat changes that,
-          and the place where a provider gets configured is where it has to be
-          said. */}
-      <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
-        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        <p>
-          Chat sends your messages and tool results — including log excerpts — to the provider you enable
-          here. API keys and custom header values are stored in your OS keychain and never sent back to this
-          UI. No provider is enabled by default.
-        </p>
-      </div>
-
       <div className="grid min-h-0 min-w-0 flex-1 gap-6 overflow-hidden lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]">
         <ProviderList
           providers={providerList}

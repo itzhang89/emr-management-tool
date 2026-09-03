@@ -160,11 +160,6 @@ describe("LlmSettingsPanel", () => {
     updateLlmProvider.mockResolvedValue(undefined);
   });
 
-  it("warns that chat content leaves the machine", async () => {
-    renderPanel();
-    expect(await screen.findByText(/sends your messages and tool results/i)).toBeInTheDocument();
-  });
-
   it("shows the provider's key, address, protocol, and grouped models", async () => {
     renderPanel();
 

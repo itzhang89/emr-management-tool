@@ -179,19 +179,16 @@ export function AssistantMessage({
           <span className="font-medium">{assistantName}</span>
           {modelId && <span className="font-mono text-muted-foreground">{modelId}</span>}
           {durationMs != null && !streaming && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  tabIndex={0}
-                  className="cursor-default rounded px-0.5 text-muted-foreground outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
-                >
-                  {formatDuration(durationMs)}
+            <>
+              <span className="text-muted-foreground">{formatDuration(durationMs)}</span>
+              {/* The send time appears next to the duration while the mouse is
+                  over this message, and disappears when it leaves. */}
+              {hovered && createdAt && (
+                <span className="text-muted-foreground/60">
+                  {formatDate(new Date(createdAt), "MM/dd HH:mm")}
                 </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {createdAt ? `Sent ${formatDate(new Date(createdAt), "MM/dd HH:mm")}` : "Sent"}
-              </TooltipContent>
-            </Tooltip>
+              )}
+            </>
           )}
           {streaming && (
             <span className="flex items-center gap-1 text-muted-foreground">
