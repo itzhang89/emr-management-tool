@@ -61,7 +61,7 @@ pub async fn list_accounts() -> AppResult<Vec<SafeAccount>> {
 
 // --- find_job -------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FindJobArgs {
     /// Complete EMR job run ID. Never truncate or invent it.
@@ -183,7 +183,7 @@ pub async fn find_job<S: JobDataSource>(
 
 // --- list_job_log_objects -------------------------------------------------
 
-#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ListJobLogObjectsArgs {
     /// Complete EMR job run ID.
@@ -262,7 +262,7 @@ pub async fn list_job_log_objects<S: JobDataSource>(
 const DEFAULT_LOG_TAIL_LINES: usize = 500;
 const MAX_LOG_TAIL_LINES: usize = 2000;
 
-#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetJobLogTextArgs {
     /// Complete EMR job run ID (used to locate the account).

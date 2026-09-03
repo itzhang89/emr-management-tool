@@ -2,8 +2,12 @@
 //!
 //! One `McpTools` handler is constructed identically for the in-process client
 //! (the Chat page) and the Streamable HTTP endpoint (external agents), so both
-//! see the same tools with the same behaviour and both write to the same audit
-//! table.
+//! see the same tools with the same behaviour. Audit differs only in *where* the
+//! row is written: external calls are audited here (the server is the only layer
+//! that sees them), while in-process Chat calls are audited by the chat loop in
+//! `session.rs`, which is the one place that knows the driving provider/model.
+//! Every tool invocation — current and future — is therefore audited exactly
+//! once.
 
 use rmcp::{
     handler::server::wrapper::Parameters,
@@ -11,8 +15,7 @@ use rmcp::{
     tool, tool_handler, tool_router, ServerHandler,
 };
 
-use crate::models::McpAuditEntry;
-
+use super::audit;
 use super::source::AppJobDataSource;
 use super::tools::analyze_job_failure::{self, AnalyzeJobFailureArgs, AnalyzeJobFailureReport};
 use super::tools::read_only as read_only_tools;
@@ -21,85 +24,55 @@ use super::tools::read_only as read_only_tools;
 /// `AppJobDataSource` (the same paths the desktop UI uses — no bridge).
 pub struct McpTools {
     pub data_source: AppJobDataSource,
+    /// When true (the Streamable HTTP transport), every tool call is written to
+    /// the audit table here. The in-process Chat transport constructs the server
+    /// with this off and lets the chat loop audit instead, so in-process calls
+    /// are not double-written.
+    pub audit_enabled: bool,
 }
 
 impl McpTools {
+    /// For the Streamable HTTP endpoint: audit every external invocation.
     pub fn new(app: tauri::AppHandle) -> Self {
         Self {
             data_source: AppJobDataSource::new(app),
+            audit_enabled: true,
+        }
+    }
+
+    /// For the in-process Chat transport: the chat loop audits these calls with
+    /// the provider/model that drove them, so the server stays out of the way.
+    pub fn for_in_process(app: tauri::AppHandle) -> Self {
+        Self {
+            data_source: AppJobDataSource::new(app),
+            audit_enabled: false,
         }
     }
 }
 
 // --- Audit ----------------------------------------------------------------
 // Every tool invocation lands in the app's `mcp_audit` table — the same table
-// the Audit Log tab reads from. Unlike the old HTTP bridge, there is no DTO
-// casing mismatch that could silently drop rows, and a failed write can never
-// break the tool call (it is fire-and-forget).
+// the Audit Log tab reads from. A failed write can never break the tool call
+// (the shared writer is fire-and-forget). Results are sanitized centrally in
+// `audit::record` (raw log bodies are dropped), so handlers just pass the value.
 
-fn audit_result_for(report: &AnalyzeJobFailureReport) -> serde_json::Value {
-    match serde_json::to_value(report) {
-        Ok(mut value) => {
-            // The full raw log tails would bloat the audit row; the structured
-            // evidence fields are kept.
-            if let Some(evidence) = value
-                .get_mut("evidence")
-                .and_then(|evidence| evidence.as_object_mut())
-            {
-                evidence.remove("rawLogs");
-            }
-            if let Some(controller) = value
-                .get_mut("controllerEvidence")
-                .and_then(|controller| controller.as_object_mut())
-            {
-                controller.remove("rawLogs");
-            }
-            value
+/// Record one invocation unless this server is the in-process transport (whose
+/// Chat loop audits instead, and knows the driving provider/model). A newly
+/// added tool audits itself by calling this once per invocation; the Chat loop
+/// needs no such call — it audits every tool it runs, new ones included.
+impl McpTools {
+    fn write_audit(
+        &self,
+        tool: &str,
+        args: serde_json::Value,
+        result: serde_json::Value,
+        error: Option<String>,
+        duration_ms: i64,
+    ) {
+        if self.audit_enabled {
+            audit::record(tool, None, args, result, error, duration_ms, None, None);
         }
-        Err(_) => serde_json::Value::Null,
     }
-}
-
-/// Write one audit row, fire-and-forget. Callers never await it.
-fn audit(
-    tool: &str,
-    client: Option<&str>,
-    args: serde_json::Value,
-    result: serde_json::Value,
-    error: Option<String>,
-) {
-    let started_at = chrono::Utc::now();
-    let tool = tool.to_string();
-    let client = client.map(ToString::to_string);
-    tauri::async_runtime::spawn(async move {
-        let pool = match crate::db::repository::pool().await {
-            Ok(pool) => pool,
-            Err(error) => {
-                crate::diagnostics::append_log_line(
-                    "WARN",
-                    &format!("mcp audit: failed to open database: {error}"),
-                );
-                return;
-            }
-        };
-        let entry = McpAuditEntry {
-            id: uuid::Uuid::new_v4().to_string(),
-            timestamp: started_at.to_rfc3339(),
-            status: if error.is_some() { "error" } else { "success" }.to_string(),
-            tool,
-            client,
-            duration_ms: (chrono::Utc::now() - started_at).num_milliseconds(),
-            args,
-            result,
-            error,
-        };
-        if let Err(error) = crate::db::repository::insert_mcp_audit_entry(&pool, &entry).await {
-            crate::diagnostics::append_log_line(
-                "WARN",
-                &format!("mcp audit: failed to write entry: {error}"),
-            );
-        }
-    });
 }
 
 // --- Tools ----------------------------------------------------------------
@@ -121,21 +94,23 @@ impl McpTools {
         &self,
         Parameters(args): Parameters<AnalyzeJobFailureArgs>,
     ) -> String {
+        let started = std::time::Instant::now();
         let result = analyze_job_failure::run(&self.data_source, &args).await;
+        let duration_ms = started.elapsed().as_millis() as i64;
         match &result {
-            Ok(report) => audit(
+            Ok(report) => self.write_audit(
                 "analyze_job_failure",
-                None,
                 serde_json::to_value(&args).unwrap_or_default(),
-                audit_result_for(report),
+                serde_json::to_value(report).unwrap_or_default(),
                 None,
+                duration_ms,
             ),
-            Err(error) => audit(
+            Err(error) => self.write_audit(
                 "analyze_job_failure",
-                None,
                 serde_json::to_value(&args).unwrap_or_default(),
                 serde_json::Value::Null,
                 Some(error.message.to_string()),
+                duration_ms,
             ),
         }
         result
@@ -150,8 +125,26 @@ impl McpTools {
     /// access keys, AWS account numbers, or full ARNs. Read-only.
     #[tool(name = "list_accounts")]
     async fn list_accounts(&self) -> String {
-        let accounts = read_only_tools::list_accounts().await.unwrap_or_default();
-        serde_json::to_string(&accounts).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+        let started = std::time::Instant::now();
+        let outcome = read_only_tools::list_accounts().await;
+        let (result, error) = match &outcome {
+            Ok(accounts) => (
+                serde_json::to_value(accounts).unwrap_or_default(),
+                None,
+            ),
+            Err(error) => (
+                serde_json::json!([]),
+                Some(error.message.to_string()),
+            ),
+        };
+        self.write_audit(
+            "list_accounts",
+            serde_json::json!({}),
+            result.clone(),
+            error,
+            started.elapsed().as_millis() as i64,
+        );
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
     /// Locate an EMR job by id across every configured account (active account
@@ -160,12 +153,24 @@ impl McpTools {
     /// Read-only.
     #[tool(name = "find_job")]
     async fn find_job(&self, Parameters(args): Parameters<read_only_tools::FindJobArgs>) -> String {
-        serde_json::to_string(
-            &read_only_tools::find_job(&self.data_source, &args)
-                .await
-                .unwrap_or_else(|error| read_only_tools::FindJobResult::not_found(&error.message)),
-        )
-        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+        let started = std::time::Instant::now();
+        let outcome = read_only_tools::find_job(&self.data_source, &args).await;
+        let (result, error) = match &outcome {
+            Ok(found) => (serde_json::to_value(found).unwrap_or_default(), None),
+            Err(error) => (
+                serde_json::to_value(read_only_tools::FindJobResult::not_found(&error.message))
+                    .unwrap_or_default(),
+                Some(error.message.to_string()),
+            ),
+        };
+        self.write_audit(
+            "find_job",
+            serde_json::to_value(&args).unwrap_or_default(),
+            result.clone(),
+            error,
+            started.elapsed().as_millis() as i64,
+        );
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
     /// List a job's S3 log objects, classified controller / driver / executor.
@@ -175,17 +180,29 @@ impl McpTools {
         &self,
         Parameters(args): Parameters<read_only_tools::ListJobLogObjectsArgs>,
     ) -> String {
-        serde_json::to_string(
-            &read_only_tools::list_job_log_objects(&self.data_source, &args)
-                .await
-                .unwrap_or_else(|error| read_only_tools::ListJobLogObjectsResult {
+        let started = std::time::Instant::now();
+        let outcome = read_only_tools::list_job_log_objects(&self.data_source, &args).await;
+        let (result, error) = match &outcome {
+            Ok(listed) => (serde_json::to_value(listed).unwrap_or_default(), None),
+            Err(error) => (
+                serde_json::to_value(read_only_tools::ListJobLogObjectsResult {
                     job_id: args.job_id.clone(),
                     bucket: None,
                     objects: Vec::new(),
                     note: Some(error.message.to_string()),
-                }),
-        )
-        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+                })
+                .unwrap_or_default(),
+                Some(error.message.to_string()),
+            ),
+        };
+        self.write_audit(
+            "list_job_log_objects",
+            serde_json::to_value(&args).unwrap_or_default(),
+            result.clone(),
+            error,
+            started.elapsed().as_millis() as i64,
+        );
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
     /// Read the sanitized text of one of a job's S3 log objects (from
@@ -196,10 +213,12 @@ impl McpTools {
         &self,
         Parameters(args): Parameters<read_only_tools::GetJobLogTextArgs>,
     ) -> String {
-        serde_json::to_string(
-            &read_only_tools::get_job_log_text(&self.data_source, &args)
-                .await
-                .unwrap_or_else(|error| read_only_tools::GetJobLogTextResult {
+        let started = std::time::Instant::now();
+        let outcome = read_only_tools::get_job_log_text(&self.data_source, &args).await;
+        let (result, error) = match &outcome {
+            Ok(text) => (serde_json::to_value(text).unwrap_or_default(), None),
+            Err(error) => (
+                serde_json::to_value(read_only_tools::GetJobLogTextResult {
                     s3_key: args.s3_key.clone(),
                     text: String::new(),
                     returned_lines: 0,
@@ -207,9 +226,19 @@ impl McpTools {
                     noise_filtered_lines: 0,
                     truncated: false,
                     error: Some(error.message.to_string()),
-                }),
-        )
-        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+                })
+                .unwrap_or_default(),
+                Some(error.message.to_string()),
+            ),
+        };
+        self.write_audit(
+            "get_job_log_text",
+            serde_json::to_value(&args).unwrap_or_default(),
+            result.clone(),
+            error,
+            started.elapsed().as_millis() as i64,
+        );
+        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 }
 

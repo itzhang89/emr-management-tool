@@ -483,7 +483,7 @@ describe("ChatPanel", () => {
     );
   });
 
-  it("does not re-answer when an edit is left unchanged", async () => {
+  it("re-answers even when an edit leaves the text unchanged", async () => {
     const user = userEvent.setup();
     listChatMessages.mockResolvedValue([
       message({ content: "why did it fail?" }),
@@ -500,9 +500,11 @@ describe("ChatPanel", () => {
     const composer = screen.getByLabelText("Message");
     expect(composer).toHaveValue("why did it fail?");
 
-    // Pressing Enter with the text untouched closes the editor without a request.
+    // In edit mode, sending is a regenerate: unchanged text still re-answers.
     await user.type(composer, "{Enter}");
-    expect(updateChatMessage).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(updateChatMessage).toHaveBeenCalledWith("s1", "msg1", "why did it fail?")
+    );
     // The editing banner is gone and the composer is back to composing.
     expect(screen.queryByText(/Editing a message/)).not.toBeInTheDocument();
     expect(composer).toHaveValue("");

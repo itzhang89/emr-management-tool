@@ -61,6 +61,9 @@ export function AppShell() {
   const openSubmitPage = useCallback(() => {
     startPageTransition(() => setActivePage("submit"));
   }, []);
+  const openAiAssistantPage = useCallback(() => {
+    startPageTransition(() => setActivePage("ai"));
+  }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
   }, []);
@@ -219,7 +222,14 @@ export function AppShell() {
       case "submit":
         return <SubmitJobPage onOpenLogs={openLogsPage} />;
       case "history":
-        return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} onOpenSubmit={openSubmitPage} />;
+        return (
+          <JobHistoryPage
+            onOpenLogs={openLogsPage}
+            onOpenS3={openS3Page}
+            onOpenSubmit={openSubmitPage}
+            onOpenAiAssistant={openAiAssistantPage}
+          />
+        );
       case "logs":
         return <LogsPage />;
       case "templates":
@@ -237,7 +247,7 @@ export function AppShell() {
       default:
         return <SubmitJobPage onOpenLogs={openLogsPage} />;
     }
-  }, [activePage, openLogsPage, openS3Page, openSubmitPage]);
+  }, [activePage, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">

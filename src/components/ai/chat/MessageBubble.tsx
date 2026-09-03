@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { format as formatDate } from "date-fns";
 import {
   AtSign,
   Bot,
@@ -115,6 +116,7 @@ export function AssistantMessage({
   streaming,
   startedAt,
   modelOptions,
+  createdAt,
   onConfigureProvider,
   onCopy,
   onRegenerate,
@@ -134,6 +136,8 @@ export function AssistantMessage({
   /** When the streaming turn began (ms epoch); drives the live elapsed clock. */
   startedAt?: number | null;
   modelOptions: ModelActionOption[];
+  /** When the reply was sent; the header tooltip shows this as MM/DD HH:mm. */
+  createdAt?: string | null;
   /** Open LLM Setting for this reply's provider, when one can be resolved. */
   onConfigureProvider?: () => void;
   onCopy: () => void;
@@ -175,7 +179,19 @@ export function AssistantMessage({
           <span className="font-medium">{assistantName}</span>
           {modelId && <span className="font-mono text-muted-foreground">{modelId}</span>}
           {durationMs != null && !streaming && (
-            <span className="text-muted-foreground">{formatDuration(durationMs)}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  className="cursor-default rounded px-0.5 text-muted-foreground outline-none hover:bg-muted/60 focus-visible:bg-muted/60"
+                >
+                  {formatDuration(durationMs)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {createdAt ? `Sent ${formatDate(new Date(createdAt), "MM/dd HH:mm")}` : "Sent"}
+              </TooltipContent>
+            </Tooltip>
           )}
           {streaming && (
             <span className="flex items-center gap-1 text-muted-foreground">

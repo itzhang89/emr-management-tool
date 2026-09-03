@@ -648,6 +648,10 @@ export interface McpAuditEntry {
   args: Record<string, unknown>;
   result: Record<string, unknown>;
   error?: string | null;
+  /** Provider that drove the call — only in-process Chat calls carry one. */
+  providerId?: string | null;
+  /** The API model id (e.g. "claude-opus-4-8") used for the Chat call. */
+  modelId?: string | null;
 }
 
 // --- LLM provider configuration -------------------------------------------

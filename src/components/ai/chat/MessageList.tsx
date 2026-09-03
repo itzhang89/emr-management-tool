@@ -36,7 +36,6 @@ export function MessageList({
   emptyHint,
   modelOptions,
   editingMessageId,
-  resolveProviderId,
   onCopy,
   onEdit,
   onConfigureProvider,
@@ -53,12 +52,10 @@ export function MessageList({
   modelOptions: ModelActionOption[];
   /** The user message being edited through the composer, dimmed in the transcript. */
   editingMessageId: string | null;
-  /** Maps a message's API-facing modelId to the provider that offers it, or null. */
-  resolveProviderId: (message: ChatMessage) => string | null;
   onCopy: (message: ChatMessage) => void;
   onEdit: (message: ChatMessage) => void;
-  /** Open LLM Setting for the provider of an errored reply. */
-  onConfigureProvider: (providerId: string) => void;
+  /** Open LLM Setting for the provider of the conversation's current model. */
+  onConfigureProvider: () => void;
   onDelete: (message: ChatMessage) => void;
   onRegenerate: (message: ChatMessage) => void;
   onRegenerateWithModel: (message: ChatMessage, modelId: string) => void;
@@ -127,7 +124,6 @@ export function MessageList({
               );
             }
             if (message.role === "assistant") {
-              const providerId = resolveProviderId(message);
               return (
                 <AssistantMessage
                   key={message.id}
@@ -140,7 +136,11 @@ export function MessageList({
                   error={message.error}
                   errorDetails={message.errorDetails}
                   modelOptions={modelOptions}
-                  onConfigureProvider={providerId ? () => onConfigureProvider(providerId) : undefined}
+                  createdAt={message.createdAt}
+                  // The settings link opens the provider of the conversation's
+                  // current model — which errored is the point, and the panel
+                  // itself resolves that provider.
+                  onConfigureProvider={onConfigureProvider}
                   onCopy={() => onCopy(message)}
                   onRegenerate={() => onRegenerate(message)}
                   onRegenerateWithModel={(modelId) => onRegenerateWithModel(message, modelId)}

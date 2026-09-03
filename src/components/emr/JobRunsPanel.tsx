@@ -1,4 +1,4 @@
-import { FileText, Play, Search, Skull } from "lucide-react";
+import { FileText, Play, Search, Skull, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +42,8 @@ export function JobRunsPanel({
   clusterJobsQuery,
   submissionJobsQuery,
   onSubmissionStarted,
-  onOpenSubmit
+  onOpenSubmit,
+  onOpenAiAssistant
 }: {
   virtualClusterId?: string;
   keyword?: string;
@@ -61,6 +62,10 @@ export function JobRunsPanel({
   submissionJobsQuery?: JobRunsQuery;
   onSubmissionStarted?: () => void;
   onOpenSubmit?: () => void;
+  /** When provided, FAILED rows gain an "Analyze" action that sends the job to
+      the AI assistant for failure analysis. Optional so the panel's other
+      hosts (submit page, dashboard) stay unchanged. */
+  onOpenAiAssistant?: () => void;
 }) {
   const [detailJobId, setDetailJobId] = useState<string>();
   const [page, setPage] = useState(1);
@@ -74,6 +79,7 @@ export function JobRunsPanel({
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const setPendingSourceSubmit = useSessionStore((state) => state.setPendingSourceSubmit);
+  const setPendingAiAnalyze = useSessionStore((state) => state.setPendingAiAnalyze);
 
   const submittedKeyword = keyword?.trim() || undefined;
   const useExternalClusterQuery = Boolean(clusterJobsQuery && !submittedOnly);
@@ -253,6 +259,23 @@ export function JobRunsPanel({
                         onOpenChange={(open) => setDetailJobId(open ? job.id : undefined)}
                       />
                       <JobLogActions job={job} onOpenLogs={onOpenLogs} />
+                      {job.state === "FAILED" && onOpenAiAssistant ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setPendingAiAnalyze({
+                              jobId: job.id,
+                              jobName: job.name,
+                              virtualClusterId: job.virtualClusterId
+                            });
+                            onOpenAiAssistant();
+                          }}
+                        >
+                          <Sparkles data-icon="inline-start" />
+                          Analyze
+                        </Button>
+                      ) : null}
                       {job.state === "RUNNING" ? (
                         <Button
                           variant="ghost"

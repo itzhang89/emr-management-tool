@@ -18,11 +18,14 @@ import { Composer } from "@/components/ai/chat/Composer";
 import { MessageList } from "@/components/ai/chat/MessageList";
 import {
   defaultModelOption,
+  findModelOption,
   ModelSelect,
   useModelOptions
 } from "@/components/ai/chat/ModelSelect";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
 import { isClearContextKey } from "@/lib/keyboardShortcut";
+import { jobAnalysisPrompt, jobSessionTitle, sameJobTitle } from "@/services/aiAnalyzeJob";
+import { useSessionStore } from "@/stores/sessionStore";
 import {
   useChatAssistants,
   useChatConversation,
@@ -72,8 +75,65 @@ export function ChatPanel({
     return map;
   }, [llmProviders.data]);
 
+  // The LlmModel row id (what a session/assistant stores) → provider id, for
+  // resolving the conversation's currently selected model to its settings page.
+  const providerIdByModelRowId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const provider of llmProviders.data ?? []) {
+      for (const model of provider.models) {
+        map.set(model.id, provider.id);
+      }
+    }
+    return map;
+  }, [llmProviders.data]);
+
+  /** Which provider a model reference belongs to, accepting either a row id or an API model id. */
+  const providerForModelRef = (modelRef: string | null | undefined): string | null => {
+    if (!modelRef) return null;
+    return providerIdByModelRowId.get(modelRef) ?? providerIdByModelId.get(modelRef) ?? null;
+  };
+
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  const sessionList = sessions.data ?? [];
+  const assistantList = assistants.data ?? [];
+
+  const activeSession = useMemo(
+    () => sessionList.find((session) => session.id === activeSessionId) ?? null,
+    [sessionList, activeSessionId]
+  );
+  const activeAssistant = useMemo(
+    () => assistantList.find((assistant) => assistant.id === activeSession?.assistantId),
+    [assistantList, activeSession]
+  );
+
+  // The last model any conversation ran on, so an auto-created analysis session
+  // can start on the model the user was just using. The sessions list is ordered
+  // most-recently-active first, so the first session that names a still-available
+  // model is that model.
+  const lastUsedModelId = useMemo(() => {
+    for (const session of sessionList) {
+      if (session.modelId && findModelOption(modelOptions, session.modelId)) {
+        return session.modelId;
+      }
+    }
+    return null;
+  }, [sessionList, modelOptions]);
+
+  // The model this conversation runs on: its own choice, else the assistant's
+  // default, else the app default. `effectiveModelId` below resolves the same
+  // value for the picker; this is the provider half of it, so the settings link
+  // can open the right provider's row when no explicit provider was requested.
+  const effectiveProviderId = useMemo(() => {
+    const modelId =
+      activeSession?.modelId ??
+      activeAssistant?.defaultModelId ??
+      defaultModelOption(modelOptions)?.id ??
+      null;
+    return providerForModelRef(modelId);
+  }, [activeSession, activeAssistant, modelOptions, providerForModelRef]);
+
   const [assistantDialog, setAssistantDialog] = useState<{
     open: boolean;
     assistant: ChatAssistant | null;
@@ -91,19 +151,124 @@ export function ChatPanel({
   // transcript), or null when the composer is just composing.
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
 
-  const sessionList = sessions.data ?? [];
-  const assistantList = assistants.data ?? [];
-
-  const activeSession = useMemo(
-    () => sessionList.find((session) => session.id === activeSessionId) ?? null,
-    [sessionList, activeSessionId]
-  );
-  const activeAssistant = useMemo(
-    () => assistantList.find((assistant) => assistant.id === activeSession?.assistantId),
-    [assistantList, activeSession]
-  );
-
   const conversation = useChatConversation(activeSession?.id ?? null);
+
+  // Job History → AI: an "Analyze" click on a FAILED job stores the job here and
+  // opens the Chat tab. On mount this consumes that intent — reuses the
+  // conversation for that job's name (clearing its context first so the model
+  // does not carry the previous run's history), or starts a new one named after
+  // the job — then auto-sends the question.
+  const pendingAiAnalyze = useSessionStore((state) => state.pendingAiAnalyze);
+  const setPendingAiAnalyze = useSessionStore((state) => state.setPendingAiAnalyze);
+  const [queuedAnalyze, setQueuedAnalyze] = useState<{
+    sessionId: string;
+    text: string;
+    clearContext: boolean;
+  } | null>(null);
+  const [pendingNewSession, setPendingNewSession] = useState<{
+    sessionId: string;
+    text: string;
+  } | null>(null);
+  // The send must run against the conversation bound to whatever session becomes
+  // active, so the latest bound functions are read through a ref rather than a
+  // stale effect closure.
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
+
+  useEffect(() => {
+    if (!pendingAiAnalyze) return;
+    // Wait for the real lists so the find-or-reuse decision is made against
+    // loaded data, not an empty first render.
+    if (assistants.isLoading || sessions.isLoading || llmProviders.isLoading) return;
+
+    // Consume the intent atomically. Reading through getState() and clearing
+    // there means StrictMode's double-invoked effect — or a remount — sees the
+    // value once, because the second pass reads the store as already cleared.
+    const data = useSessionStore.getState().pendingAiAnalyze;
+    if (!data) return;
+    useSessionStore.getState().setPendingAiAnalyze(undefined);
+
+    if (assistantList.length === 0) {
+      toast.error("No assistant is available to analyze the job.");
+      return;
+    }
+    if (noModels) {
+      // Chat is already showing its "configure a provider" empty state — the
+      // fix this needs — so drop the intent rather than firing into nothing.
+      toast.error("No model is configured yet. Configure one in LLM Setting, then press Analyze again.");
+      return;
+    }
+
+    const title = jobSessionTitle(data.jobName) || data.jobId;
+    const text = jobAnalysisPrompt(data);
+
+    const existing = sessionList.find((session) => sameJobTitle(session.title, title));
+    if (existing) {
+      setActiveSessionId(existing.id);
+      setQueuedAnalyze({ sessionId: existing.id, text, clearContext: true });
+      return;
+    }
+
+    const assistantId =
+      (assistantList.find((assistant) => assistant.builtIn) ?? assistantList[0]).id;
+    // The new conversation runs on the last model used in any conversation, when
+    // one still exists and is still selectable; otherwise it falls back to the
+    // default. (Handpicked options are a `ModelOption.id`, the same key a session
+    // stores and the session's own model picker writes.)
+    const modelId =
+      findModelOption(modelOptions, lastUsedModelId)?.id ??
+      defaultModelOption(modelOptions)?.id ??
+      null;
+    createSession
+      .mutateAsync({ assistantId, title, modelId: modelId ?? undefined })
+      .then((sessionId) => setPendingNewSession({ sessionId, text }))
+      .catch((error: Error) => toast.error(error?.message || "Failed to start the AI analysis"));
+  }, [
+    pendingAiAnalyze,
+    assistantList,
+    sessionList,
+    assistants.isLoading,
+    sessions.isLoading,
+    llmProviders.isLoading,
+    noModels,
+    createSession,
+    lastUsedModelId,
+    modelOptions
+  ]);
+
+  // A freshly created session only appears in the sessions query after it
+  // refetches; select it then, when it is actually in the list, so the
+  // keep-selection-on-delete effect below cannot clear the choice first.
+  useEffect(() => {
+    if (!pendingNewSession) return;
+    if (!sessionList.some((session) => session.id === pendingNewSession.sessionId)) return;
+    const { sessionId, text } = pendingNewSession;
+    setPendingNewSession(null);
+    setActiveSessionId(sessionId);
+    setQueuedAnalyze({ sessionId, text, clearContext: false });
+  }, [pendingNewSession, sessionList]);
+
+  const streamingActive = conversation.streaming !== null;
+  // Fires the queued analysis once the target session is actually selected and
+  // idle (its messages loaded, no stream in flight).
+  useEffect(() => {
+    if (!queuedAnalyze) return;
+    const queued = queuedAnalyze;
+    if (activeSession?.id !== queued.sessionId) return;
+    if (conversation.isLoading || conversation.sending || streamingActive) return;
+    setQueuedAnalyze(null);
+    void (async () => {
+      const current = conversationRef.current;
+      if (queued.clearContext) {
+        await current.clearContext();
+      }
+      try {
+        await current.send(queued.text);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to send the job for analysis");
+      }
+    })();
+  }, [queuedAnalyze, activeSession?.id, conversation.isLoading, conversation.sending, streamingActive]);
 
   // Keep the selection on a session that still exists after a delete.
   useEffect(() => {
@@ -222,19 +387,24 @@ export function ChatPanel({
   /**
    * The composer's send. While a past question is being edited, the box re-answers
    * that question instead of sending a new one — mirroring the old inline editor.
-   * An unchanged or empty edit just closes the editor, no re-answer.
+   * Re-answering always runs, even when the wording is unchanged: in edit mode the
+   * send action means "regenerate", and an unchanged-text no-op would read as the
+   * button being dead.
    */
   const handleComposerSend = async (text: string) => {
     if (editingMessage) {
       const original = editingMessage.content?.trim() ?? "";
-      const target = text.trim();
       const message = editingMessage;
+      const target = text.trim();
       setEditingMessage(null);
       setComposerText("");
-      if (!target || target === original) return;
       try {
         await conversation.edit(message.id, target);
-        toast.success("Question updated and answered again");
+        // An unchanged text is still a regenerate; the fresh stream already shows
+        // that, so only an actual wording change earns a success toast.
+        if (target !== original) {
+          toast.success("Question updated and answered again");
+        }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to update the message");
       }
@@ -247,9 +417,9 @@ export function ChatPanel({
     }
   };
 
-  /** Jump to LLM Setting with the provider of an errored reply preselected. */
-  const handleConfigureProvider = (providerId: string) => {
-    onConfigureModels(providerId);
+  /** Jump to LLM Setting with the provider of the session's currently selected model. */
+  const handleConfigureProvider = () => {
+    onConfigureModels(effectiveProviderId ?? undefined);
   };
 
   const handleRegenerate = async (message: ChatMessage) => {
@@ -384,14 +554,9 @@ export function ChatPanel({
           isLoading={conversation.isLoading}
           modelOptions={modelOptions}
           editingMessageId={editingMessage?.id ?? null}
-          // A message's modelId is API-facing; resolve it back to the provider
-          // that offers it so an errored reply can link to the right settings.
-          resolveProviderId={(message) =>
-            message.modelId ? providerIdByModelId.get(message.modelId) ?? null : null
-          }
           onCopy={handleCopy}
           onEdit={handleEditRequest}
-          onConfigureProvider={(providerId) => void handleConfigureProvider(providerId)}
+          onConfigureProvider={() => void handleConfigureProvider()}
           onDelete={setMessageDeleteTarget}
           onRegenerate={handleRegenerate}
           onRegenerateWithModel={handleRegenerateWithModel}

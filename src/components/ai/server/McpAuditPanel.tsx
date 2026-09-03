@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { ChevronDown, Copy, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -15,8 +15,9 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
+import { useLlmProviders } from "@/hooks/useLlmConfig";
 import { tauriClient } from "@/services/tauriClient";
-import type { McpAuditEntry } from "@/types/domain";
+import type { LlmProvider, McpAuditEntry } from "@/types/domain";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms} ms`;
@@ -71,7 +72,27 @@ export function CopyJsonButton({ value, label }: { value: unknown; label: string
   );
 }
 
-function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
+/**
+ * One label for "who called this tool". In-process Chat rows record the
+ * provider + model that drove the call; external HTTP-agent rows have neither.
+ * The provider is looked up by id so the row reads e.g. "Anthropic ·
+ * claude-opus-4-8"; if a provider was deleted the id falls back to the model id
+ * alone rather than a dangling reference.
+ */
+function modelLabel(entry: McpAuditEntry, providersById: Map<string, LlmProvider>): string {
+  if (!entry.modelId) return "—";
+  const provider = entry.providerId ? providersById.get(entry.providerId) : undefined;
+  const name = provider?.name ?? "";
+  return name ? `${name} · ${entry.modelId}` : entry.modelId;
+}
+
+function AuditLogRow({
+  entry,
+  providersById
+}: {
+  entry: McpAuditEntry;
+  providersById: Map<string, LlmProvider>;
+}) {
   const [expanded, setExpanded] = useState(false);
   const isError = entry.status === "error" || Boolean(entry.error);
   return (
@@ -103,6 +124,9 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
         </TableCell>
         <TableCell className="truncate font-mono text-xs">{entry.tool}</TableCell>
         <TableCell className="truncate font-mono text-xs text-muted-foreground">
+          {modelLabel(entry, providersById)}
+        </TableCell>
+        <TableCell className="truncate font-mono text-xs text-muted-foreground">
           {entry.client || "—"}
         </TableCell>
         <TableCell className="truncate font-mono text-xs text-muted-foreground">
@@ -117,7 +141,7 @@ function AuditLogRow({ entry }: { entry: McpAuditEntry }) {
       </TableRow>
       {expanded && (
         <TableRow className="hover:bg-muted/30">
-          <TableCell colSpan={8} className="bg-muted/30 py-3">
+          <TableCell colSpan={9} className="bg-muted/30 py-3">
             <div className="space-y-3">
               {/* Responses dwarf the arguments, so split the width 1:4 rather
                   than evenly. */}
@@ -167,6 +191,11 @@ export function McpAuditPanel() {
     refetchInterval: 3000,
     refetchOnWindowFocus: true
   });
+  const { data: providers } = useLlmProviders();
+  const providersById = useMemo(
+    () => new Map((providers ?? []).map((provider) => [provider.id, provider])),
+    [providers]
+  );
 
   if (isLoading) {
     return (
@@ -197,6 +226,7 @@ export function McpAuditPanel() {
             <TableHead className="w-40">Time</TableHead>
             <TableHead className="w-24">Status</TableHead>
             <TableHead className="w-44">Tool</TableHead>
+            <TableHead className="w-48">Provider / Model</TableHead>
             <TableHead className="w-40">Client</TableHead>
             <TableHead className="w-[22%]">Arguments</TableHead>
             <TableHead>Response</TableHead>
@@ -205,7 +235,7 @@ export function McpAuditPanel() {
         </TableHeader>
         <TableBody>
           {(entries ?? []).map((entry) => (
-            <AuditLogRow key={entry.id} entry={entry} />
+            <AuditLogRow key={entry.id} entry={entry} providersById={providersById} />
           ))}
         </TableBody>
       </Table>

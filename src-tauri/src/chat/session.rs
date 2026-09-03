@@ -111,16 +111,28 @@ pub struct ResolvedTarget {
     pub enabled_tools: Option<Vec<String>>,
 }
 
+/// The model a session would send with, before its provider's credentials are
+/// read. Kept apart from [`ResolvedTarget`] so a turn whose API key turns out to
+/// be missing or refused still knows which model it would have used — the
+/// transcript then links that setup error to the provider's settings.
+pub struct ResolvedModel {
+    pub protocol: LlmProtocol,
+    pub base_url: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub system_prompt: Option<String>,
+    pub enabled_tools: Option<Vec<String>>,
+}
+
 /// Picks the model for a session: an explicit override for this one send, else
 /// the session's own choice, else its assistant's default, else the
 /// globally-default model. Each fallback is a deliberate step rather than an
 /// arbitrary pick, so a user who set a default gets it everywhere.
-pub async fn resolve_target(
-    app: &AppHandle,
+pub async fn resolve_model(
     pool: &SqlitePool,
     session_id: &str,
     model_override: Option<&str>,
-) -> AppResult<ResolvedTarget> {
+) -> AppResult<ResolvedModel> {
     let sessions = crate::db::chat::list_sessions(pool).await?;
     let session = sessions
         .into_iter()
@@ -174,18 +186,38 @@ pub async fn resolve_target(
         )
     })?;
 
-    let credentials = providers::resolve_credentials(app, pool, &candidate.provider_id).await?;
-
-    Ok(ResolvedTarget {
+    Ok(ResolvedModel {
         protocol: candidate.protocol,
         base_url: candidate.base_url,
         provider_id: candidate.provider_id,
-        api_key_id: credentials.key_id,
-        api_key: credentials.api_key,
-        headers: credentials.headers,
         model_id: candidate.model_id,
         system_prompt: assistant.system_prompt,
         enabled_tools: assistant.enabled_tools,
+    })
+}
+
+/// Everything needed to talk to a provider for one session: the model chosen by
+/// [`resolve_model`] plus the API key (or the first healthy one) and custom
+/// headers to send with it.
+pub async fn resolve_target(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    session_id: &str,
+    model_override: Option<&str>,
+) -> AppResult<ResolvedTarget> {
+    let model = resolve_model(pool, session_id, model_override).await?;
+    let credentials = providers::resolve_credentials(app, pool, &model.provider_id).await?;
+
+    Ok(ResolvedTarget {
+        protocol: model.protocol,
+        base_url: model.base_url,
+        provider_id: model.provider_id,
+        api_key_id: credentials.key_id,
+        api_key: credentials.api_key,
+        headers: credentials.headers,
+        model_id: model.model_id,
+        system_prompt: model.system_prompt,
+        enabled_tools: model.enabled_tools,
     })
 }
 
@@ -407,13 +439,18 @@ pub async fn answer_current_turn(
     cancel: &tokio_util::sync::CancellationToken,
 ) -> AppResult<String> {
     let started = Instant::now();
-    // Mutable because a refused API key is swapped for the next one mid-run.
-    let mut target = match resolve_target(app, pool, session_id, model_override).await {
-        Ok(target) => target,
+
+    // The model comes first: it is what names the provider, and persisting it on
+    // an error row is what lets the transcript link a provider-setup failure
+    // ("no API key configured", "every key was refused") back to that provider's
+    // settings instead of leaving a bare sentence.
+    let model = match resolve_model(pool, session_id, model_override).await {
+        Ok(model) => model,
         // A failure before any request is still a failed turn the user should see
         // in the transcript, not just a toast: reserve a row and persist the error
         // exactly the way a mid-stream failure below does. This is what keeps a
         // model-switch regenerate from leaving nothing but a spinner behind.
+        // Nothing is configured yet, so this row cannot name a model.
         Err(error) => {
             let duration_ms = started.elapsed().as_millis() as i64;
             let message = error.to_string();
@@ -455,17 +492,63 @@ pub async fn answer_current_turn(
         }
     };
 
-    // Created before the first request so deltas have an id to attach to.
+    // Created before the first request so deltas have an id to attach to — and so
+    // a credential failure below is recorded on a row that already names the
+    // model (and therefore the provider) it would have used.
     let assistant = crate::db::chat::append_message(
         pool,
         session_id,
         ChatRole::Assistant,
         crate::db::chat::NewMessage {
-            model_id: Some(&target.model_id),
+            model_id: Some(&model.model_id),
             ..Default::default()
         },
     )
     .await?;
+
+    // The model resolved, but its credentials may still be missing or refused.
+    // Fail the reserved row exactly like a mid-stream error — it carries the
+    // model id, so the UI can jump to the provider that needs fixing.
+    // Mutable because a refused API key is swapped for the next one mid-run.
+    let mut target = match providers::resolve_credentials(app, pool, &model.provider_id).await {
+        Ok(credentials) => ResolvedTarget {
+            protocol: model.protocol,
+            base_url: model.base_url,
+            provider_id: model.provider_id,
+            api_key_id: credentials.key_id,
+            api_key: credentials.api_key,
+            headers: credentials.headers,
+            model_id: model.model_id,
+            system_prompt: model.system_prompt,
+            enabled_tools: model.enabled_tools,
+        },
+        Err(error) => {
+            let duration_ms = started.elapsed().as_millis() as i64;
+            let message = error.to_string();
+            let details = error.details.clone();
+            let _ = crate::db::chat::finish_assistant_message(
+                pool,
+                &assistant.id,
+                None,
+                &[],
+                Some(duration_ms),
+                Some(&message),
+                details.as_ref(),
+            )
+            .await;
+            emit(
+                app,
+                EVENT_ERROR,
+                ErrorEvent {
+                    session_id: session_id.to_string(),
+                    message_id: assistant.id.clone(),
+                    message,
+                    details,
+                },
+            );
+            return Err(error);
+        }
+    };
 
     let outcome = run_rounds(
         app,
@@ -658,6 +741,8 @@ async fn run_rounds(
             session_id,
             message_id,
             &calls,
+            &target.provider_id,
+            &target.model_id,
             cancel,
         )
         .await;
@@ -813,6 +898,8 @@ async fn run_tools(
     session_id: &str,
     message_id: &str,
     calls: &[PendingCall],
+    provider_id: &str,
+    model_id: &str,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Vec<ChatToolCall> {
     let mut executed = Vec::with_capacity(calls.len());
@@ -846,6 +933,7 @@ async fn run_tools(
                     signature: signature.clone(),
                 };
                 emit_tool_end(app, session_id, message_id, &call);
+                audit_chat_call(provider_id, model_id, &call);
                 executed.push(call);
                 continue;
             }
@@ -892,11 +980,29 @@ async fn run_tools(
             },
         };
 
+        audit_chat_call(provider_id, model_id, &call);
         emit_tool_end(app, session_id, message_id, &call);
         executed.push(call);
     }
 
     executed
+}
+
+/// Record one in-process tool call in the audit table, tagged with the model
+/// that drove it. Written fire-and-forget through the shared MCP audit helper —
+/// the in-process `McpTools` server has auditing switched off, so nothing here
+/// is double-recorded. Tool-agnostic, so newly added tools are audited for free.
+fn audit_chat_call(provider_id: &str, model_id: &str, call: &ChatToolCall) {
+    crate::mcp::audit::record(
+        &call.tool,
+        None,
+        call.args.clone(),
+        call.result.clone().unwrap_or(serde_json::Value::Null),
+        call.error.clone(),
+        call.duration_ms.unwrap_or(0),
+        Some(provider_id.to_string()),
+        Some(model_id.to_string()),
+    );
 }
 
 fn emit_tool_end(app: &AppHandle, session_id: &str, message_id: &str, call: &ChatToolCall) {

@@ -746,8 +746,8 @@ pub struct McpStatus {
     pub endpoint_url: Option<String>,
 }
 
-/// One MCP tool invocation, persisted by the Node MCP server into the app's
-/// SQLite database (`mcp_audit` table) and shown in the Audit Log tab.
+/// One MCP tool invocation, persisted into the app's SQLite database
+/// (`mcp_audit` table) and shown in the Audit Log tab.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpAuditEntry {
@@ -761,6 +761,12 @@ pub struct McpAuditEntry {
     pub args: serde_json::Value,
     pub result: serde_json::Value,
     pub error: Option<String>,
+    /// Which provider drove the call — only in-process Chat calls know this.
+    /// External HTTP-agent rows have no provider/model, since the transport
+    /// carries no identity.
+    pub provider_id: Option<String>,
+    /// The API model id (e.g. "claude-opus-4-8") used for the Chat call.
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

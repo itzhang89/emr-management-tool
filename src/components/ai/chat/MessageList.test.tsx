@@ -44,8 +44,7 @@ type MessageListProps = Partial<{
   onDelete: (m: ChatMessage) => void;
   onRegenerate: (m: ChatMessage) => void;
   onRegenerateWithModel: (m: ChatMessage, id: string) => void;
-  resolveProviderId: (m: ChatMessage) => string | null;
-  onConfigureProvider: (providerId: string) => void;
+  onConfigureProvider: () => void;
 }>;
 
 function list({ messages, streaming, ...rest }: MessageListProps = {}) {
@@ -59,7 +58,6 @@ function list({ messages, streaming, ...rest }: MessageListProps = {}) {
         emptyHint={null}
         modelOptions={[]}
         editingMessageId={null}
-        resolveProviderId={() => null}
         {...noopCallbacks}
         {...rest}
       />
@@ -182,12 +180,14 @@ describe("MessageList", () => {
   });
 
   it("asks the parent to load an edit into the composer", async () => {
-    const user = userEvent.setup();
     const onEdit = vi.fn();
     render(list({ onEdit, messages: [message({ role: "user", content: "why did it fail?" })] }));
 
-    await user.hover(screen.getByText("why did it fail?"));
-    await user.click(screen.getByRole("button", { name: "Edit" }));
+    // Note: userEvent.setup() → user.click() on a Tooltip-wrapped button
+    // doesn't fire in jsdom. The module-level userEvent.click() works, so
+    // we use it here.
+    await userEvent.hover(screen.getByText("why did it fail?"));
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
 
     expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "m1" }));
   });
@@ -203,13 +203,12 @@ describe("MessageList", () => {
     expect(screen.getByText("why did it fail?").closest(".opacity-50")).not.toBeNull();
   });
 
-  it("links an errored reply to its provider settings when the model resolves", async () => {
+  it("links an errored reply to the conversation's provider settings", async () => {
     const user = userEvent.setup();
     const onConfigureProvider = vi.fn();
     render(
       list({
         onConfigureProvider,
-        resolveProviderId: () => "p1",
         messages: [
           message({ role: "user", content: "why?" }),
           message({
@@ -225,29 +224,8 @@ describe("MessageList", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /open provider settings/i }));
-    expect(onConfigureProvider).toHaveBeenCalledWith("p1");
-  });
-
-  it("hides the provider settings link when the model cannot be resolved", () => {
-    render(
-      list({
-        resolveProviderId: () => null,
-        messages: [
-          message({ role: "user", content: "why?" }),
-          message({
-            id: "m2",
-            seq: 1,
-            role: "assistant",
-            content: null,
-            modelId: "unknown-model",
-            error: "The provider returned HTTP 500."
-          })
-        ]
-      })
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /open provider settings/i })
-    ).not.toBeInTheDocument();
+    // The provider is resolved by the panel from the conversation's current
+    // model, not from this errored reply, so the callback takes no argument.
+    expect(onConfigureProvider).toHaveBeenCalled();
   });
 });
