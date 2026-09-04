@@ -10,8 +10,10 @@ use crate::models::{
     AddLlmModelInput, LlmApiKey, LlmApiKeyStatus, LlmModel, LlmModelCapabilities, LlmModelType,
     LlmProtocol, LlmProvider,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::{Row, SqlitePool};
+
+use super::parse_timestamp;
 
 /// The presets seeded on first run, disabled and keyless.
 ///
@@ -35,7 +37,9 @@ const BUILT_IN_PROVIDERS: [(&str, &str, LlmProtocol); 3] = [
 pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     // Before anything else: an older layout's tables have the same names but
     // different columns, so every statement below would fail against them.
-    reset_legacy_schema(pool).await?;
+    // Drop those tables so the `create table if not exists` statements land on a
+    // clean slate.
+    drop_legacy_schema(pool).await?;
 
     for statement in [
         "create table if not exists llm_providers (
@@ -168,12 +172,6 @@ macro_rules! update_column {
     }};
 }
 
-fn parse_timestamp(value: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
-}
-
 /// Header names are stored as a JSON array. A row written by an older build, or
 /// hand-edited into something else, reads back as "no custom headers" rather
 /// than failing the whole tree query.
@@ -192,77 +190,17 @@ fn parse_capabilities(raw: Option<String>) -> LlmModelCapabilities {
 // --- Legacy reset ----------------------------------------------------------
 
 /// Drops LLM tables written by an older layout, so the `create table if not
-/// exists` statements above land on a clean slate.
+/// exists` statements in `migrate` land on a clean slate.
 ///
 /// Nothing is migrated. From the original layout — protocol as `kind` on the
 /// provider — an endpoint's protocol is unknowable. From the intermediate one,
 /// a provider with two endpoints has no single protocol or address to collapse
 /// into, and picking one would silently discard the other. Both are the author's
 /// own unreleased schemas, so there is no installed base to preserve.
-///
-/// This runs inside `migrate` rather than beside it because every statement in
-/// `migrate` targets tables whose names the old layouts also used: a stale
-/// `llm_api_keys` keyed by `endpoint_id` survives `create table if not exists`
-/// and then fails every insert with "no such column: provider_id".
-///
-/// The keychain entries the drop orphans are recorded in `llm_orphaned_secrets`
-/// rather than deleted here — this layer has no `AppHandle`. `chat::providers::
-/// purge_orphaned_secrets` drains that table, and the table persisting means a
-/// crash in between does not leak the keys permanently.
-async fn reset_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
-    sqlx::query(
-        "create table if not exists llm_orphaned_secrets (
-            key text primary key,
-            recorded_at text not null
-        )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-
-    if !has_legacy_schema(pool).await? {
-        return Ok(());
+async fn drop_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
+    if has_legacy_schema(pool).await? {
+        drop_all(pool).await?;
     }
-
-    let mut orphaned: Vec<String> = Vec::new();
-    // The intermediate layout keyed key values by key id.
-    if column_exists(pool, "llm_api_keys", "endpoint_id").await? {
-        for id in collect_ids(pool, "select id from llm_api_keys").await? {
-            orphaned.push(format!("llm/key/{id}"));
-        }
-    }
-    if table_exists(pool, "llm_endpoints").await? {
-        for id in collect_ids(pool, "select id from llm_endpoints").await? {
-            // The original scheme kept one key per endpoint; the intermediate one
-            // kept headers there.
-            orphaned.push(format!("llm/{id}/api_key"));
-            orphaned.push(format!("llm/{id}/headers"));
-        }
-    }
-    if table_exists(pool, "llm_providers").await? {
-        for id in collect_ids(pool, "select id from llm_providers").await? {
-            orphaned.push(format!("llm/{id}/headers"));
-        }
-    }
-
-    let now = Utc::now().to_rfc3339();
-    for key in &orphaned {
-        sqlx::query(
-            "insert into llm_orphaned_secrets (key, recorded_at) values (?1, ?2)
-             on conflict(key) do nothing",
-        )
-        .bind(key)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    }
-
-    drop_all(pool).await?;
-    crate::diagnostics::append_log_line(
-        "INFO",
-        "Dropped LLM configuration written by an earlier schema; the layout predates per-provider protocols.",
-    );
     Ok(())
 }
 
@@ -299,55 +237,14 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> AppResult<bool> {
     Ok(table_sql(pool, table).await?.is_some())
 }
 
-async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> AppResult<bool> {
-    Ok(table_sql(pool, table)
-        .await?
-        .is_some_and(|sql| sql.contains(column)))
-}
-
-async fn collect_ids(pool: &SqlitePool, statement: &'static str) -> AppResult<Vec<String>> {
-    Ok(sqlx::query(statement)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .into_iter()
-        .map(|row| row.get("id"))
-        .collect())
-}
-
-/// Keychain keys a legacy drop orphaned, for the caller that can delete them.
-pub async fn orphaned_secret_keys(pool: &SqlitePool) -> AppResult<Vec<String>> {
-    if !table_exists(pool, "llm_orphaned_secrets").await? {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query("select key from llm_orphaned_secrets")
-        .fetch_all(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .into_iter()
-        .map(|row| row.get("key"))
-        .collect())
-}
-
-/// Clears the record once the keychain entries are actually gone.
-pub async fn clear_orphaned_secret_keys(pool: &SqlitePool) -> AppResult<()> {
-    sqlx::query("delete from llm_orphaned_secrets")
-        .execute(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    Ok(())
-}
-
-/// Drops the LLM tables, leaving `llm_orphaned_secrets` alone — that record has to
-/// outlive them.
+/// Drops the LLM tables, so the presets are re-seeded on the next `migrate`
+/// rather than leaving the user with nothing.
 async fn drop_all(pool: &SqlitePool) -> AppResult<()> {
     for statement in [
         "drop table if exists llm_models",
         "drop table if exists llm_api_keys",
         "drop table if exists llm_endpoints",
         "drop table if exists llm_providers",
-        // Dropped too, so the presets are re-seeded rather than leaving the user
-        // with nothing.
         "drop table if exists llm_seeded_providers",
     ] {
         sqlx::query(statement)
@@ -1597,7 +1494,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_original_layout_is_replaced_and_its_secrets_recorded() {
+    async fn the_original_layout_is_replaced_and_the_presets_reseeded() {
         // Protocol as `kind` on the provider, one API key per endpoint.
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1630,20 +1527,10 @@ mod tests {
         assert!(!has_legacy_schema(&pool).await.unwrap());
         // The presets are seeded into the rebuilt tables.
         assert_eq!(list_providers(&pool).await.unwrap().len(), 3);
-
-        // The keychain keys the drop stranded are recorded for the caller that can
-        // delete them — this layer has no AppHandle.
-        let orphaned = orphaned_secret_keys(&pool).await.unwrap();
-        assert!(orphaned.contains(&"llm/ep-old/api_key".to_string()), "{orphaned:?}");
-        assert!(orphaned.contains(&"llm/ep-old/headers".to_string()), "{orphaned:?}");
-        assert!(orphaned.contains(&"llm/p-old/headers".to_string()), "{orphaned:?}");
-
-        clear_orphaned_secret_keys(&pool).await.unwrap();
-        assert!(orphaned_secret_keys(&pool).await.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn the_intermediate_layout_is_replaced_and_its_key_values_recorded() {
+    async fn the_intermediate_layout_is_replaced_and_provider_scoped_writes_work() {
         // Protocol on a separate endpoints table; key values keyed by key id. This
         // is the layout that produced "no such column: provider_id", because its
         // table names match the current ones.
@@ -1673,11 +1560,6 @@ mod tests {
 
         assert!(has_legacy_schema(&pool).await.unwrap());
         migrate(&pool).await.expect("migrate over the old layout");
-
-        assert!(orphaned_secret_keys(&pool)
-            .await
-            .unwrap()
-            .contains(&"llm/key/k-old".to_string()));
 
         // The rebuilt tables take the new columns, so a write that the old shape
         // rejected now succeeds.

@@ -275,7 +275,7 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
   }
 ];
 
-export function getShortcutKeys(id: ShortcutId) {
+function getShortcutKeys(id: ShortcutId) {
   const entry = keyboardShortcuts.find((shortcut) => shortcut.id === id);
   if (!entry) {
     throw new Error(`Unknown shortcut id: ${id}`);

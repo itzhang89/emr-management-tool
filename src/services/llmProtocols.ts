@@ -34,10 +34,6 @@ export const LLM_PROTOCOLS: Array<{
   }
 ];
 
-export function protocolLabel(protocol: LlmProtocol) {
-  return LLM_PROTOCOLS.find((entry) => entry.value === protocol)?.label ?? protocol;
-}
-
 export function defaultBaseUrl(protocol: LlmProtocol) {
   return LLM_PROTOCOLS.find((entry) => entry.value === protocol)?.defaultBaseUrl ?? "";
 }

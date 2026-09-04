@@ -9,7 +9,6 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
-import type { LlmModel } from "@/types/domain";
 
 export type ModelOption = {
   /** `LlmModel.id` — what a session or assistant stores. */
@@ -57,10 +56,6 @@ export function findModelOption(options: ModelOption[], id?: string | null) {
 /** The model a session falls back to when it has no explicit choice. */
 export function defaultModelOption(options: ModelOption[]) {
   return options.find((option) => option.isDefault) ?? options[0];
-}
-
-export function modelLabel(model: Pick<LlmModel, "modelId">) {
-  return model.modelId;
 }
 
 /**

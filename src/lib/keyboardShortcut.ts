@@ -2,7 +2,7 @@ function isMacPlatform() {
   return typeof navigator !== "undefined" && /Mac|iPhone|iPod|iPad/i.test(navigator.platform);
 }
 
-export function modKeyLabel() {
+function modKeyLabel() {
   return isMacPlatform() ? "⌘" : "Ctrl";
 }
 

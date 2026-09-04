@@ -8,8 +8,10 @@ use crate::error::{AppError, AppResult};
 use crate::models::{
     ChatAssistant, ChatMessage, ChatMessageVersionSummary, ChatRole, ChatSession, ChatToolCall,
 };
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sqlx::{Row, SqlitePool};
+
+use super::parse_timestamp;
 
 /// The assistant seeded on first run. Without it the Chat tab opens on an empty
 /// list, and nothing tells the user how this differs from a generic chat window.
@@ -33,6 +35,12 @@ reaches you, so bucket names, ARNs, account ids, and hostnames appear as \
 placeholders — do not ask the user to un-redact them.";
 
 pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
+    // Tables written by earlier layouts carry columns that the `create table if
+    // not exists` statements below cannot repair (`error_details` on messages,
+    // a foreign key on the versions table). Drop them first so the create list
+    // rebuilds them. These layouts are the author's own unreleased schemas.
+    drop_legacy_layouts(pool).await?;
+
     for statement in [
         "create table if not exists chat_assistants (
             id text primary key,
@@ -101,126 +109,51 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .map_err(|error| AppError::storage(error.to_string()))?;
     }
 
-    // `error_details` (structured diagnostics for a failed turn) arrived after the
-    // column shipped. Fresh databases already have it via the CREATE above, so the
-    // duplicate-column error is expected there and tolerated; older databases get
-    // the column added now.
-    if let Err(error) = sqlx::query("alter table chat_messages add column error_details text")
-        .execute(pool)
-        .await
-    {
-        if !error.to_string().contains("duplicate column name") {
-            return Err(AppError::storage(error.to_string()));
-        }
-    }
-
-    // The first release of `chat_message_versions` declared a foreign key to
-    // `chat_messages(id)`. On any connection with `pragma foreign_keys` on,
-    // deleting an assistant reply that still has version rows — exactly what
-    // regeneration does — fails with SQLITE_CONSTRAINT_FOREIGNKEY. Rebuild any
-    // such legacy table without the FK; deletions clear versions in Rust.
-    rebuild_message_versions_if_legacy(pool).await?;
-
-    // Assistant messages written before versioning existed carry their single
-    // answer inline, with no version row. Backfill one active version per such
-    // message so capsule switching has something to point at. Idempotent: rows
-    // that already have a version are skipped.
-    sqlx::query(
-        "insert into chat_message_versions
-            (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
-         select lower(hex(randomblob(16))), m.session_id, m.id, m.model_id, m.content, m.tool_calls,
-                m.duration_ms, m.error, m.error_details, 1, m.created_at
-         from chat_messages m
-         where m.role = 'assistant'
-           and not exists (select 1 from chat_message_versions v where v.message_id = m.id)",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-
     seed_built_in_assistant(pool).await
 }
 
-/// Rebuilds `chat_message_versions` without its legacy foreign-key declaration.
+/// Drops chat tables that predate the current layout, so the `create table if
+/// not exists` statements in `migrate` rebuild them.
 ///
-/// SQLite cannot drop a column-level FK from an existing table, so a table that
-/// was created while the FK was present must be replaced. Column contents are
-/// preserved; only the constraint goes away. On connections that enable
-/// `pragma foreign_keys`, the old FK would otherwise make regeneration fail with
-/// SQLITE_CONSTRAINT_FOREIGNKEY when it discards an assistant reply that still
-/// has version rows.
-async fn rebuild_message_versions_if_legacy(pool: &SqlitePool) -> AppResult<()> {
-    let definition: Option<String> = sqlx::query(
-        "select sql from sqlite_master
-         where type = 'table' and name = 'chat_message_versions'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?
-    .map(|row| row.get("sql"));
-    let Some(definition) = definition else {
-        return Ok(());
-    };
-    if !definition.contains("references") {
-        return Ok(());
+/// Two earlier shapes are handled: `chat_messages` rows written before the
+/// `error_details` column existed, and a `chat_message_versions` that still
+/// declares a foreign key to `chat_messages(id)` (which breaks regeneration on
+/// connections that enable `pragma foreign_keys`). The versions table is dropped
+/// first so a leftover FK cannot block dropping messages. These are the author's
+/// own unreleased schemas — no installed base to preserve.
+async fn drop_legacy_layouts(pool: &SqlitePool) -> AppResult<()> {
+    if let Some(definition) = table_definition(pool, "chat_message_versions").await? {
+        if definition.contains("references") {
+            sqlx::query("drop table chat_message_versions")
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?;
+        }
     }
-
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-
-    // Drop the index first so it does not follow the renamed table and squat on
-    // the name the fresh table needs.
-    sqlx::query("drop index if exists idx_chat_message_versions_message")
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    sqlx::query("alter table chat_message_versions rename to chat_message_versions_legacy")
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    sqlx::query(
-        "create table chat_message_versions (
-            id text primary key,
-            session_id text not null,
-            message_id text not null,
-            model_id text,
-            content text,
-            tool_calls text,
-            duration_ms integer,
-            error text,
-            error_details text,
-            is_active integer not null default 0,
-            created_at text not null
-        )",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-    sqlx::query("create index idx_chat_message_versions_message on chat_message_versions(message_id)")
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    sqlx::query(
-        "insert into chat_message_versions
-            (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
-         select id, session_id, message_id, model_id, content, tool_calls,
-                duration_ms, error, error_details, is_active, created_at
-         from chat_message_versions_legacy",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-    sqlx::query("drop table chat_message_versions_legacy")
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-
-    tx.commit()
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    if let Some(definition) = table_definition(pool, "chat_messages").await? {
+        if !definition.contains("error_details") {
+            // A message drop orphans any version rows pointing at them; drop those
+            // too (already gone if the FK layout was above).
+            sqlx::query("drop table if exists chat_message_versions")
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?;
+            sqlx::query("drop table chat_messages")
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?;
+        }
+    }
     Ok(())
+}
+
+async fn table_definition(pool: &SqlitePool, name: &str) -> AppResult<Option<String>> {
+    let row = sqlx::query("select sql from sqlite_master where type = 'table' and name = ?1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(row.and_then(|row| row.get::<Option<String>, _>("sql")))
 }
 
 /// Inserts the built-in assistant once. Its prompt is refreshed on every start
@@ -241,12 +174,6 @@ async fn seed_built_in_assistant(pool: &SqlitePool) -> AppResult<()> {
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
-}
-
-fn parse_timestamp(value: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
 }
 
 // --- Assistants ------------------------------------------------------------
@@ -1927,14 +1854,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migrate_rebuilds_a_legacy_version_table_that_still_has_a_foreign_key() {
-        // A database created by the release that declared `references
-        // chat_messages(id)` keeps that FK — `create table if not exists` never
-        // touches an existing table, so changing the DDL above does not heal it.
-        // migrate() must detect the leftover constraint and rebuild the table
-        // without it, preserving rows. Otherwise the next regenerate on an
-        // FK-enabled connection fails with SQLITE_CONSTRAINT_FOREIGNKEY the
-        // moment it discards a reply that still has version rows.
+    async fn migrate_drops_a_legacy_version_table_that_still_has_a_foreign_key() {
+        // The first draft of `chat_message_versions` declared `references
+        // chat_messages(id)`. `create table if not exists` never touches an
+        // existing table, so migrate() must drop any such legacy table and let
+        // the create list rebuild it FK-free — otherwise the next regenerate on
+        // an FK-enabled connection fails with SQLITE_CONSTRAINT_FOREIGNKEY the
+        // moment it discards a reply that still has version rows. The legacy
+        // layout is the author's own unreleased schema, so no rows are preserved.
         let pool = fk_pool().await;
         let session_id = session(&pool).await;
 
@@ -1970,6 +1897,22 @@ mod tests {
         let q = append_message(&pool, &session_id, ChatRole::User, NewMessage::text("why?"))
             .await
             .unwrap();
+
+        // Running migrate heals the schema: the FK table is dropped and the
+        // create list rebuilds it without the constraint.
+        migrate(&pool).await.expect("migrate drops the legacy table");
+        let schema: String = sqlx::query(
+            "select sql from sqlite_master
+             where type = 'table' and name = 'chat_message_versions'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get(0);
+        assert!(!schema.contains("references"), "{schema}");
+
+        // The proof that matters: discarding an assistant reply while its version
+        // rows still exist no longer trips SQLITE_CONSTRAINT_FOREIGNKEY.
         let a = append_message(
             &pool,
             &session_id,
@@ -1984,29 +1927,6 @@ mod tests {
         finish_assistant_message(&pool, &a.id, Some("driver OOM"), &[], Some(12), None, None)
             .await
             .unwrap();
-
-        // Running migrate again heals the schema: the FK is gone and the version
-        // row survived the rebuild (and so is skipped by the backfill).
-        migrate(&pool).await.expect("migrate rebuilds the legacy table");
-        let schema: String = sqlx::query(
-            "select sql from sqlite_master
-             where type = 'table' and name = 'chat_message_versions'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get(0);
-        assert!(!schema.contains("references"), "{schema}");
-        let versions: i64 = sqlx::query("select count(*) from chat_message_versions")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get(0);
-        assert_eq!(versions, 1);
-
-        // The proof that matters: discarding the assistant reply (regenerate) no
-        // longer trips SQLITE_CONSTRAINT_FOREIGNKEY while its version row points
-        // at it.
         delete_messages_from(&pool, &session_id, q.seq + 1)
             .await
             .unwrap();

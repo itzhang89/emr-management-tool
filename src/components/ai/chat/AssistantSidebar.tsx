@@ -3,7 +3,7 @@ import { Bot, Filter, MessageSquarePlus, Plus, Settings2, Trash2 } from "lucide-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accentClasses } from "@/components/ai/chat/MessageBubble";
+import { accentClasses } from "@/components/ai/chat/accents";
 import { cn } from "@/lib/utils";
 import type { ChatAssistant, ChatSession } from "@/types/domain";
 

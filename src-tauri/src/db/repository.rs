@@ -537,48 +537,14 @@ pub async fn active_aws_account(pool: &SqlitePool) -> AppResult<Option<AwsAccoun
 }
 
 async fn migrate(pool: &SqlitePool) -> AppResult<()> {
+    drop_job_config_templates_legacy_layout(pool).await?;
+
     for statement in [
         "create table if not exists application_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists resource_templates (id text primary key, name text not null, payload text not null)",
-        "create table if not exists job_history (id text primary key, created_at text not null, payload text not null)",
+        "create table if not exists job_history (id text primary key, account_id text, region text, virtual_cluster_id text, created_at text not null, payload text not null)",
         "create table if not exists aws_accounts (id text primary key, name text not null, region text not null, is_active integer not null default 0, payload text not null)",
         "create table if not exists mcp_audit (id text primary key, timestamp text not null, status text not null, tool text not null, client text, duration_ms integer not null, args_json text not null default '{}', result_json text not null default '{}', error text, provider_id text, model_id text)",
-        "alter table mcp_audit add column provider_id text",
-        "alter table mcp_audit add column model_id text",
-        "alter table job_history add column account_id text",
-        "alter table job_history add column region text",
-        "alter table job_history add column virtual_cluster_id text",
-    ] {
-        if let Err(error) = sqlx::query(statement).execute(pool).await {
-            if !error.to_string().contains("duplicate column name") {
-                return Err(AppError::storage(error.to_string()));
-            }
-        }
-    }
-
-    migrate_job_config_templates_table(pool).await?;
-    crate::db::llm::migrate(pool).await?;
-    crate::db::chat::migrate(pool).await?;
-
-    Ok(())
-}
-
-async fn table_create_sql_for(pool: &SqlitePool, table_name: &str) -> AppResult<Option<String>> {
-    let row = sqlx::query("select sql from sqlite_master where type = 'table' and name = ?1")
-        .bind(table_name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-
-    Ok(row.and_then(|row| row.get::<Option<String>, _>("sql")))
-}
-
-fn has_composite_account_id_primary_key(sql: &str) -> bool {
-    sql.contains("primary key (account_id, id)")
-}
-
-async fn create_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> {
-    sqlx::query(
         "create table if not exists job_config_templates (
             account_id text not null default 'legacy',
             id text not null,
@@ -586,90 +552,43 @@ async fn create_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> {
             payload text not null,
             primary key (account_id, id)
         )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
+    ] {
+        sqlx::query(statement)
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+
+    crate::db::llm::migrate(pool).await?;
+    crate::db::chat::migrate(pool).await?;
+
     Ok(())
 }
 
-async fn migrate_job_config_templates_table(pool: &SqlitePool) -> AppResult<()> {
-    let main_sql = table_create_sql_for(pool, "job_config_templates").await?;
-    if main_sql
-        .as_deref()
-        .is_some_and(has_composite_account_id_primary_key)
-    {
-        let _ = sqlx::query("drop table if exists job_config_templates_v2")
-            .execute(pool)
-            .await;
-        return Ok(());
-    }
-
-    let v2_sql = table_create_sql_for(pool, "job_config_templates_v2").await?;
-    if v2_sql
-        .as_deref()
-        .is_some_and(has_composite_account_id_primary_key)
-    {
-        if main_sql.is_some()
-            && !main_sql
-                .as_deref()
-                .is_some_and(has_composite_account_id_primary_key)
-        {
-            sqlx::query(
-                "insert or ignore into job_config_templates_v2 (account_id, id, name, payload)
-                 select coalesce(account_id, 'legacy'), id, name, payload from job_config_templates",
-            )
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::storage(error.to_string()))?;
-        }
-
-        sqlx::query("drop table if exists job_config_templates")
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::storage(error.to_string()))?;
-        sqlx::query("alter table job_config_templates_v2 rename to job_config_templates")
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::storage(error.to_string()))?;
-        return Ok(());
-    }
-
-    if main_sql.is_none() {
-        return create_job_config_templates_table(pool).await;
-    }
-
-    sqlx::query(
-        "create table job_config_templates_v2 (
-            account_id text not null default 'legacy',
-            id text not null,
-            name text not null,
-            payload text not null,
-            primary key (account_id, id)
-        )",
+/// Drop a `job_config_templates` written by an earlier, single-column-PK layout
+/// so the `create table if not exists` above lands on the composite key.
+///
+/// The reshape predates the first tagged release and there is no installed base
+/// to preserve, so the table is dropped rather than data-migrated. A database
+/// that already carries the current `primary key (account_id, id)` layout — or
+/// no table at all — is left untouched.
+async fn drop_job_config_templates_legacy_layout(pool: &SqlitePool) -> AppResult<()> {
+    let row = sqlx::query(
+        "select sql from sqlite_master where type = 'table' and name = 'job_config_templates'",
     )
-    .execute(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
-
-    sqlx::query(
-        "insert into job_config_templates_v2 (account_id, id, name, payload)
-         select coalesce(account_id, 'legacy'), id, name, payload from job_config_templates",
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-
+    let Some(sql) = row.and_then(|row| row.get::<Option<String>, _>("sql")) else {
+        return Ok(());
+    };
+    if sql.contains("primary key (account_id, id)") {
+        return Ok(());
+    }
     sqlx::query("drop table job_config_templates")
         .execute(pool)
         .await
         .map_err(|error| AppError::storage(error.to_string()))?;
-
-    sqlx::query("alter table job_config_templates_v2 rename to job_config_templates")
-        .execute(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-
     Ok(())
 }
 

@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { ChevronDown, Copy, LoaderCircle } from "lucide-react";
-import { toast } from "sonner";
+import { ChevronDown, LoaderCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -12,25 +10,13 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { formatDuration, formatJson } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
 import { tauriClient } from "@/services/tauriClient";
 import type { LlmProvider, McpAuditEntry } from "@/types/domain";
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(1)} s`;
-}
-
-export function formatJson(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? {}, null, 2);
-  } catch {
-    return String(value);
-  }
-}
 
 /**
  * One-line JSON for table cells. The cell itself truncates with CSS, so this
@@ -39,37 +25,6 @@ export function formatJson(value: unknown): string {
 function inlineJson(value: unknown): string {
   const text = JSON.stringify(value ?? {}) ?? "{}";
   return text.length > 600 ? `${text.slice(0, 600)}…` : text;
-}
-
-/**
- * Copies a JSON value to the clipboard. Used by the expanded audit row and by
- * the Chat panel's tool-call steps, so both views of "what a tool did" behave
- * the same.
- */
-export function CopyJsonButton({ value, label }: { value: unknown; label: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          aria-label={`Copy ${label}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            navigator.clipboard.writeText(formatJson(value)).then(
-              () => toast.success(`${label} copied`),
-              () => toast.error("Failed to copy to clipboard")
-            );
-          }}
-        >
-          <Copy className="size-3.5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>Copy {label}</TooltipContent>
-    </Tooltip>
-  );
 }
 
 /**

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDelta,
-  applyError,
   applyToolEvent,
   emptyStreamingTurn
 } from "@/services/chatStream";
@@ -46,18 +45,5 @@ describe("chatStream streaming turn", () => {
     expect(turn.toolCalls[0].phase).toBe("end");
     expect(turn.toolCalls[0].durationMs).toBe(12);
     expect(turn.toolCalls[0].startedAt).toBeUndefined();
-  });
-
-  it("copies diagnostics onto an erroring turn", () => {
-    const turn = emptyStreamingTurn("s1");
-    const next = applyError(turn, {
-      sessionId: "s1",
-      messageId: "a1",
-      message: "boom",
-      details: { url: "https://x", httpStatus: 401, errorKind: "http" }
-    });
-
-    expect(next.error).toBe("boom");
-    expect(next.errorDetails?.httpStatus).toBe(401);
   });
 });

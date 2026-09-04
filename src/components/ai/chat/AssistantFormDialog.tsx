@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { accentClasses, ACCENT_NAMES } from "@/components/ai/chat/MessageBubble";
+import { ACCENT_NAMES, accentClasses } from "@/components/ai/chat/accents";
 import { ModelSelect, useModelOptions } from "@/components/ai/chat/ModelSelect";
 import { useCreateChatAssistant, useUpdateChatAssistant } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";

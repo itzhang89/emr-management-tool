@@ -114,7 +114,7 @@ pub async fn generate(
 }
 
 /// The title to use when the model cannot supply one: the message's own opening.
-pub fn fallback_title(first_message: &str) -> String {
+fn fallback_title(first_message: &str) -> String {
     let condensed = condense(first_message, MAX_TITLE_CHARS);
     if condensed.is_empty() {
         // Only reachable for whitespace-only input, which `chat_send` rejects.

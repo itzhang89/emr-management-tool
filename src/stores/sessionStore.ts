@@ -1,13 +1,10 @@
 import { create } from "zustand";
+import type { JobAnalyzeIntent } from "@/services/aiAnalyzeJob";
 import type { StartJobPayloadJson } from "@/services/startJobPayload";
 import type { StartJobRunRequest } from "@/types/domain";
 
 /** A failed job the user asked the AI assistant to analyze from Job History. */
-export interface PendingAiAnalyze {
-  jobId: string;
-  jobName?: string;
-  virtualClusterId?: string;
-}
+export type PendingAiAnalyze = JobAnalyzeIntent;
 
 interface SessionState {
   region: string;

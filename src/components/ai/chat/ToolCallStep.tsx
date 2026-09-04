@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
-import { CopyJsonButton, formatJson } from "@/components/ai/server/McpAuditPanel";
+import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { formatDuration, formatJson } from "@/lib/format";
 import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import { cn } from "@/lib/utils";
 import type { ChatToolCall } from "@/types/domain";
@@ -42,11 +43,6 @@ export function toolStepFromStored(call: ChatToolCall): ToolStep {
     durationMs: call.durationMs,
     running: false
   };
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(1)} s`;
 }
 
 /**

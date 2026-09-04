@@ -372,21 +372,6 @@ fn emit<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: T) {
 
 // --- The loop -------------------------------------------------------------
 
-/// Runs one send to completion, for a conversation that uses its own model.
-///
-/// Thin wrapper over [`send_with_model`] with no per-send override, so ordinary
-/// sends read the same way they always have.
-pub async fn send(
-    app: &AppHandle,
-    pool: &SqlitePool,
-    in_process: &crate::mcp::in_process::InProcessClient,
-    session_id: &str,
-    text: &str,
-    cancel: tokio_util::sync::CancellationToken,
-) -> AppResult<String> {
-    send_with_model(app, pool, in_process, session_id, text, None, cancel).await
-}
-
 /// Runs one send to completion: persist the user turn, then alternate between
 /// streaming a response and running the tools it asks for.
 ///

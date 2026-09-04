@@ -45,13 +45,6 @@ export async function bindChatStreamEvents(handlers: ChatStreamHandlers) {
 }
 
 /**
- * The in-flight assistant turn, assembled from stream events.
- *
- * Streaming state is kept out of the react-query cache: a token-by-token write
- * would re-render the whole message list on every delta. Once `chat:done` lands
- * the persisted rows become the source of truth and this is discarded.
- */
-/**
  * A tool step while it streams. `ChatToolEvent` is the wire shape; `startedAt` is
  * stamped locally when the "start" arrives so a running step can show a live
  * clock, and dropped on "end" when the backend's `durationMs` becomes
@@ -105,22 +98,4 @@ export function applyToolEvent(turn: StreamingTurn, event: ChatToolEvent): Strea
     index === -1 ? [...turn.toolCalls, enriched] : turn.toolCalls.map((call, position) => (position === index ? enriched : call));
 
   return { ...turn, messageId: event.messageId || turn.messageId, toolCalls };
-}
-
-/**
- * Attaches a failure to the in-flight turn.
- *
- * The chat panel does not use this: `chat:error` ends the turn, and the assistant
- * row persisted by the backend already carries the error, so the panel drops the
- * streaming turn and lets the refreshed transcript show it once. Kept because a
- * caller that wants to render a partial answer plus its failure reason without
- * re-reading the transcript needs exactly this.
- */
-export function applyError(turn: StreamingTurn, event: ChatErrorEvent): StreamingTurn {
-  return {
-    ...turn,
-    messageId: event.messageId || turn.messageId,
-    error: event.message,
-    errorDetails: event.details ?? turn.errorDetails
-  };
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { CopyJsonButton, formatJson } from "@/components/ai/server/McpAuditPanel";
+import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { formatJson } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ChatErrorDetails } from "@/types/domain";
 

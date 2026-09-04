@@ -20,7 +20,8 @@ import {
   defaultModelOption,
   findModelOption,
   ModelSelect,
-  useModelOptions
+  useModelOptions,
+  type ModelOption
 } from "@/components/ai/chat/ModelSelect";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
 import { isClearContextKey } from "@/lib/keyboardShortcut";
@@ -37,6 +38,23 @@ import {
 } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
 import type { ChatAssistant, ChatMessage, ChatSession } from "@/types/domain";
+
+/**
+ * The model this conversation runs on: its own stored choice, else the
+ * assistant's default, else the app default.
+ */
+function resolveEffectiveModelId(
+  activeSession: ChatSession | null,
+  activeAssistant: ChatAssistant | null | undefined,
+  options: ModelOption[]
+): string | null {
+  return (
+    activeSession?.modelId ??
+    activeAssistant?.defaultModelId ??
+    defaultModelOption(options)?.id ??
+    null
+  );
+}
 
 /**
  * The Chat tab: assistants and conversations on the left, the selected
@@ -62,36 +80,24 @@ export function ChatPanel({
   const llmProviders = useLlmProviders();
   const noModels = modelOptions.length === 0;
 
-  // A message's modelId is the API-facing id (e.g. "claude-opus-4-8"), not the
-  // provider's local row id. To send an errored reply to the right provider
-  // settings, map each API model id back to the provider that offers it.
-  const providerIdByModelId = useMemo(() => {
+  /**
+   * Which provider a model reference belongs to, accepting either a model row id
+   * (what a session/assistant stores) or an API-facing model id like
+   * "claude-opus-4-8". Row ids and API ids live in different namespaces, so both
+   * are keyed in the same map.
+   */
+  const providerIdByModelRef = useMemo(() => {
     const map = new Map<string, string>();
     for (const provider of llmProviders.data ?? []) {
       for (const model of provider.models) {
+        map.set(model.id, provider.id);
         map.set(model.modelId, provider.id);
       }
     }
     return map;
   }, [llmProviders.data]);
-
-  // The LlmModel row id (what a session/assistant stores) → provider id, for
-  // resolving the conversation's currently selected model to its settings page.
-  const providerIdByModelRowId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const provider of llmProviders.data ?? []) {
-      for (const model of provider.models) {
-        map.set(model.id, provider.id);
-      }
-    }
-    return map;
-  }, [llmProviders.data]);
-
-  /** Which provider a model reference belongs to, accepting either a row id or an API model id. */
-  const providerForModelRef = (modelRef: string | null | undefined): string | null => {
-    if (!modelRef) return null;
-    return providerIdByModelRowId.get(modelRef) ?? providerIdByModelId.get(modelRef) ?? null;
-  };
+  const providerForModelRef = (modelRef: string | null | undefined): string | null =>
+    modelRef ? (providerIdByModelRef.get(modelRef) ?? null) : null;
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -121,18 +127,12 @@ export function ChatPanel({
     return null;
   }, [sessionList, modelOptions]);
 
-  // The model this conversation runs on: its own choice, else the assistant's
-  // default, else the app default. `effectiveModelId` below resolves the same
-  // value for the picker; this is the provider half of it, so the settings link
-  // can open the right provider's row when no explicit provider was requested.
-  const effectiveProviderId = useMemo(() => {
-    const modelId =
-      activeSession?.modelId ??
-      activeAssistant?.defaultModelId ??
-      defaultModelOption(modelOptions)?.id ??
-      null;
-    return providerForModelRef(modelId);
-  }, [activeSession, activeAssistant, modelOptions, providerForModelRef]);
+  // The provider half of the effective model, so the settings link can open the
+  // right provider's row when no explicit provider was requested.
+  const effectiveProviderId = useMemo(
+    () => providerForModelRef(resolveEffectiveModelId(activeSession, activeAssistant, modelOptions)),
+    [activeSession, activeAssistant, modelOptions, providerForModelRef]
+  );
 
   const [assistantDialog, setAssistantDialog] = useState<{
     open: boolean;
@@ -467,11 +467,7 @@ export function ChatPanel({
     );
   }
 
-  const effectiveModelId =
-    activeSession?.modelId ??
-    activeAssistant?.defaultModelId ??
-    defaultModelOption(modelOptions)?.id ??
-    null;
+  const effectiveModelId = resolveEffectiveModelId(activeSession, activeAssistant, modelOptions);
 
   return (
     <div

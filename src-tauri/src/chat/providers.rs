@@ -47,50 +47,6 @@ pub async fn list_providers(pool: &SqlitePool) -> AppResult<Vec<LlmProvider>> {
     crate::db::llm::list_providers(pool).await
 }
 
-// --- Legacy cleanup --------------------------------------------------------
-
-/// Deletes keychain entries left behind when `db::llm::migrate` dropped tables
-/// written by an earlier schema.
-///
-/// The drop happens in the storage layer, which has no `AppHandle` and so cannot
-/// touch the keychain; it records the orphaned keys in a table instead. This
-/// drains that record. Leaving the entries behind would keep API keys on the
-/// machine after the user's configuration visibly disappeared.
-///
-/// Returns how many were removed. The record is only cleared once every deletion
-/// succeeded, so a failure here is retried on the next start rather than leaking
-/// the keys permanently.
-pub async fn purge_orphaned_secrets(app: &AppHandle, pool: &SqlitePool) -> AppResult<usize> {
-    let keys = crate::db::llm::orphaned_secret_keys(pool).await?;
-    if keys.is_empty() {
-        return Ok(0);
-    }
-
-    let mut removed = 0usize;
-    let mut failed = false;
-    for key in &keys {
-        match secrets::delete_secret(app, key) {
-            Ok(()) => removed += 1,
-            Err(error) => {
-                failed = true;
-                crate::diagnostics::append_log_line(
-                    "WARN",
-                    &format!("Failed to remove the stored secret {key}: {error}"),
-                );
-            }
-        }
-    }
-
-    if !failed {
-        crate::db::llm::clear_orphaned_secret_keys(pool).await?;
-    }
-    crate::diagnostics::append_log_line(
-        "INFO",
-        &format!("Removed {removed} LLM secrets orphaned by an earlier schema."),
-    );
-    Ok(removed)
-}
-
 // --- Providers -------------------------------------------------------------
 
 pub async fn create_provider(

@@ -28,18 +28,6 @@ fn emit_to_frontend(app: &tauri::AppHandle, event: &str) {
     let _ = app.emit(event, ());
 }
 
-/// Removes keychain entries orphaned when the LLM tables were rebuilt.
-///
-/// The rebuild itself happens in `db::llm::migrate`, on the first pool open; that
-/// layer records which secrets it stranded but cannot delete them, having no
-/// `AppHandle`. See `chat::providers::purge_orphaned_secrets`.
-#[cfg(desktop)]
-async fn purge_orphaned_llm_secrets(app: &tauri::AppHandle) -> error::AppResult<()> {
-    let pool = db::repository::pool().await?;
-    chat::providers::purge_orphaned_secrets(app, &pool).await?;
-    Ok(())
-}
-
 pub fn run() {
     diagnostics::install_panic_hook();
 
@@ -168,17 +156,6 @@ pub fn run() {
                     diagnostics::append_log_line(
                         "WARN",
                         &format!("Failed to migrate the legacy credential store: {error}"),
-                    );
-                }
-                // Blocking, and deliberately so: `db::llm::migrate` may have just
-                // dropped tables from an older schema, and the API keys they
-                // stranded must not outlive the configuration the user can see.
-                if let Err(error) =
-                    tauri::async_runtime::block_on(purge_orphaned_llm_secrets(app.handle()))
-                {
-                    diagnostics::append_log_line(
-                        "WARN",
-                        &format!("Failed to remove orphaned LLM secrets: {error}"),
                     );
                 }
                 if distribution::is_portable() {

@@ -3,6 +3,7 @@ pub mod llm;
 pub mod repository;
 
 use crate::error::{AppError, AppResult};
+use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
 
 pub fn app_data_dir() -> AppResult<PathBuf> {
@@ -15,6 +16,17 @@ pub fn app_data_dir() -> AppResult<PathBuf> {
 
 pub fn resolve_app_data_dir(is_portable: bool, exe_path: Option<&Path>) -> AppResult<PathBuf> {
     resolve_app_data_dir_with_base(is_portable, exe_path, dirs::data_dir())
+}
+
+/// Parses an RFC3339 timestamp column back into a `DateTime<Utc>`.
+///
+/// Columns are stored via `Utc::now().to_rfc3339()`. A row that does not parse —
+/// written by an older build or hand-edited — reads as "now" rather than failing
+/// the whole query.
+pub(crate) fn parse_timestamp(value: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|parsed| parsed.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 pub fn resolve_app_data_dir_with_base(
