@@ -115,6 +115,33 @@ describe("createAppUpdater", () => {
     expect(check).toHaveBeenCalledOnce();
   });
 
+  it("skips silent updates when the user disabled automatic updates", async () => {
+    const check = vi.fn();
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check,
+      isAutoUpdateEnabled: () => false
+    });
+
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("skipped");
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("does not consume the silent attempt while the user has automatic updates disabled", async () => {
+    let autoUpdateEnabled = false;
+    const check = vi.fn().mockResolvedValue(null);
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check,
+      isAutoUpdateEnabled: () => autoUpdateEnabled
+    });
+
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("skipped");
+    autoUpdateEnabled = true;
+    await expect(updater.checkAndInstallSilently()).resolves.toBe("no-update");
+    expect(check).toHaveBeenCalledOnce();
+  });
+
   describe("checkPortableUpdate", () => {
     it("returns null when no portable update is available", async () => {
       const { checkPortableUpdate } = await import("./appUpdater");
