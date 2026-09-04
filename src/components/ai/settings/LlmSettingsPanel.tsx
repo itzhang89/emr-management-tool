@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, LoaderCircle, Trash2 } from "lucide-react";
+import { LoaderCircle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CommitInput } from "@/components/ai/settings/CommitInput";
 import { ModelFormDialog } from "@/components/ai/settings/ModelFormDialog";
 import { ModelTree } from "@/components/ai/settings/ModelTree";
@@ -36,8 +35,9 @@ import type { LlmModel, LlmModelCandidate, LlmProvider } from "@/types/domain";
  * duplicate action copies everything but the key, which is the only thing that
  * actually differs between two accounts on one gateway.
  *
- * OpenAI, Anthropic, and Gemini are seeded as disabled presets, so the common case
- * is pasting a key into a row that already knows the right address.
+ * OpenAI, Anthropic, Gemini, and the domestic OpenAI-compatible gateways
+ * (DeepSeek, Kimi, Zhipu AI, Qwen) are seeded as disabled presets, so the common
+ * case is pasting a key into a row that already knows the right address.
  */
 export function LlmSettingsPanel({
   preselectProviderId,
@@ -106,10 +106,13 @@ export function LlmSettingsPanel({
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
-    deleteProvider.mutate(deleteTarget.id, {
+    const target = deleteTarget;
+    deleteProvider.mutate(target.id, {
       onSuccess: () => {
-        toast.success(`${deleteTarget.name} deleted`);
-        setSelectedProviderId(null);
+        toast.success(`${target.name} deleted`);
+        // Delete can be reached from any row in the list, not just the selected
+        // provider — leave the selection alone unless it was the one removed.
+        if (selected?.id === target.id) setSelectedProviderId(null);
         setDeleteTarget(null);
       },
       onError: (error: Error) => toast.error(error.message || "Failed to delete")
@@ -133,6 +136,8 @@ export function LlmSettingsPanel({
           selectedId={selected?.id ?? null}
           onSelect={setSelectedProviderId}
           onAdd={() => setProviderDialog({ duplicateOf: null })}
+          onDuplicate={(provider) => setProviderDialog({ duplicateOf: provider })}
+          onDelete={(provider) => setDeleteTarget(provider)}
         />
 
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto">
@@ -142,44 +147,12 @@ export function LlmSettingsPanel({
             </p>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <CommitInput
-                  value={selected.name}
-                  onCommit={(name) => updateProvider.mutateAsync({ id: selected.id, name })}
-                  aria-label="Provider name"
-                  className="h-9 min-w-0 flex-1 text-base font-semibold"
-                />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-9 shrink-0"
-                      aria-label={`Duplicate ${selected.name}`}
-                      onClick={() => setProviderDialog({ duplicateOf: selected })}
-                    >
-                      <Copy className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Duplicate for another account or gateway</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="size-9 shrink-0 text-muted-foreground hover:text-destructive"
-                      aria-label={`Delete ${selected.name}`}
-                      onClick={() => setDeleteTarget(selected)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Delete this provider</TooltipContent>
-                </Tooltip>
-              </div>
+              <CommitInput
+                value={selected.name}
+                onCommit={(name) => updateProvider.mutateAsync({ id: selected.id, name })}
+                aria-label="Provider name"
+                className="h-9 min-w-0 text-base font-semibold"
+              />
 
               <ProviderCard provider={selected} />
 

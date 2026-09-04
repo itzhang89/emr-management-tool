@@ -424,7 +424,9 @@ describe("LlmSettingsPanel", () => {
     duplicateLlmProvider.mockResolvedValue("prov-2");
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Duplicate Google" }));
+    // The row's duplicate action only appears on hover.
+    await user.hover(await screen.findByRole("button", { name: "Google 2" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate Google" }));
 
     // The dialog explains what does and does not come along, and suggests a name.
     const dialog = within(screen.getByRole("dialog"));
@@ -566,7 +568,9 @@ describe("LlmSettingsPanel", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Delete Google" }));
+    // The row's delete action only appears on hover.
+    await user.hover(await screen.findByRole("button", { name: "Google 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Google" }));
 
     expect(screen.getByRole("heading", { name: /delete provider\?/i })).toBeInTheDocument();
     expect(screen.getByText(/stored API keys/i)).toBeInTheDocument();
@@ -580,7 +584,8 @@ describe("LlmSettingsPanel", () => {
     listLlmProviders.mockResolvedValue([preset()]);
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Delete OpenAI" }));
+    await user.hover(await screen.findByRole("button", { name: "OpenAI 0" }));
+    await user.click(screen.getByRole("button", { name: "Delete OpenAI" }));
 
     // Seeding is once-ever, so the confirmation must not imply it is recoverable.
     expect(screen.getByText(/not restored on the next start/i)).toBeInTheDocument();

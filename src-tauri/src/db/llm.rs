@@ -21,10 +21,28 @@ use super::parse_timestamp;
 /// there" rather than "know that Gemini lists at /v1beta". Ids are fixed so the
 /// seed is idempotent, and the rows are ordinary providers afterwards — editable,
 /// duplicable, deletable.
-const BUILT_IN_PROVIDERS: [(&str, &str, LlmProtocol); 3] = [
-    ("builtin-openai", "OpenAI", LlmProtocol::Openai),
-    ("builtin-anthropic", "Anthropic", LlmProtocol::Anthropic),
-    ("builtin-gemini", "Gemini", LlmProtocol::Gemini),
+///
+/// The fourth field overrides the protocol's usual address when `Some`. The four
+/// domestic OpenAI-compatible gateways need this: they speak the `openai` shape
+/// but each has its own host, and the address is the whole point of a preset.
+const BUILT_IN_PROVIDERS: [(&str, &str, LlmProtocol, Option<&'static str>); 7] = [
+    ("builtin-openai", "OpenAI", LlmProtocol::Openai, None),
+    ("builtin-anthropic", "Anthropic", LlmProtocol::Anthropic, None),
+    ("builtin-gemini", "Gemini", LlmProtocol::Gemini, None),
+    ("builtin-deepseek", "DeepSeek", LlmProtocol::Openai, Some("https://api.deepseek.com")),
+    ("builtin-kimi", "Kimi", LlmProtocol::Openai, Some("https://api.moonshot.cn/v1")),
+    (
+        "builtin-zhipu",
+        "Zhipu AI",
+        LlmProtocol::Openai,
+        Some("https://open.bigmodel.cn/api/paas/v4"),
+    ),
+    (
+        "builtin-qwen",
+        "Qwen",
+        LlmProtocol::Openai,
+        Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    ),
 ];
 
 /// Schema for the three LLM tables. Follows `repository::migrate`'s
@@ -107,7 +125,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
 /// the marker table exists rather than relying on the row's own presence.
 async fn seed_built_in_providers(pool: &SqlitePool) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    for (index, (id, name, protocol)) in BUILT_IN_PROVIDERS.iter().enumerate() {
+    for (index, (id, name, protocol, base_url)) in BUILT_IN_PROVIDERS.iter().enumerate() {
         let claimed = sqlx::query(
             "insert into llm_seeded_providers (id, seeded_at) values (?1, ?2)
              on conflict(id) do nothing",
@@ -122,6 +140,10 @@ async fn seed_built_in_providers(pool: &SqlitePool) -> AppResult<()> {
             continue;
         }
 
+        // An OpenAI-compatible gateway that is not OpenAI lists at its own host,
+        // so the preset may carry an address other than the protocol's default.
+        let base_url = base_url.unwrap_or_else(|| protocol.default_base_url());
+
         sqlx::query(
             "insert into llm_providers
                 (id, name, protocol, base_url, enabled, built_in, sort_order, created_at, updated_at)
@@ -131,7 +153,7 @@ async fn seed_built_in_providers(pool: &SqlitePool) -> AppResult<()> {
         .bind(id)
         .bind(name)
         .bind(protocol.as_str())
-        .bind(protocol.default_base_url())
+        .bind(base_url)
         .bind(index as i64)
         .bind(&now)
         .execute(pool)
@@ -931,7 +953,7 @@ mod tests {
     /// A pool with the presets removed, for tests that assert on a specific list.
     async fn empty_pool() -> SqlitePool {
         let pool = test_pool().await;
-        for (id, _, _) in BUILT_IN_PROVIDERS {
+        for (id, _, _, _) in BUILT_IN_PROVIDERS {
             delete_provider(&pool, id).await.expect("drop preset");
         }
         pool
@@ -951,20 +973,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_three_protocols_are_seeded_disabled_and_keyless() {
+    async fn the_built_in_presets_are_seeded_disabled_and_keyless_with_the_right_address() {
         let pool = test_pool().await;
         let providers = list_providers(&pool).await.expect("list providers");
 
-        let seeded: Vec<(&str, LlmProtocol)> = providers
+        // The domestic gateways speak the openai shape, so they differ from the
+        // OpenAI preset only by the address the seed pinned for them — an address
+        // that must NOT be the protocol default, or they would point at OpenAI.
+        let seeded: Vec<(&str, LlmProtocol, &str)> = providers
             .iter()
-            .map(|provider| (provider.name.as_str(), provider.protocol))
+            .map(|provider| (provider.name.as_str(), provider.protocol, provider.base_url.as_str()))
             .collect();
         assert_eq!(
             seeded,
             vec![
-                ("OpenAI", LlmProtocol::Openai),
-                ("Anthropic", LlmProtocol::Anthropic),
-                ("Gemini", LlmProtocol::Gemini)
+                ("OpenAI", LlmProtocol::Openai, "https://api.openai.com/v1"),
+                (
+                    "Anthropic",
+                    LlmProtocol::Anthropic,
+                    "https://api.anthropic.com/v1"
+                ),
+                (
+                    "Gemini",
+                    LlmProtocol::Gemini,
+                    "https://generativelanguage.googleapis.com/v1beta"
+                ),
+                ("DeepSeek", LlmProtocol::Openai, "https://api.deepseek.com"),
+                ("Kimi", LlmProtocol::Openai, "https://api.moonshot.cn/v1"),
+                (
+                    "Zhipu AI",
+                    LlmProtocol::Openai,
+                    "https://open.bigmodel.cn/api/paas/v4"
+                ),
+                (
+                    "Qwen",
+                    LlmProtocol::Openai,
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                )
             ]
         );
 
@@ -974,8 +1019,6 @@ mod tests {
             assert!(!provider.enabled);
             assert!(provider.api_keys.is_empty());
             assert!(provider.models.is_empty());
-            // The address is the point of the preset.
-            assert_eq!(provider.base_url, provider.protocol.default_base_url());
         }
     }
 
@@ -1000,8 +1043,19 @@ mod tests {
         let providers = list_providers(&pool).await.unwrap();
         let names: Vec<&str> = providers.iter().map(|p| p.name.as_str()).collect();
         // The edit survives, and a deleted preset stays deleted — unlike the chat
-        // assistant's prompt, these rows are the user's to change.
-        assert_eq!(names, vec!["my gateway", "Anthropic"]);
+        // assistant's prompt, these rows are the user's to change. OpenAI was
+        // renamed and Gemini removed; the four domestic presets are untouched.
+        assert_eq!(
+            names,
+            vec![
+                "my gateway",
+                "Anthropic",
+                "DeepSeek",
+                "Kimi",
+                "Zhipu AI",
+                "Qwen"
+            ]
+        );
         assert_eq!(providers[0].base_url, "https://gw.example/v1");
     }
 
@@ -1526,7 +1580,7 @@ mod tests {
         migrate(&pool).await.expect("migrate over the old layout");
         assert!(!has_legacy_schema(&pool).await.unwrap());
         // The presets are seeded into the rebuilt tables.
-        assert_eq!(list_providers(&pool).await.unwrap().len(), 3);
+        assert_eq!(list_providers(&pool).await.unwrap().len(), 7);
     }
 
     #[tokio::test]
@@ -1576,6 +1630,6 @@ mod tests {
         assert!(list_providers(&pool).await.is_ok());
         assert!(!has_legacy_schema(&pool).await.unwrap());
         // Seeding twice must not duplicate the presets.
-        assert_eq!(list_providers(&pool).await.unwrap().len(), 3);
+        assert_eq!(list_providers(&pool).await.unwrap().len(), 7);
     }
 }
