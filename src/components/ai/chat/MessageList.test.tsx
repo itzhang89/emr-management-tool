@@ -291,4 +291,55 @@ describe("MessageList", () => {
     // model, not from this errored reply, so the callback takes no argument.
     expect(onConfigureProvider).toHaveBeenCalled();
   });
+
+  it("does not render the persisted in-flight row under the streaming bubble", () => {
+    // Returning to a conversation that kept generating in the background refetches
+    // its transcript mid-stream; the reserved (empty) assistant row must not show
+    // as a ghost "No response." under the live bubble.
+    const turn = {
+      ...emptyStreamingTurn("s1"),
+      messageId: "m-inflight",
+      text: "checking the logs…"
+    };
+    render(
+      list({
+        streaming: turn,
+        messages: [
+          message({ role: "user", content: "why?" }),
+          message({
+            id: "m-inflight",
+            seq: 1,
+            role: "assistant",
+            content: null,
+            modelId: "claude-4"
+          })
+        ]
+      })
+    );
+
+    expect(screen.getByText("checking the logs…")).toBeInTheDocument();
+    expect(screen.queryByText(/No response\./i)).not.toBeInTheDocument();
+  });
+
+  it("hides the empty tail placeholder while a turn waits for its first token", () => {
+    render(
+      list({
+        // No delta yet, so the streaming turn has not been assigned a message id.
+        streaming: emptyStreamingTurn("s1"),
+        messages: [
+          message({ role: "user", content: "why?" }),
+          message({
+            id: "m2",
+            seq: 1,
+            role: "assistant",
+            content: null,
+            modelId: "claude-4"
+          })
+        ]
+      })
+    );
+
+    expect(screen.getByText(/Waiting for model/)).toBeInTheDocument();
+    expect(screen.queryByText(/No response\./i)).not.toBeInTheDocument();
+  });
 });

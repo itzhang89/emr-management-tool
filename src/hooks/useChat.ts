@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tauriClient } from "@/services/tauriClient";
 import {
@@ -108,22 +108,53 @@ export function useDeleteAllChatSessions() {
 }
 
 /**
- * Drives one session's conversation: sends messages, tracks the in-flight
- * assistant turn from stream events, and refreshes the persisted transcript when
- * the exchange ends.
+ * Drives the conversation the user is looking at: sends messages, tracks that
+ * session's in-flight assistant turn from stream events, and refreshes the
+ * persisted transcript when the exchange ends.
  *
- * The streaming turn lives in React state rather than the query cache — writing
- * every token into the cache would re-render the whole message list per delta.
- * On `chat:done` the stored rows become the truth and the streaming turn clears.
+ * Turns live outside the react-query cache — writing every token into the cache
+ * would re-render the whole message list per delta. They are also kept per
+ * session rather than as a single value, so a conversation that is still
+ * answering keeps generating when the user switches to another one; its turn
+ * accumulates in the background and is simply shown again when it becomes the
+ * active session again. On `chat:done` the stored rows become the truth and the
+ * turn clears.
  */
 export function useChatConversation(sessionId: string | null) {
   const queryClient = useQueryClient();
   const messages = useChatMessages(sessionId);
-  const [streaming, setStreaming] = useState<StreamingTurn | null>(null);
-  const [sending, setSending] = useState(false);
+  // One in-flight turn per session, so switching away from a conversation that is
+  // answering does not stop the request or lose its progress — generation runs in
+  // the background and its turn keeps accumulating here until `chat:done`. The
+  // map lives in a ref so tokens from a background conversation do not re-render
+  // the transcript the user is actually reading; the render bump fires only when
+  // the *active* session's own turn changes.
+  const turnsRef = useRef<Record<string, StreamingTurn>>({});
+  const [, bump] = useReducer((value: number) => value + 1, 0);
+  // Which session is currently sending, so an unrelated conversation's composer
+  // does not show the spinner or lock itself while another answers.
+  const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
+
+  const streaming = sessionId ? (turnsRef.current[sessionId] ?? null) : null;
+  const sending = sessionId != null && sendingSessionId === sessionId;
+
+  /** Records a fresh empty turn for a send we are about to start. */
+  const startTurn = (sid: string) => {
+    turnsRef.current[sid] = emptyStreamingTurn(sid);
+    bump();
+  };
+  /** Drops a session's turn, forcing a render when it is the one on screen. */
+  const clearTurn = (sid: string) => {
+    if (sid in turnsRef.current) {
+      delete turnsRef.current[sid];
+      bump();
+    }
+  };
 
   // Handlers read the current session from a ref so the subscription is bound
-  // once rather than torn down and rebuilt on every session switch.
+  // once rather than torn down and rebuilt on every session switch. Every event
+  // is applied to its own session's turn regardless of which conversation is on
+  // screen; only the active one triggers a re-render.
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
 
@@ -131,32 +162,40 @@ export function useChatConversation(sessionId: string | null) {
     let dispose = () => {};
     let cancelled = false;
 
-    const forCurrentSession = (eventSessionId: string) =>
-      sessionRef.current !== null && eventSessionId === sessionRef.current;
+    const updateTurn = (
+      eventSessionId: string,
+      apply: (turn?: StreamingTurn) => StreamingTurn
+    ) => {
+      const current = turnsRef.current[eventSessionId];
+      turnsRef.current[eventSessionId] = apply(current);
+      if (sessionRef.current === eventSessionId) bump();
+    };
 
     void bindChatStreamEvents({
-      onDelta: (event) => {
-        if (!forCurrentSession(event.sessionId)) return;
-        setStreaming((turn) => applyDelta(turn ?? emptyStreamingTurn(event.sessionId), event));
-      },
-      onTool: (event) => {
-        if (!forCurrentSession(event.sessionId)) return;
-        setStreaming((turn) => applyToolEvent(turn ?? emptyStreamingTurn(event.sessionId), event));
-      },
+      onDelta: (event) =>
+        updateTurn(event.sessionId, (turn) =>
+          applyDelta(turn ?? emptyStreamingTurn(event.sessionId), event)
+        ),
+      onTool: (event) =>
+        updateTurn(event.sessionId, (turn) =>
+          applyToolEvent(turn ?? emptyStreamingTurn(event.sessionId), event)
+        ),
       onDone: (event) => {
-        if (!forCurrentSession(event.sessionId)) return;
-        setStreaming(null);
-        // The persisted rows now hold everything the streaming turn showed.
+        delete turnsRef.current[event.sessionId];
+        if (sessionRef.current === event.sessionId) bump();
+        // The persisted rows now hold everything the streaming turn showed; the
+        // message list is refreshed even for a background conversation so it is
+        // current when the user switches back.
         void queryClient.invalidateQueries({ queryKey: chatMessagesKey(event.sessionId) });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       },
       onError: (event) => {
-        if (!forCurrentSession(event.sessionId)) return;
         // An error ends the turn, so the streaming bubble is dropped rather than
         // left showing "Thinking" beside its own copy of the message: the
         // assistant row was already persisted carrying this error, and the
         // refreshed transcript renders it once.
-        setStreaming(null);
+        delete turnsRef.current[event.sessionId];
+        if (sessionRef.current === event.sessionId) bump();
         void queryClient.invalidateQueries({ queryKey: chatMessagesKey(event.sessionId) });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       },
@@ -179,29 +218,23 @@ export function useChatConversation(sessionId: string | null) {
     };
   }, [queryClient]);
 
-  // A session switch must not leave the previous conversation's partial turn on
-  // screen under the new transcript.
-  useEffect(() => {
-    setStreaming(null);
-  }, [sessionId]);
-
   const send = useCallback(
     async (text: string) => {
       if (!sessionId) return;
-      setSending(true);
+      setSendingSessionId(sessionId);
       // Shown immediately so the user's message and a thinking indicator appear
       // before the first token arrives.
-      setStreaming(emptyStreamingTurn(sessionId));
+      startTurn(sessionId);
       try {
         await tauriClient.chatSend(sessionId, text);
       } catch (error) {
         // A rejection can reach us without a chat:error/chat:done (a failure that
         // happens before the streaming loop), so clear the turn here — otherwise
         // the "Thinking" bubble would spin forever under a toast.
-        setStreaming(null);
+        clearTurn(sessionId);
         throw error;
       } finally {
-        setSending(false);
+        setSendingSessionId((current) => (current === sessionId ? null : current));
         void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }
@@ -220,8 +253,8 @@ export function useChatConversation(sessionId: string | null) {
    */
   const cancel = useCallback(async () => {
     if (!sessionId) return;
-    setStreaming(null);
-    setSending(false);
+    clearTurn(sessionId);
+    setSendingSessionId((current) => (current === sessionId ? null : current));
     try {
       await tauriClient.chatCancel(sessionId);
     } finally {
@@ -267,10 +300,10 @@ export function useChatConversation(sessionId: string | null) {
   const regenerate = useCallback(
     async (messageId: string, modelId?: string) => {
       if (!sessionId) return;
-      setSending(true);
+      setSendingSessionId(sessionId);
       // Reuse the streaming turn so the reply shows a thinking indicator while
       // the model re-answers; regeneration re-emits the usual chat events.
-      setStreaming(emptyStreamingTurn(sessionId));
+      startTurn(sessionId);
       const key = chatMessagesKey(sessionId);
       const previous = queryClient.getQueryData<ChatMessage[]>(key);
       // The backend discards the old reply and everything after it before
@@ -287,10 +320,10 @@ export function useChatConversation(sessionId: string | null) {
         await tauriClient.regenerateChatMessage(sessionId, messageId, modelId);
       } catch (error) {
         if (previous) queryClient.setQueryData(key, previous); // roll back
-        setStreaming(null);
+        clearTurn(sessionId);
         throw error;
       } finally {
-        setSending(false);
+        setSendingSessionId((current) => (current === sessionId ? null : current));
         void queryClient.invalidateQueries({ queryKey: key });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }
@@ -301,8 +334,8 @@ export function useChatConversation(sessionId: string | null) {
   const edit = useCallback(
     async (messageId: string, newText: string) => {
       if (!sessionId) return;
-      setSending(true);
-      setStreaming(emptyStreamingTurn(sessionId));
+      setSendingSessionId(sessionId);
+      startTurn(sessionId);
       const key = chatMessagesKey(sessionId);
       const previous = queryClient.getQueryData<ChatMessage[]>(key);
       // Optimistically adopt the new wording and drop everything after the edited
@@ -323,10 +356,10 @@ export function useChatConversation(sessionId: string | null) {
         await tauriClient.updateChatMessage(sessionId, messageId, newText);
       } catch (error) {
         if (previous) queryClient.setQueryData(key, previous); // roll back
-        setStreaming(null);
+        clearTurn(sessionId);
         throw error;
       } finally {
-        setSending(false);
+        setSendingSessionId((current) => (current === sessionId ? null : current));
         void queryClient.invalidateQueries({ queryKey: key });
         void queryClient.invalidateQueries({ queryKey: CHAT_SESSIONS_KEY });
       }

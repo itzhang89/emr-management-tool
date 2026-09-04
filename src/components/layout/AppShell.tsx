@@ -220,7 +220,7 @@ export function AppShell() {
       case "dashboard":
         return <DashboardPage />;
       case "submit":
-        return <SubmitJobPage onOpenLogs={openLogsPage} />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
       case "history":
         return (
           <JobHistoryPage
@@ -245,7 +245,7 @@ export function AppShell() {
       case "settings":
         return <SettingsPage />;
       default:
-        return <SubmitJobPage onOpenLogs={openLogsPage} />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
     }
   }, [activePage, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
 

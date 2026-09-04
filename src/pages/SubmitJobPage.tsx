@@ -61,7 +61,15 @@ const FORM_PANE_MIN_PX = 220;
 const HISTORY_PANE_MIN_PX = 140;
 const SPLITTER_PX = 8;
 
-export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
+export function SubmitJobPage({
+  onOpenLogs,
+  onOpenAiAssistant
+}: {
+  onOpenLogs?: () => void;
+  /** When provided, FAILED rows in Recent Submissions gain the same "Analyze"
+      action as Job History, opening the AI assistant for failure analysis. */
+  onOpenAiAssistant?: () => void;
+}) {
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
@@ -655,6 +663,7 @@ export function SubmitJobPage({ onOpenLogs }: { onOpenLogs?: () => void }) {
             refreshCountdown={submissionRefreshCountdown}
             submissionJobsQuery={submissionJobs}
             onOpenLogs={onOpenLogs}
+            onOpenAiAssistant={onOpenAiAssistant}
             onSubmissionStarted={enableAfterSubmit}
             className="min-h-0 flex-1"
           />

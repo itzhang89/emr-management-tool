@@ -93,6 +93,25 @@ export function MessageList({
     }
   }, [streaming?.text, streaming?.toolCalls.length]);
 
+  // While a turn is streaming for this conversation the live bubble below is the
+  // single representation of the answer in flight. The persisted assistant row
+  // the backend reserved for it (an empty placeholder, still unwritten until the
+  // turn finishes) must not render underneath as a ghost — that happens when the
+  // user switches back to a conversation that kept generating in the background,
+  // whose transcript is refetched mid-stream. Match it by id once known, and by
+  // "empty tail placeholder" before the first delta assigns an id.
+  const lastSeq = messages.length > 0 ? messages[messages.length - 1].seq : -1;
+  const isInFlight = (message: ChatMessage): boolean => {
+    if (!streaming || message.role !== "assistant") return false;
+    if (streaming.messageId && message.id === streaming.messageId) return true;
+    const isEmptyPlaceholder =
+      message.seq === lastSeq &&
+      !(message.content ?? "").trim() &&
+      !message.error &&
+      message.toolCalls.length === 0;
+    return isEmptyPlaceholder;
+  };
+
   return (
     // overscroll-contain keeps a wheel gesture that reaches the end of the
     // transcript from continuing into whatever scrolls behind it.
@@ -128,6 +147,7 @@ export function MessageList({
               );
             }
             if (message.role === "assistant") {
+              if (isInFlight(message)) return null;
               return (
                 <AssistantMessage
                   key={message.id}
