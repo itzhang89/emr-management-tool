@@ -8,9 +8,9 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
     ChatAssistant, ChatIdRequest, ChatMessage, ChatMessageIdRequest, ChatRegenerateRequest,
-    ChatSendRequest, ChatSession, ChatSessionIdRequest, ChatUpdateMessageRequest,
-    CreateChatAssistantRequest, CreateChatSessionRequest, UpdateChatAssistantRequest,
-    UpdateChatSessionRequest,
+    ChatSendRequest, ChatSession, ChatSessionIdRequest, ChatSetMessageVersionRequest,
+    ChatUpdateMessageRequest, CreateChatAssistantRequest, CreateChatSessionRequest,
+    UpdateChatAssistantRequest, UpdateChatSessionRequest,
 };
 use crate::state::AppState;
 use sqlx::SqlitePool;
@@ -159,6 +159,7 @@ pub async fn regenerate_chat_message(
             "Only an assistant message can be regenerated.",
         ));
     }
+    let old_message_id = target.id.clone();
     let prior = crate::db::chat::list_messages(&pool, &request.session_id).await?;
     let question = prior
         .iter()
@@ -169,16 +170,116 @@ pub async fn regenerate_chat_message(
             AppError::validation("There is no question to regenerate an answer for.")
         })?;
 
+    // Regenerating on the *same* model overwrites the answer in place — the
+    // numbered version the user is looking at is replaced, not added to. Only a
+    // genuinely different model (@) branches the reply into a new numbered
+    // version worth keeping to compare against.
+    let appends_version = request
+        .model_id
+        .as_deref()
+        .is_some_and(|picked| picked != target.model_id.as_deref().unwrap_or_default());
+    // The version currently shown, captured before the row is discarded so an
+    // in-place overwrite can drop it and a failed re-answer can restore it.
+    let previously_active = prior
+        .iter()
+        .find(|m| m.id == old_message_id)
+        .and_then(|m| m.versions.iter().find(|version| version.is_active).map(|v| v.id.clone()));
+
+    // The model must resolve before anything is discarded: if the picked model
+    // cannot be found (e.g. its provider was removed), regenerating should leave
+    // the current answer on screen with a clear error rather than deleting it
+    // and whatever followed and then failing. Answering resolves again later —
+    // this is only an early, transcript-preserving guard.
+    let model_override = request.model_id.or(target.model_id);
+    crate::chat::session::resolve_model(&pool, &request.session_id, model_override.as_deref())
+        .await?;
+
     // Discard the old reply and everything after it, keeping the question. The
     // model override applies only to this reply; the session default is intact.
+    // Version rows are *not* cascade-deleted here — they are re-pointed onto the
+    // fresh assistant row below so the superseded answers stay switchable.
     crate::db::chat::delete_messages_from(&pool, &request.session_id, question.seq + 1).await?;
     assert_last_user(&pool, &request.session_id).await?;
 
-    run_send_on_existing_turn(
+    let outcome = run_send_on_existing_turn(
         &app,
         &app_state,
         &request.session_id,
-        request.model_id.or(target.model_id),
+        model_override,
+    )
+    .await;
+
+    // Whether the re-answer succeeded or left an error row, the answer loop
+    // appended exactly one assistant message right after the question. Move the
+    // old reply's archived versions onto it so its history survives, then decide
+    // what the numbering should be.
+    if let Ok(messages) = crate::db::chat::list_messages(&pool, &request.session_id).await {
+        let replacement = messages
+            .iter()
+            .find(|m| m.role == crate::models::ChatRole::Assistant && m.seq == question.seq + 1);
+        if let Some(replacement) = replacement {
+            // Only a real completion earns a fresh active version (finish archives
+            // none for an error or an empty reply), so before re-attaching we can
+            // tell whether this attempt actually landed.
+            let fresh_answer_landed = replacement.versions.iter().any(|version| version.is_active);
+
+            let _ = crate::db::chat::reattach_message_versions(
+                &pool,
+                &old_message_id,
+                &replacement.id,
+            )
+            .await;
+
+            if !fresh_answer_landed {
+                // The re-answer failed or came back empty — it must not eat the
+                // working reply it was meant to replace, so put the previously
+                // shown version back on display (the transcript then reads as if
+                // the attempt never happened; the error surfaces as a toast).
+                if let Some(active) = &previously_active {
+                    let _ = crate::db::chat::activate_message_version(
+                        &pool,
+                        &request.session_id,
+                        &replacement.id,
+                        active,
+                    )
+                    .await;
+                }
+            } else if !appends_version {
+                // A same-model overwrite: the answer this re-run replaced is gone,
+                // so its version row goes with it — the count stays put instead of
+                // the number marching up on every regenerate.
+                if let Some(active) = &previously_active {
+                    let _ = crate::db::chat::delete_message_version(
+                        &pool,
+                        &request.session_id,
+                        active,
+                    )
+                    .await;
+                }
+            }
+            // A different model (@) that landed keeps every past answer, and the
+            // fresh one sits at the end as a new numbered version — nothing more
+            // to do after the re-attach.
+        }
+    }
+    // Any version rows still pointing at messages that were truly discarded (the
+    // tail after the question) are now orphans.
+    let _ = crate::db::chat::purge_orphan_message_versions(&pool, &request.session_id).await;
+
+    outcome
+}
+
+/// Makes one recorded answer the message's displayed version. The row's columns
+/// are overwritten with that version's content, so the transcript and the next
+/// request's context both reflect it immediately.
+#[tauri::command]
+pub async fn set_chat_message_version(request: ChatSetMessageVersionRequest) -> AppResult<()> {
+    let pool = crate::db::repository::pool().await?;
+    crate::db::chat::activate_message_version(
+        &pool,
+        &request.session_id,
+        &request.message_id,
+        &request.version_id,
     )
     .await
 }
@@ -205,9 +306,11 @@ pub async fn update_chat_message(
         return Err(AppError::validation("Enter a message to save."));
     }
     crate::db::chat::update_message_content(&pool, &request.message_id, content).await?;
-    // A reply once existed for the old wording; the new one follows the edit.
+    // A reply once existed for the old wording; the new one follows the edit. The
+    // old reply and every later turn are discarded, so their versions go too.
     crate::db::chat::delete_messages_from(&pool, &request.session_id, target.seq + 1).await?;
     assert_last_user(&pool, &request.session_id).await?;
+    let _ = crate::db::chat::purge_orphan_message_versions(&pool, &request.session_id).await;
 
     run_send_on_existing_turn(&app, &app_state, &request.session_id, None).await
 }
@@ -322,7 +425,11 @@ pub async fn delete_chat_messages_from(request: ChatMessageIdRequest) -> AppResu
     let pool = crate::db::repository::pool().await?;
     let target = crate::db::chat::get_message(&pool, &request.session_id, &request.message_id)
         .await?;
-    crate::db::chat::delete_messages_from(&pool, &request.session_id, target.seq).await
+    let removed = crate::db::chat::delete_messages_from(&pool, &request.session_id, target.seq)
+        .await?;
+    // The removed rows' version children are no longer reachable.
+    let _ = crate::db::chat::purge_orphan_message_versions(&pool, &request.session_id).await;
+    Ok(removed)
 }
 
 /// Interrupts a streaming send. Whatever was streamed so far stays in the

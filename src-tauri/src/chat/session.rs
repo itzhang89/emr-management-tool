@@ -172,7 +172,14 @@ pub async fn resolve_model(
                 provider_id: provider.id.clone(),
                 model_id: model.model_id.clone(),
             };
-            if Some(&model.id) == wanted_model_id.as_ref() {
+            // The override may name the model by its local row id (what a session
+            // or a picked capsule stores) or by its API-facing id (what an
+            // assistant message records when it answers). Matching both lets a
+            // plain Regenerate reuse the reply's own model without the frontend
+            // resolving it back to a row id first.
+            let matches = Some(&model.id) == wanted_model_id.as_ref()
+                || Some(&model.model_id) == wanted_model_id.as_ref();
+            if matches {
                 chosen = Some(candidate);
             } else if model.is_default && fallback.is_none() {
                 fallback = Some(candidate);
@@ -1111,6 +1118,7 @@ mod tests {
             error: None,
             error_details: None,
             created_at: Utc::now(),
+            versions: Vec::new(),
         }
     }
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const noopCallbacks = {
   onDelete: vi.fn(),
   onRegenerate: vi.fn(),
   onRegenerateWithModel: vi.fn(),
+  onSwitchVersion: vi.fn(),
   onConfigureProvider: vi.fn()
 };
 
@@ -44,6 +45,7 @@ type MessageListProps = Partial<{
   onDelete: (m: ChatMessage) => void;
   onRegenerate: (m: ChatMessage) => void;
   onRegenerateWithModel: (m: ChatMessage, id: string) => void;
+  onSwitchVersion: (m: ChatMessage, versionId: string) => void;
   onConfigureProvider: () => void;
 }>;
 
@@ -125,34 +127,95 @@ describe("MessageList", () => {
     expect(onDelete).toHaveBeenCalled();
   });
 
-  it("offers regenerate and switch-model on an assistant message", async () => {
+  it("regenerates on the active model and offers the @ model list", async () => {
     const onRegenerate = vi.fn();
     const onRegenerateWithModel = vi.fn();
     render(
       list({
         onRegenerate,
         onRegenerateWithModel,
-        modelOptions: [{ id: "m1", modelId: "claude-opus-5", providerName: "p" }],
+        modelOptions: [
+          { id: "m1", modelId: "claude-opus-5", providerName: "p" },
+          { id: "m2", modelId: "claude-sonnet-5", providerName: "p" }
+        ],
         messages: [
           message({ role: "user", content: "why?" }),
-          message({ id: "m2", seq: 1, role: "assistant", content: "driver OOM" })
+          message({ id: "m3", seq: 1, role: "assistant", content: "driver OOM" })
         ]
       })
     );
 
-    await userEvent.hover(screen.getByText("driver OOM"));
+    // fireEvent keeps the hover state put while the action row stays mounted,
+    // which the setup-bound userEvent.click cannot rely on for Tooltip-wrapped
+    // buttons (see the edit test below).
+    fireEvent.mouseEnter(screen.getByText("driver OOM"));
 
+    // Regenerate re-answers on the version currently shown.
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(onRegenerate).toHaveBeenCalled();
 
-    // The "@" glyph opens a model list; picking one regenerates that reply on
-    // that model.
-    await userEvent.click(screen.getByRole("button", { name: /different model/i }));
-    await userEvent.click(screen.getByRole("button", { name: "claude-opus-5" }));
+    // A single-version message shows no version capsules — switching needs
+    // something to switch to.
+    expect(screen.queryByRole("button", { name: /Show version/i })).not.toBeInTheDocument();
+
+    // The "@" glyph opens the model list; picking one regenerates on it.
+    await userEvent.click(screen.getByRole("button", { name: "Answer with another model" }));
+    await userEvent.click(screen.getByRole("button", { name: /claude-sonnet-5/i }));
     expect(onRegenerateWithModel).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "m2" }),
-      "m1"
+      expect.objectContaining({ id: "m3" }),
+      "claude-sonnet-5"
     );
+  });
+
+  it("switches the displayed version from the capsule bar when one is recorded", async () => {
+    const onSwitchVersion = vi.fn();
+    render(
+      list({
+        onSwitchVersion,
+        messages: [
+          message({ role: "user", content: "why?" }),
+          message({
+            id: "m3",
+            seq: 1,
+            role: "assistant",
+            content: "driver OOM",
+            modelId: "claude-sonnet-5",
+            versions: [
+              {
+                id: "v1",
+                modelId: "claude-opus-5",
+                isActive: false,
+                createdAt: "2026-08-30T00:00:00Z"
+              },
+              {
+                id: "v2",
+                modelId: "claude-sonnet-5",
+                isActive: true,
+                createdAt: "2026-08-31T00:00:00Z"
+              }
+            ]
+          })
+        ]
+      })
+    );
+
+    fireEvent.mouseEnter(screen.getByText("driver OOM"));
+
+    // A regenerated message (two versions) reveals its version capsules as soon
+    // as the action row is up — switching needs no trip through the "@" model
+    // menu first. The group is drawn as one boxed, numbered set.
+    const group = screen.getByRole("group", { name: "Answer versions" });
+    expect(group.className).toContain("rounded-full");
+    const shown = screen.getByRole("button", { name: "Showing version 2" });
+    expect(shown).toHaveTextContent("2");
+    expect(screen.getByRole("button", { name: "Show version 1" })).toHaveTextContent("1");
+
+    // Clicking the other version switches to it; it does not regenerate. The
+    // toolbox-wrapped capsule button swallows userEvent.click in jsdom, so the
+    // click is fired directly, like the Edit action test above.
+    fireEvent.click(screen.getByRole("button", { name: "Show version 1" }));
+    expect(onSwitchVersion).toHaveBeenCalledWith(expect.objectContaining({ id: "m3" }), "v1");
+    expect(screen.queryByRole("button", { name: "Regenerate" })).toBeInTheDocument();
   });
 
   it("shows the empty hint when there is nothing to scroll", () => {

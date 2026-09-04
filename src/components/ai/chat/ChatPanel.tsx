@@ -426,7 +426,7 @@ export function ChatPanel({
     try {
       await conversation.regenerate(message.id);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to regenerate the answer");
+      toast.error(errorMessage(error, "Failed to regenerate the answer"));
     }
   };
 
@@ -434,7 +434,16 @@ export function ChatPanel({
     try {
       await conversation.regenerate(message.id, modelId);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to regenerate the answer");
+      toast.error(errorMessage(error, "Failed to regenerate the answer"));
+    }
+  };
+
+  /** Switch which recorded answer of a message is displayed. */
+  const handleSwitchVersion = async (message: ChatMessage, versionId: string) => {
+    try {
+      await conversation.switchVersion(message.id, versionId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to switch the answer version");
     }
   };
 
@@ -560,6 +569,7 @@ export function ChatPanel({
           onDelete={setMessageDeleteTarget}
           onRegenerate={handleRegenerate}
           onRegenerateWithModel={handleRegenerateWithModel}
+          onSwitchVersion={handleSwitchVersion}
           emptyHint={
             noModels ? (
               <div className="space-y-3 text-sm">
@@ -692,4 +702,12 @@ export function ChatPanel({
       </Dialog>
     </div>
   );
+}
+
+/** Picks the message off an error of any shape (Tauri errors are plain objects). */
+function errorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return fallback;
 }

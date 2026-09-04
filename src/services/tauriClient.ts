@@ -241,6 +241,9 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
      */
     regenerateChatMessage: (sessionId: string, messageId: string, modelId?: string) =>
       call<string>("regenerate_chat_message", { sessionId, messageId, modelId }),
+    /** Makes one recorded answer the message's displayed version. */
+    setChatMessageVersion: (sessionId: string, messageId: string, versionId: string) =>
+      call<void>("set_chat_message_version", { sessionId, messageId, versionId }),
     /**
      * Replaces a past question and re-answers it. Resolves when the exchange
      * finishes, streaming on the CHAT_EVENTS channels.

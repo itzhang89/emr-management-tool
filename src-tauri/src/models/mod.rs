@@ -1225,6 +1225,21 @@ pub struct ChatToolCall {
     pub signature: Option<String>,
 }
 
+/// One past answer for an assistant message. The `chat_messages` row itself
+/// always mirrors the *active* version's columns (so history, streaming, and the
+/// transcript need no join); these rows archive every answer so the UI can offer
+/// the other versions as switchable capsules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageVersionSummary {
+    pub id: String,
+    /// Which model produced this version (API-facing id).
+    pub model_id: Option<String>,
+    /// Whether this is the version currently shown.
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
@@ -1244,6 +1259,11 @@ pub struct ChatMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<crate::error::ErrorDetails>,
     pub created_at: DateTime<Utc>,
+    /// Every answer recorded for this message, oldest first. Non-empty only on
+    /// assistant messages returned by `list_messages`; other construction sites
+    /// (append placeholders, history) leave it empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<ChatMessageVersionSummary>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1321,6 +1341,15 @@ pub struct ChatRegenerateRequest {
     /// The model to regenerate with. `None` reuses the message's own model, so
     /// the session's default is left untouched when a user only picks a model.
     pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSetMessageVersionRequest {
+    pub session_id: String,
+    pub message_id: String,
+    /// The `chat_message_versions.id` to make the active/displayed version.
+    pub version_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

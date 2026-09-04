@@ -5,7 +5,9 @@
 //! session deletion for exactly that reason.
 
 use crate::error::{AppError, AppResult};
-use crate::models::{ChatAssistant, ChatMessage, ChatRole, ChatSession, ChatToolCall};
+use crate::models::{
+    ChatAssistant, ChatMessage, ChatMessageVersionSummary, ChatRole, ChatSession, ChatToolCall,
+};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
@@ -65,8 +67,33 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             error_details text,
             created_at text not null
         )",
+        // One row per answer a message has ever produced. The `chat_messages`
+        // row itself mirrors the *active* version (its columns are the displayed
+        // content), so existing readers — history, streaming, list — need no
+        // join; this table only archives the versions a user can switch back to.
+        // No `references chat_messages(id)`: the pool's SQLite connections enable
+        // `pragma foreign_keys` (SQLx turns it on by default, unlike a raw
+        // SQLite open), so a live FK would reject deleting an assistant row while
+        // any of its version children still point at it — exactly what
+        // regeneration does (it discards the old reply, then re-points the
+        // versions onto the fresh row). Deletions clear the versions in Rust,
+        // matching the rest of this module.
+        "create table if not exists chat_message_versions (
+            id text primary key,
+            session_id text not null,
+            message_id text not null,
+            model_id text,
+            content text,
+            tool_calls text,
+            duration_ms integer,
+            error text,
+            error_details text,
+            is_active integer not null default 0,
+            created_at text not null
+        )",
         "create index if not exists idx_chat_sessions_assistant on chat_sessions(assistant_id)",
         "create index if not exists idx_chat_messages_session on chat_messages(session_id, seq)",
+        "create index if not exists idx_chat_message_versions_message on chat_message_versions(message_id)",
     ] {
         sqlx::query(statement)
             .execute(pool)
@@ -87,7 +114,113 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         }
     }
 
+    // The first release of `chat_message_versions` declared a foreign key to
+    // `chat_messages(id)`. On any connection with `pragma foreign_keys` on,
+    // deleting an assistant reply that still has version rows — exactly what
+    // regeneration does — fails with SQLITE_CONSTRAINT_FOREIGNKEY. Rebuild any
+    // such legacy table without the FK; deletions clear versions in Rust.
+    rebuild_message_versions_if_legacy(pool).await?;
+
+    // Assistant messages written before versioning existed carry their single
+    // answer inline, with no version row. Backfill one active version per such
+    // message so capsule switching has something to point at. Idempotent: rows
+    // that already have a version are skipped.
+    sqlx::query(
+        "insert into chat_message_versions
+            (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
+         select lower(hex(randomblob(16))), m.session_id, m.id, m.model_id, m.content, m.tool_calls,
+                m.duration_ms, m.error, m.error_details, 1, m.created_at
+         from chat_messages m
+         where m.role = 'assistant'
+           and not exists (select 1 from chat_message_versions v where v.message_id = m.id)",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
     seed_built_in_assistant(pool).await
+}
+
+/// Rebuilds `chat_message_versions` without its legacy foreign-key declaration.
+///
+/// SQLite cannot drop a column-level FK from an existing table, so a table that
+/// was created while the FK was present must be replaced. Column contents are
+/// preserved; only the constraint goes away. On connections that enable
+/// `pragma foreign_keys`, the old FK would otherwise make regeneration fail with
+/// SQLITE_CONSTRAINT_FOREIGNKEY when it discards an assistant reply that still
+/// has version rows.
+async fn rebuild_message_versions_if_legacy(pool: &SqlitePool) -> AppResult<()> {
+    let definition: Option<String> = sqlx::query(
+        "select sql from sqlite_master
+         where type = 'table' and name = 'chat_message_versions'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .map(|row| row.get("sql"));
+    let Some(definition) = definition else {
+        return Ok(());
+    };
+    if !definition.contains("references") {
+        return Ok(());
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    // Drop the index first so it does not follow the renamed table and squat on
+    // the name the fresh table needs.
+    sqlx::query("drop index if exists idx_chat_message_versions_message")
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query("alter table chat_message_versions rename to chat_message_versions_legacy")
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query(
+        "create table chat_message_versions (
+            id text primary key,
+            session_id text not null,
+            message_id text not null,
+            model_id text,
+            content text,
+            tool_calls text,
+            duration_ms integer,
+            error text,
+            error_details text,
+            is_active integer not null default 0,
+            created_at text not null
+        )",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query("create index idx_chat_message_versions_message on chat_message_versions(message_id)")
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query(
+        "insert into chat_message_versions
+            (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
+         select id, session_id, message_id, model_id, content, tool_calls,
+                duration_ms, error, error_details, is_active, created_at
+         from chat_message_versions_legacy",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query("drop table chat_message_versions_legacy")
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
 }
 
 /// Inserts the built-in assistant once. Its prompt is refreshed on every start
@@ -468,6 +601,7 @@ pub async fn rename_if_untitled(pool: &SqlitePool, id: &str, title: &str) -> App
 }
 
 pub async fn delete_session(pool: &SqlitePool, id: &str) -> AppResult<()> {
+    delete_message_versions_for_session(pool, id).await?;
     sqlx::query("delete from chat_messages where session_id = ?1")
         .bind(id)
         .execute(pool)
@@ -484,6 +618,10 @@ pub async fn delete_session(pool: &SqlitePool, id: &str) -> AppResult<()> {
 /// Removes every session and message, for the "clear all conversations" action.
 /// Assistants are presets and survive.
 pub async fn delete_all_sessions(pool: &SqlitePool) -> AppResult<u64> {
+    sqlx::query("delete from chat_message_versions")
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query("delete from chat_messages")
         .execute(pool)
         .await
@@ -494,6 +632,18 @@ pub async fn delete_all_sessions(pool: &SqlitePool) -> AppResult<u64> {
         .map_err(|error| AppError::storage(error.to_string()))?
         .rows_affected();
     Ok(deleted)
+}
+
+/// Deletes archived versions belonging to a session's messages. FK cascades are
+/// off in this database, so every row deletion that removes chat_messages rows
+/// must clear their children here.
+async fn delete_message_versions_for_session(pool: &SqlitePool, session_id: &str) -> AppResult<()> {
+    sqlx::query("delete from chat_message_versions where session_id = ?1")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
 }
 
 async fn ensure_session_exists(pool: &SqlitePool, id: &str) -> AppResult<()> {
@@ -546,6 +696,148 @@ pub async fn delete_messages_from(
     Ok(affected)
 }
 
+/// Removes archived versions whose `message_id` no longer exists.
+///
+/// Regeneration and the "delete from here" / edit truncations remove rows but
+/// keep their version children until this sweep runs. Regeneration re-points the
+/// regenerated reply's versions to its fresh row *first*, so those survive; the
+/// versions of truly-deleted later turns are cleaned here.
+pub async fn purge_orphan_message_versions(pool: &SqlitePool, session_id: &str) -> AppResult<u64> {
+    let affected = sqlx::query(
+        "delete from chat_message_versions
+         where session_id = ?1
+           and message_id not in (select id from chat_messages where session_id = ?1)",
+    )
+    .bind(session_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .rows_affected();
+    Ok(affected)
+}
+
+/// Re-points archived versions from one assistant message to another.
+///
+/// Regeneration discards the old assistant row and answers with a fresh one, so
+/// the versions recorded under the old row's id would otherwise dangle. The old
+/// answer is kept as a switchable capsule by moving its versions onto the new
+/// row and demoting them (the brand-new answer owns `is_active = 1`).
+pub async fn reattach_message_versions(
+    pool: &SqlitePool,
+    old_message_id: &str,
+    new_message_id: &str,
+) -> AppResult<u64> {
+    let affected = sqlx::query(
+        "update chat_message_versions set message_id = ?1, is_active = 0 where message_id = ?2",
+    )
+    .bind(new_message_id)
+    .bind(old_message_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .rows_affected();
+    Ok(affected)
+}
+
+/// Deletes a single archived version row.
+///
+/// An in-place regenerate overwrites the answer it replaced, so that attempt's
+/// version row (no longer switchable) is dropped rather than kept alongside the
+/// superseding one.
+pub async fn delete_message_version(
+    pool: &SqlitePool,
+    session_id: &str,
+    version_id: &str,
+) -> AppResult<u64> {
+    let affected = sqlx::query(
+        "delete from chat_message_versions where id = ?1 and session_id = ?2",
+    )
+    .bind(version_id)
+    .bind(session_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .rows_affected();
+    Ok(affected)
+}
+
+/// Makes one recorded version the message's displayed answer.
+///
+/// The `chat_messages` row always mirrors the active version, so switching means
+/// copying the chosen version's columns onto the row (history and the transcript
+/// read the row, not the table) and flipping which version row is `is_active`.
+pub async fn activate_message_version(
+    pool: &SqlitePool,
+    session_id: &str,
+    message_id: &str,
+    version_id: &str,
+) -> AppResult<()> {
+    // The version must exist and belong to this message in this session.
+    let owned = sqlx::query(
+        "select 1 from chat_message_versions
+         where id = ?1 and message_id = ?2 and session_id = ?3",
+    )
+    .bind(version_id)
+    .bind(message_id)
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    if owned.is_none() {
+        return Err(AppError::validation(format!(
+            "Version {version_id} was not found for this message."
+        )));
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+    // Mirror the chosen version onto the live row: content columns plus model_id,
+    // which is what the header and regeneration both read. `created_at` is left
+    // as the row's own so the message keeps its position in the transcript.
+    let affected = sqlx::query(
+        "update chat_messages
+         set model_id = (select model_id from chat_message_versions where id = ?1),
+             content = (select content from chat_message_versions where id = ?1),
+             tool_calls = (select tool_calls from chat_message_versions where id = ?1),
+             duration_ms = (select duration_ms from chat_message_versions where id = ?1),
+             error = (select error from chat_message_versions where id = ?1),
+             error_details = (select error_details from chat_message_versions where id = ?1)
+         where id = ?2 and session_id = ?3",
+    )
+    .bind(version_id)
+    .bind(message_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .rows_affected();
+    if affected == 0 {
+        return Err(AppError::validation(format!(
+            "Chat message {message_id} was not found in this conversation."
+        )));
+    }
+
+    // Exactly one version per message is active — the one just selected.
+    sqlx::query(
+        "update chat_message_versions set is_active = (id = ?1)
+         where message_id = ?2 and session_id = ?3",
+    )
+    .bind(version_id)
+    .bind(message_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
 /// Deletes a single message. Refuses when that would leave the transcript
 /// starting with an assistant turn — the providers require the first message to
 /// be from the user.
@@ -595,6 +887,11 @@ pub async fn delete_message(
     }
 
     // The guard passed, so the deletion leaves a valid transcript: commit it.
+    sqlx::query("delete from chat_message_versions where message_id = ?1")
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     sqlx::query("delete from chat_messages where id = ?1")
         .bind(message_id)
         .execute(&mut *tx)
@@ -659,7 +956,51 @@ fn row_to_message(row: &sqlx::sqlite::SqliteRow) -> AppResult<ChatMessage> {
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok()),
         created_at: parse_timestamp(&row.get::<String, _>("created_at")),
+        versions: Vec::new(),
     })
+}
+
+/// Fills each assistant message's `versions` summary from the version table.
+///
+/// Kept separate from `row_to_message` so history building and single-message
+/// lookups skip the extra query; only the transcript listing needs capsules.
+fn attach_versions(messages: &mut [ChatMessage], rows: &[sqlx::sqlite::SqliteRow]) {
+    let mut by_message: std::collections::HashMap<String, Vec<ChatMessageVersionSummary>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        // Only a real answer is switchable: a version that archived an error or
+        // came back empty must not surface as a numbered capsule. New attempts
+        // never archive those (see `finish_assistant_message`), but a version row
+        // written before that rule — or a backfill of a pre-versioning message —
+        // can still carry one, so it is filtered here rather than trusted.
+        let error: Option<String> = row.get("error");
+        let content: Option<String> = row.get("content");
+        let tool_calls: Option<String> = row.get("tool_calls");
+        let has_answer = error.is_none()
+            && (content.as_deref().is_some_and(|c| !c.trim().is_empty())
+                || tool_calls.is_some());
+        if !has_answer {
+            continue;
+        }
+        let message_id: String = row.get("message_id");
+        by_message
+            .entry(message_id)
+            .or_default()
+            .push(ChatMessageVersionSummary {
+                id: row.get("id"),
+                model_id: row.get("model_id"),
+                is_active: row.get::<i64, _>("is_active") != 0,
+                created_at: parse_timestamp(&row.get::<String, _>("created_at")),
+            });
+    }
+    for message in messages.iter_mut() {
+        if message.role == ChatRole::Assistant {
+            if let Some(mut versions) = by_message.remove(&message.id) {
+                versions.sort_by_key(|v| v.created_at);
+                message.versions = versions;
+            }
+        }
+    }
 }
 
 /// Every message in a session, oldest first — the full readable history,
@@ -671,7 +1012,16 @@ pub async fn list_messages(pool: &SqlitePool, session_id: &str) -> AppResult<Vec
         .await
         .map_err(|error| AppError::storage(error.to_string()))?;
 
-    rows.iter().map(row_to_message).collect()
+    let mut messages: Vec<ChatMessage> = rows.iter().map(row_to_message).collect::<AppResult<_>>()?;
+    let version_rows = sqlx::query(
+        "select * from chat_message_versions where session_id = ?1 order by created_at",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    attach_versions(&mut messages, &version_rows);
+    Ok(messages)
 }
 
 /// One message by id, or an error when it is not in the given session.
@@ -824,12 +1174,21 @@ pub async fn append_message(
         error: error.map(ToString::to_string),
         error_details: error_details.cloned(),
         created_at: parse_timestamp(&now),
+        versions: Vec::new(),
     })
 }
 
 /// Rewrites an assistant message in place as the stream completes: the streamed
 /// text and the tool calls made along the way are known only at the end, but the
 /// row is created up front so the UI has an id to attach deltas to.
+///
+/// A successful finish also records the completed answer as a version row, so the
+/// reply is switchable later. A fresh message gets its first version here; a
+/// reply that is being regenerated gets a new active version while its earlier
+/// versions stay selectable. A finish that carried an error or produced nothing
+/// (no text, no tool calls) still updates the row for the transcript but archives
+/// no version — a failed or empty attempt is not something a user switches back
+/// to, so it must not count as one.
 pub async fn finish_assistant_message(
     pool: &SqlitePool,
     message_id: &str,
@@ -854,6 +1213,10 @@ pub async fn finish_assistant_message(
         ),
         None => None,
     };
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
 
     let affected = sqlx::query(
         "update chat_messages
@@ -866,7 +1229,7 @@ pub async fn finish_assistant_message(
     .bind(error)
     .bind(&error_details_json)
     .bind(message_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?
     .rows_affected();
@@ -876,6 +1239,43 @@ pub async fn finish_assistant_message(
             "Chat message {message_id} was not found."
         )));
     }
+
+    // Only a real answer earns a version: one that carried no error and has
+    // something to show (text, or tool calls). A failed or empty attempt leaves
+    // the previously active version untouched — the row mirrors the error/empty
+    // state for the transcript, but nothing switchable is added or demoted.
+    let archives_a_version = error.is_none()
+        && (content.map_or(false, |c| !c.trim().is_empty()) || !tool_calls.is_empty());
+    if archives_a_version {
+        // The just-finished answer becomes the active version of this message;
+        // any older active (an earlier regeneration that was itself superseded)
+        // is kept but demoted so exactly one version is "current".
+        sqlx::query(
+            "update chat_message_versions set is_active = 0
+             where message_id = ?1 and is_active = 1",
+        )
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+
+        sqlx::query(
+            "insert into chat_message_versions
+                (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
+             select lower(hex(randomblob(16))), session_id, id, model_id, content, tool_calls,
+                    duration_ms, error, error_details, 1, ?1
+             from chat_messages where id = ?2",
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(message_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
 }
 
@@ -910,6 +1310,22 @@ pub async fn append_context_reset(pool: &SqlitePool, session_id: &str) -> AppRes
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    /// A pool with `pragma foreign_keys` on — the app's production connection
+    /// behaves this way (SQLx turns it on per connection), so version children
+    /// deleting their parent row would otherwise fail with SQLITE_CONSTRAINT.
+    async fn fk_pool() -> SqlitePool {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(":memory:")
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("create sqlite memory pool with FK");
+        migrate(&pool).await.expect("migrate chat schema");
+        pool
+    }
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -1186,6 +1602,139 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_or_empty_finish_archives_no_version() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+
+        // A turn that ends in an error keeps the error on the row for the
+        // transcript, but records nothing to switch back to.
+        let errored = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("model-1"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        finish_assistant_message(
+            &pool,
+            &errored.id,
+            None,
+            &[],
+            Some(3_000),
+            Some("the provider refused"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // A turn that produced nothing (whitespace-only text) is equally not a
+        // switchable answer.
+        let empty = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("model-2"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        finish_assistant_message(&pool, &empty.id, Some("   "), &[], Some(1_000), None, None)
+            .await
+            .unwrap();
+
+        let messages = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|m| m.versions.is_empty()));
+        assert_eq!(messages[0].error.as_deref(), Some("the provider refused"));
+        assert_eq!(messages[0].content.as_deref(), None);
+    }
+
+    #[tokio::test]
+    async fn a_successful_finish_archives_a_version_that_can_be_deleted_individually() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+
+        let reply = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("claude-4"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        finish_assistant_message(&pool, &reply.id, Some("driver OOM"), &[], Some(12), None, None)
+            .await
+            .unwrap();
+
+        let messages = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(messages[0].versions.len(), 1);
+        assert!(messages[0].versions[0].is_active);
+        let version_id = messages[0].versions[0].id.clone();
+
+        // An in-place overwrite drops the superseded version by id.
+        delete_message_version(&pool, &session_id, &version_id).await.unwrap();
+        let messages = list_messages(&pool, &session_id).await.unwrap();
+        assert!(messages[0].versions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn archived_failed_or_empty_versions_are_not_offered_for_switching() {
+        let pool = test_pool().await;
+        let session_id = session(&pool).await;
+        let a = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("model-ok"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        finish_assistant_message(&pool, &a.id, Some("a real answer"), &[], Some(12), None, None)
+            .await
+            .unwrap();
+
+        // Stale version rows that archived a failed or empty attempt — written
+        // before the archive rule, or backfilled from a pre-versioning row — must
+        // not surface as switchable capsules next to the real answer.
+        sqlx::query(
+            "insert into chat_message_versions
+                (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
+             values ('bad-error', ?1, ?2, 'model-9', NULL, NULL, NULL, 'the provider refused', NULL, 0, '2026-08-30T00:00:00Z')",
+        )
+        .bind(&session_id)
+        .bind(&a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "insert into chat_message_versions
+                (id, session_id, message_id, model_id, content, tool_calls, duration_ms, error, error_details, is_active, created_at)
+             values ('bad-empty', ?1, ?2, 'model-9', '   ', NULL, NULL, NULL, NULL, 0, '2026-08-30T00:00:01Z')",
+        )
+        .bind(&session_id)
+        .bind(&a.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let messages = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(messages[0].versions.len(), 1);
+        assert_eq!(messages[0].versions[0].model_id.as_deref(), Some("model-ok"));
+    }
+
+    #[tokio::test]
     async fn sessions_are_listed_by_most_recent_activity() {
         let pool = test_pool().await;
         let assistants = list_assistants(&pool).await.unwrap();
@@ -1326,6 +1875,141 @@ mod tests {
 
         // Deleting what is not there is not an error — the end state matches.
         assert!(delete_session(&pool, "nope").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn foreign_keys_on_delete_clears_version_children_without_constraint() {
+        // The production pool enables `pragma foreign_keys`. Regression for the
+        // @-regenerate flow: when the old assistant reply — which still has
+        // version rows pointing at it — is discarded, deleting the parent row
+        // must succeed (no SQLITE_CONSTRAINT_FOREIGNKEY) and the now-orphaned
+        // version children must be sweepable.
+        let pool = fk_pool().await;
+        let session_id = session(&pool).await;
+        let q = append_message(
+            &pool,
+            &session_id,
+            ChatRole::User,
+            NewMessage::text("why?"),
+        )
+        .await
+        .unwrap();
+        let a = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("claude-4"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // A real finish writes the active version row, mirroring the message.
+        finish_assistant_message(&pool, &a.id, Some("driver OOM"), &[], Some(12), None, None)
+            .await
+            .unwrap();
+
+        delete_messages_from(&pool, &session_id, q.seq + 1).await.unwrap();
+        let remaining = list_messages(&pool, &session_id).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].content.as_deref(), Some("why?"));
+
+        // The version row now points at a deleted message; the orphan sweep
+        // removes it rather than leaving it to break a later FK write.
+        purge_orphan_message_versions(&pool, &session_id).await.unwrap();
+        let items: i64 = sqlx::query("select count(*) from chat_message_versions")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(items, 0);
+    }
+
+    #[tokio::test]
+    async fn migrate_rebuilds_a_legacy_version_table_that_still_has_a_foreign_key() {
+        // A database created by the release that declared `references
+        // chat_messages(id)` keeps that FK — `create table if not exists` never
+        // touches an existing table, so changing the DDL above does not heal it.
+        // migrate() must detect the leftover constraint and rebuild the table
+        // without it, preserving rows. Otherwise the next regenerate on an
+        // FK-enabled connection fails with SQLITE_CONSTRAINT_FOREIGNKEY the
+        // moment it discards a reply that still has version rows.
+        let pool = fk_pool().await;
+        let session_id = session(&pool).await;
+
+        // Roll the version table back to the legacy schema, as a pre-fix install
+        // would have it. Dropping the fresh table also drops its index.
+        sqlx::query("drop table chat_message_versions")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "create table chat_message_versions (
+                id text primary key,
+                session_id text not null,
+                message_id text not null references chat_messages(id),
+                model_id text,
+                content text,
+                tool_calls text,
+                duration_ms integer,
+                error text,
+                error_details text,
+                is_active integer not null default 0,
+                created_at text not null
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("create index idx_chat_message_versions_message on chat_message_versions(message_id)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let q = append_message(&pool, &session_id, ChatRole::User, NewMessage::text("why?"))
+            .await
+            .unwrap();
+        let a = append_message(
+            &pool,
+            &session_id,
+            ChatRole::Assistant,
+            NewMessage {
+                model_id: Some("claude-4"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        finish_assistant_message(&pool, &a.id, Some("driver OOM"), &[], Some(12), None, None)
+            .await
+            .unwrap();
+
+        // Running migrate again heals the schema: the FK is gone and the version
+        // row survived the rebuild (and so is skipped by the backfill).
+        migrate(&pool).await.expect("migrate rebuilds the legacy table");
+        let schema: String = sqlx::query(
+            "select sql from sqlite_master
+             where type = 'table' and name = 'chat_message_versions'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get(0);
+        assert!(!schema.contains("references"), "{schema}");
+        let versions: i64 = sqlx::query("select count(*) from chat_message_versions")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(versions, 1);
+
+        // The proof that matters: discarding the assistant reply (regenerate) no
+        // longer trips SQLITE_CONSTRAINT_FOREIGNKEY while its version row points
+        // at it.
+        delete_messages_from(&pool, &session_id, q.seq + 1)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

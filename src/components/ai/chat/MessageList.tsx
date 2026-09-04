@@ -41,7 +41,8 @@ export function MessageList({
   onConfigureProvider,
   onDelete,
   onRegenerate,
-  onRegenerateWithModel
+  onRegenerateWithModel,
+  onSwitchVersion
 }: {
   sessionId: string | null;
   messages: ChatMessage[];
@@ -49,6 +50,7 @@ export function MessageList({
   streaming: StreamingTurn | null;
   isLoading: boolean;
   emptyHint: React.ReactNode;
+  /** The models the "@" answer action offers. */
   modelOptions: ModelActionOption[];
   /** The user message being edited through the composer, dimmed in the transcript. */
   editingMessageId: string | null;
@@ -59,6 +61,7 @@ export function MessageList({
   onDelete: (message: ChatMessage) => void;
   onRegenerate: (message: ChatMessage) => void;
   onRegenerateWithModel: (message: ChatMessage, modelId: string) => void;
+  onSwitchVersion: (message: ChatMessage, versionId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const assistantName = assistant?.name ?? "Assistant";
@@ -117,6 +120,7 @@ export function MessageList({
                   key={message.id}
                   text={message.content ?? ""}
                   dimmed={editingMessageId === message.id}
+                  createdAt={message.createdAt}
                   onCopy={() => onCopy(message)}
                   onEdit={() => onEdit(message)}
                   onDelete={() => onDelete(message)}
@@ -135,6 +139,7 @@ export function MessageList({
                   durationMs={message.durationMs}
                   error={message.error}
                   errorDetails={message.errorDetails}
+                  versions={message.versions ?? []}
                   modelOptions={modelOptions}
                   createdAt={message.createdAt}
                   // The settings link opens the provider of the conversation's
@@ -144,6 +149,7 @@ export function MessageList({
                   onCopy={() => onCopy(message)}
                   onRegenerate={() => onRegenerate(message)}
                   onRegenerateWithModel={(modelId) => onRegenerateWithModel(message, modelId)}
+                  onSwitchVersion={(versionId) => onSwitchVersion(message, versionId)}
                   onDelete={() => onDelete(message)}
                 />
               );
@@ -162,10 +168,12 @@ export function MessageList({
               errorDetails={streaming.errorDetails ?? null}
               streaming
               startedAt={streaming.startedAt}
+              versions={[]}
               modelOptions={modelOptions}
               onCopy={() => {}}
               onRegenerate={() => {}}
               onRegenerateWithModel={() => {}}
+              onSwitchVersion={() => {}}
               onDelete={() => {}}
             />
           )}

@@ -232,6 +232,20 @@ export function useChatConversation(sessionId: string | null) {
   // Each mutation re-runs the send plumbing afterwards so the stream events
   // update the transcript the same way an ordinary send does. The persisted rows
   // are invalidated on completion.
+  /**
+   * Switches which recorded answer of a message is displayed. No model call —
+   * the backend copies that version's columns onto the row, so the transcript
+   * and the next request's context both change at once.
+   */
+  const switchVersion = useCallback(
+    async (messageId: string, versionId: string) => {
+      if (!sessionId) return;
+      await tauriClient.setChatMessageVersion(sessionId, messageId, versionId);
+      void queryClient.invalidateQueries({ queryKey: chatMessagesKey(sessionId) });
+    },
+    [queryClient, sessionId]
+  );
+
   const deleteMessage = useCallback(
     async (messageId: string) => {
       if (!sessionId) return;
@@ -340,6 +354,7 @@ export function useChatConversation(sessionId: string | null) {
       deleteMessage,
       deleteFrom,
       regenerate,
+      switchVersion,
       edit,
       clearContext
     }),
@@ -353,6 +368,7 @@ export function useChatConversation(sessionId: string | null) {
       deleteMessage,
       deleteFrom,
       regenerate,
+      switchVersion,
       edit,
       clearContext
     ]

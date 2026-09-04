@@ -16,14 +16,10 @@ import { ErrorDetails } from "@/components/ai/chat/ErrorDetails";
 import { Markdown } from "@/components/ai/chat/Markdown";
 import { ToolCallStep, type ToolStep } from "@/components/ai/chat/ToolCallStep";
 import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { ChatErrorDetails } from "@/types/domain";
+import type { ChatErrorDetails, ChatMessageVersionSummary } from "@/types/domain";
 
 /** Tailwind classes per assistant accent, so avatars are distinguishable. */
 const ACCENTS: Record<string, string> = {
@@ -45,7 +41,11 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** A model option offered in the assistant's switch-model submenu. */
+/**
+ * One model the "@" menu offers: a currently-configured, chat-capable model the
+ * user can answer this message with. `id` is the LlmModel row id regeneration
+ * resolves; `modelId` is the API-facing name shown in the menu.
+ */
 export type ModelActionOption = {
   id: string;
   modelId: string;
@@ -55,6 +55,7 @@ export type ModelActionOption = {
 export function UserMessage({
   text,
   dimmed = false,
+  createdAt,
   onCopy,
   onEdit,
   onDelete
@@ -62,6 +63,8 @@ export function UserMessage({
   text: string;
   /** Grey the message out while it is being edited through the composer. */
   dimmed?: boolean;
+  /** When the message was sent; shown on hover as MM/dd HH:mm. */
+  createdAt?: string | null;
   onCopy: () => void;
   onEdit: (text: string) => void;
   onDelete: () => void;
@@ -77,7 +80,16 @@ export function UserMessage({
         <User className="size-4 text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-xs font-medium text-muted-foreground">You</p>
+        <div className="flex items-center gap-2 text-xs">
+          <p className="font-medium text-muted-foreground">You</p>
+          {/* The send time appears next to the name while the mouse is over this
+              message, and disappears when it leaves. */}
+          {hovered && createdAt && (
+            <span className="text-muted-foreground/60">
+              {formatDate(new Date(createdAt), "MM/dd HH:mm")}
+            </span>
+          )}
+        </div>
         {/* Preserve the user's own line breaks. */}
         <p className="whitespace-pre-wrap break-words text-sm">{text}</p>
         <ActionRow visible={hovered}>
@@ -115,12 +127,14 @@ export function AssistantMessage({
   errorDetails,
   streaming,
   startedAt,
+  versions,
   modelOptions,
   createdAt,
   onConfigureProvider,
   onCopy,
   onRegenerate,
   onRegenerateWithModel,
+  onSwitchVersion,
   onDelete
 }: {
   assistantName: string;
@@ -135,21 +149,31 @@ export function AssistantMessage({
   streaming?: boolean;
   /** When the streaming turn began (ms epoch); drives the live elapsed clock. */
   startedAt?: number | null;
+  /**
+   * Every answer recorded for this message. When there are several, the numbered
+   * capsule bar lets the user switch which one is shown; clicking a capsule swaps
+   * the displayed version immediately (the row's content mirrors it afterwards).
+   */
+  versions: ChatMessageVersionSummary[];
+  /** Models the "@" action offers — the conversation's currently-configured chat models. */
   modelOptions: ModelActionOption[];
   /** When the reply was sent; the header tooltip shows this as MM/DD HH:mm. */
   createdAt?: string | null;
   /** Open LLM Setting for this reply's provider, when one can be resolved. */
   onConfigureProvider?: () => void;
   onCopy: () => void;
+  /** Re-answer on the currently displayed version's model, appending a new version. */
   onRegenerate: () => void;
+  /** Re-answer on a picked model, appending a new version (the "@" action). */
   onRegenerateWithModel: (modelId: string) => void;
+  /** Show a different recorded version of this answer. */
+  onSwitchVersion: (versionId: string) => void;
   onDelete: () => void;
 }) {
   const hasBody = Boolean(text) || toolSteps.length > 0 || Boolean(error);
   const [hovered, setHovered] = useState(false);
-  // The model list is portaled outside the message, so hovering it no longer
-  // counts as hovering the message; keep the row up while it is open.
-  const [modelListOpen, setModelListOpen] = useState(false);
+  // The "@" action: which configured model to re-answer on.
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
   const clock = useLiveClock(Boolean(streaming && startedAt != null));
   const elapsedMs =
@@ -159,6 +183,13 @@ export function AssistantMessage({
     : text
       ? "Generating…"
       : "Waiting for model…";
+
+  // Regenerate always re-answers on the version currently shown. Picking a model
+  // in the "@" menu regenerates immediately on that model — either way a fresh
+  // version is appended and the old ones stay switchable. Once a message has been
+  // re-answered at all (two or more versions), the capsules ride along with the
+  // action row so switching versions needs no trip through the "@" model menu.
+  const multipleVersions = versions.length > 1;
 
   return (
     <div
@@ -233,7 +264,9 @@ export function AssistantMessage({
 
         {!hasBody && !streaming && <p className="text-xs text-muted-foreground">No response.</p>}
 
-        <ActionRow visible={hovered || modelListOpen}>
+        {/* The action row is kept mounted while a version capsule is hovered, so
+            moving between the icons and the capsules does not hide the actions. */}
+        <ActionRow visible={hovered || modelMenuOpen}>
           <ActionIcon label="Copy" onClick={onCopy}>
             <Copy className="size-3.5" />
           </ActionIcon>
@@ -244,19 +277,152 @@ export function AssistantMessage({
               <ActionIcon label="Regenerate" onClick={onRegenerate}>
                 <RefreshCw className="size-3.5" />
               </ActionIcon>
-              <SwitchModelIcon
-                modelOptions={modelOptions}
+              <ModelMenu
+                options={modelOptions}
+                open={modelMenuOpen}
+                onOpenChange={setModelMenuOpen}
                 onPick={onRegenerateWithModel}
-                onOpenChange={setModelListOpen}
               />
             </>
           )}
           <ActionIcon label="Delete" destructive onClick={onDelete}>
             <Trash2 className="size-3.5" />
           </ActionIcon>
+          {/* A regenerated message (two or more versions) shows the version
+              capsules whenever the action row is up — no need to open the "@"
+              model menu first. They sit right after the tool buttons, so they
+              read as "which of this message's answers is shown". Clicking a
+              capsule switches it immediately and persists. */}
+          {!streaming && multipleVersions && (
+            <VersionCapsuleBar versions={versions} onSwitch={onSwitchVersion} />
+          )}
         </ActionRow>
       </div>
     </div>
+  );
+}
+
+/**
+ * The "@" action: opens the list of models this conversation can be answered
+ * with. Picking one immediately regenerates the message on that model — a fresh
+ * version that joins (not replaces) the existing ones.
+ */
+function ModelMenu({
+  options,
+  open,
+  onOpenChange,
+  onPick
+}: {
+  options: ModelActionOption[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (modelId: string) => void;
+}) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Answer with another model"
+          className={cn(
+            "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
+            open && "bg-muted text-foreground",
+            options.length === 0 && "pointer-events-none opacity-50"
+          )}
+        >
+          <AtSign className="size-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="max-h-72 w-64 overflow-y-auto p-1">
+        <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          Answer with…
+        </p>
+        {options.length === 0 ? (
+          <p className="px-2 py-1 text-xs text-muted-foreground">
+            No other model is configured.
+          </p>
+        ) : (
+          options.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                onPick(option.modelId);
+              }}
+              className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+            >
+              <span className="font-mono truncate">{option.modelId}</span>
+              <span className="shrink-0 text-muted-foreground">{option.providerName}</span>
+            </button>
+          ))
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * The version switch for a message that has been regenerated: each recorded
+ * answer is one numbered button (1, 2, … in the order it was produced), and the
+ * whole set is drawn inside a single bordered pill so the attempts read as one
+ * switchable group. Clicking a capsule switches the message to that version
+ * immediately and persists the choice.
+ */
+function VersionCapsuleBar({
+  versions,
+  onSwitch
+}: {
+  versions: ChatMessageVersionSummary[];
+  onSwitch: (versionId: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Answer versions"
+      className="flex items-center gap-0.5 rounded-full border border-border bg-background/60 p-0.5"
+    >
+      {versions.map((version, index) => (
+        <VersionCapsule
+          key={version.id}
+          number={index + 1}
+          active={version.isActive}
+          onSwitch={() => onSwitch(version.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One version in the switch group: a pure number (1, 2, …). The one currently
+ * shown is highlighted; clicking another switches the displayed version. The
+ * producing model is shown in the message header, not repeated per capsule.
+ */
+function VersionCapsule({
+  number,
+  active,
+  onSwitch
+}: {
+  number: number;
+  active: boolean;
+  onSwitch: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSwitch}
+      aria-label={active ? `Showing version ${number}` : `Show version ${number}`}
+      aria-pressed={active}
+      className={cn(
+        "flex h-5 min-w-6 items-center justify-center rounded-full px-1.5 text-[10px] transition-colors",
+        active
+          ? "bg-foreground/10 font-medium text-foreground"
+          : "text-muted-foreground/70 hover:text-muted-foreground"
+      )}
+    >
+      <span className="tabular-nums">{number}</span>
+    </button>
   );
 }
 
@@ -306,74 +472,6 @@ function ActionIcon({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
-  );
-}
-
-/**
- * The "@" switch-model action: regenerate the reply on a different model. Clicking
- * it opens the model list; picking one regenerates with that model. The glyph
- * distinguishes it from the plain "Regenerate" arrow next to it.
- *
- * `onOpenChange` is reported upwards because the list is portaled outside the
- * message: without it, moving the mouse onto the list would count as leaving the
- * message and unmount the row — taking the list with it before a model could be
- * picked.
- */
-function SwitchModelIcon({
-  modelOptions,
-  onPick,
-  onOpenChange
-}: {
-  modelOptions: ModelActionOption[];
-  onPick: (modelId: string) => void;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  const change = (next: boolean) => {
-    setOpen(next);
-    onOpenChange(next);
-  };
-
-  return (
-    <Popover open={open} onOpenChange={change}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Regenerate with a different model"
-          className={cn(
-            "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
-            modelOptions.length === 0 && "pointer-events-none opacity-50"
-          )}
-        >
-          <AtSign className="size-4" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto min-w-48 p-1">
-        <p className="px-2 py-1 text-xs font-medium text-muted-foreground">Switch model</p>
-        {modelOptions.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-muted-foreground">
-            No models configured. Open LLM Setting to add one.
-          </p>
-        ) : (
-          <div className="max-h-64 overflow-y-auto">
-            {modelOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => {
-                  change(false);
-                  onPick(option.id);
-                }}
-                className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-left text-sm hover:bg-accent"
-              >
-                <span className="truncate font-mono text-xs">{option.modelId}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
   );
 }
 

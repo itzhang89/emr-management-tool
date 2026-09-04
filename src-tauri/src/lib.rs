@@ -155,6 +155,7 @@ pub fn run() {
             commands::chat::delete_chat_message,
             commands::chat::delete_chat_messages_from,
             commands::chat::regenerate_chat_message,
+            commands::chat::set_chat_message_version,
             commands::chat::update_chat_message,
         ]);
 

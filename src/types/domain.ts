@@ -904,6 +904,23 @@ export interface ChatMessage {
   /** Structured diagnostics behind the error line, when the backend captured them. */
   errorDetails?: ChatErrorDetails | null;
   createdAt: string;
+  /**
+   * Every answer recorded for this assistant message, oldest first. Non-empty
+   * only on assistant messages returned by `list_chat_messages`. Capsules in the
+   * action row are built from this list; the message's own `modelId`/`content`
+   * mirror whichever entry has `isActive`.
+   */
+  versions?: ChatMessageVersionSummary[];
+}
+
+/** One past answer for an assistant message, shown as a switchable capsule. */
+export interface ChatMessageVersionSummary {
+  id: string;
+  /** Which model produced this version (API-facing id). */
+  modelId?: string | null;
+  /** Whether this is the version currently displayed. */
+  isActive: boolean;
+  createdAt: string;
 }
 
 export interface CreateChatAssistantRequest {

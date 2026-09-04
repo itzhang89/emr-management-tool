@@ -1463,6 +1463,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_model_picks_an_override_model_by_row_id() {
+        let pool = empty_pool().await;
+        let provider_id = create_provider(&pool, "gemini", LlmProtocol::Gemini).await.unwrap();
+        // One default + one explicit model, so the override has something to
+        // out-rank.
+        add_models(
+            &pool,
+            &provider_id,
+            &[model("gemini-3.5-flash"), model("gemini-4-flash")],
+        )
+        .await
+        .unwrap();
+        update_model(
+            &pool,
+            &list_providers(&pool).await.unwrap()[0].models[0].id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let row_id = list_providers(&pool).await.unwrap()[0].models[1].id.clone();
+        update_provider(
+            &pool,
+            &provider_id,
+            None,
+            None,
+            Some("https://gemini.example"),
+            Some(true),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Chat's own tables are separate; seed them so a session exists.
+        crate::db::chat::migrate(&pool).await.unwrap();
+        let assistants = crate::db::chat::list_assistants(&pool).await.unwrap();
+        let session_id = crate::db::chat::create_session(&pool, &assistants[0].id, None, None)
+            .await
+            .unwrap();
+
+        // The row id names the non-default model directly.
+        let resolved =
+            crate::chat::session::resolve_model(&pool, &session_id, Some(&row_id)).await.unwrap();
+        assert_eq!(resolved.model_id, "gemini-4-flash");
+        assert_eq!(resolved.provider_id, provider_id);
+    }
+
+    #[tokio::test]
     async fn deleting_a_provider_reports_every_orphaned_secret() {
         let pool = empty_pool().await;
         let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
