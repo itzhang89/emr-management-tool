@@ -1,6 +1,41 @@
 use aws_smithy_types::error::metadata::ProvideErrorMetadata;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Structured context for a failed provider request, kept so the Chat transcript
+/// can show *why* a call failed — the URL, HTTP status, response body, and so on —
+/// instead of a bare sentence.
+///
+/// `request_body` holds what the app sent (it never contains the API key, which
+/// travels in a header), and `response_body` holds what the provider returned.
+/// Both are capped to a few KB when captured so a large log-ish body cannot bloat
+/// the stored row.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorDetails {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// HTTP method, e.g. "POST".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<String>,
+    /// The provider's own reported reason, when it gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// "http" | "stream" | "transport" | "resolve"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// The innermost cause for transport/resolve failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stack: Option<String>,
+}
 
 #[derive(Debug, Clone, Error, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +48,10 @@ pub struct AppError {
     pub request_id: Option<Box<str>>,
     pub retryable: bool,
     pub account_id: Option<Box<str>>,
+    /// Optional structured diagnostics (e.g. a failed LLM request). AWS and other
+    /// callers leave it `None`, so it never changes their payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ErrorDetails>,
 }
 
 impl AppError {
@@ -25,6 +64,7 @@ impl AppError {
             request_id: None,
             retryable: false,
             account_id: None,
+            details: None,
         }
     }
 
@@ -83,6 +123,7 @@ impl AppError {
             request_id,
             retryable,
             account_id: account_id.map(Into::into),
+            details: None,
         }
     }
 
@@ -95,6 +136,7 @@ impl AppError {
             request_id: None,
             retryable: false,
             account_id: None,
+            details: None,
         }
     }
 
@@ -107,6 +149,7 @@ impl AppError {
             request_id: None,
             retryable: false,
             account_id: None,
+            details: None,
         }
     }
 
@@ -119,8 +162,44 @@ impl AppError {
             request_id: None,
             retryable: false,
             account_id: None,
+            details: None,
         }
     }
+}
+
+impl AppError {
+    /// Attaches structured diagnostics, e.g. the failed request for an LLM call.
+    pub fn with_details(mut self, details: ErrorDetails) -> Self {
+        self.details = Some(details);
+        self
+    }
+}
+
+/// Keeps a captured body bounded: `None` for empty input, truncated past `cap`
+/// with a marker so the transcript does not say something ended that did not.
+pub fn capped(text: &str, cap: usize) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= cap {
+        return Some(trimmed.to_string());
+    }
+    let mut truncated: String = trimmed.chars().take(cap).collect();
+    truncated.push_str("… [truncated]");
+    Some(truncated)
+}
+
+/// The chain of `source()` causes for an error, joined by " → ". For a reqwest
+/// failure this reaches the DNS/TLS/refused-connection root the wrapper restates.
+pub fn source_chain(error: &dyn std::error::Error) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Option<&dyn std::error::Error> = Some(error);
+    while let Some(cause) = current {
+        parts.push(cause.to_string());
+        current = cause.source();
+    }
+    parts.join(" → ")
 }
 
 fn humanize_aws_error(

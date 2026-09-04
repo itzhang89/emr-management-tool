@@ -4,7 +4,9 @@
 //! resident for the app's lifetime: `McpTools` served on one half, an rmcp
 //! client on the other. No port, no configuration, no "start the server first"
 //! step — the Chat page works even with the Streamable HTTP endpoint switched
-//! off. Both paths see the same tools and write to the same audit table.
+//! off. Both transports see the same tools; the Chat loop audits its own calls
+//! (with the driving provider/model) rather than having the server write them,
+//! so the server is constructed here with auditing off.
 
 use rmcp::{
     model::Tool,
@@ -82,7 +84,10 @@ async fn connect_server_and_client(app: tauri::AppHandle) -> Result<ConnectedCli
     let (server_side, client_side) = tokio::io::duplex(64 * 1024);
 
     let server_task = tokio::spawn(async move {
-        let tools = McpTools::new(app);
+        // The in-process transport audits nothing itself: the Chat loop records
+        // every call with the provider/model that drove it, so enabling the
+        // server's own audit here would double-write.
+        let tools = McpTools::for_in_process(app);
         let running = tools
             .serve(server_side)
             .await
@@ -120,6 +125,7 @@ mod tests {
             // uses it inside tool calls, which the handshake does not make.
             let tools = McpTools {
                 data_source: AppJobDataSource::new_unavailable_for_test(),
+                audit_enabled: false,
             };
             let running = tools.serve(server_side).await.expect("serve server");
             let _ = running.waiting().await;

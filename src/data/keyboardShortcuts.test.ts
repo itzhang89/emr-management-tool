@@ -43,6 +43,14 @@ describe("keyboardShortcuts registry", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_FIND)).toMatch(/F/i);
   });
 
+  it("exposes the chat clear-context shortcut under the ai category", () => {
+    expect(getShortcutPrimaryKey(SHORTCUT_IDS.CHAT_CLEAR_CONTEXT)).toMatch(/K/i);
+
+    const clearContext = keyboardShortcuts.find((s) => s.id === SHORTCUT_IDS.CHAT_CLEAR_CONTEXT);
+    expect(clearContext?.category).toBe("ai");
+    expect(clearContext?.description.toLowerCase()).toMatch(/history visible/);
+  });
+
   it("exposes S3 editor find shortcuts", () => {
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_FIND)).toMatch(/F/i);
     expect(getShortcutPrimaryKey(SHORTCUT_IDS.S3_REPLACE)).toMatch(/R/i);

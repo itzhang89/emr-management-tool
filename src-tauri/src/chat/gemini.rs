@@ -1,0 +1,1187 @@
+//! Gemini-shaped `generateContent` over SSE.
+//!
+//! A third module rather than a branch in `openai.rs`, because the differences
+//! are larger than the ones between the other two shapes: roles are
+//! `user`/`model`, history is `contents[].parts[]`, tool calls carry no id at
+//! all, the system prompt is a `systemInstruction` object, and each SSE frame is
+//! a complete response rather than a delta envelope.
+//!
+//! The request builder and the frame folder are pure functions so they can be
+//! tested without a network; only `stream_response` touches HTTP.
+
+use super::protocol::{StreamErrorPayload, StreamEvent, ToolDefinition, Turn, Usage};
+use crate::error::{AppError, AppResult};
+use serde_json::json;
+use std::collections::BTreeMap;
+
+pub fn build_request(
+    system_prompt: Option<&str>,
+    tools: &[ToolDefinition],
+    history: &[Turn],
+) -> serde_json::Value {
+    let mut contents: Vec<serde_json::Value> = Vec::new();
+    for turn in history {
+        append_turn(&mut contents, turn);
+    }
+
+    let mut body = json!({ "contents": contents });
+    // Not a message in the list — a sibling of it.
+    if let Some(system_prompt) = system_prompt.filter(|text| !text.trim().is_empty()) {
+        body["systemInstruction"] = json!({ "parts": [{ "text": system_prompt }] });
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!([{
+            "functionDeclarations": tools
+                .iter()
+                .map(|tool| json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": to_gemini_schema(&tool.input_schema),
+                }))
+                .collect::<Vec<_>>(),
+        }]);
+    }
+    body
+}
+
+/// Converts a JSON Schema into the subset Gemini's `Schema` proto accepts.
+///
+/// This is a translation, not a filter. The API rejects unknown fields with a 400
+/// instead of ignoring them, and its `Schema` is a protobuf message, so several
+/// things JSON Schema allows are not merely redundant here but ill-typed:
+///
+/// - `"type": ["integer", "null"]` — what `schemars` emits for `Option<T>` — is a
+///   list where the proto has a single enum, which fails as *"Proto field is not
+///   repeating, cannot start list"*. The null member becomes `nullable: true` and
+///   the real type is kept.
+/// - `$schema`, `default`, `minimum`, `additionalProperties`, `$defs` and friends
+///   have no counterpart at all.
+/// - `format` is an open string in JSON Schema but an enum per type here, so only
+///   the values the proto names survive (`uint`, which `schemars` emits for
+///   `usize`, is not one of them).
+///
+/// Hence a whitelist: anything not known to round-trip is dropped, because a
+/// dropped constraint costs a little validation while an unknown field costs the
+/// whole request.
+fn to_gemini_schema(schema: &serde_json::Value) -> serde_json::Value {
+    /// Fields the proto accepts and that carry over unchanged in meaning.
+    const PASSTHROUGH: [&str; 6] = [
+        "description",
+        "enum",
+        "maxItems",
+        "minItems",
+        "nullable",
+        "title",
+    ];
+    /// `format` values the proto names, by the type they belong to.
+    const FORMATS: [&str; 5] = ["date-time", "double", "float", "int32", "int64"];
+
+    let serde_json::Value::Object(fields) = schema else {
+        // A boolean schema (`true`/`false`) has no proto equivalent; the loosest
+        // honest translation is "some object".
+        return json!({ "type": "object" });
+    };
+
+    let mut out = serde_json::Map::new();
+
+    if let Some((type_name, nullable)) = normalise_type(fields.get("type")) {
+        out.insert("type".to_string(), json!(type_name));
+        if nullable {
+            out.insert("nullable".to_string(), json!(true));
+        }
+    }
+
+    for key in PASSTHROUGH {
+        if let Some(value) = fields.get(key) {
+            // An explicit `nullable` must not undo one derived from the type list.
+            if key == "nullable" && out.contains_key("nullable") {
+                continue;
+            }
+            out.insert(key.to_string(), value.clone());
+        }
+    }
+
+    if let Some(format) = fields.get("format").and_then(|value| value.as_str()) {
+        if FORMATS.contains(&format) {
+            out.insert("format".to_string(), json!(format));
+        }
+    }
+
+    if let Some(serde_json::Value::Object(properties)) = fields.get("properties") {
+        let converted: serde_json::Map<String, serde_json::Value> = properties
+            .iter()
+            .map(|(name, value)| (name.clone(), to_gemini_schema(value)))
+            .collect();
+        out.insert("properties".to_string(), serde_json::Value::Object(converted));
+        // An object schema with properties but no declared type still has to say
+        // it is an object.
+        out.entry("type").or_insert_with(|| json!("object"));
+    }
+
+    if let Some(items) = fields.get("items") {
+        out.insert("items".to_string(), to_gemini_schema(items));
+        out.entry("type").or_insert_with(|| json!("array"));
+    }
+
+    // Only names that survived as properties may be required, or the API rejects
+    // the reference.
+    if let Some(required) = fields.get("required").and_then(|value| value.as_array()) {
+        let known: Vec<serde_json::Value> = required
+            .iter()
+            .filter(|name| {
+                name.as_str().is_some_and(|name| {
+                    out.get("properties")
+                        .and_then(|properties| properties.get(name))
+                        .is_some()
+                })
+            })
+            .cloned()
+            .collect();
+        if !known.is_empty() {
+            out.insert("required".to_string(), serde_json::Value::Array(known));
+        }
+    }
+
+    // A schema that named nothing usable still has to be a valid `Schema`.
+    if out.is_empty() {
+        return json!({ "type": "object" });
+    }
+    serde_json::Value::Object(out)
+}
+
+/// Resolves a JSON Schema `type` into the proto's single type plus nullability.
+///
+/// `["integer", "null"]` is how `schemars` writes `Option<T>`, and it is the shape
+/// that provoked the 400 this function exists to prevent.
+fn normalise_type(value: Option<&serde_json::Value>) -> Option<(String, bool)> {
+    match value? {
+        serde_json::Value::String(name) => {
+            // A bare "null" type carries no information the proto can express.
+            (name != "null").then(|| (name.clone(), false))
+        }
+        serde_json::Value::Array(names) => {
+            let mut nullable = false;
+            let mut resolved: Option<String> = None;
+            for name in names.iter().filter_map(|name| name.as_str()) {
+                if name == "null" {
+                    nullable = true;
+                } else if resolved.is_none() {
+                    // Genuine unions ("string" or "number") are not expressible;
+                    // the first member is the closest single type.
+                    resolved = Some(name.to_string());
+                }
+            }
+            resolved.map(|name| (name, nullable))
+        }
+        _ => None,
+    }
+}
+
+fn append_turn(contents: &mut Vec<serde_json::Value>, turn: &Turn) {
+    match turn {
+        Turn::User { text } => {
+            contents.push(json!({ "role": "user", "parts": [{ "text": text }] }));
+        }
+        Turn::Assistant { text, tool_calls } => {
+            let mut parts: Vec<serde_json::Value> = Vec::new();
+            if let Some(text) = text.as_deref().filter(|text| !text.is_empty()) {
+                parts.push(json!({ "text": text }));
+            }
+            for call in tool_calls {
+                // No id field exists here: a call is identified by its name.
+                let mut part = json!({
+                    "functionCall": { "name": call.tool, "args": call.args },
+                });
+                // Echoed back verbatim, as a *sibling* of `functionCall`: the
+                // signature is a field of `Part`, and `FunctionCall` itself rejects
+                // it ("Unknown name thoughtSignature at …function_call").
+                //
+                // Per call, not per turn: Gemini 3 refuses a request whose first
+                // call of a step lost its signature, and copying one onto a call
+                // that never had it is equally wrong.
+                if let Some(signature) = &call.signature {
+                    part["thoughtSignature"] = json!(signature);
+                }
+                parts.push(part);
+            }
+            // The assistant role is called "model".
+            if !parts.is_empty() {
+                contents.push(json!({ "role": "model", "parts": parts }));
+            }
+        }
+        Turn::ToolResult {
+            tool,
+            content,
+            is_error,
+            ..
+        } => {
+            // A result is a user-role part naming the function it answers. The
+            // response must be an object, so free text is wrapped — and a failure
+            // is labelled rather than hidden, so the model can retry differently.
+            let response = if *is_error {
+                json!({ "error": content })
+            } else {
+                json!({ "result": content })
+            };
+            let part = json!({ "functionResponse": { "name": tool, "response": response } });
+
+            // Results for one step belong in a single user content, alongside each
+            // other. The caller hands them over one at a time, and emitting a
+            // content per result would interleave the round as
+            // `[FC1, FC2] [FR1] [FR2]` — the API wants `[FC1, FC2] [FR1, FR2]`.
+            if let Some(previous) = contents.last_mut().filter(|content| is_results(content)) {
+                previous["parts"]
+                    .as_array_mut()
+                    .expect("a results content always has a parts array")
+                    .push(part);
+                return;
+            }
+            contents.push(json!({ "role": "user", "parts": [part] }));
+        }
+    }
+}
+
+/// Whether a content is a user turn holding nothing but function results, and so
+/// can absorb one more.
+fn is_results(content: &serde_json::Value) -> bool {
+    content.get("role").and_then(|role| role.as_str()) == Some("user")
+        && content
+            .get("parts")
+            .and_then(|parts| parts.as_array())
+            .is_some_and(|parts| {
+                !parts.is_empty() && parts.iter().all(|part| part.get("functionResponse").is_some())
+            })
+}
+
+/// Reads a thought signature, accepting either spelling.
+///
+/// REST answers in camelCase, but the proto field is `thought_signature` and some
+/// gateways pass the snake_case name straight through. Reading both costs one
+/// lookup; guessing wrong costs every tool call after the first.
+fn thought_signature(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("thoughtSignature")
+        .or_else(|| value.get("thought_signature"))
+        .and_then(|signature| signature.as_str())
+        .filter(|signature| !signature.is_empty())
+        .map(ToString::to_string)
+}
+
+/// Folds SSE frames into provider-neutral stream events.
+///
+/// Unlike the other two shapes there is nothing to accumulate: every frame is a
+/// whole `GenerateContentResponse`, so a `functionCall` part arrives with its
+/// arguments already complete.
+#[derive(Debug, Default)]
+pub struct StreamFolder {
+    usage: Usage,
+    finished: bool,
+    /// A mid-stream error envelope, if the provider sent one (HTTP was 200).
+    stream_error: Option<StreamErrorPayload>,
+}
+
+impl StreamFolder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn usage(&self) -> Usage {
+        self.usage
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.finished
+    }
+
+    /// Takes a mid-stream error envelope so `stream_response` can lift it into an
+    /// `AppError` with the request context the folder does not hold.
+    pub fn take_error(&mut self) -> Option<StreamErrorPayload> {
+        self.stream_error.take()
+    }
+
+    /// Handles one frame's payload.
+    pub fn push_payload(&mut self, payload: &str) -> Vec<StreamEvent> {
+        let Ok(data) = serde_json::from_str::<serde_json::Value>(payload) else {
+            return Vec::new();
+        };
+
+        // An in-stream error arrives as a body rather than an HTTP status, so it
+        // must not be silently swallowed: record it for `stream_response` to turn
+        // into a real failure.
+        if let Some(error) = data.get("error") {
+            self.stream_error = Some(StreamErrorPayload {
+                message: error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(|message| message.chars().take(300).collect())
+                    .unwrap_or_else(|| "the provider reported a streaming error".to_string()),
+                error_code: error
+                    .get("code")
+                    .and_then(|code| code.as_i64())
+                    .map(|code| code.to_string())
+                    .or_else(|| {
+                        error
+                            .get("status")
+                            .and_then(|status| status.as_str())
+                            .map(ToString::to_string)
+                    }),
+                error_kind: Some("stream".to_string()),
+                raw: Some(error.clone()),
+            });
+            self.finished = true;
+            return Vec::new();
+        }
+
+        self.capture_usage(data.get("usageMetadata"));
+
+        let mut events = Vec::new();
+        let candidate = data
+            .get("candidates")
+            .and_then(|candidates| candidates.as_array())
+            .and_then(|candidates| candidates.first());
+
+        if let Some(parts) = candidate
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+        {
+            for part in parts {
+                if let Some(text) = part
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .filter(|text| !text.is_empty())
+                {
+                    events.push(StreamEvent::TextDelta(text.to_string()));
+                }
+                if let Some(call) = part.get("functionCall") {
+                    if let Some(name) = call.get("name").and_then(|name| name.as_str()) {
+                        events.push(StreamEvent::ToolCall {
+                            // The wire format has no id, but the rest of the app
+                            // correlates results by one, so it is minted here.
+                            call_id: uuid::Uuid::new_v4().to_string(),
+                            tool: name.to_string(),
+                            arguments: call
+                                .get("args")
+                                .map(|args| args.to_string())
+                                .unwrap_or_else(|| "{}".to_string()),
+                            // Kept because the next request must carry it back. The
+                            // API puts it on the part, but some builds nest it inside
+                            // `functionCall`, so both places are read. Only the first
+                            // call of a step has one; the rest stay `None`.
+                            signature: thought_signature(part)
+                                .or_else(|| thought_signature(call)),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(reason) = candidate
+            .and_then(|candidate| candidate.get("finishReason"))
+            .and_then(|reason| reason.as_str())
+            .filter(|reason| !reason.is_empty())
+        {
+            events.extend(self.finish(Some(reason.to_string())));
+        }
+
+        events
+    }
+
+    fn capture_usage(&mut self, usage: Option<&serde_json::Value>) {
+        let Some(usage) = usage else { return };
+        if let Some(input) = usage.get("promptTokenCount").and_then(|v| v.as_i64()) {
+            self.usage.input_tokens = Some(input);
+        }
+        if let Some(output) = usage.get("candidatesTokenCount").and_then(|v| v.as_i64()) {
+            self.usage.output_tokens = Some(output);
+        }
+    }
+
+    /// Ends the response. Idempotent: a stream carrying `finishReason` on more
+    /// than one frame must not yield two `Done`s.
+    pub fn finish(&mut self, stop_reason: Option<String>) -> Vec<StreamEvent> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.finished = true;
+        vec![StreamEvent::Done { stop_reason }]
+    }
+}
+
+/// Turns a non-2xx response into something the user can act on.
+///
+/// The error envelope is `{"error": {"message": ...}}`, same as the other two,
+/// so the shared wording applies — but the 404 hint differs: this API's paths
+/// are versioned as `/v1beta` rather than `/v1`.
+pub fn describe_failure(status: u16, body: &str) -> String {
+    let detail = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| error.get("message"))
+                .or_else(|| value.get("message"))
+                .and_then(|message| message.as_str())
+                .map(|message| message.chars().take(300).collect::<String>())
+        })
+        .map(|message| format!(" {message}"))
+        .unwrap_or_default();
+    match status {
+        400 => format!("The provider rejected the request ({status}).{detail}"),
+        401 | 403 => format!("Authentication failed ({status}). Check the API key.{detail}"),
+        404 => format!(
+            "No such model or path at this address ({status}). Check the model id and whether the base URL should end in /v1beta.{detail}"
+        ),
+        429 => format!("Rate limited by the provider ({status}).{detail}"),
+        _ => format!("The provider returned HTTP {status}.{detail}"),
+    }
+}
+
+/// The streaming URL. The model id is part of the path here, not the body, and
+/// `alt=sse` is what turns the response into an event stream rather than a JSON
+/// array.
+pub fn stream_url(base_url: &str, model: &str) -> String {
+    format!(
+        "{}/models/{}:streamGenerateContent?alt=sse",
+        base_url.trim_end_matches('/'),
+        model
+    )
+}
+
+/// Issues the streaming request. `on_event` sees each event as it is produced.
+pub async fn stream_response(
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+    headers: &BTreeMap<String, String>,
+    body: &serde_json::Value,
+    cancel: &tokio_util::sync::CancellationToken,
+    mut on_event: impl FnMut(StreamEvent),
+) -> AppResult<Usage> {
+    use futures_util::StreamExt;
+
+    let url = stream_url(base_url, model);
+    let client = super::protocol::streaming_client()?;
+
+    let mut request = client.post(&url).header("x-goog-api-key", api_key);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+
+    // The request is raced against the token: establishing the stream can hang for
+    // as long as the provider holds the socket, and a stop pressed during that
+    // wait has to be observed here rather than after the first byte.
+    let response = super::protocol::until_cancelled(cancel, request.json(body).send())
+        .await
+        .ok_or_else(super::protocol::cancelled)?
+        .map_err(|error| {
+            let details = super::protocol::request_details(
+                "POST",
+                &url,
+                Some(body),
+                None,
+                None,
+                "transport",
+                None,
+                None,
+                Some(crate::error::source_chain(&error)),
+            );
+            AppError::internal(super::openai::describe_transport_failure(&url, &error))
+                .with_details(details)
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let status_code = status.as_u16();
+        let text = response.text().await.unwrap_or_default();
+        let (reason, code) = super::protocol::envelope_fields(&text);
+        let details = super::protocol::request_details(
+            "POST",
+            &url,
+            Some(body),
+            Some(status_code),
+            Some(&text),
+            "http",
+            reason,
+            code,
+            None,
+        );
+        // Tagged so a caller holding several keys can retire this one and retry.
+        return Err(
+            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
+                .with_details(details),
+        );
+    }
+
+    let mut parser = super::sse::SseParser::new();
+    let mut folder = StreamFolder::new();
+    let mut bytes = response.bytes_stream();
+
+    loop {
+        let chunk = tokio::select! {
+            // Stopping mid-stream is a user action, not an error.
+            _ = cancel.cancelled() => return Ok(folder.usage()),
+            chunk = bytes.next() => chunk,
+        };
+        let Some(chunk) = chunk else { break };
+        let chunk = chunk.map_err(|error| AppError::internal(error.to_string()))?;
+
+        for event in parser.push(&String::from_utf8_lossy(&chunk)) {
+            for produced in folder.push_payload(&event.data) {
+                on_event(produced);
+            }
+        }
+        if let Some(raw) = folder.take_error() {
+            return Err(super::protocol::stream_error(&url, Some(body), &raw));
+        }
+        if folder.is_finished() {
+            return Ok(folder.usage());
+        }
+    }
+
+    if let Some(event) = parser.finish() {
+        for produced in folder.push_payload(&event.data) {
+            on_event(produced);
+        }
+    }
+    for produced in folder.finish(None) {
+        on_event(produced);
+    }
+    if let Some(raw) = folder.take_error() {
+        return Err(super::protocol::stream_error(&url, Some(body), &raw));
+    }
+    Ok(folder.usage())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ChatToolCall;
+
+    fn tool() -> ToolDefinition {
+        ToolDefinition {
+            name: "find_job".to_string(),
+            description: Some("Locate a job".to_string()),
+            input_schema: json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"jobId": {"type": "string"}}
+            }),
+        }
+    }
+
+    /// A stored call as the transcript holds it. `signature` is what the model
+    /// attached, which only the first call of a step ever has.
+    fn call(tool: &str, signature: Option<&str>) -> ChatToolCall {
+        ChatToolCall {
+            call_id: format!("c-{tool}"),
+            tool: tool.to_string(),
+            args: json!({}),
+            result: None,
+            error: None,
+            duration_ms: None,
+            signature: signature.map(ToString::to_string),
+        }
+    }
+
+    #[test]
+    fn the_system_prompt_is_a_sibling_of_the_contents() {
+        let body = build_request(
+            Some("be terse"),
+            &[],
+            &[Turn::User {
+                text: "hi".to_string(),
+            }],
+        );
+        assert_eq!(body["systemInstruction"]["parts"][0]["text"], "be terse");
+        // It is not smuggled into the message list.
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn a_blank_system_prompt_is_omitted() {
+        let body = build_request(Some("   "), &[], &[]);
+        assert!(body.get("systemInstruction").is_none());
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn tools_are_declared_with_schemas_this_api_accepts() {
+        let body = build_request(None, &[tool()], &[]);
+        let declaration = &body["tools"][0]["functionDeclarations"][0];
+        assert_eq!(declaration["name"], "find_job");
+        // The parameters key is not called "input_schema" here.
+        assert_eq!(declaration["parameters"]["type"], "object");
+        assert_eq!(
+            declaration["parameters"]["properties"]["jobId"]["type"],
+            "string"
+        );
+        // Keywords this API answers with a 400 are stripped rather than sent.
+        assert!(declaration["parameters"].get("$schema").is_none());
+        assert!(declaration["parameters"].get("additionalProperties").is_none());
+    }
+
+    #[test]
+    fn an_optional_field_becomes_a_single_type_plus_nullable() {
+        // `schemars` writes Option<usize> as a type *list*, which this API's proto
+        // rejects outright: "Proto field is not repeating, cannot start list".
+        let converted = to_gemini_schema(&json!({
+            "type": "object",
+            "properties": {
+                "tailLines": {
+                    "description": "How many trailing lines to return.",
+                    "type": ["integer", "null"],
+                    "format": "uint",
+                    "default": null,
+                    "minimum": 0
+                }
+            }
+        }));
+
+        let field = &converted["properties"]["tailLines"];
+        assert_eq!(field["type"], "integer");
+        assert_eq!(field["nullable"], true);
+        assert_eq!(field["description"], "How many trailing lines to return.");
+        // `uint` is not one of the formats the proto names, so it is dropped
+        // rather than sent and rejected.
+        assert!(field.get("format").is_none());
+        // Neither has a proto counterpart.
+        assert!(field.get("default").is_none());
+        assert!(field.get("minimum").is_none());
+    }
+
+    #[test]
+    fn known_formats_survive_and_unknown_ones_do_not() {
+        let kept = to_gemini_schema(&json!({"type": "string", "format": "date-time"}));
+        assert_eq!(kept["format"], "date-time");
+
+        let dropped = to_gemini_schema(&json!({"type": "integer", "format": "uint64"}));
+        assert!(dropped.get("format").is_none());
+        assert_eq!(dropped["type"], "integer");
+    }
+
+    #[test]
+    fn unrepresentable_keywords_are_dropped_throughout() {
+        let converted = to_gemini_schema(&json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "GetJobLogTextArgs",
+            "type": "object",
+            "additionalProperties": false,
+            "$defs": {"Other": {"type": "string"}},
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "$schema": "x",
+                    "properties": {"inner": {"type": "string", "pattern": "^a"}}
+                }
+            }
+        }));
+
+        assert!(converted.get("$schema").is_none());
+        assert!(converted.get("additionalProperties").is_none());
+        assert!(converted.get("$defs").is_none());
+        // The title is one of the few fields that does carry over.
+        assert_eq!(converted["title"], "GetJobLogTextArgs");
+
+        // Recursion reaches nested property schemas.
+        let nested = &converted["properties"]["nested"];
+        assert!(nested.get("additionalProperties").is_none());
+        assert!(nested.get("$schema").is_none());
+        assert_eq!(nested["type"], "object");
+        assert_eq!(nested["properties"]["inner"]["type"], "string");
+        assert!(nested["properties"]["inner"].get("pattern").is_none());
+    }
+
+    #[test]
+    fn required_names_that_did_not_survive_are_not_referenced() {
+        let converted = to_gemini_schema(&json!({
+            "type": "object",
+            "properties": {"jobId": {"type": "string"}},
+            "required": ["jobId", "vanished"]
+        }));
+        // Naming a property that is not in `properties` is itself a 400.
+        assert_eq!(converted["required"], json!(["jobId"]));
+    }
+
+    #[test]
+    fn array_and_object_types_are_inferred_when_omitted() {
+        let array = to_gemini_schema(&json!({"items": {"type": "string"}}));
+        assert_eq!(array["type"], "array");
+        assert_eq!(array["items"]["type"], "string");
+
+        let object = to_gemini_schema(&json!({"properties": {"a": {"type": "string"}}}));
+        assert_eq!(object["type"], "object");
+    }
+
+    #[test]
+    fn a_schema_with_nothing_usable_is_still_a_valid_object() {
+        // Every declaration needs a `Schema`, so an empty or boolean one becomes
+        // the loosest honest translation rather than nothing.
+        assert_eq!(to_gemini_schema(&json!({})), json!({"type": "object"}));
+        assert_eq!(to_gemini_schema(&json!(true)), json!({"type": "object"}));
+        assert_eq!(
+            to_gemini_schema(&json!({"default": null, "minimum": 0})),
+            json!({"type": "object"})
+        );
+    }
+
+    #[test]
+    fn a_union_type_collapses_to_its_first_member() {
+        // Genuine unions are not expressible; the first member is closer than
+        // dropping the type entirely.
+        let converted = to_gemini_schema(&json!({"type": ["string", "number"]}));
+        assert_eq!(converted["type"], "string");
+        assert!(converted.get("nullable").is_none());
+
+        // A type that is only "null" says nothing the proto can carry.
+        assert_eq!(to_gemini_schema(&json!({"type": "null"})), json!({"type": "object"}));
+    }
+
+    /// The real MCP tool schemas, not handwritten fixtures — these are what
+    /// actually go on the wire, and it was one of them (an `Option<usize>`) that
+    /// produced the 400 this conversion exists to prevent.
+    #[test]
+    fn every_mcp_tool_schema_converts_to_something_the_proto_accepts() {
+        let schemas = [
+            serde_json::to_value(schemars::schema_for!(
+                crate::mcp::tools::read_only::FindJobArgs
+            ))
+            .unwrap(),
+            serde_json::to_value(schemars::schema_for!(
+                crate::mcp::tools::read_only::ListJobLogObjectsArgs
+            ))
+            .unwrap(),
+            serde_json::to_value(schemars::schema_for!(
+                crate::mcp::tools::read_only::GetJobLogTextArgs
+            ))
+            .unwrap(),
+            serde_json::to_value(schemars::schema_for!(
+                crate::mcp::tools::analyze_job_failure::AnalyzeJobFailureArgs
+            ))
+            .unwrap(),
+        ];
+
+        for schema in &schemas {
+            let converted = to_gemini_schema(schema);
+            assert_no_unsupported_fields(&converted);
+        }
+    }
+
+    /// Walks a converted schema asserting nothing the proto would reject remains:
+    /// no type lists, and no field outside the accepted set.
+    fn assert_no_unsupported_fields(schema: &serde_json::Value) {
+        const ACCEPTED: [&str; 11] = [
+            "description",
+            "enum",
+            "format",
+            "items",
+            "maxItems",
+            "minItems",
+            "nullable",
+            "properties",
+            "required",
+            "title",
+            "type",
+        ];
+
+        let object = schema.as_object().expect("every schema is an object");
+        for (key, value) in object {
+            assert!(ACCEPTED.contains(&key.as_str()), "unsupported field {key}");
+            // The failure mode was "Proto field is not repeating, cannot start
+            // list" — a type must be a single string here.
+            if key == "type" {
+                assert!(value.is_string(), "type must not be a list: {value}");
+            }
+        }
+        if let Some(properties) = object.get("properties").and_then(|value| value.as_object()) {
+            for value in properties.values() {
+                assert_no_unsupported_fields(value);
+            }
+        }
+        if let Some(items) = object.get("items") {
+            assert_no_unsupported_fields(items);
+        }
+    }
+
+    #[test]
+    fn the_assistant_role_is_called_model_and_calls_carry_no_id() {
+        let body = build_request(
+            None,
+            &[],
+            &[Turn::Assistant {
+                text: Some("checking".to_string()),
+                tool_calls: vec![ChatToolCall {
+                    call_id: "c-1".to_string(),
+                    tool: "find_job".to_string(),
+                    args: json!({"jobId": "abc"}),
+                    result: None,
+                    error: None,
+                    duration_ms: None,
+                    signature: None,
+                }],
+            }],
+        );
+        let content = &body["contents"][0];
+        assert_eq!(content["role"], "model");
+        assert_eq!(content["parts"][0]["text"], "checking");
+        let call = &content["parts"][1]["functionCall"];
+        assert_eq!(call["name"], "find_job");
+        // Args are an object here, not a JSON string.
+        assert_eq!(call["args"]["jobId"], "abc");
+        assert!(call.get("id").is_none());
+    }
+
+    #[test]
+    fn an_empty_assistant_turn_is_skipped() {
+        // An aborted send leaves a row with neither text nor calls; replaying it
+        // would break the role alternation.
+        let body = build_request(
+            None,
+            &[],
+            &[Turn::Assistant {
+                text: None,
+                tool_calls: vec![],
+            }],
+        );
+        assert!(body["contents"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tool_results_reference_the_function_by_name_and_flag_failures() {
+        let body = build_request(
+            None,
+            &[],
+            &[
+                Turn::ToolResult {
+                    call_id: "c-1".to_string(),
+                    tool: "find_job".to_string(),
+                    content: "{\"id\":\"abc\"}".to_string(),
+                    is_error: false,
+                },
+                Turn::ToolResult {
+                    call_id: "c-2".to_string(),
+                    tool: "get_job_log_text".to_string(),
+                    content: "no such log".to_string(),
+                    is_error: true,
+                },
+            ],
+        );
+
+        // Both results belong to one step, so they share a single user content
+        // rather than getting one each — the API reads `[FR1, FR2]`, not
+        // `[FR1] [FR2]`.
+        assert_eq!(body["contents"].as_array().unwrap().len(), 1);
+        assert_eq!(body["contents"][0]["role"], "user");
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+
+        let ok = &parts[0]["functionResponse"];
+        assert_eq!(ok["name"], "find_job");
+        assert_eq!(ok["response"]["result"], "{\"id\":\"abc\"}");
+
+        // The model is told the call failed rather than being handed a blank.
+        let failed = &parts[1]["functionResponse"];
+        assert_eq!(failed["name"], "get_job_log_text");
+        assert_eq!(failed["response"]["error"], "no such log");
+    }
+
+    #[test]
+    fn a_round_sends_every_call_then_every_result() {
+        // The shape the API insists on: `[FC1, FC2] [FR1, FR2]`. Interleaving them
+        // as `[FC1] [FR1] [FC2] [FR2]` is a 400.
+        let calls = vec![
+            call("list_accounts", Some("sig-1")),
+            call("find_job", None),
+        ];
+        let body = build_request(
+            None,
+            &[],
+            &[
+                Turn::User {
+                    text: "why did it fail?".to_string(),
+                },
+                Turn::Assistant {
+                    text: None,
+                    tool_calls: calls.clone(),
+                },
+                Turn::ToolResult {
+                    call_id: calls[0].call_id.clone(),
+                    tool: "list_accounts".to_string(),
+                    content: "[]".to_string(),
+                    is_error: false,
+                },
+                Turn::ToolResult {
+                    call_id: calls[1].call_id.clone(),
+                    tool: "find_job".to_string(),
+                    content: "{}".to_string(),
+                    is_error: false,
+                },
+                // A second step, whose results must not join the first step's.
+                Turn::Assistant {
+                    text: None,
+                    tool_calls: vec![call("get_job_log_text", Some("sig-2"))],
+                },
+                Turn::ToolResult {
+                    call_id: "c-3".to_string(),
+                    tool: "get_job_log_text".to_string(),
+                    content: "log".to_string(),
+                    is_error: false,
+                },
+            ],
+        );
+
+        let contents = body["contents"].as_array().unwrap();
+        let shape: Vec<(String, usize)> = contents
+            .iter()
+            .map(|content| {
+                (
+                    content["role"].as_str().unwrap().to_string(),
+                    content["parts"].as_array().unwrap().len(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("user".to_string(), 1),   // the question
+                ("model".to_string(), 2),  // both calls together
+                ("user".to_string(), 2),   // both results together
+                ("model".to_string(), 1),  // the next step's call
+                ("user".to_string(), 1),   // and its result
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stored_signature_goes_back_beside_the_call_it_came_from() {
+        // Two 400s live here. Omitting the signature is "Function call is missing a
+        // thought_signature in functionCall parts"; putting it *inside*
+        // `functionCall` is "Unknown name thoughtSignature at …function_call:
+        // Cannot find field". It is a field of `Part`, so it sits next to
+        // `functionCall`, not in it.
+        let body = build_request(
+            None,
+            &[],
+            &[Turn::Assistant {
+                text: None,
+                tool_calls: vec![
+                    call("list_accounts", Some("Ct4BAV")),
+                    call("find_job", None),
+                ],
+            }],
+        );
+
+        let parts = body["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thoughtSignature"], "Ct4BAV");
+        assert!(parts[0]["functionCall"].get("thoughtSignature").is_none());
+        // The call itself carries only what `FunctionCall` accepts.
+        let fields: Vec<&str> = parts[0]["functionCall"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, vec!["args", "name"]);
+
+        // Only the first call of the step had one, so only that part carries it
+        // back — copying it onto the second is its own rejection.
+        assert!(parts[1].get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn text_frames_become_deltas() {
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"the driver "}]}}]}"#,
+        );
+        assert_eq!(events, vec![StreamEvent::TextDelta("the driver ".to_string())]);
+        assert!(!folder.is_finished());
+    }
+
+    #[test]
+    fn a_function_call_arrives_complete_in_one_frame() {
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"find_job","args":{"jobId":"abc"}}}
+            ]}}]}"#,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::ToolCall {
+                call_id,
+                tool,
+                arguments,
+                signature,
+            } => {
+                assert_eq!(tool, "find_job");
+                assert_eq!(arguments, r#"{"jobId":"abc"}"#);
+                // The wire format has no id, so one is minted to correlate the
+                // result.
+                assert!(!call_id.is_empty());
+                // Nothing to echo back when the model sent no signature — and
+                // inventing one is a 400 of its own.
+                assert_eq!(signature, &None);
+            }
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_thought_signature_is_captured_from_the_part_that_carried_it() {
+        // Gemini 3 attaches one to the *first* function call of a step and rejects
+        // the follow-up request if it does not come back. Parallel calls after the
+        // first carry none, and must stay that way.
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts","args":{}},"thoughtSignature":"Ct4BAV"},
+                {"functionCall":{"name":"find_job","args":{"jobId":"abc"}}}
+            ]}}]}"#,
+        );
+
+        let signatures: Vec<Option<&str>> = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::ToolCall { signature, .. } => Some(signature.as_deref()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(signatures, vec![Some("Ct4BAV"), None]);
+    }
+
+    #[test]
+    fn a_signature_is_read_from_either_spelling_or_nesting() {
+        // REST answers camelCase on the part; some gateways pass the proto's
+        // snake_case name through, or nest it inside functionCall.
+        for payload in [
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts"},"thought_signature":"sig"}]}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts","thoughtSignature":"sig"}}]}}]}"#,
+        ] {
+            let mut folder = StreamFolder::new();
+            let events = folder.push_payload(payload);
+            match &events[0] {
+                StreamEvent::ToolCall { signature, .. } => {
+                    assert_eq!(signature.as_deref(), Some("sig"), "{payload}")
+                }
+                other => panic!("expected a tool call, got {other:?}"),
+            }
+        }
+
+        // An empty string is not a signature; sending one back is not better than
+        // sending nothing.
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[
+                {"functionCall":{"name":"list_accounts"},"thoughtSignature":""}]}}]}"#,
+        );
+        match &events[0] {
+            StreamEvent::ToolCall { signature, .. } => assert_eq!(signature, &None),
+            other => panic!("expected a tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_argument_less_call_defaults_to_an_empty_object() {
+        let mut folder = StreamFolder::new();
+        let events = folder
+            .push_payload(r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_accounts"}}]}}]}"#);
+        assert_eq!(
+            events,
+            vec![StreamEvent::ToolCall {
+                call_id: match &events[0] {
+                    StreamEvent::ToolCall { call_id, .. } => call_id.clone(),
+                    _ => unreachable!(),
+                },
+                tool: "list_accounts".to_string(),
+                arguments: "{}".to_string(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_finish_reason_ends_the_stream_once() {
+        let mut folder = StreamFolder::new();
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}],
+                "usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":3}}"#,
+        );
+        assert_eq!(
+            events,
+            vec![
+                StreamEvent::TextDelta("done".to_string()),
+                StreamEvent::Done {
+                    stop_reason: Some("STOP".to_string())
+                }
+            ]
+        );
+        assert_eq!(folder.usage().input_tokens, Some(12));
+        assert_eq!(folder.usage().output_tokens, Some(3));
+
+        // A second terminator must not produce a second Done.
+        assert!(folder
+            .push_payload(r#"{"candidates":[{"finishReason":"STOP"}]}"#)
+            .is_empty());
+        assert!(folder.finish(None).is_empty());
+    }
+
+    #[test]
+    fn an_in_stream_error_is_kept_for_the_stream_response_to_lift() {
+        let mut folder = StreamFolder::new();
+        let events =
+            folder.push_payload(r#"{"error":{"code":429,"message":"quota exhausted"}}"#);
+        // The envelope is surfaced, not folded into a silent Done.
+        assert!(events.is_empty());
+        assert!(folder.is_finished());
+        let payload = folder.take_error().expect("error payload recorded");
+        assert_eq!(payload.message, "quota exhausted");
+        assert_eq!(payload.error_code.as_deref(), Some("429"));
+        assert!(matches!(payload.raw, Some(raw) if raw["code"] == 429));
+        // Taking clears it: a second read reports nothing.
+        assert!(folder.take_error().is_none());
+    }
+
+    #[test]
+    fn keep_alives_and_junk_frames_are_ignored() {
+        let mut folder = StreamFolder::new();
+        assert!(folder.push_payload("").is_empty());
+        assert!(folder.push_payload("not json").is_empty());
+        assert!(folder.push_payload("{}").is_empty());
+        assert!(!folder.is_finished());
+    }
+
+    #[test]
+    fn the_model_id_goes_in_the_path_with_sse_requested() {
+        assert_eq!(
+            stream_url("https://generativelanguage.googleapis.com/v1beta", "gemini-3.5-flash"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse"
+        );
+        // A trailing slash on the configured address must not double up.
+        assert_eq!(
+            stream_url("https://x.example/v1beta/", "m"),
+            "https://x.example/v1beta/models/m:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn http_failures_explain_the_likely_cause() {
+        let unauthorized = describe_failure(401, r#"{"error":{"message":"bad key"}}"#);
+        assert!(unauthorized.contains("API key"), "{unauthorized}");
+        assert!(unauthorized.contains("bad key"), "{unauthorized}");
+
+        // The version hint is /v1beta here, not /v1.
+        let missing = describe_failure(404, "");
+        assert!(missing.contains("/v1beta"), "{missing}");
+
+        let rejected = describe_failure(400, r#"{"error":{"message":"unknown field"}}"#);
+        assert!(rejected.contains("unknown field"), "{rejected}");
+    }
+}

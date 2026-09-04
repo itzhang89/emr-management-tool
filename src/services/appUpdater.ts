@@ -1,4 +1,5 @@
 import { check as checkTauriUpdate } from "@tauri-apps/plugin-updater";
+import { readAutoUpdatePreference } from "./autoUpdatePreferences";
 import { getReleaseInfo } from "./releaseInfo";
 import { tauriClient } from "./tauriClient";
 
@@ -7,6 +8,8 @@ export const UPDATE_CHECK_TIMEOUT_MS = 60_000;
 export interface UpdaterDependency {
   canUseAutoUpdater: boolean;
   check: () => Promise<UpdateHandle | null>;
+  /** Live check of the user preference to install updates automatically. Defaults to enabled. */
+  isAutoUpdateEnabled?: () => boolean;
 }
 
 export interface UpdateHandle {
@@ -48,7 +51,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency) {
+export function createAppUpdater({ canUseAutoUpdater, check, isAutoUpdateEnabled = () => true }: UpdaterDependency) {
   let silentUpdateAttempted = false;
   let silentUpdateInFlight = false;
 
@@ -76,6 +79,7 @@ export function createAppUpdater({ canUseAutoUpdater, check }: UpdaterDependency
       onInstalled?: (version: string) => void;
     }): Promise<SilentUpdateResult> {
       if (!canUseAutoUpdater) return "skipped";
+      if (!isAutoUpdateEnabled()) return "skipped";
       if (silentUpdateAttempted || silentUpdateInFlight) return "skipped";
       silentUpdateAttempted = true;
       silentUpdateInFlight = true;
@@ -100,5 +104,6 @@ export function resolveUpdateChecker(releaseInfo = getReleaseInfo()) {
 
 export const appUpdater = createAppUpdater({
   canUseAutoUpdater: getReleaseInfo().canUseAutoUpdater,
-  check: resolveUpdateChecker()
+  check: resolveUpdateChecker(),
+  isAutoUpdateEnabled: readAutoUpdatePreference
 });

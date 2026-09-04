@@ -63,6 +63,21 @@ vi.mock("@/services/appUpdater", () => ({
   appUpdater: { checkForUpdate: mocks.checkForUpdate }
 }));
 
+const release = vi.hoisted(() => ({ canUseAutoUpdater: false }));
+
+vi.mock("@/services/releaseInfo", () => ({
+  getReleaseInfo: () => ({
+    appChannel: "stable",
+    platform: "unknown",
+    version: "0.1.0",
+    distribution: "installer",
+    isPortable: false,
+    channelLabel: "Stable",
+    isDevelopment: false,
+    canUseAutoUpdater: release.canUseAutoUpdater
+  })
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     info: mocks.toastInfo,
@@ -87,6 +102,7 @@ vi.mock("@/hooks/useAwsSettings", () => ({
 
 describe("SettingsPage updates", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     vi.clearAllMocks();
     mocks.accounts[0] = {
       id: "acct-1",
@@ -312,6 +328,39 @@ describe("SettingsPage updates", () => {
     expect(within(dialog).getByText(/This profile has no region/i)).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("AKIANONE")).toBeInTheDocument();
     expect(within(dialog).getByPlaceholderText("eu-central-1")).toHaveValue("");
+  });
+
+  describe("automatic updates toggle", () => {
+    beforeEach(() => {
+      release.canUseAutoUpdater = true;
+    });
+
+    it("defaults automatic updates to on and persists toggling it off", async () => {
+      const user = userEvent.setup();
+      renderSettingsPage();
+
+      const toggle = screen.getByRole("switch", { name: "Automatic updates" });
+      expect(toggle).toBeChecked();
+
+      await user.click(toggle);
+
+      expect(toggle).not.toBeChecked();
+      expect(window.localStorage.getItem("emr-eks:auto-update")).toBe("false");
+    });
+
+    it("reflects a previously disabled preference on mount", () => {
+      window.localStorage.setItem("emr-eks:auto-update", "false");
+      renderSettingsPage();
+
+      expect(screen.getByRole("switch", { name: "Automatic updates" })).not.toBeChecked();
+    });
+
+    it("disables the toggle when the current build cannot auto-update", () => {
+      release.canUseAutoUpdater = false;
+      renderSettingsPage();
+
+      expect(screen.getByRole("switch", { name: "Automatic updates" })).toBeDisabled();
+    });
   });
 });
 

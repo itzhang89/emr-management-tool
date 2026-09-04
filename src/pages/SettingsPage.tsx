@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, Download, FileDown, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
@@ -18,6 +19,7 @@ import {
   useSetActiveAwsAccount
 } from "@/hooks/useAwsSettings";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
+import { readAutoUpdatePreference, writeAutoUpdatePreference } from "@/services/autoUpdatePreferences";
 import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
 import type { CredentialFormValues } from "@/services/credentialValidation";
 import { getReleaseInfo } from "@/services/releaseInfo";
@@ -39,6 +41,13 @@ export function SettingsPage() {
   const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(() => readAutoUpdatePreference());
+  const autoUpdateAvailable = releaseInfo.canUseAutoUpdater;
+
+  useEffect(() => {
+    writeAutoUpdatePreference(autoUpdateEnabled);
+  }, [autoUpdateEnabled]);
+
   const [accountDialog, setAccountDialog] = useState<AccountDialogState | null>(null);
   const [accountPendingDelete, setAccountPendingDelete] = useState<AwsAccountSummary | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -165,20 +174,48 @@ export function SettingsPage() {
           </>
         }
         actions={
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={checkingUpdate || installingUpdate}
-                onClick={availableUpdate ? installUpdate : checkForUpdates}
-              >
-                {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                {updateButtonLabel}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{updateTooltip}</TooltipContent>
-          </Tooltip>
+          <div className="flex flex-col items-end gap-1.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={checkingUpdate || installingUpdate}
+                  onClick={availableUpdate ? installUpdate : checkForUpdates}
+                >
+                  {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+                  {updateButtonLabel}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{updateTooltip}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label
+                  htmlFor="auto-update-toggle"
+                  className={
+                    autoUpdateAvailable
+                      ? "flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+                      : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
+                  }
+                >
+                  <span>Automatic updates</span>
+                  <Switch
+                    id="auto-update-toggle"
+                    checked={autoUpdateEnabled}
+                    onCheckedChange={setAutoUpdateEnabled}
+                    disabled={!autoUpdateAvailable}
+                    aria-label="Automatic updates"
+                  />
+                </label>
+              </TooltipTrigger>
+              <TooltipContent>
+                {autoUpdateAvailable
+                  ? "Automatically check for and install updates."
+                  : "Automatic updates are unavailable for this build."}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         }
       />
 

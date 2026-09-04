@@ -105,7 +105,7 @@ pub async fn list_mcp_audit_entries(
     let pool = crate::db::repository::pool().await?;
 
     let rows = sqlx::query(
-        "select id, timestamp, status, tool, client, duration_ms, args_json, result_json, error
+        "select id, timestamp, status, tool, client, duration_ms, args_json, result_json, error, provider_id, model_id
          from mcp_audit
          order by timestamp desc
          limit ?1",
@@ -129,6 +129,8 @@ pub async fn list_mcp_audit_entries(
             args: serde_json::from_str(&args_json).unwrap_or(serde_json::Value::Null),
             result: serde_json::from_str(&result_json).unwrap_or(serde_json::Value::Null),
             error: row.get("error"),
+            provider_id: row.get("provider_id"),
+            model_id: row.get("model_id"),
         });
     }
 

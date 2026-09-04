@@ -25,9 +25,13 @@ High Frequency:
 
 Medium Frequency:
 
-- Templates
+- S3 Browser
+- Data Catalog
+- AI Assistant
 
 Low Frequency:
 
+- Templates
 - Virtual Clusters
+- Dashboard
 - Settings

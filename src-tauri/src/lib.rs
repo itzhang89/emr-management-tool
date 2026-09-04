@@ -1,4 +1,5 @@
 pub mod aws;
+pub mod chat;
 pub mod commands;
 pub mod db;
 pub mod diagnostics;
@@ -8,6 +9,7 @@ pub mod error;
 pub mod mcp;
 pub mod models;
 pub mod portable_updater;
+pub mod secrets;
 pub mod state;
 
 use state::AppState;
@@ -110,6 +112,39 @@ pub fn run() {
             commands::mcp::mcp_stop,
             commands::mcp::mcp_status,
             commands::mcp::list_mcp_audit_entries,
+            commands::llm::list_llm_providers,
+            commands::llm::create_llm_provider,
+            commands::llm::update_llm_provider,
+            commands::llm::duplicate_llm_provider,
+            commands::llm::delete_llm_provider,
+            commands::llm::set_llm_provider_headers,
+            commands::llm::add_llm_api_key,
+            commands::llm::update_llm_api_key,
+            commands::llm::delete_llm_api_key,
+            commands::llm::probe_llm_api_keys,
+            commands::llm::test_llm_provider,
+            commands::llm::sync_llm_models,
+            commands::llm::add_llm_models,
+            commands::llm::update_llm_model,
+            commands::llm::delete_llm_model,
+            commands::chat::list_chat_assistants,
+            commands::chat::create_chat_assistant,
+            commands::chat::update_chat_assistant,
+            commands::chat::delete_chat_assistant,
+            commands::chat::list_chat_sessions,
+            commands::chat::create_chat_session,
+            commands::chat::update_chat_session,
+            commands::chat::delete_chat_session,
+            commands::chat::delete_all_chat_sessions,
+            commands::chat::list_chat_messages,
+            commands::chat::clear_chat_context,
+            commands::chat::chat_send,
+            commands::chat::chat_cancel,
+            commands::chat::delete_chat_message,
+            commands::chat::delete_chat_messages_from,
+            commands::chat::regenerate_chat_message,
+            commands::chat::set_chat_message_version,
+            commands::chat::update_chat_message,
         ]);
 
     #[cfg(desktop)]
@@ -117,8 +152,7 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
-                if let Err(error) = aws::credentials::migrate_legacy_credential_store(app.handle())
-                {
+                if let Err(error) = secrets::migrate_legacy_credential_store(app.handle()) {
                     diagnostics::append_log_line(
                         "WARN",
                         &format!("Failed to migrate the legacy credential store: {error}"),

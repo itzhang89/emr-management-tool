@@ -50,7 +50,26 @@ import type {
   ExportAthenaQueryCsvRequest,
   PortableUpdateInfo,
   McpStatus,
-  McpAuditEntry
+  McpAuditEntry,
+  AddLlmApiKeyRequest,
+  AddLlmModelsRequest,
+  CreateLlmProviderRequest,
+  DuplicateLlmProviderRequest,
+  LlmApiKey,
+  LlmModelCandidate,
+  LlmProvider,
+  LlmProviderTestResult,
+  SetLlmProviderHeadersRequest,
+  UpdateLlmApiKeyRequest,
+  UpdateLlmModelRequest,
+  UpdateLlmProviderRequest,
+  ChatAssistant,
+  ChatMessage,
+  ChatSession,
+  CreateChatAssistantRequest,
+  CreateChatSessionRequest,
+  UpdateChatAssistantRequest,
+  UpdateChatSessionRequest
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -173,6 +192,64 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     mcpStop: () => call<boolean>("mcp_stop"),
     mcpStatus: () => call<McpStatus>("mcp_status"),
     listMcpAuditEntries: (limit?: number) => call<McpAuditEntry[]>("list_mcp_audit_entries", { limit }),
+    listLlmProviders: () => call<LlmProvider[]>("list_llm_providers"),
+    createLlmProvider: (request: CreateLlmProviderRequest) => call<string>("create_llm_provider", request),
+    updateLlmProvider: (request: UpdateLlmProviderRequest) => call<void>("update_llm_provider", request),
+    /** Copies settings and models under a new name; never the API keys. */
+    duplicateLlmProvider: (request: DuplicateLlmProviderRequest) =>
+      call<string>("duplicate_llm_provider", request),
+    deleteLlmProvider: (id: string) => call<void>("delete_llm_provider", { id }),
+    /** Returns the resulting header names. Values are write-only. */
+    setLlmProviderHeaders: (request: SetLlmProviderHeadersRequest) =>
+      call<string[]>("set_llm_provider_headers", request),
+    addLlmApiKey: (request: AddLlmApiKeyRequest) => call<string>("add_llm_api_key", request),
+    updateLlmApiKey: (request: UpdateLlmApiKeyRequest) => call<void>("update_llm_api_key", request),
+    deleteLlmApiKey: (id: string) => call<void>("delete_llm_api_key", { id }),
+    /** Probes every key on the provider and returns them with fresh statuses. */
+    probeLlmApiKeys: (providerId: string) => call<LlmApiKey[]>("probe_llm_api_keys", { providerId }),
+    testLlmProvider: (providerId: string) => call<LlmProviderTestResult>("test_llm_provider", { providerId }),
+    syncLlmModels: (providerId: string) => call<LlmModelCandidate[]>("sync_llm_models", { providerId }),
+    addLlmModels: (request: AddLlmModelsRequest) => call<number>("add_llm_models", request),
+    updateLlmModel: (request: UpdateLlmModelRequest) => call<void>("update_llm_model", request),
+    deleteLlmModel: (id: string) => call<void>("delete_llm_model", { id }),
+    listChatAssistants: () => call<ChatAssistant[]>("list_chat_assistants"),
+    createChatAssistant: (request: CreateChatAssistantRequest) =>
+      call<string>("create_chat_assistant", request),
+    updateChatAssistant: (request: UpdateChatAssistantRequest) =>
+      call<void>("update_chat_assistant", request),
+    deleteChatAssistant: (id: string) => call<void>("delete_chat_assistant", { id }),
+    listChatSessions: () => call<ChatSession[]>("list_chat_sessions"),
+    createChatSession: (request: CreateChatSessionRequest) => call<string>("create_chat_session", request),
+    updateChatSession: (request: UpdateChatSessionRequest) => call<void>("update_chat_session", request),
+    deleteChatSession: (id: string) => call<void>("delete_chat_session", { id }),
+    deleteAllChatSessions: () => call<number>("delete_all_chat_sessions"),
+    listChatMessages: (sessionId: string) => call<ChatMessage[]>("list_chat_messages", { sessionId }),
+    clearChatContext: (sessionId: string) => call<boolean>("clear_chat_context", { sessionId }),
+    /**
+     * Resolves when the whole exchange finishes, returning the assistant message
+     * id. Progress arrives meanwhile on the CHAT_EVENTS channels.
+     */
+    chatSend: (sessionId: string, text: string) => call<string>("chat_send", { sessionId, text }),
+    chatCancel: (sessionId: string) => call<boolean>("chat_cancel", { sessionId }),
+    deleteChatMessage: (sessionId: string, messageId: string) =>
+      call<void>("delete_chat_message", { sessionId, messageId }),
+    deleteChatMessagesFrom: (sessionId: string, messageId: string) =>
+      call<number>("delete_chat_messages_from", { sessionId, messageId }),
+    /**
+     * Re-answers the asked question, optionally on a different model. Resolves
+     * when the exchange finishes, streaming on the CHAT_EVENTS channels.
+     */
+    regenerateChatMessage: (sessionId: string, messageId: string, modelId?: string) =>
+      call<string>("regenerate_chat_message", { sessionId, messageId, modelId }),
+    /** Makes one recorded answer the message's displayed version. */
+    setChatMessageVersion: (sessionId: string, messageId: string, versionId: string) =>
+      call<void>("set_chat_message_version", { sessionId, messageId, versionId }),
+    /**
+     * Replaces a past question and re-answers it. Resolves when the exchange
+     * finishes, streaming on the CHAT_EVENTS channels.
+     */
+    updateChatMessage: (sessionId: string, messageId: string, content: string) =>
+      call<string>("update_chat_message", { sessionId, messageId, content })
   };
 }
 

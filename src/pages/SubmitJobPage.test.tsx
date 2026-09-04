@@ -49,7 +49,8 @@ const mocks = vi.hoisted(() => {
     pendingSourceSubmit: undefined as { payload: StartJobPayloadJson; virtualClusterId: string } | undefined,
     setPendingSourceSubmit: vi.fn((value?: { payload: StartJobPayloadJson; virtualClusterId: string }) => {
       mocks.sessionState.pendingSourceSubmit = value;
-    })
+    }),
+    setPendingAiAnalyze: vi.fn()
   }
   };
 });
@@ -266,6 +267,47 @@ describe("SubmitJobPage", () => {
     expect(mocks.toastError).toHaveBeenCalledWith(
       "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #."
     );
+  });
+
+  it("offers AI Analyze on a FAILED recent submission, opening the AI assistant", async () => {
+    const user = userEvent.setup();
+    const onOpenAiAssistant = vi.fn();
+    mocks.useSubmissionHistory.mockReturnValue({
+      data: [
+        {
+          id: "job-run-42",
+          name: "nightly-etl-2026-09-04",
+          state: "FAILED",
+          virtualClusterId: "vc-1",
+          createdAt: "2026-09-04T03:00:00.000Z",
+          durationSeconds: 312
+        }
+      ],
+      isLoading: false,
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: Date.now()
+    });
+
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <SubmitJobPage onOpenAiAssistant={onOpenAiAssistant} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("nightly-etl-2026-09-04")).toBeInTheDocument();
+    const analyze = screen.getByRole("button", { name: /Analyze/i });
+    await user.click(analyze);
+
+    expect(onOpenAiAssistant).toHaveBeenCalledTimes(1);
+    expect(mocks.sessionState.setPendingAiAnalyze).toHaveBeenCalledWith({
+      jobId: "job-run-42",
+      jobName: "nightly-etl-2026-09-04",
+      virtualClusterId: "vc-1"
+    });
   });
 
   describe("Source mode", () => {

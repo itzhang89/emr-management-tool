@@ -36,7 +36,9 @@ const GlueCatalogPage = lazy(() =>
   import("@/pages/GlueCatalogPage").then((module) => ({ default: module.GlueCatalogPage }))
 );
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
-const McpPage = lazy(() => import("@/pages/McpPage").then((module) => ({ default: module.McpPage })));
+const AiAssistantPage = lazy(() =>
+  import("@/pages/AiAssistantPage").then((module) => ({ default: module.AiAssistantPage }))
+);
 
 export function AppShell() {
   const [activePage, setActivePage] = useState<PageId>("submit");
@@ -58,6 +60,9 @@ export function AppShell() {
   }, []);
   const openSubmitPage = useCallback(() => {
     startPageTransition(() => setActivePage("submit"));
+  }, []);
+  const openAiAssistantPage = useCallback(() => {
+    startPageTransition(() => setActivePage("ai"));
   }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
@@ -215,9 +220,16 @@ export function AppShell() {
       case "dashboard":
         return <DashboardPage />;
       case "submit":
-        return <SubmitJobPage onOpenLogs={openLogsPage} />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
       case "history":
-        return <JobHistoryPage onOpenLogs={openLogsPage} onOpenS3={openS3Page} onOpenSubmit={openSubmitPage} />;
+        return (
+          <JobHistoryPage
+            onOpenLogs={openLogsPage}
+            onOpenS3={openS3Page}
+            onOpenSubmit={openSubmitPage}
+            onOpenAiAssistant={openAiAssistantPage}
+          />
+        );
       case "logs":
         return <LogsPage />;
       case "templates":
@@ -228,14 +240,14 @@ export function AppShell() {
         return <S3BrowserPage />;
       case "glue":
         return <GlueCatalogPage />;
-      case "mcp":
-        return <McpPage />;
+      case "ai":
+        return <AiAssistantPage />;
       case "settings":
         return <SettingsPage />;
       default:
-        return <SubmitJobPage onOpenLogs={openLogsPage} />;
+        return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
     }
-  }, [activePage, openLogsPage, openS3Page, openSubmitPage]);
+  }, [activePage, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
