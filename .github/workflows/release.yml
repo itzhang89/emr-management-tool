@@ -549,6 +549,7 @@ jobs:
         run: node scripts/prepare-release-config.mjs
       - name: Build portable package
         if: matrix.distribution == 'portable'
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY:           ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
