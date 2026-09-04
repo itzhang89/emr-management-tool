@@ -52,7 +52,7 @@ describe("AiAssistantPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "AI Assistant" })).toBeInTheDocument();
-    for (const name of ["Chat", "LLM Setting", "MCP Server", "Audit"]) {
+    for (const name of ["Chat", "Providers", "MCP Server", "Audit"]) {
       expect(screen.getByRole("tab", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("tab", { name: "Chat", selected: true })).toBeInTheDocument();
@@ -69,15 +69,15 @@ describe("AiAssistantPage", () => {
     expect(screen.getByTestId("mcp-audit-panel")).toBeInTheDocument();
   });
 
-  it("opens the LLM settings panel from its tab", async () => {
+  it("opens the providers panel from its tab", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByRole("tab", { name: "LLM Setting" }));
+    await user.click(screen.getByRole("tab", { name: "Providers" }));
     expect(screen.getByTestId("llm-settings-panel")).toBeInTheDocument();
   });
 
-  it("sends an unconfigured user from Chat to LLM Setting", async () => {
+  it("sends an unconfigured user from Chat to Providers", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -85,7 +85,7 @@ describe("AiAssistantPage", () => {
     // rather than telling the user to go find it.
     await user.click(screen.getByRole("button", { name: "Configure a provider" }));
 
-    expect(screen.getByRole("tab", { name: "LLM Setting", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Providers", selected: true })).toBeInTheDocument();
     expect(screen.getByTestId("llm-settings-panel")).toBeInTheDocument();
   });
 
@@ -95,7 +95,7 @@ describe("AiAssistantPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Fix an errored provider" }));
 
-    expect(screen.getByRole("tab", { name: "LLM Setting", selected: true })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Providers", selected: true })).toBeInTheDocument();
     expect(screen.getByTestId("llm-settings-panel")).toHaveAttribute("data-preselect", "prov-1");
   });
 });

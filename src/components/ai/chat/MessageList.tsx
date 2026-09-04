@@ -56,7 +56,7 @@ export function MessageList({
   editingMessageId: string | null;
   onCopy: (message: ChatMessage) => void;
   onEdit: (message: ChatMessage) => void;
-  /** Open LLM Setting for the provider of the conversation's current model. */
+  /** Open the Providers tab for the provider of the conversation's current model. */
   onConfigureProvider: () => void;
   onDelete: (message: ChatMessage) => void;
   onRegenerate: (message: ChatMessage) => void;

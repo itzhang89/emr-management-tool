@@ -1,5 +1,5 @@
 /**
- * Grouping model ids into series for the LLM Setting model tree.
+ * Grouping model ids into series for the Providers model tree.
  *
  * `claude-opus-4-8` → `claude-opus`, `gpt-5.6-sol` → `gpt-5.6-sol`. The rule is
  * a heuristic over hyphen-separated segments: trailing version-looking segments

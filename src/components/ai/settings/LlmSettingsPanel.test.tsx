@@ -164,8 +164,8 @@ describe("LlmSettingsPanel", () => {
     renderPanel();
 
     // The provider row in the left column; the name field also holds the name, so
-    // match the row by its trailing model count.
-    expect(await screen.findByRole("button", { name: "Google 2" })).toBeInTheDocument();
+    // match the row by its button role.
+    expect(await screen.findByRole("button", { name: "Google" })).toBeInTheDocument();
     expect(screen.getByLabelText("Provider name")).toHaveValue("Google");
     expect(screen.getByLabelText(/api address/i)).toHaveValue(
       "https://generativelanguage.googleapis.com/v1beta"
@@ -425,7 +425,7 @@ describe("LlmSettingsPanel", () => {
     renderPanel();
 
     // The row's duplicate action only appears on hover.
-    await user.hover(await screen.findByRole("button", { name: "Google 2" }));
+    await user.hover(await screen.findByRole("button", { name: "Google" }));
     await user.click(screen.getByRole("button", { name: "Duplicate Google" }));
 
     // The dialog explains what does and does not come along, and suggests a name.
@@ -555,9 +555,11 @@ describe("LlmSettingsPanel", () => {
     listLlmProviders.mockResolvedValue([]);
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: /add$/i }));
-    await user.type(screen.getByLabelText("Name"), "agentrouter");
-    await user.click(screen.getByRole("button", { name: "Add provider" }));
+    // Adding is the footer action on the Providers list.
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "agentrouter");
+    await user.click(dialog.getByRole("button", { name: "Add provider" }));
 
     await waitFor(() =>
       expect(createLlmProvider).toHaveBeenCalledWith({ name: "agentrouter", protocol: "openai" })
@@ -569,7 +571,7 @@ describe("LlmSettingsPanel", () => {
     renderPanel();
 
     // The row's delete action only appears on hover.
-    await user.hover(await screen.findByRole("button", { name: "Google 2" }));
+    await user.hover(await screen.findByRole("button", { name: "Google" }));
     await user.click(screen.getByRole("button", { name: "Delete Google" }));
 
     expect(screen.getByRole("heading", { name: /delete provider\?/i })).toBeInTheDocument();
@@ -584,7 +586,7 @@ describe("LlmSettingsPanel", () => {
     listLlmProviders.mockResolvedValue([preset()]);
     renderPanel();
 
-    await user.hover(await screen.findByRole("button", { name: "OpenAI 0" }));
+    await user.hover(await screen.findByRole("button", { name: "OpenAI" }));
     await user.click(screen.getByRole("button", { name: "Delete OpenAI" }));
 
     // Seeding is once-ever, so the confirmation must not imply it is recoverable.
@@ -596,6 +598,50 @@ describe("LlmSettingsPanel", () => {
     renderPanel();
 
     expect(await screen.findByText(/add a provider to configure/i)).toBeInTheDocument();
+  });
+
+  it("filters the provider list by name", async () => {
+    const user = userEvent.setup();
+    listLlmProviders.mockResolvedValue([
+      provider({ id: "prov-a", name: "Alpha" }),
+      provider({ id: "prov-b", name: "Beta" })
+    ]);
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Alpha" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Beta" })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search providers"), "alph");
+
+    expect(screen.getByRole("button", { name: "Alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Beta" })).not.toBeInTheDocument();
+  });
+
+  it("filters the provider list by enabled state", async () => {
+    const user = userEvent.setup();
+    listLlmProviders.mockResolvedValue([
+      provider({ id: "prov-a", name: "Alpha", enabled: true }),
+      provider({ id: "prov-b", name: "Beta", enabled: false })
+    ]);
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "Alpha" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filter providers" }));
+    await user.click(screen.getByRole("button", { name: /disabled only/i }));
+
+    expect(screen.getByRole("button", { name: "Beta" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Alpha" })).not.toBeInTheDocument();
+  });
+
+  it("shows a hint when the search matches no provider", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await screen.findByRole("button", { name: "Google" });
+    await user.type(screen.getByLabelText("Search providers"), "zzz");
+
+    expect(screen.getByText("Nothing matches.")).toBeInTheDocument();
   });
 
   it("clears stored conversations after confirming", async () => {

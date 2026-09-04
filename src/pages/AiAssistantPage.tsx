@@ -8,13 +8,13 @@ import { McpAuditPanel } from "@/components/ai/server/McpAuditPanel";
 
 /**
  * All of the app's AI capabilities in one place. Chat is the daily entry point;
- * LLM Setting configures providers; MCP Server and Audit are the operations
- * views for the in-process tool server external agents connect to.
+ * Providers configures the LLM gateways and their models; MCP Server and Audit
+ * are the operations views for the in-process tool server external agents connect to.
  */
 export function AiAssistantPage() {
   // Controlled so Chat's empty state can send an unconfigured user straight to
-  // LLM Setting instead of telling them to find the tab themselves. A providerId
-  // carries over which provider an errored reply belongs to, so the settings
+  // the Providers tab instead of telling them to find the tab themselves. A
+  // providerId carries over which provider an errored reply belongs to, so the
   // tab can open on that provider's row.
   const [tab, setTab] = useState("chat");
   const [settingsProviderId, setSettingsProviderId] = useState<string | null>(null);
@@ -33,7 +33,7 @@ export function AiAssistantPage() {
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
         <TabsList className="w-fit">
           <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="settings">LLM Setting</TabsTrigger>
+          <TabsTrigger value="settings">Providers</TabsTrigger>
           <TabsTrigger value="server">MCP Server</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
         </TabsList>

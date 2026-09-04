@@ -67,7 +67,7 @@ function resolveEffectiveModelId(
 export function ChatPanel({
   onConfigureModels
 }: {
-  /** Jump to LLM Setting, optionally with a specific provider preselected. */
+  /** Jump to the Providers tab, optionally with a specific provider preselected. */
   onConfigureModels: (providerId?: string) => void;
 }) {
   const assistants = useChatAssistants();
@@ -195,7 +195,7 @@ export function ChatPanel({
     if (noModels) {
       // Chat is already showing its "configure a provider" empty state — the
       // fix this needs — so drop the intent rather than firing into nothing.
-      toast.error("No model is configured yet. Configure one in LLM Setting, then press Analyze again.");
+      toast.error("No model is configured yet. Configure one in Providers, then press Analyze again.");
       return;
     }
 
@@ -417,7 +417,7 @@ export function ChatPanel({
     }
   };
 
-  /** Jump to LLM Setting with the provider of the session's currently selected model. */
+  /** Jump to the Providers tab with the provider of the session's currently selected model. */
   const handleConfigureProvider = () => {
     onConfigureModels(effectiveProviderId ?? undefined);
   };

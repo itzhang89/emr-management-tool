@@ -141,7 +141,7 @@ export function AssistantMessage({
   modelOptions: ModelActionOption[];
   /** When the reply was sent; the header tooltip shows this as MM/DD HH:mm. */
   createdAt?: string | null;
-  /** Open LLM Setting for this reply's provider, when one can be resolved. */
+  /** Open the Providers tab for this reply's provider, when one can be resolved. */
   onConfigureProvider?: () => void;
   onCopy: () => void;
   /** Re-answer on the currently displayed version's model, appending a new version. */
