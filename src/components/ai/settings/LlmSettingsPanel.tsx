@@ -10,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
-import { CommitInput } from "@/components/ai/settings/CommitInput";
 import { ModelFormDialog } from "@/components/ai/settings/ModelFormDialog";
 import { ModelTree } from "@/components/ai/settings/ModelTree";
 import { ProviderCard } from "@/components/ai/settings/ProviderCard";
@@ -147,12 +146,6 @@ export function LlmSettingsPanel({
             </p>
           ) : (
             <>
-              <CommitInput
-                value={selected.name}
-                onCommit={(name) => updateProvider.mutateAsync({ id: selected.id, name })}
-                aria-label="Provider name"
-                className="h-9 min-w-0 text-base font-semibold"
-              />
 
               <ProviderCard provider={selected} />
 

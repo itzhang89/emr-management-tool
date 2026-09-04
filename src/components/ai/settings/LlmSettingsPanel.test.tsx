@@ -163,10 +163,9 @@ describe("LlmSettingsPanel", () => {
   it("shows the provider's key, address, protocol, and grouped models", async () => {
     renderPanel();
 
-    // The provider row in the left column; the name field also holds the name, so
-    // match the row by its button role.
+    // The provider row in the left column carries the name; the configured
+    // address below is what the right column is editing.
     expect(await screen.findByRole("button", { name: "Google" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Provider name")).toHaveValue("Google");
     expect(screen.getByLabelText(/api address/i)).toHaveValue(
       "https://generativelanguage.googleapis.com/v1beta"
     );
@@ -210,16 +209,19 @@ describe("LlmSettingsPanel", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
-  it("saves the name on Enter without leaving the field", async () => {
+  it("saves the address on Enter without leaving the field", async () => {
     const user = userEvent.setup();
     renderPanel();
 
-    const nameField = await screen.findByLabelText("Provider name");
-    await user.clear(nameField);
-    await user.type(nameField, "Google Vertex{Enter}");
+    const urlField = await screen.findByLabelText(/api address/i);
+    await user.clear(urlField);
+    await user.type(urlField, "https://gateway.example/v1{Enter}");
 
     await waitFor(() =>
-      expect(updateLlmProvider).toHaveBeenCalledWith({ id: "prov-1", name: "Google Vertex" })
+      expect(updateLlmProvider).toHaveBeenCalledWith({
+        id: "prov-1",
+        baseUrl: "https://gateway.example/v1"
+      })
     );
   });
 
@@ -243,11 +245,11 @@ describe("LlmSettingsPanel", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    const nameField = await screen.findByLabelText("Provider name");
-    await user.clear(nameField);
-    await user.type(nameField, "scratch{Escape}");
+    const urlField = await screen.findByLabelText(/api address/i);
+    await user.clear(urlField);
+    await user.type(urlField, "scratch{Escape}");
 
-    expect(nameField).toHaveValue("Google");
+    expect(urlField).toHaveValue("https://generativelanguage.googleapis.com/v1beta");
     expect(updateLlmProvider).not.toHaveBeenCalled();
   });
 
@@ -255,7 +257,7 @@ describe("LlmSettingsPanel", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await user.click(await screen.findByLabelText("Provider name"));
+    await user.click(await screen.findByLabelText(/api address/i));
     await user.tab();
 
     expect(updateLlmProvider).not.toHaveBeenCalled();
