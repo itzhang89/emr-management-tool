@@ -8,7 +8,7 @@
  *   PORTABLE_EXE  - path to the built portable `.exe`
  *   PORTABLE_OUT  - output `.zip` path
  *   TAURI_SIGNING_PRIVATE_KEY (+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD) - optional;
- *                     when set, runs `npm run tauri -- signer sign <zip>` and writes `<zip>.sig`
+ *                     when set, signs the zip via the Tauri CLI and writes `<zip>.sig`
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -120,8 +120,13 @@ export function signPortableZip(zipPath, env = process.env) {
     return false;
   }
 
-  const args = ["run", "tauri", "--", "signer", "sign", zipPath];
-  execFileSync("node", ["node_modules/.bin/tauri", ...args.slice(2)], {
+  // Call the Tauri CLI's real JS entry directly. The npm shim at
+  // node_modules/.bin/tauri is a shell script on Windows and cannot be
+  // spawned as `node <path>` (EINVAL / SyntaxError), while `npm run tauri`
+  // also fails under spawnSync on Windows. Resolving the CLI entry avoids
+  // both shell wrappers.
+  const cliEntry = resolve(repoRoot, "node_modules/@tauri-apps/cli/tauri.js");
+  execFileSync(process.execPath, [cliEntry, "signer", "sign", zipPath], {
     cwd: repoRoot,
     env: { ...process.env, ...env },
     stdio: "inherit"
