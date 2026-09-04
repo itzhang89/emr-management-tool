@@ -120,8 +120,8 @@ export function signPortableZip(zipPath, env = process.env) {
     return false;
   }
 
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  execFileSync(npmCommand, ["run", "tauri", "--", "signer", "sign", zipPath], {
+  const args = ["run", "tauri", "--", "signer", "sign", zipPath];
+  execFileSync("node", ["node_modules/.bin/tauri", ...args.slice(2)], {
     cwd: repoRoot,
     env: { ...process.env, ...env },
     stdio: "inherit"
