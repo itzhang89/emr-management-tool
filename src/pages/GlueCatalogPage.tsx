@@ -19,7 +19,6 @@ import {
   SqlTemplatesButton
 } from "@/components/glue/SqlQueryMenus";
 import { TableMetadataPanel } from "@/components/glue/TableMetadataPanel";
-import { PageHeader } from "@/components/layout/PageHeader";
 import {
   Dialog,
   DialogContent,
@@ -715,17 +714,6 @@ export function GlueCatalogPage() {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
-      <PageHeader
-        pageId="glue"
-        actions={
-          topTab === "metadata" && metadataKind === "table" && selectedDatabase && selectedTable ? (
-            <Button type="button" variant="destructive" size="sm" onClick={() => setDropDialogOpen(true)}>
-              <Trash2 data-icon="inline-start" />
-              Drop table
-            </Button>
-          ) : null
-        }
-      />
 
       <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
         {catalogCollapsed ? (

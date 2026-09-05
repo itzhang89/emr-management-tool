@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { ChatPanel } from "@/components/ai/chat/ChatPanel";
 import { LlmSettingsPanel } from "@/components/ai/settings/LlmSettingsPanel";
 import { McpServerPanel } from "@/components/ai/server/McpServerPanel";
@@ -28,7 +27,6 @@ export function AiAssistantPage() {
     // main element's padding): Chat and Audit scroll inside themselves, so the
     // page must not be free to grow and hand its overflow to the window.
     <div className="flex h-[calc(100vh-3rem)] min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
-      <PageHeader pageId="ai" />
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
         <TabsList className="w-fit">
