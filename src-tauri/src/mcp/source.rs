@@ -85,15 +85,10 @@ impl JobDataSource for AppJobDataSource {
     /// search, so one misconfigured account can't block lookup in the others.
     async fn find_job(&self, job_id: &str) -> AppResult<FoundJob> {
         let pool = repository::pool().await?;
-        let active = repository::active_aws_account(&pool).await?;
         let mut accounts = repository::list_aws_accounts(&pool).await?;
-        // Active account first so it is always searched before the others.
-        if let Some(active) = active {
-            if let Some(index) = accounts.iter().position(|a| a.id == active.id) {
-                let account = accounts.remove(index);
-                accounts.insert(0, account);
-            }
-        }
+        // Active account first so it is always searched before the others;
+        // the stable sort keeps the remaining accounts in their name order.
+        accounts.sort_by_key(|account| !account.is_active);
 
         for account in accounts {
             // 1. Local cache first. Job ids are matched exactly; no prefix
