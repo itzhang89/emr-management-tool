@@ -327,12 +327,14 @@ export function AppShell() {
         </main>
       </div>
       <Dialog open={accountDialogOpen} onOpenChange={handleAccountDialogOpenChange}>
-        <DialogContent>
+        {/* grid-cols-1 → minmax(0,1fr): stop the dialog's auto column from growing wider than max-w-lg when an
+            account's long name/ARN sets a large intrinsic (min-content) width, which pushed each option past the frame */}
+        <DialogContent className="grid-cols-1">
           <DialogHeader>
             <DialogTitle>Switch AWS Account</DialogTitle>
             <DialogDescription>Choose the active AWS account used by EMR, CloudWatch, and S3.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3" role="listbox" aria-label="AWS accounts">
+          <div className="min-w-0 space-y-3" role="listbox" aria-label="AWS accounts">
             {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
             {accounts.error ? <p className="text-sm text-destructive">Failed to load AWS accounts.</p> : null}
             {accounts.data?.length === 0 ? (
@@ -357,11 +359,11 @@ export function AppShell() {
                   onDoubleClick={() => activateAccount(account.id)}
                 >
                   <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <p className="truncate font-medium">{account.name}</p>
                       {account.isActive ? <Badge>Active</Badge> : null}
                     </div>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="truncate text-sm text-muted-foreground">
                       {account.region} · {account.accessKeyIdMasked}
                       {account.identity ? ` · ${account.identity.account}` : ""}
                     </p>
