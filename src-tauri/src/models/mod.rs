@@ -1359,3 +1359,76 @@ pub struct ChatUpdateMessageRequest {
     pub message_id: String,
     pub content: String,
 }
+
+// --- Configurable log desensitization (redaction) rules ---------------------
+
+/// Where a rule comes from. Built-ins are the app's fixed conservative
+/// implementations (enable-only); `Custom` rules are user-supplied
+/// pattern → replacement regexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RedactRuleKind {
+    Builtin,
+    Custom,
+}
+
+/// One configurable redaction rule, as the frontend panel reads and edits it.
+///
+/// For a `Builtin` rule `pattern`/`replacement` describe the rule for the UI
+/// display only; the redaction engine always uses the built-in's fixed
+/// implementation and only respects `enabled`. A `Custom` rule's `pattern` is a
+/// (case-sensitive) regex the engine compiles and `replacement` is a mask macro
+/// or literal replacement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactRule {
+    pub id: String,
+    pub name: String,
+    /// One of `secret` | `pii` | `network` | `custom` — the fixed category groups
+    /// the panel renders.
+    pub category: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample: Option<String>,
+    pub enabled: bool,
+    pub kind: RedactRuleKind,
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactConfig {
+    pub rules: Vec<RedactRule>,
+}
+
+/// Whole-config replacement sent by the panel's Save button: rules with
+/// `kind: Custom` that have an `id` update in place; rule objects with a blank
+/// `id` (new custom rows) are assigned one server-side.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactSaveRequest {
+    pub rules: Vec<RedactRule>,
+}
+
+/// The Redaction tab's batch-test body, mirroring the reference `/api/test`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactTestRequest {
+    pub text: String,
+    /// The local rule set to test against (what the panel is currently showing),
+    /// so the result matches the in-panel previews without a separate save.
+    pub rules: Vec<RedactRule>,
+}
+
+/// Which rules matched when a batch test ran, so the result can name hits the
+/// way the reference panel does.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactTestResult {
+    pub masked: String,
+    pub count: u64,
+    pub hits: Vec<String>,
+}

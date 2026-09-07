@@ -145,6 +145,10 @@ pub fn run() {
             commands::chat::regenerate_chat_message,
             commands::chat::set_chat_message_version,
             commands::chat::update_chat_message,
+            commands::redact::redact_get_config,
+            commands::redact::redact_save_config,
+            commands::redact::redact_reset_defaults,
+            commands::redact::redact_test,
         ]);
 
     #[cfg(desktop)]
@@ -152,6 +156,10 @@ pub fn run() {
         builder = builder
             .setup(|app| {
                 diagnostics::init_file_logger()?;
+                // Load persisted redaction rules into the engine as soon as the
+                // DB is ready, so a previously disabled built-in stays disabled
+                // after a restart.
+                commands::redact::prime();
                 if let Err(error) = secrets::migrate_legacy_credential_store(app.handle()) {
                     diagnostics::append_log_line(
                         "WARN",

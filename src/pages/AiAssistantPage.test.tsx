@@ -23,6 +23,10 @@ vi.mock("@/components/ai/settings/LlmSettingsPanel", () => ({
   )
 }));
 
+vi.mock("@/components/ai/server/RedactionPanel", () => ({
+  RedactionPanel: () => <div data-testid="redaction-panel">Redaction</div>
+}));
+
 vi.mock("@/components/ai/chat/ChatPanel", () => ({
   ChatPanel: ({ onConfigureModels }: { onConfigureModels: (providerId?: string) => void }) => (
     <div data-testid="chat-panel">
@@ -48,14 +52,22 @@ function renderPage() {
 }
 
 describe("AiAssistantPage", () => {
-  it("shows the four AI tabs with Chat selected first", () => {
+  it("shows the five AI tabs with Chat selected first", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "AI Assistant" })).toBeInTheDocument();
-    for (const name of ["Chat", "Providers", "MCP Server", "Audit"]) {
+    for (const name of ["Chat", "Providers", "Redaction", "MCP Server", "Audit"]) {
       expect(screen.getByRole("tab", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("tab", { name: "Chat", selected: true })).toBeInTheDocument();
+  });
+
+  it("opens the redaction panel from its tab", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("tab", { name: "Redaction" }));
+    expect(screen.getByTestId("redaction-panel")).toBeInTheDocument();
   });
 
   it("keeps the ported MCP server and audit panels reachable", async () => {

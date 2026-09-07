@@ -4,11 +4,14 @@ import { ChatPanel } from "@/components/ai/chat/ChatPanel";
 import { LlmSettingsPanel } from "@/components/ai/settings/LlmSettingsPanel";
 import { McpServerPanel } from "@/components/ai/server/McpServerPanel";
 import { McpAuditPanel } from "@/components/ai/server/McpAuditPanel";
+import { RedactionPanel } from "@/components/ai/server/RedactionPanel";
 
 /**
  * All of the app's AI capabilities in one place. Chat is the daily entry point;
- * Providers configures the LLM gateways and their models; MCP Server and Audit
- * are the operations views for the in-process tool server external agents connect to.
+ * Providers configures the LLM gateways and their models; Redaction configures
+ * which of the log values are masked before they are sent from an MCP tool; MCP
+ * Server and Audit are the operations views for the in-process tool server
+ * external agents connect to.
  */
 export function AiAssistantPage() {
   // Controlled so Chat's empty state can send an unconfigured user straight to
@@ -32,6 +35,7 @@ export function AiAssistantPage() {
         <TabsList className="w-fit">
           <TabsTrigger value="chat">Chat</TabsTrigger>
           <TabsTrigger value="settings">Providers</TabsTrigger>
+          <TabsTrigger value="redact">Redaction</TabsTrigger>
           <TabsTrigger value="server">MCP Server</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
         </TabsList>
@@ -50,6 +54,10 @@ export function AiAssistantPage() {
             preselectProviderId={settingsProviderId}
             onPreselectHandled={clearSettingsProvider}
           />
+        </TabsContent>
+
+        <TabsContent value="redact" className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <RedactionPanel />
         </TabsContent>
 
         <TabsContent value="server" className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto">

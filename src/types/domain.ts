@@ -1010,3 +1010,45 @@ export const CHAT_EVENTS = {
   title: "chat:title"
 } as const;
 
+// --- Configurable log desensitization (redaction) rules ---------------------
+
+/** `"builtin"` rules are fixed engine redactions; `"custom"` are user regexes. */
+export const REDACT_KIND = {
+  builtin: "builtin",
+  custom: "custom"
+} as const;
+export type RedactKind = (typeof REDACT_KIND)[keyof typeof REDACT_KIND];
+
+/** The fixed category groups the Redaction tab renders, in display order. */
+export const REDACT_CATEGORIES = ["secret", "pii", "network", "custom"] as const;
+export type RedactCategory = (typeof REDACT_CATEGORIES)[number];
+
+export interface RedactRule {
+  /** Stable slug for built-ins (`arn`, `s3-bucket`, …); uuid for custom rules. */
+  id: string;
+  name: string;
+  category: RedactCategory;
+  /** Regex source. Built-ins carry none (their mask is an engine implementation). */
+  pattern?: string;
+  /** `__MASK_ALL__`, `__KEEP_HEAD_TAIL_<a>_<b>__`, or a literal. Custom only. */
+  replacement?: string;
+  /** Optional text used for the row's inline before→after preview. */
+  sample?: string;
+  enabled: boolean;
+  kind: RedactKind;
+  sortOrder: number;
+}
+
+export interface RedactConfig {
+  rules: RedactRule[];
+}
+
+/** The local rule set a custom rule is tested against, mirroring `/api/test`. */
+export interface RedactTestResult {
+  masked: string;
+  count: number;
+  /** Rule display names (de-duplicated) that masked at least one span. */
+  hits: string[];
+}
+
+

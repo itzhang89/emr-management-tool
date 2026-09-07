@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod llm;
+pub mod redact;
 pub mod repository;
 
 use crate::error::{AppError, AppResult};

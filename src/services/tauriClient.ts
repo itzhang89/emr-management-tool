@@ -69,7 +69,10 @@ import type {
   CreateChatAssistantRequest,
   CreateChatSessionRequest,
   UpdateChatAssistantRequest,
-  UpdateChatSessionRequest
+  UpdateChatSessionRequest,
+  RedactConfig,
+  RedactRule,
+  RedactTestResult
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -249,7 +252,13 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
      * finishes, streaming on the CHAT_EVENTS channels.
      */
     updateChatMessage: (sessionId: string, messageId: string, content: string) =>
-      call<string>("update_chat_message", { sessionId, messageId, content })
+      call<string>("update_chat_message", { sessionId, messageId, content }),
+    // Configurable log desensitization rules for MCP tool output.
+    redactGetConfig: () => call<RedactConfig>("redact_get_config"),
+    redactSaveConfig: (rules: RedactRule[]) => call<RedactConfig>("redact_save_config", { rules }),
+    redactResetDefaults: () => call<RedactConfig>("redact_reset_defaults"),
+    redactTest: (text: string, rules: RedactRule[]) =>
+      call<RedactTestResult>("redact_test", { text, rules })
   };
 }
 

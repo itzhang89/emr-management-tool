@@ -10,6 +10,7 @@ pub mod llm;
 pub mod logs;
 pub mod mcp;
 pub mod portable_updater;
+pub mod redact;
 pub mod s3;
 pub mod system;
 pub mod templates;
