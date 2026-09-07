@@ -251,7 +251,7 @@ jobs:
       ARTIFACT_PATTERNS:       ${{ matrix.artifact_patterns }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-tauri
         with:
           rust-targets: ${{ matrix.rust_targets }}
@@ -335,7 +335,7 @@ jobs:
       ARTIFACT_PATTERNS:                  ${{ matrix.artifact_patterns }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-tauri
         with:
           rust-targets: ${{ matrix.rust_targets }}
@@ -408,7 +408,7 @@ jobs:
     needs: [prepare-release, stable-packages, detect-updater]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build latest.json
         env:
           GH_TOKEN:            ${{ secrets.GITHUB_TOKEN }}
@@ -468,7 +468,7 @@ jobs:
     outputs:
       app_version: ${{ steps.validate.outputs.app_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate semver tag
         id: validate
         run: node scripts/validate-release-tag.mjs
@@ -518,7 +518,7 @@ jobs:
       VITE_APP_CHANNEL:                   stable
       VITE_APP_PLATFORM:                  ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-tauri
         with:
           rust-targets: ${{ matrix.rust_targets }}
@@ -590,7 +590,7 @@ jobs:
     needs: [detect-updater, stable-release, resolve-tag-version]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build latest.json
         env:
           GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
