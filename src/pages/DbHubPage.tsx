@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Database } from "lucide-react";
 import { GlueCatalogTab } from "@/components/dbhub/workspace/GlueCatalogTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { useDbConnections } from "@/hooks/useDbHub";
 
 /**
  * DBHub — the hub for every queryable data source (Glue/Athena today, JDBC
@@ -10,8 +11,8 @@ import { Button } from "@/components/ui/button";
  *
  * Two fixed tabs: Overview (connection management — cards, network profiles,
  * the add-connection wizard) and Glue Catalog (the Athena workspace, moved
- * here verbatim from the old GlueCatalogPage). Connections marked show_as_tab
- * additionally appear as their own query tabs (batch 4).
+ * here verbatim from the old GlueCatalogPage). Connections marked showAsTab
+ * additionally appear as their own query tabs (the workspace lands in batch 4).
  *
  * Workspace tabs mount lazily on first activation and then never unmount on
  * tab switch, so the SQL editor, result tabs and catalog selection survive
@@ -27,11 +28,6 @@ type TabConnection = {
   showAsTab: boolean;
 };
 
-/** Placeholder until the db_connections table lands in batch 1. */
-function useDbConnectionsForTabs(): TabConnection[] {
-  return [];
-}
-
 const OVERVIEW_TAB = "overview";
 const GLUE_TAB = "glue";
 
@@ -40,7 +36,8 @@ function connectionTabValue(connectionId: string) {
 }
 
 export function DbHubPage() {
-  const connections = useDbConnectionsForTabs();
+  const connectionsQuery = useDbConnections();
+  const connections: TabConnection[] = connectionsQuery.data ?? [];
   const [activeTab, setActiveTab] = useState(OVERVIEW_TAB);
 
   const dynamicTabs = connections.filter((connection) => connection.showAsTab);

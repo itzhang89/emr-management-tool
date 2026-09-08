@@ -72,7 +72,14 @@ import type {
   UpdateChatSessionRequest,
   RedactConfig,
   RedactRule,
-  RedactTestResult
+  RedactTestResult,
+  DbConnection,
+  DbConnectionInput,
+  DbConnectionUpdateInput,
+  DbConnectionFlags,
+  DbTestResult,
+  NetworkProfile,
+  NetworkProfileInput
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -258,7 +265,26 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     redactSaveConfig: (rules: RedactRule[]) => call<RedactConfig>("redact_save_config", { rules }),
     redactResetDefaults: () => call<RedactConfig>("redact_reset_defaults"),
     redactTest: (text: string, rules: RedactRule[]) =>
-      call<RedactTestResult>("redact_test", { text, rules })
+      call<RedactTestResult>("redact_test", { text, rules }),
+    // DBHub: database connections + network profiles (active-account scoped).
+    listDbConnections: () => call<DbConnection[]>("list_db_connections"),
+    createDbConnection: (request: DbConnectionInput) =>
+      call<DbConnection>("create_db_connection", request),
+    updateDbConnection: (request: DbConnectionUpdateInput) =>
+      call<DbConnection>("update_db_connection", request),
+    setDbConnectionFlags: (connectionId: string, request: DbConnectionFlags) =>
+      call<DbConnection>("set_db_connection_flags", { connectionId, ...request }),
+    deleteDbConnection: (connectionId: string) =>
+      call<DbConnection[]>("delete_db_connection", { connectionId }),
+    testDbConnection: (connectionId: string) =>
+      call<DbTestResult>("test_db_connection", { connectionId }),
+    listNetworkProfiles: () => call<NetworkProfile[]>("list_network_profiles"),
+    saveNetworkProfile: (request: NetworkProfileInput) =>
+      call<NetworkProfile>("save_network_profile", request),
+    deleteNetworkProfile: (profileId: string) =>
+      call<void>("delete_network_profile", { profileId }),
+    testNetworkProfile: (profileId: string) =>
+      call<DbTestResult>("test_network_profile", { profileId })
   };
 }
 

@@ -1051,4 +1051,107 @@ export interface RedactTestResult {
   hits: string[];
 }
 
+// --- DBHub: database connections and network profiles ----------------------
+
+/** What wire protocol a connection speaks. Yellowbrick rides Postgres wire. */
+export type DbConnectionKind = "mysql" | "postgres" | "yellowbrick";
+
+/** The SQL the AI tools may run — always select-only in this first cut. */
+export type DbReadOnlyPolicy = "select-only";
+
+/** A saved database connection, bound to the active AWS account. */
+export interface DbConnection {
+  id: string;
+  accountId: string;
+  kind: DbConnectionKind;
+  name: string;
+  host: string;
+  port: number;
+  database?: string;
+  username: string;
+  networkProfileId?: string;
+  /** Show this connection as its own query tab next to Glue Catalog. */
+  showAsTab: boolean;
+  /** Register the read-only SQL tool for this connection into the AI Chat. */
+  enabledForAi: boolean;
+  aiReadOnlyPolicy: DbReadOnlyPolicy;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Creation body; the password is optional and lands in the secrets store. */
+export interface DbConnectionInput {
+  kind: DbConnectionKind;
+  name: string;
+  host: string;
+  port: number;
+  database?: string;
+  username: string;
+  networkProfileId?: string;
+  showAsTab?: boolean;
+  enabledForAi?: boolean;
+  aiReadOnlyPolicy?: DbReadOnlyPolicy;
+  sortOrder?: number;
+  password?: string;
+}
+
+/** Patch body — absent fields keep their stored values. */
+export interface DbConnectionUpdateInput extends Partial<Omit<DbConnectionInput, "kind">> {
+  id: string;
+}
+
+/** Overview-card switches; absent fields stay untouched. */
+export interface DbConnectionFlags {
+  showAsTab?: boolean;
+  enabledForAi?: boolean;
+  aiReadOnlyPolicy?: DbReadOnlyPolicy;
+}
+
+/** Transport details of one network profile (tagged union on `type`). */
+export type NetworkTransport =
+  | {
+      type: "ssh-tunnel";
+      host: string;
+      port: number;
+      username: string;
+      authMethod: string;
+      /** Mirrored flag — the secret itself never crosses to the WebView. */
+      credentialsSaved: boolean;
+    }
+  | {
+      type: "socks5";
+      host: string;
+      port: number;
+      username?: string;
+      credentialsSaved: boolean;
+    };
+
+/** A saved SSH-tunnel or SOCKS5 profile, also account-bound. */
+export interface NetworkProfile {
+  id: string;
+  accountId: string;
+  name: string;
+  transport: NetworkTransport;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create/update body; `id` present = update. Secret travels separately. */
+export interface NetworkProfileInput {
+  id?: string;
+  name: string;
+  transport: NetworkTransport;
+  enabled?: boolean;
+  secret?: string;
+}
+
+/** Handshake-only connectivity probe result. */
+export interface DbTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+}
+
 

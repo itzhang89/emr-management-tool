@@ -344,6 +344,16 @@ pub async fn delete_aws_account(
         .ok_or_else(|| AppError::validation("accountId is required."))?;
     let pool = repository::pool().await?;
     let _ = clear_account_credentials(&app, account_id);
+
+    // DBHub rows belong to this account — cascade them (and their secrets)
+    // with it. Best-effort secret cleanup must never block the row deletion.
+    if let Ok((connection_ids, profile_ids)) = crate::db::dbhub::delete_all_for_account(&pool, account_id).await {
+        for id in connection_ids.iter().chain(profile_ids.iter()) {
+            let _ = crate::secrets::delete_secret(&app, &format!("db/{id}/password"));
+            let _ = crate::secrets::delete_secret(&app, &format!("profile/{id}/password"));
+        }
+    }
+
     repository::delete_aws_account(&pool, account_id).await?;
 
     let mut accounts = repository::list_aws_accounts(&pool).await?;

@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod dbhub;
 pub mod llm;
 pub mod redact;
 pub mod repository;

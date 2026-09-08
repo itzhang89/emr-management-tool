@@ -1432,3 +1432,218 @@ pub struct RedactTestResult {
     pub count: u64,
     pub hits: Vec<String>,
 }
+
+// --- DBHub: database connections and network profiles ----------------------
+
+/// What wire protocol a connection speaks. Yellowbrick rides the Postgres wire
+/// protocol in this first cut (see the DBHub design, section 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DbConnectionKind {
+    #[serde(rename = "mysql")]
+    Mysql,
+    #[serde(rename = "postgres")]
+    Postgres,
+    #[serde(rename = "yellowbrick")]
+    Yellowbrick,
+}
+
+impl DbConnectionKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DbConnectionKind::Mysql => "mysql",
+            DbConnectionKind::Postgres => "postgres",
+            DbConnectionKind::Yellowbrick => "yellowbrick",
+        }
+    }
+}
+
+/// The SQL the AI tools may run against a connection. `select_only` is the
+/// default and only lets SELECT/SHOW/DESCRIBE/EXPLAIN through; read-only
+/// transaction mode enforces it a second time at the wire level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DbReadOnlyPolicy {
+    #[serde(rename = "select-only")]
+    SelectOnly,
+}
+
+impl DbReadOnlyPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DbReadOnlyPolicy::SelectOnly => "select-only",
+        }
+    }
+}
+
+/// A saved database connection. Bound to one AWS account: connections of
+/// different accounts never see each other (DBHub design, account binding).
+/// Passwords live in the secrets store under `db/{id}/password`, never here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnection {
+    pub id: String,
+    pub account_id: String,
+    pub kind: DbConnectionKind,
+    pub name: String,
+    pub host: String,
+    pub port: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    pub username: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_profile_id: Option<String>,
+    /// Show this connection as its own query tab next to Glue Catalog.
+    pub show_as_tab: bool,
+    /// Register the read-only SQL tool for this connection into the AI Chat.
+    pub enabled_for_ai: bool,
+    pub ai_read_only_policy: DbReadOnlyPolicy,
+    pub sort_order: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Creation body for a connection. The password is optional — absent means the
+/// user chose not to store it (test/manual entry will prompt again).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionInput {
+    pub kind: DbConnectionKind,
+    pub name: String,
+    pub host: String,
+    pub port: i64,
+    #[serde(default)]
+    pub database: Option<String>,
+    pub username: String,
+    #[serde(default)]
+    pub network_profile_id: Option<String>,
+    #[serde(default)]
+    pub show_as_tab: bool,
+    #[serde(default = "default_true")]
+    pub enabled_for_ai: bool,
+    #[serde(default)]
+    pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Patch body for connection flags from the Overview card switches. Absent
+/// fields stay untouched.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionFlags {
+    #[serde(default)]
+    pub show_as_tab: Option<bool>,
+    #[serde(default)]
+    pub enabled_for_ai: Option<bool>,
+    #[serde(default)]
+    pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+}
+
+/// Update body for a connection. Absent/None fields keep their stored values;
+/// `password: Some("")` clears the stored password, `Some(text)` replaces it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionUpdateInput {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<i64>,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub network_profile_id: Option<String>,
+    #[serde(default)]
+    pub show_as_tab: Option<bool>,
+    #[serde(default)]
+    pub enabled_for_ai: Option<bool>,
+    #[serde(default)]
+    pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    #[serde(default)]
+    pub sort_order: Option<i64>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Transport details for one network profile. `SshTunnel` forwards a local
+/// port to the target through an SSH server (jump servers arrive in batch 6);
+/// `Socks5` dials the target through a SOCKS5 proxy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum NetworkTransport {
+    #[serde(rename = "ssh-tunnel")]
+    SshTunnel {
+        host: String,
+        port: i64,
+        username: String,
+        /// `password` for now; key-based auth lands with batch 6.
+        auth_method: String,
+        /// Whether a password/passphrase was saved — the secret itself never
+        /// crosses to the WebView, only this flag is mirrored here.
+        credentials_saved: bool,
+    },
+    #[serde(rename = "socks5")]
+    Socks5 {
+        host: String,
+        port: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
+        credentials_saved: bool,
+    },
+}
+
+impl NetworkTransport {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            NetworkTransport::SshTunnel { .. } => "ssh-tunnel",
+            NetworkTransport::Socks5 { .. } => "socks5",
+        }
+    }
+}
+
+/// A saved network profile (SSH tunnel or SOCKS5 proxy), also account-bound.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProfile {
+    pub id: String,
+    pub account_id: String,
+    pub name: String,
+    pub transport: NetworkTransport,
+    /// Master switch on the profile card. A disabled profile cannot serve
+    /// traffic but stays configured.
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Creation/update body for a profile; `id: None` creates.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProfileInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub transport: NetworkTransport,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub secret: Option<String>,
+}
+
+/// Result of a connectivity test — handshake only, no SQL.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub latency_ms: u64,
+}

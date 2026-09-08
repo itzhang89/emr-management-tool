@@ -149,6 +149,16 @@ pub fn run() {
             commands::redact::redact_save_config,
             commands::redact::redact_reset_defaults,
             commands::redact::redact_test,
+            commands::dbhub::list_db_connections,
+            commands::dbhub::create_db_connection,
+            commands::dbhub::update_db_connection,
+            commands::dbhub::set_db_connection_flags,
+            commands::dbhub::delete_db_connection,
+            commands::dbhub::test_db_connection,
+            commands::dbhub::list_network_profiles,
+            commands::dbhub::save_network_profile,
+            commands::dbhub::delete_network_profile,
+            commands::dbhub::test_network_profile,
         ]);
 
     #[cfg(desktop)]
