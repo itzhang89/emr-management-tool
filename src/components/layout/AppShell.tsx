@@ -32,8 +32,8 @@ const VirtualClustersPage = lazy(() =>
   import("@/pages/VirtualClustersPage").then((module) => ({ default: module.VirtualClustersPage }))
 );
 const S3BrowserPage = lazy(() => import("@/pages/S3BrowserPage").then((module) => ({ default: module.S3BrowserPage })));
-const GlueCatalogPage = lazy(() =>
-  import("@/pages/GlueCatalogPage").then((module) => ({ default: module.GlueCatalogPage }))
+const DbHubPage = lazy(() =>
+  import("@/pages/DbHubPage").then((module) => ({ default: module.DbHubPage }))
 );
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const AiAssistantPage = lazy(() =>
@@ -239,7 +239,7 @@ export function AppShell() {
       case "s3":
         return <S3BrowserPage />;
       case "glue":
-        return <GlueCatalogPage />;
+        return <DbHubPage />;
       case "ai":
         return <AiAssistantPage />;
       case "settings":

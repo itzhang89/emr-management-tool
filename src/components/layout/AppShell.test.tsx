@@ -404,7 +404,9 @@ describe("AppShell", () => {
 
     await user.keyboard("{Meta>}5{/Meta}");
 
-    expect(await screen.findByRole("heading", { name: "Data Catalog" })).toBeInTheDocument();
+    // The DBHub page has no PageHeader; its fixed tab bar is the identity marker.
+    expect(await screen.findByRole("tab", { name: "Glue Catalog" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
   });
 
   it("cycles pages with bracket shortcuts", async () => {

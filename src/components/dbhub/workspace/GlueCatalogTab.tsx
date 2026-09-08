@@ -83,6 +83,12 @@ import {
 import type { AthenaQueryResults, SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
 import { useQueryClient } from "@tanstack/react-query";
 
+/**
+ * The Glue/Athena query workspace, moved verbatim out of the old
+ * `GlueCatalogPage` when the page became the DBHub host. Renders as the
+ * "Glue Catalog" fixed tab inside `DbHubPage`; behavior is unchanged.
+ */
+
 const WORKSPACE_PANE_MIN_WIDTH = 220;
 const WORKSPACE_PANE_DEFAULT_WIDTH = 300;
 const CATALOG_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_CATALOG_TOGGLE);
@@ -94,7 +100,7 @@ type MetadataKind = "table" | "database";
 
 const initialResultTab = createQueryResultTab(1);
 
-export function GlueCatalogPage() {
+export function GlueCatalogTab() {
   const queryClient = useQueryClient();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;

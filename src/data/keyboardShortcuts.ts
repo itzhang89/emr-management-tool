@@ -64,7 +64,7 @@ export const shortcutCategories: ShortcutCategory[] = [
   { id: "global", label: "Global", description: "Available from any page" },
   { id: "navigation", label: "Navigation", description: "Jump between primary pages" },
   { id: "account", label: "Account", description: "AWS account switching" },
-  { id: "glue", label: "Data Catalog", description: "Glue tables and Athena SQL" },
+  { id: "glue", label: "DBHub", description: "Databases, connections and queries" },
   { id: "history", label: "Job History", description: "Search and refresh job runs" },
   { id: "logs", label: "Job Logs", description: "Job log tree and viewer" },
   { id: "s3", label: "S3 Browser", description: "When the object list or editor has focus" },
