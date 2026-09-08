@@ -157,11 +157,8 @@ fn project_mysql_rows(
         .map(|row| {
             let mut map = serde_json::Map::new();
             for (index, column) in row.columns().iter().enumerate() {
-                let value: serde_json::Value = match row.try_get::<Option<serde_json::Value>, _>(index) {
-                    Ok(Some(value)) => value,
-                    Ok(None) | Err(_) => serde_json::Value::Null,
-                };
-                map.insert(column.name().to_string(), normalize(value));
+                let value: serde_json::Value = mysql_cell_to_json(row, index);
+                map.insert(column.name().to_string(), value);
             }
             serde_json::Value::Object(map)
         })
@@ -254,12 +251,51 @@ fn project_postgres_rows(
 
 /// MySQL decodes some values as non-JSON scalars; normalise the shapes the
 /// grid cannot render (bytes → base64 flag, big numerics → string) minimally.
-fn normalize(value: serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::String(text) => serde_json::Value::String(text),
-        serde_json::Value::Null => serde_json::Value::Null,
-        other => other,
+/// Decode one MySQL cell into a JSON value.
+///
+/// sqlx provides no `Decode for serde_json::Value` on MySQL (only the `Json<T>`
+/// wrapper), so a blanket `try_get::<serde_json::Value>` always errored and the
+/// old projection swallowed every error into `Null` — MySQL results (and the
+/// catalog tree that reads them) came back all-blank with no error. Instead,
+/// decode by value type: numbers and booleans keep their JSON shapes, text and
+/// temporal values become strings, NULL stays null, and anything that cannot
+/// be decoded as one of those (e.g. binary blobs) renders as its hex `0x…`
+/// marker rather than silently vanishing.
+fn mysql_cell_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> serde_json::Value {
+    // Text first covers VARCHAR/TEXT/CHAR/ENUM/SET plus how temporal and float
+    // values surface through sqlx's string decode.
+    if let Ok(Some(text)) = row.try_get::<Option<String>, _>(index) {
+        return serde_json::Value::String(text);
     }
+    if let Ok(Some(text)) = row.try_get::<Option<&str>, _>(index) {
+        return serde_json::Value::String(text.to_string());
+    }
+    if let Ok(Some(number)) = row.try_get::<Option<i64>, _>(index) {
+        return serde_json::Value::Number(number.into());
+    }
+    if let Ok(Some(number)) = row.try_get::<Option<f64>, _>(index) {
+        if let Some(number) = serde_json::Number::from_f64(number) {
+            return serde_json::Value::Number(number);
+        }
+    }
+    if let Ok(Some(flag)) = row.try_get::<Option<bool>, _>(index) {
+        return serde_json::Value::Bool(flag);
+    }
+    if let Ok(Some(bytes)) = row.try_get::<Option<Vec<u8>>, _>(index) {
+        // Binary payload — render as 0x-hex so the cell is visibly non-empty.
+        return serde_json::Value::String(format!("0x{}", hex_encode(&bytes)));
+    }
+    serde_json::Value::Null
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 // --- Catalog (workspace tree) ------------------------------------------------
