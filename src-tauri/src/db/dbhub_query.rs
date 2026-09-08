@@ -8,7 +8,6 @@ use crate::error::{AppError, AppResult};
 use crate::models::DbConnectionKind;
 use serde::Serialize;
 use sqlx::{Column, Row};
-use tauri::AppHandle;
 
 /// Hard cap on rows returned to the UI per page — result pages fetch more via
 /// the token only if the driver exposes one (first cut: offset paging).

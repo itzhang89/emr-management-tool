@@ -32,6 +32,7 @@ use crate::error::AppResult;
 use super::audit;
 use super::source::AppJobDataSource;
 use super::tools::analyze_job_failure::{self, AnalyzeJobFailureArgs, AnalyzeJobFailureReport};
+use super::tools::dbhub_sql;
 use super::tools::read_only as read_only_tools;
 
 /// The tool handler. Holds the app handle so every `#[tool]` can reach AWS via
@@ -231,6 +232,60 @@ impl McpTools {
             },
         )
         .await
+    }
+    /// List the database connections enabled for AI queries in the active AWS
+    /// account. Each entry carries the connection's id, display name, kind
+    /// (mysql/postgres/yellowbrick) and default database — never hosts, ports,
+    /// usernames or credentials. Use a returned connectionId with
+    /// sql_query_text. Read-only.
+    #[tool(name = "list_databases")]
+    async fn list_databases(&self) -> String {
+        self.run_tool(
+            "list_databases",
+            &serde_json::json!({}),
+            dbhub_sql::list_databases(),
+            |_| Vec::new(),
+        )
+        .await
+    }
+
+    /// Run ONE read-only SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN) against
+    /// an AI-enabled database connection from list_databases. Any statement
+    /// that could modify data is refused by the read-only gate and the query
+    /// runs inside a read-only transaction — this tool cannot alter a
+    /// database. Rows are capped (default 50, max 100) and oversized text is
+    /// marked [truncated]. Read-only.
+    #[tool(name = "sql_query_text")]
+    async fn sql_query_text(
+        &self,
+        Parameters(args): Parameters<dbhub_sql::SqlQueryTextArgs>,
+    ) -> String {
+        // The app handle resolves eagerly (cheap clone); the actual SQL run
+        // happens inside run_tool so its timing/audit wrap the real work.
+        // `args` is cloned into the future so the on_error closure can still
+        // project the failure into the tool's own result shape.
+        let app = self.app_handle();
+        let future_args = args.clone();
+        let result = async move {
+            let app = app?;
+            dbhub_sql::sql_query_text(&app, &future_args).await
+        };
+        self.run_tool(
+            "sql_query_text",
+            &args,
+            result,
+            |message| dbhub_sql::SqlQueryTextResult::refused(&args.connection_id, &args.sql, message),
+        )
+        .await
+    }
+}
+
+impl McpTools {
+    /// The app handle the tools reach AWS through. The data source owns it;
+    /// exposing it here lets DBHub tools reuse the same handle without a new
+    /// construction path.
+    fn app_handle(&self) -> AppResult<tauri::AppHandle> {
+        self.data_source.app().cloned()
     }
 }
 

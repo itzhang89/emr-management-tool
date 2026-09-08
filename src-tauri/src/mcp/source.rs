@@ -48,6 +48,15 @@ impl AppJobDataSource {
         Self { app: None }
     }
 
+    /// The app handle, for tool families (DBHub SQL) that resolve connections
+    /// themselves rather than going through a JobDataSource method. Returns a
+    /// readable error instead of panicking in test mode.
+    pub fn app(&self) -> AppResult<&AppHandle> {
+        self.app
+            .as_ref()
+            .ok_or_else(|| AppError::internal("MCP data source has no app handle (test mode)."))
+    }
+
     fn handle(&self) -> AppResult<&AppHandle> {
         self.app
             .as_ref()
