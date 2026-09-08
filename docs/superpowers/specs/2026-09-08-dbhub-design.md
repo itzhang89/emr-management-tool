@@ -219,7 +219,7 @@ set_connection_flags(id, { showAsTab?, enabledForAi?, readOnlyPolicy? })
 // network profiles
 list_profiles() -> Vec<NetworkProfile>
 save_profile(NetworkProfileDraft) -> NetworkProfile // create/upsert 合并
-delete_profile(id)                                 // 引用它的 connections 置 network_profile_id=null
+delete_profile(id)                                 // 被连接引用则拒绝(先解绑)，详见 §13 偏离
 test_ssh_tunnel_profile(id) -> { ok, message }      // 仅握手连通
 ```
 
@@ -479,8 +479,8 @@ Bootstrap，统一走 `@/components/ui/*`。）
    `configurable-redaction`(可配置脱敏不可逆出)和 MCP 安全底线。
 4. **只读门禁的方言差异**——MySQL/PG 删表语句容易只读阻塞;视图/临时表可能要求
    `read-only-ops` 策略;复杂 prepare/prepare 前门禁对函数 默认保守放行 SELECT。
-5. **网络 Profile 无连接引用校验**：删除 profile 直接把引用该 profile 的连接列 `null`
-   （保留连接本身）。
+5. **网络 Profile 删除先解绑（语义修正，见 §13）**：原设计是「删 profile 置空连接引用」；
+   用户要求改为被绑定即拒绝删除、提示先解绑（原行为会让连接悄然变直连）。
 6. **数据体量/权限**——SQL tool 返回行数 cap + 明确截断标注（对齐
    `2026-08-28` chat 工具 60k [truncated] 规则）避免灌爆模型；外部 agent 路径同规则。
 
@@ -543,3 +543,33 @@ PageHeader 未同步）、`AppShell` 的 "Data Catalog" heading 断言（同 com
 `releaseConfig` 两条（7ec7ba3 升级 setup-node@v5 未同步断言；signer argv
 数组写法与 `signer sign` 字面量断言不匹配）。修复方式均为让断言贴合实现
 现状，非放松语义。
+
+**需求反馈轮（2026-09-09）补充记录：**
+
+**SSH 认证扩展到 password / private-key / ssh-config 别名。** 用户反馈 password
+不够 —— 企业跳板机普遍禁密码、用户早配好 `~/.ssh/config` 别名（含跳板链）。
+实现：`SshTunnel` 增 `private_key_path`（路径非机密，随 transport JSON；passphrase
+走 secrets）；`resolve_ssh_endpoint` 把 transport 解析成 `SshEndpoint`，别名模式
+手写 `~/.ssh/config` 子集解析（Host 精确/通配、HostName/User/Port/IdentityFile、
+`~` 展开），复用用户既有跳板配置。store secret 在 key/别名模式下充当 key
+passphrase。5 个 resolver 测试。
+
+**「Profile is disabled」卡死的两个坑。** (a) 新建 profile 默认 disabled 且 Enable
+只改本地 state（Apply 才落库），而 Test 探测数据库旧值 → 改：Test 先静默保存工作
+副本再探测（同连接向导语义）；新建/复制默认 enabled。(b) 语义修正：`enabled` 只
+决定真实路由，不再阻止测试（测试是验证配置）。另在切换认证方式时清掉残留 host
+（防 IP 变幽灵别名）。
+
+**Profile 删除改为「先解绑」。** 原设计删除即置空连接引用；用户要求被绑定即拒绝。
+实现：db 层 `list_referencing_connections`（账号内、按名排序）；`delete_network_profile`
+命令有引用即返错（后端兜底）；前端删除入口收口到列表底部，被绑弹「Profile is in
+use」列出绑定连接、未绑走确认对话框。
+
+**Overview 连接卡补删除。** 用户要求能删除连接。实现：卡片加删除图标 → 确认
+对话框 → `delete_db_connection`，成功后清该连接的 workspace 缓存（防复活幽灵草稿）。
+
+**DBHub 命令统一单一 `request` 参数。** 前面 batch 全在本地 mock/单测下绿灯，真机
+运行才暴露：前端 `tauriClient` 把所有 payload 包进 `{ request }`（仓库铁律），而
+早期 DBHub 命令参数名是 `connection_id`/`profile_id`/`input` → Tauri 按名匹配不到。
+已全部改为 `DbConnectionRef`/`NetworkProfileRef`/`DbConnectionFlagsRequest`/
+`DbCatalogRequest` 单一 request，并加 serde 回归测试逐条演练前端 payload 形状。

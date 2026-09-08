@@ -11,6 +11,7 @@ vi.mock("sonner", () => ({
 }));
 
 const setConnectionFlags = vi.fn().mockResolvedValue({ id: "c1", name: "Sales MySQL" });
+const deleteConnection = vi.fn().mockResolvedValue([]);
 const saveProfile = vi.fn().mockResolvedValue({ id: "p1", name: "Office tunnel" });
 const deleteProfile = vi.fn().mockResolvedValue(undefined);
 const testProfile = vi.fn().mockResolvedValue({ ok: true, message: "ok", latencyMs: 3 });
@@ -70,6 +71,7 @@ vi.mock("@/services/tauriClient", () => ({
       }
     ]),
     setDbConnectionFlags: (...args: unknown[]) => setConnectionFlags(...args),
+    deleteDbConnection: (...args: unknown[]) => deleteConnection(...args),
     saveNetworkProfile: (...args: unknown[]) => saveProfile(...args),
     deleteNetworkProfile: (...args: unknown[]) => deleteProfile(...args),
     testNetworkProfile: (...args: unknown[]) => testProfile(...args)
@@ -147,5 +149,34 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("Proxy")).toBeInTheDocument();
     expect(screen.getByDisplayValue("10.20.30.40")).toBeInTheDocument();
     expect(screen.getByDisplayValue("root")).toBeInTheDocument();
+  });
+
+  it("deletes a connection after confirming", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+
+    await user.click(await screen.findByRole("button", { name: "Delete Sales MySQL" }));
+    expect(await screen.findByText("Delete connection?")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete connection" }));
+
+    await waitFor(() => expect(deleteConnection).toHaveBeenCalledWith("c1"));
+  });
+
+  it("refuses to delete a profile still bound to a connection", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+
+    await user.click(screen.getByRole("button", { name: "Manage Network Profiles" }));
+    // p1 "Office tunnel" is bound to c2 "Warehouse" in the mock.
+    await user.click(await screen.findByRole("button", { name: "Office tunnel" }));
+    await user.click(screen.getByRole("button", { name: "Delete profile" }));
+
+    expect(await screen.findByText("Profile is in use")).toBeInTheDocument();
+    expect(screen.getByText(/still bound to 1 connection/)).toBeInTheDocument();
+    // "Warehouse" also appears on its connection card behind the dialog — the
+    // list inside the dialog is what matters.
+    expect(screen.getAllByText("Warehouse").length).toBeGreaterThan(0);
+    expect(deleteProfile).not.toHaveBeenCalled();
   });
 });

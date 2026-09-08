@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import type { NetworkProfile } from "@/types/domain";
 import { ProfileDetail } from "./ProfileDetail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -31,7 +32,7 @@ vi.mock("@/hooks/useAwsSettings", () => ({
 
 function renderProfile() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const profile = {
+  const profile: NetworkProfile = {
     id: "p1",
     accountId: "acct-a",
     name: "Office tunnel",

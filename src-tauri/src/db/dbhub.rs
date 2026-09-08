@@ -368,6 +368,27 @@ pub async fn upsert_profile(pool: &SqlitePool, profile: &NetworkProfile) -> AppR
     Ok(())
 }
 
+/// List the account's connections that route through this profile. Used to
+/// refuse deleting a profile that is still bound — silently nulling the
+/// reference would leave a connection silently direct, which is exactly the
+/// surprise the delete guard exists to prevent.
+pub async fn list_referencing_connections(
+    pool: &SqlitePool,
+    account_id: &str,
+    profile_id: &str,
+) -> AppResult<Vec<DbConnection>> {
+    let rows = sqlx::query(
+        "select * from db_connections where account_id = ?1 and network_profile_id = ?2 order by name",
+    )
+    .bind(account_id)
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    rows.into_iter().map(connection_from_row).collect()
+}
+
 /// Delete a profile; connections that referenced it fall back to direct
 /// connections (`network_profile_id = null`) rather than dangling.
 pub async fn delete_profile(pool: &SqlitePool, account_id: &str, id: &str) -> AppResult<bool> {
@@ -606,6 +627,34 @@ mod tests {
         assert!(a.network_profile_id.is_none());
         let b = get_connection(&pool, "acct-b", "c2").await.unwrap().unwrap();
         assert_eq!(b.network_profile_id.as_deref(), Some("p1"));
+    }
+
+    #[tokio::test]
+    async fn list_referencing_connections_is_account_scoped_and_names_them() {
+        let pool = test_pool().await;
+        let mut conn_a = connection("acct-a", "c1", "Orders DB");
+        conn_a.network_profile_id = Some("p1".to_string());
+        insert_connection(&pool, &conn_a).await.expect("insert a");
+        let mut conn_a2 = connection("acct-a", "c2", "Warehouse DB");
+        conn_a2.network_profile_id = Some("p1".to_string());
+        insert_connection(&pool, &conn_a2).await.expect("insert a2");
+        let mut conn_b = connection("acct-b", "c3", "Other account DB");
+        conn_b.network_profile_id = Some("p1".to_string());
+        insert_connection(&pool, &conn_b).await.expect("insert b");
+
+        // Scoped by account, ordered by name.
+        let referencing = list_referencing_connections(&pool, "acct-a", "p1")
+            .await
+            .expect("list");
+        let names: Vec<&str> = referencing.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Orders DB", "Warehouse DB"]);
+
+        // A different account's binding is invisible to A's guard.
+        assert!(list_referencing_connections(&pool, "acct-a", "p1")
+            .await
+            .unwrap()
+            .iter()
+            .all(|c| c.account_id == "acct-a"));
     }
 
     #[tokio::test]

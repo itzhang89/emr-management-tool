@@ -385,6 +385,25 @@ pub async fn save_network_profile(
 pub async fn delete_network_profile(request: NetworkProfileRef) -> AppResult<()> {
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
+
+    // A profile still bound to connections cannot be deleted: the UI prompts
+    // the user to unbind first, and this guard is the backstop that keeps a
+    // call from any path (or a stale UI) from silently leaving connections
+    // direct.
+    let referencing = dbhub::list_referencing_connections(&pool, &account_id, &request.profile_id).await?;
+    if !referencing.is_empty() {
+        let names = referencing
+            .iter()
+            .map(|connection| format!("\"{}\"", connection.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(AppError::validation(format!(
+            "This profile is still bound to {} connection(s): {names}. \
+             Edit those connections and pick '(None — direct connection)' before deleting the profile.",
+            referencing.len()
+        )));
+    }
+
     dbhub::delete_profile(&pool, &account_id, &request.profile_id).await?;
     Ok(())
 }

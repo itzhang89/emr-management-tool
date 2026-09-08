@@ -1,9 +1,20 @@
 import { useState } from "react";
 import { Network } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useDbConnections, useNetworkProfiles } from "@/hooks/useDbHub";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
+import { useDbConnections, useDeleteDbConnection, useNetworkProfiles } from "@/hooks/useDbHub";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { clearDbWorkspace } from "@/services/dbWorkspaceCache";
+import { formatAppError } from "@/services/appErrorMessage";
 import type { DbConnection } from "@/types/domain";
 import { ConnectionCard } from "./ConnectionCard";
 import { ConnectionFormDialog } from "./ConnectionFormDialog";
@@ -18,12 +29,16 @@ import { NetworkProfilesSection } from "./NetworkProfilesSection";
 export function OverviewPanel() {
   const connectionsQuery = useDbConnections();
   const profilesQuery = useNetworkProfiles();
+  const deleteConnection = useDeleteDbConnection();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
   const connections = connectionsQuery.data ?? [];
   const profiles = profilesQuery.data ?? [];
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<DbConnection>();
   const [profilesOpen, setProfilesOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<DbConnection>();
 
   const openCreate = () => {
     setEditing(undefined);
@@ -32,6 +47,23 @@ export function OverviewPanel() {
   const openEdit = (connection: DbConnection) => {
     setEditing(connection);
     setWizardOpen(true);
+  };
+  const openDelete = (connection: DbConnection) => {
+    setEditing(undefined);
+    setPendingDelete(connection);
+  };
+  const confirmDelete = () => {
+    if (!pendingDelete) return;
+    deleteConnection.mutate(pendingDelete.id, {
+      onSuccess: () => {
+        toast.success(`Connection "${pendingDelete.name}" deleted.`);
+        // Its dynamic tab is gone; drop the cached workspace so a stale draft
+        // never reappears if the user later recreates the connection.
+        if (accountId) clearDbWorkspace(accountId, pendingDelete.id);
+        setPendingDelete(undefined);
+      },
+      onError: (error) => toast.error(formatAppError(error, "Failed to delete connection."))
+    });
   };
 
   return (
@@ -82,6 +114,7 @@ export function OverviewPanel() {
                 connection={connection}
                 profiles={profiles}
                 onEdit={openEdit}
+                onDelete={openDelete}
               />
             ))}
           </div>
@@ -105,6 +138,36 @@ export function OverviewPanel() {
         onOpenChange={setWizardOpen}
         connection={editing}
       />
+
+      <Dialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete connection?</DialogTitle>
+            <DialogDescription>
+              Delete "{pendingDelete?.name}"? This removes the saved connection and its
+              passwords, hides its query tab, and drops its cached workspace. Read-only
+              AI queries to it are disabled too. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingDelete(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteConnection.isPending}
+              onClick={confirmDelete}
+            >
+              Delete connection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

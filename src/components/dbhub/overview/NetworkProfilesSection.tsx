@@ -4,6 +4,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
+import {
+  useDbConnections,
   useDeleteNetworkProfile,
   useNetworkProfiles,
   useSaveNetworkProfile
@@ -18,12 +27,27 @@ import { ProfileDetail } from "./ProfileDetail";
  * its bottom edge, the selected profile's SSH Tunnel | Proxy form on the
  * right, and a shared Apply footer. Fields follow the DBeaver-style mock the
  * design was built from.
+ *
+ * Deleting a profile that is still bound to a connection is refused: the
+ * Delete button prompts with which connections use it, asking the user to
+ * unbind those first (a silent delete would leave them suddenly direct).
  */
 export function NetworkProfilesSection() {
   const profilesQuery = useNetworkProfiles();
+  const connectionsQuery = useDbConnections();
   const profiles = profilesQuery.data ?? [];
+  const connections = connectionsQuery.data ?? [];
   const [selectedId, setSelectedId] = useState<string>();
   const selected = profiles.find((profile) => profile.id === selectedId) ?? profiles[0];
+
+  // Delete is confirmed through one of two dialogs, decided by whether the
+  // profile is still bound.
+  const [deleteTarget, setDeleteTarget] = useState<NetworkProfile>();
+  const referencing = deleteTarget
+    ? connections.filter((connection) => connection.networkProfileId === deleteTarget.id)
+    : [];
+  const deleteRefuses = Boolean(deleteTarget && referencing.length > 0);
+  const deleteRefusesOpen = deleteRefuses;
 
   return (
     <div className="rounded-lg border bg-card">
@@ -39,6 +63,7 @@ export function NetworkProfilesSection() {
           selectedId={selected?.id}
           loading={profilesQuery.isLoading}
           onSelect={setSelectedId}
+          onRequestDelete={setDeleteTarget}
         />
         <div className="min-w-0">
           {selected ? (
@@ -51,7 +76,84 @@ export function NetworkProfilesSection() {
           )}
         </div>
       </div>
+
+      {/* Bound → refuse with the referencing connections listed. */}
+      <Dialog open={deleteRefusesOpen} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Profile is in use</DialogTitle>
+            <DialogDescription>
+              "{deleteTarget?.name}" is still bound to {referencing.length} connection
+              {referencing.length === 1 ? "" : "s"}. Remove the Network Profile from those
+              connections before deleting it, or they will keep pointing at a tunnel that no
+              longer exists.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
+            {referencing.map((connection) => (
+              <li key={connection.id} className="flex items-center gap-2">
+                <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate">{connection.name}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">{connection.kind}</span>
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteTarget(undefined)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unbound → confirm, then delete. */}
+      <ConfirmDeleteDialog target={deleteTarget} onClose={() => setDeleteTarget(undefined)} />
     </div>
+  );
+}
+
+function ConfirmDeleteDialog({
+  target,
+  onClose
+}: {
+  target?: NetworkProfile;
+  onClose: () => void;
+}) {
+  const deleteProfile = useDeleteNetworkProfile();
+  return (
+    <Dialog open={Boolean(target)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete profile?</DialogTitle>
+          <DialogDescription>
+            Delete "{target?.name}"? Connections already route directly; this only removes
+            the profile so it can no longer be chosen.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={deleteProfile.isPending}
+            onClick={() => {
+              if (!target) return;
+              deleteProfile.mutate(target.id, {
+                onSuccess: () => {
+                  onClose();
+                  toast.success(`Profile "${target.name}" deleted.`);
+                },
+                onError: (error) => toast.error(formatAppError(error, "Failed to delete profile."))
+              });
+            }}
+          >
+            Delete profile
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -59,15 +161,16 @@ function ProfileList({
   profiles,
   selectedId,
   loading,
-  onSelect
+  onSelect,
+  onRequestDelete
 }: {
   profiles: NetworkProfile[];
   selectedId?: string;
   loading: boolean;
   onSelect: (id: string) => void;
+  onRequestDelete: (profile: NetworkProfile) => void;
 }) {
   const createProfile = useSaveNetworkProfile();
-  const deleteProfile = useDeleteNetworkProfile();
 
   const handleCreate = () => {
     const input: NetworkProfileInput = {
@@ -115,10 +218,8 @@ function ProfileList({
 
   const handleDelete = () => {
     if (!selectedId) return;
-    deleteProfile.mutate(selectedId, {
-      onSuccess: () => toast.success("Profile deleted. Connections fell back to direct."),
-      onError: (error) => toast.error(formatAppError(error, "Failed to delete profile."))
-    });
+    const profile = profiles.find((entry) => entry.id === selectedId);
+    if (profile) onRequestDelete(profile);
   };
 
   return (
@@ -175,7 +276,7 @@ function ProfileList({
               size="icon"
               className="size-7"
               aria-label="Delete profile"
-              disabled={!selectedId || deleteProfile.isPending}
+              disabled={!selectedId}
               onClick={handleDelete}
             >
               <Trash2 className="size-3.5" />

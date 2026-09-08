@@ -1,4 +1,4 @@
-import { Database, Pencil } from "lucide-react";
+import { Database, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,11 +19,13 @@ import type { DbConnection, NetworkProfile } from "@/types/domain";
 export function ConnectionCard({
   connection,
   profiles,
-  onEdit
+  onEdit,
+  onDelete
 }: {
   connection: DbConnection;
   profiles: NetworkProfile[];
   onEdit?: (connection: DbConnection) => void;
+  onDelete?: (connection: DbConnection) => void;
 }) {
   const setFlags = useSetDbConnectionFlags();
 
@@ -66,6 +68,23 @@ export function ConnectionCard({
           <Badge variant="outline" className="text-xs">
             {connection.enabledForAi ? "AI read-only" : "Manual"}
           </Badge>
+          {onDelete ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 text-destructive hover:text-destructive"
+                  aria-label={`Delete ${connection.name}`}
+                  onClick={() => onDelete(connection)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete connection</TooltipContent>
+            </Tooltip>
+          ) : null}
           {onEdit ? (
             <Tooltip>
               <TooltipTrigger asChild>

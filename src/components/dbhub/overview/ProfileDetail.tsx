@@ -7,11 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import {
-  useDeleteNetworkProfile,
-  useSaveNetworkProfile,
-  useTestNetworkProfile
-} from "@/hooks/useDbHub";
+import { useSaveNetworkProfile, useTestNetworkProfile } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile, NetworkTransport } from "@/types/domain";
 import { SSH_AUTH_METHODS } from "@/types/domain";
@@ -25,9 +21,9 @@ import { SSH_AUTH_METHODS } from "@/types/domain";
  */
 export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   const saveProfile = useSaveNetworkProfile();
-  const deleteProfile = useDeleteNetworkProfile();
   const testProfile = useTestNetworkProfile();
 
+  const [name, setName] = useState(profile.name);
   const [transport, setTransport] = useState<NetworkTransport>(profile.transport);
   const [enabled, setEnabled] = useState(profile.enabled);
   const [secret, setSecret] = useState("");
@@ -36,6 +32,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   // Reset the working copy when a different profile is selected (the parent
   // keys this component by profile id, so this only fires on real switches).
   useEffect(() => {
+    setName(profile.name);
     setTransport(profile.transport);
     setEnabled(profile.enabled);
     setSecret("");
@@ -97,7 +94,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
     saveProfile.mutate(
       {
         id: profile.id,
-        name: profile.name,
+        name,
         transport,
         enabled,
         secret: secret || undefined
@@ -121,7 +118,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
     try {
       await saveProfile.mutateAsync({
         id: profile.id,
-        name: profile.name,
+        name,
         transport,
         enabled,
         secret: secret || undefined
@@ -144,15 +141,24 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
     });
   };
 
-  const handleDelete = () => {
-    deleteProfile.mutate(profile.id, {
-      onSuccess: () => toast.success("Profile deleted."),
-      onError: (error) => toast.error(formatAppError(error, "Failed to delete profile."))
-    });
-  };
-
   return (
     <div className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
+        <Label htmlFor={`profile-name-${profile.id}`} className="text-sm">
+          Name
+        </Label>
+        <Input
+          id={`profile-name-${profile.id}`}
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setDirty(true);
+          }}
+          className="max-w-xs"
+          aria-label="Profile name"
+        />
+        <span className="ml-auto text-xs text-muted-foreground">Apply saves the name too.</span>
+      </div>
       <Tabs
         value={transport.type}
         onValueChange={(value) => switchKind(value as NetworkTransport["type"])}
@@ -334,9 +340,6 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               </TooltipTrigger>
               <TooltipContent>Handshake-only; no SQL runs.</TooltipContent>
             </Tooltip>
-            <Button type="button" variant="ghost" size="sm" onClick={handleDelete}>
-              Delete
-            </Button>
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" disabled={!dirty || saveProfile.isPending} onClick={handleApply}>
