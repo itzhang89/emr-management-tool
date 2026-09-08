@@ -1115,7 +1115,13 @@ export type NetworkTransport =
       host: string;
       port: number;
       username: string;
+      /**
+       * `password` | `private-key` | `ssh-config`. In ssh-config mode `host`
+       * is the ~/.ssh/config alias and the other fields are ignored.
+       */
       authMethod: string;
+      /** Absolute path to the key file (private-key mode). */
+      privateKeyPath?: string;
       /** Mirrored flag — the secret itself never crosses to the WebView. */
       credentialsSaved: boolean;
     }
@@ -1126,6 +1132,13 @@ export type NetworkTransport =
       username?: string;
       credentialsSaved: boolean;
     };
+
+/** The SSH auth methods, for the profile form's dropdown. */
+export const SSH_AUTH_METHODS = [
+  { value: "password", label: "Password" },
+  { value: "private-key", label: "Private key file" },
+  { value: "ssh-config", label: "SSH config alias" }
+] as const;
 
 /** A saved SSH-tunnel or SOCKS5 profile, also account-bound. */
 export interface NetworkProfile {

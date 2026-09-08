@@ -80,7 +80,10 @@ function ProfileList({
         authMethod: "password",
         credentialsSaved: false
       },
-      enabled: false
+      // Enabled from birth: a brand-new profile is the user's active intent,
+      // and the previous `false` default made every test click answer
+      // "disabled" until Apply was found and pressed.
+      enabled: true
     };
     createProfile.mutate(input, {
       onSuccess: (profile) => {
@@ -97,7 +100,9 @@ function ProfileList({
     const input: NetworkProfileInput = {
       name: `${source.name} copy`,
       transport: source.transport,
-      enabled: false
+      // A copy starts enabled too — the user duplicates a working profile to
+      // tweak it, not to have it inert.
+      enabled: true
     };
     createProfile.mutate(input, {
       onSuccess: (profile) => {

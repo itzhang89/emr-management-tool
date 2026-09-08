@@ -14,6 +14,7 @@ import {
 } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile, NetworkTransport } from "@/types/domain";
+import { SSH_AUTH_METHODS } from "@/types/domain";
 
 /**
  * The detail form of one network profile (design section 6). Editing is a
@@ -57,8 +58,37 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
     if (transport.type === kind) return;
     setTransport(
       kind === "ssh-tunnel"
-        ? { type: "ssh-tunnel", host: transport.host, port: 22, username: "root", authMethod: "password", credentialsSaved: false }
+        ? {
+            type: "ssh-tunnel",
+            host: transport.host,
+            port: 22,
+            username: "root",
+            authMethod: "password",
+            credentialsSaved: false
+          }
         : { type: "socks5", host: transport.host, port: 1080, credentialsSaved: false }
+    );
+    setDirty(true);
+  };
+
+  const isSsh = transport.type === "ssh-tunnel";
+  const sshAuthMethod = isSsh ? transport.authMethod : "password";
+  const authLabels: Record<string, { secret: string; host: string }> = {
+    password: { secret: "Password", host: "Host/IP" },
+    "private-key": { secret: "Key passphrase", host: "Host/IP" },
+    "ssh-config": { secret: "Key passphrase (if encrypted)", host: "SSH config alias" }
+  };
+  const labels = authLabels[sshAuthMethod] ?? authLabels.password;
+
+  // Switching between auth modes re-frames what `host` means (IP vs alias),
+  // so clear the old value to stop a stray IP becoming a phantom alias.
+  const handleAuthChange = (value: string) => {
+    if (!isSsh) return;
+    const clearingHost = value === "ssh-config" || sshAuthMethod === "ssh-config";
+    setTransport(
+      clearingHost
+        ? { ...transport, authMethod: value, host: "" }
+        : { ...transport, authMethod: value }
     );
     setDirty(true);
   };
@@ -83,7 +113,25 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
     );
   };
 
-  const handleTest = () => {
+  const handleTest = async () => {
+    // Test validates the *working copy*: save it first (silently, no toast),
+    // then probe. Otherwise the backend tests the last-applied state and the
+    // button lies about whatever the user just typed or toggled — the exact
+    // trap the old "Profile is disabled" forever-error came from.
+    try {
+      await saveProfile.mutateAsync({
+        id: profile.id,
+        name: profile.name,
+        transport,
+        enabled,
+        secret: secret || undefined
+      });
+      setSecret("");
+      setDirty(false);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to apply profile before testing."));
+      return;
+    }
     testProfile.mutate(profile.id, {
       onSuccess: (result) => {
         if (result.ok) {
@@ -102,8 +150,6 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
       onError: (error) => toast.error(formatAppError(error, "Failed to delete profile."))
     });
   };
-
-  const isSsh = transport.type === "ssh-tunnel";
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -137,13 +183,21 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             Forwards database traffic through an SSH server. The database host/port
             you enter here is the *target* the tunnel opens on the far side.
           </p>
+          {sshAuthMethod === "ssh-config" ? (
+            <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+              Alias mode reads <code>~/.ssh/config</code>: HostName, User, Port,
+              IdentityFile and your existing jump chains come from there — the
+              fields below are ignored except the alias itself. The passphrase
+              field is only used when the config&apos;s key file is encrypted.
+            </p>
+          ) : null}
           <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-            <Label htmlFor="ssh-host" className="text-right text-sm">Host/IP</Label>
+            <Label htmlFor="ssh-host" className="text-right text-sm">{labels.host}</Label>
             <Input
               id="ssh-host"
               value={transport.type === "ssh-tunnel" ? transport.host : ""}
               onChange={(event) => patchTransport({ host: event.target.value })}
-              placeholder="10.xx.xx.50"
+              placeholder={sshAuthMethod === "ssh-config" ? "bastion-prod" : "10.xx.xx.50"}
               className="max-w-xs"
             />
             <Label htmlFor="ssh-user" className="text-right text-sm">User Name</Label>
@@ -151,6 +205,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               id="ssh-user"
               value={transport.type === "ssh-tunnel" ? transport.username : ""}
               onChange={(event) => patchTransport({ username: event.target.value })}
+              disabled={sshAuthMethod === "ssh-config"}
               className="max-w-xs"
             />
             <Label htmlFor="ssh-auth" className="text-right text-sm">Authentication</Label>
@@ -158,14 +213,30 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               <select
                 id="ssh-auth"
                 value={transport.type === "ssh-tunnel" ? transport.authMethod : "password"}
-                onChange={(event) => patchTransport({ authMethod: event.target.value })}
+                onChange={(event) => handleAuthChange(event.target.value)}
                 className="h-9 max-w-xs rounded-md border bg-background px-3 text-sm"
               >
-                <option value="password">Password</option>
+                {SSH_AUTH_METHODS.map((method) => (
+                  <option key={method.value} value={method.value}>{method.label}</option>
+                ))}
               </select>
-              <p className="mt-1 text-xs text-muted-foreground">Key-based auth lands in batch 6.</p>
             </div>
-            <Label htmlFor="ssh-secret" className="text-right text-sm">Password</Label>
+            {sshAuthMethod === "private-key" || sshAuthMethod === "ssh-config" ? (
+              <>
+                <Label htmlFor="ssh-key-path" className="text-right text-sm">Key file</Label>
+                <Input
+                  id="ssh-key-path"
+                  value={
+                    transport.type === "ssh-tunnel" ? (transport.privateKeyPath ?? "") : ""
+                  }
+                  onChange={(event) => patchTransport({ privateKeyPath: event.target.value || undefined })}
+                  placeholder={sshAuthMethod === "ssh-config" ? "from ~/.ssh/config (IdentityFile)" : "~/.ssh/id_ed25519"}
+                  disabled={sshAuthMethod === "ssh-config"}
+                  className="max-w-xs font-mono text-xs"
+                />
+              </>
+            ) : null}
+            <Label htmlFor="ssh-secret" className="text-right text-sm">{labels.secret}</Label>
             <div className="flex max-w-xs items-center gap-2">
               <Input
                 id="ssh-secret"

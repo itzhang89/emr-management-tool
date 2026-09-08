@@ -393,6 +393,12 @@ pub async fn delete_network_profile(request: NetworkProfileRef) -> AppResult<()>
 /// transport. This proves the local bind and accept loop are sound; the
 /// far-side SSH/SOCKS handshake surfaces when a connection actually dials
 /// (the honest scope of a configuration-only probe — recorded in the design).
+///
+/// A *disabled* profile can still be tested: `enabled` gates whether real
+/// connections may route through the profile, not whether its configuration
+/// can be validated. Refusing tests on disabled profiles made the button lie
+/// ("disabled" forever) whenever the user had not applied the toggle — the
+/// test now validates the configuration as stored.
 #[tauri::command]
 pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) -> AppResult<DbTestResult> {
     let profile_id = request.profile_id;
@@ -404,14 +410,6 @@ pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) ->
         .await?
         .ok_or_else(|| AppError::validation("Profile was not found."))?;
 
-    if !profile.enabled {
-        return Ok(DbTestResult {
-            ok: false,
-            message: "Profile is disabled. Enable it before testing.".to_string(),
-            latency_ms: started.elapsed().as_millis() as u64,
-        });
-    }
-
     let secret = crate::secrets::read_optional_secret(&app, &profile_secret_key(&profile_id))
         .unwrap_or(None);
     match crate::db::dbhub_tunnel::probe_profile(&profile, move |_| Ok(secret)).await {
@@ -420,10 +418,15 @@ pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) ->
                 crate::models::NetworkTransport::SshTunnel { host, port, .. } => (host.clone(), *port),
                 crate::models::NetworkTransport::Socks5 { host, port, .. } => (host.clone(), *port),
             };
+            let enabled_note = if profile.enabled {
+                String::new()
+            } else {
+                " Note: the profile is disabled — enable and apply it before routing connections through it.".to_string()
+            };
             Ok(DbTestResult {
                 ok: true,
                 message: format!(
-                    "Local forward bound on 127.0.0.1:{port} (target {host}:{port_target}). Far-side handshake is exercised when a connection dials."
+                    "Local forward bound on 127.0.0.1:{port} (target {host}:{port_target}). Far-side handshake is exercised when a connection dials.{enabled_note}"
                 ),
                 latency_ms: started.elapsed().as_millis() as u64,
             })

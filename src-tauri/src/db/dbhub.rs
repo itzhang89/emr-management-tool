@@ -482,6 +482,7 @@ mod tests {
                 port: 22,
                 username: "root".to_string(),
                 auth_method: "password".to_string(),
+                private_key_path: None,
                 credentials_saved: false,
             },
             enabled: true,

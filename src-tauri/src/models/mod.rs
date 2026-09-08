@@ -1589,8 +1589,19 @@ pub enum NetworkTransport {
         host: String,
         port: i64,
         username: String,
-        /// `password` for now; key-based auth lands with batch 6.
+        /// How the SSH session authenticates: `password` (secret from the
+        /// store), `private-key` (key file at `private_key_path`, optional
+        /// passphrase from the store), or `ssh-config` (dial the local
+        /// ~/.ssh/config alias named by `host` — HostName/User/Port/
+        /// IdentityFile/ProxyJump all come from there and the other fields
+        /// are ignored). Free-form until it crosses the wire; the resolver
+        /// validates each variant.
         auth_method: String,
+        /// Absolute path to the user's private key file (private-key mode).
+        /// A path is configuration, not a secret — it rides in the transport
+        /// JSON; the passphrase (if the key is encrypted) lives in the store.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_key_path: Option<String>,
         /// Whether a password/passphrase was saved — the secret itself never
         /// crosses to the WebView, only this flag is mirrored here.
         credentials_saved: bool,
@@ -1603,6 +1614,35 @@ pub enum NetworkTransport {
         username: Option<String>,
         credentials_saved: bool,
     },
+}
+
+/// The SSH authentication methods the tunnel supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshAuthMethod {
+    Password,
+    PrivateKey,
+    SshConfig,
+}
+
+impl SshAuthMethod {
+    pub fn parse(value: &str) -> crate::error::AppResult<Self> {
+        match value {
+            "password" => Ok(SshAuthMethod::Password),
+            "private-key" => Ok(SshAuthMethod::PrivateKey),
+            "ssh-config" => Ok(SshAuthMethod::SshConfig),
+            other => Err(crate::error::AppError::validation(format!(
+                "Unsupported SSH auth method: {other}. Use password, private-key or ssh-config."
+            ))),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SshAuthMethod::Password => "password",
+            SshAuthMethod::PrivateKey => "private-key",
+            SshAuthMethod::SshConfig => "ssh-config",
+        }
+    }
 }
 
 impl NetworkTransport {
