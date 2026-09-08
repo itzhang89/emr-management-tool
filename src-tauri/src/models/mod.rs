@@ -1647,3 +1647,14 @@ pub struct DbTestResult {
     pub message: String,
     pub latency_ms: u64,
 }
+
+/// Body of the query-tab SQL run. maxRows caps the returned page (Rust-side
+/// clamp applies).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbQueryRequest {
+    pub connection_id: String,
+    pub sql: String,
+    #[serde(default)]
+    pub max_rows: Option<usize>,
+}

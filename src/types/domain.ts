@@ -1154,4 +1154,26 @@ export interface DbTestResult {
   latencyMs: number;
 }
 
+/** One row page of a read-only query run. Rows are JSON objects keyed by column. */
+export interface DbQueryResult {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+  rowCount: number;
+  truncated: boolean;
+  durationMs: number;
+}
+
+/** Body of the query-tab SQL run. */
+export interface DbQueryRequest {
+  connectionId: string;
+  sql: string;
+  maxRows?: number;
+}
+
+/** One entry of the workspace catalog tree (database or table). */
+export interface DbCatalogEntry {
+  name: string;
+  kind?: string;
+}
+
 

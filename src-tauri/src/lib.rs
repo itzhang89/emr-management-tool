@@ -159,6 +159,9 @@ pub fn run() {
             commands::dbhub::save_network_profile,
             commands::dbhub::delete_network_profile,
             commands::dbhub::test_network_profile,
+            commands::dbhub::run_db_query,
+            commands::dbhub::list_db_databases,
+            commands::dbhub::list_db_tables,
         ]);
 
     #[cfg(desktop)]

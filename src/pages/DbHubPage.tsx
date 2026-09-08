@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Database } from "lucide-react";
 import { GlueCatalogTab } from "@/components/dbhub/workspace/GlueCatalogTab";
+import { ConnectionQueryTab } from "@/components/dbhub/workspace/ConnectionQueryTab";
 import { OverviewPanel } from "@/components/dbhub/overview/OverviewPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDbConnections } from "@/hooks/useDbHub";
@@ -28,6 +29,11 @@ type TabConnection = {
   showAsTab: boolean;
 };
 
+/**
+ * Widens a persisted connection into the shape the tab bar needs. The full
+ * DbConnection flows into ConnectionQueryTab through the same list — the tab
+ * content below maps back into it by id.
+ */
 const OVERVIEW_TAB = "overview";
 const GLUE_TAB = "glue";
 
@@ -37,7 +43,7 @@ function connectionTabValue(connectionId: string) {
 
 export function DbHubPage() {
   const connectionsQuery = useDbConnections();
-  const connections: TabConnection[] = connectionsQuery.data ?? [];
+  const connections = connectionsQuery.data ?? [];
   const [activeTab, setActiveTab] = useState(OVERVIEW_TAB);
 
   const dynamicTabs = connections.filter((connection) => connection.showAsTab);
@@ -93,7 +99,7 @@ export function DbHubPage() {
                 visible={activeTab === value}
                 className="flex min-h-0 w-full flex-col"
               >
-                <ConnectionTabPlaceholder connection={connection} />
+                <ConnectionQueryTab connection={connection} />
               </PersistMount>
             </TabsContent>
           );
@@ -132,17 +138,3 @@ function PersistMount({
   return <div className={className}>{children}</div>;
 }
 
-function ConnectionTabPlaceholder({ connection }: { connection: TabConnection }) {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <div className="max-w-md space-y-3 text-center">
-        <h2 className="text-lg font-semibold">{connection.name}</h2>
-        <p className="text-sm capitalize text-muted-foreground">{connection.kind} query workspace</p>
-        <p className="text-xs text-muted-foreground">
-          The JDBC query workspace lands in DBHub batch 4; the connection stays registered
-          for AI in the meantime.
-        </p>
-      </div>
-    </div>
-  );
-}

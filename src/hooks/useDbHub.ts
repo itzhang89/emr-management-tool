@@ -3,6 +3,7 @@ import type {
   DbConnectionFlags,
   DbConnectionInput,
   DbConnectionUpdateInput,
+  DbQueryRequest,
   NetworkProfileInput
 } from "@/types/domain";
 import { dbHubService } from "@/services/dbHubService";
@@ -106,5 +107,35 @@ export function useDeleteNetworkProfile() {
 export function useTestNetworkProfile() {
   return useMutation({
     mutationFn: (profileId: string) => dbHubService.testProfile(profileId)
+  });
+}
+
+// --- Read-only query execution ----------------------------------------------
+
+export function useRunDbQuery() {
+  return useMutation({
+    mutationFn: (request: DbQueryRequest) => dbHubService.runQuery(request)
+  });
+}
+
+/** Catalog tree: databases of the connection. */
+export function useDbDatabases(connectionId?: string) {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useQuery({
+    queryKey: ["dbhub-databases", accountId, connectionId],
+    queryFn: () => dbHubService.listDatabases(connectionId!),
+    enabled: Boolean(accountId && connectionId)
+  });
+}
+
+/** Catalog tree: tables of one database. */
+export function useDbTables(connectionId?: string, database?: string) {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useQuery({
+    queryKey: ["dbhub-tables", accountId, connectionId, database],
+    queryFn: () => dbHubService.listTables(connectionId!, database!),
+    enabled: Boolean(accountId && connectionId && database)
   });
 }

@@ -426,3 +426,33 @@ pub async fn test_network_profile(profile_id: String) -> AppResult<DbTestResult>
         latency_ms: started.elapsed().as_millis() as u64,
     })
 }
+
+// --- Read-only query execution (workspace + AI tools) ------------------------
+
+/// Run one read-only statement for the human query tab. The AI-tool twin
+/// (requireAiEnabled) lives in the MCP layer and reuses the same execution
+/// path; both audit via their own layers.
+#[tauri::command]
+pub async fn run_db_query(
+    app: AppHandle,
+    request: crate::models::DbQueryRequest,
+) -> AppResult<crate::db::dbhub_query::DbQueryResult> {
+    crate::db::dbhub_query::run_for_command(&app, &request.connection_id, false, &request.sql, request.max_rows).await
+}
+
+#[tauri::command]
+pub async fn list_db_databases(
+    app: AppHandle,
+    connection_id: String,
+) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
+    crate::db::dbhub_query::catalog_databases_for_command(&app, &connection_id).await
+}
+
+#[tauri::command]
+pub async fn list_db_tables(
+    app: AppHandle,
+    connection_id: String,
+    database: String,
+) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
+    crate::db::dbhub_query::catalog_tables_for_command(&app, &connection_id, &database).await
+}

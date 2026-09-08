@@ -180,7 +180,7 @@ describe("ConnectionFormDialog", () => {
       }
     });
 
-    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(updateConnection).toHaveBeenCalledWith(

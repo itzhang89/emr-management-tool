@@ -11,7 +11,7 @@ use crate::models::DbConnection;
 use sqlx::Executor;
 
 /// How long a test dial may take before we give up and blame the network.
-const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+pub const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// A minimal read that every supported engine answers.
 const PING: &str = "SELECT 1";
@@ -67,7 +67,7 @@ const PING_VERSION_PG: &str = "select version()";
 
 /// Build a MySQL connection URL. Percent-encodes every user-supplied piece so
 /// a password containing `@` or `/` cannot rewrite the URL's meaning.
-fn mysql_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
+pub(crate) fn mysql_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
     let mut url = format!(
         "mysql://{}:{}@{}:{}/{}",
         urlencoding::encode(&connection.username),
@@ -89,7 +89,7 @@ fn mysql_url(connection: &DbConnection, password: Option<&str>) -> AppResult<Str
 }
 
 /// Build a PostgreSQL connection URL (also used for Yellowbrick's wire).
-fn postgres_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
+pub(crate) fn postgres_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
     let database = connection.database.as_deref().filter(|value| !value.is_empty()).unwrap_or("postgres");
     Ok(format!(
         "postgresql://{}:{}@{}:{}/{}",
@@ -103,7 +103,7 @@ fn postgres_url(connection: &DbConnection, password: Option<&str>) -> AppResult<
 
 /// Project driver errors into a short, human explanation. Driver error chains
 /// are noisy; the first line usually names the real problem.
-fn describe_dial_error(error: &dyn std::fmt::Display) -> String {
+pub(crate) fn describe_dial_error(error: &dyn std::fmt::Display) -> String {
     let text = error.to_string();
     let first_line = text.lines().next().unwrap_or(&text);
     // Keep it bounded — driver timeouts embed long socket dumps.

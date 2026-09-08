@@ -79,7 +79,10 @@ import type {
   DbConnectionFlags,
   DbTestResult,
   NetworkProfile,
-  NetworkProfileInput
+  NetworkProfileInput,
+  DbQueryResult,
+  DbQueryRequest,
+  DbCatalogEntry
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -284,7 +287,13 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     deleteNetworkProfile: (profileId: string) =>
       call<void>("delete_network_profile", { profileId }),
     testNetworkProfile: (profileId: string) =>
-      call<DbTestResult>("test_network_profile", { profileId })
+      call<DbTestResult>("test_network_profile", { profileId }),
+    // Read-only query execution for connection tabs (gate + read-only tx).
+    runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
+    listDbDatabases: (connectionId: string) =>
+      call<DbCatalogEntry[]>("list_db_databases", { connectionId }),
+    listDbTables: (connectionId: string, database: string) =>
+      call<DbCatalogEntry[]>("list_db_tables", { connectionId, database })
   };
 }
 
