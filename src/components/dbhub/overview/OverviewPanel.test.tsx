@@ -108,8 +108,9 @@ describe("OverviewPanel", () => {
     expect(screen.getByText(/Office tunnel \(ssh-tunnel\)/)).toBeInTheDocument();
     expect(screen.getByText(/Direct connection/)).toBeInTheDocument();
 
-    // 2 cards × 2 switches + 1 profile enable switch, each labelled by id.
-    expect(screen.getAllByRole("switch")).toHaveLength(5);
+    // 2 cards × 2 switches (the profiles board lives in a dialog now), each
+    // labelled by id.
+    expect(screen.getAllByRole("switch")).toHaveLength(4);
     expect(document.getElementById("tab-c1")).not.toBeNull();
     expect(document.getElementById("ai-c1")).not.toBeNull();
   });
@@ -133,14 +134,16 @@ describe("OverviewPanel", () => {
     });
   });
 
-  it("shows the network profiles master-detail board", async () => {
+  it("opens the network profiles master-detail board from the toolbar icon", async () => {
+    const user = userEvent.setup();
     renderOverview();
 
-    expect(await screen.findByText("Network Profiles")).toBeInTheDocument();
-    // Left list entry and right detail header.
-    const listButton = await screen.findByRole("button", { name: "Office tunnel" });
-    expect(listButton).toBeInTheDocument();
-    expect(screen.getByText("SSH Tunnel")).toBeInTheDocument();
+    // The board is an entry, not a fixture: hidden until the icon opens it.
+    expect(screen.queryByText("SSH Tunnel")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Manage Network Profiles" }));
+
+    expect(await screen.findByText("SSH Tunnel")).toBeInTheDocument();
     expect(screen.getByText("Proxy")).toBeInTheDocument();
     expect(screen.getByDisplayValue("10.20.30.40")).toBeInTheDocument();
     expect(screen.getByDisplayValue("root")).toBeInTheDocument();

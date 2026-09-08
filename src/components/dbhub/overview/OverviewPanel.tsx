@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Network } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDbConnections, useNetworkProfiles } from "@/hooks/useDbHub";
 import type { DbConnection } from "@/types/domain";
 import { ConnectionCard } from "./ConnectionCard";
@@ -8,10 +10,10 @@ import { ConnectionFormDialog } from "./ConnectionFormDialog";
 import { NetworkProfilesSection } from "./NetworkProfilesSection";
 
 /**
- * The DBHub Overview tab (design section 1): the management hub for the active
- * AWS account. Connection cards (with the Show-as-tab / Enabled-for-AI
- * switches) sit on top; the Network Profiles Master–Detail board sits below.
- * Add Connection / the card edit pencil open the DBeaver-style wizard.
+ * The DBHub Overview tab (design section 1, as adjusted): connection cards for
+ * the active AWS account, with a single toolbar icon opening the Network
+ * Profiles manager in a dialog — the board is an entry, not a fixture of the
+ * page. Add Connection / the card edit pencil open the DBeaver-style wizard.
  */
 export function OverviewPanel() {
   const connectionsQuery = useDbConnections();
@@ -21,6 +23,7 @@ export function OverviewPanel() {
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<DbConnection>();
+  const [profilesOpen, setProfilesOpen] = useState(false);
 
   const openCreate = () => {
     setEditing(undefined);
@@ -43,10 +46,27 @@ export function OverviewPanel() {
                 : `${connections.length} connection(s), pinned to tabs: ${connections.filter((connection) => connection.showAsTab).length}`}
             </p>
           </div>
-          <Button type="button" size="sm" onClick={openCreate}>
-            <Plus data-icon="inline-start" />
-            Add Connection
-          </Button>
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Manage Network Profiles"
+                  onClick={() => setProfilesOpen(true)}
+                >
+                  <Network className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Network Profiles ({profiles.length}) — SSH tunnels &amp; SOCKS5 proxies
+              </TooltipContent>
+            </Tooltip>
+            <Button type="button" size="sm" onClick={openCreate}>
+              Add Connection
+            </Button>
+          </div>
         </div>
         {connectionsQuery.isLoading ? (
           <p className="text-sm text-muted-foreground">Loading connections…</p>
@@ -68,7 +88,17 @@ export function OverviewPanel() {
         ) : null}
       </section>
 
-      <NetworkProfilesSection />
+      <Dialog open={profilesOpen} onOpenChange={setProfilesOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Network Profiles</DialogTitle>
+            <DialogDescription>
+              SSH tunnels and SOCKS5 proxies this account's connections can dial through.
+            </DialogDescription>
+          </DialogHeader>
+          <NetworkProfilesSection />
+        </DialogContent>
+      </Dialog>
 
       <ConnectionFormDialog
         open={wizardOpen}

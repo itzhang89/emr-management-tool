@@ -19,6 +19,8 @@ import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCy
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { navigationItems, type PageId } from "@/pages/pageMeta";
+import { OVERVIEW_TAB } from "@/pages/DbHubPage";
+import { DbHubSubNav } from "@/components/layout/DbHubSubNav";
 import { PageLoader } from "@/components/layout/PageLoader";
 import { appUpdater } from "@/services/appUpdater";
 import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
@@ -47,6 +49,10 @@ export function AppShell() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
+  // Which DBHub tab the sidebar's second level points at. Undefined unless the
+  // user navigated there through the sub-nav; the page keeps its own state
+  // otherwise.
+  const [dbHubTabIntent, setDbHubTabIntent] = useState<string>();
   const [, startPageTransition] = useTransition();
   const accounts = useAwsAccounts();
   const accountList = accounts.data ?? [];
@@ -66,6 +72,14 @@ export function AppShell() {
   }, []);
   const navigateToPage = useCallback((page: PageId) => {
     startPageTransition(() => setActivePage(page));
+  }, []);
+  // Sidebar sub-navigation: jump straight into a DBHub tab (Glue Catalog or a
+  // pinned connection's workspace).
+  const openDbHubTab = useCallback((tabValue: string) => {
+    startPageTransition(() => {
+      setDbHubTabIntent(tabValue);
+      setActivePage("glue");
+    });
   }, []);
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => !collapsed);
@@ -239,7 +253,7 @@ export function AppShell() {
       case "s3":
         return <S3BrowserPage />;
       case "glue":
-        return <DbHubPage />;
+        return <DbHubPage initialTab={dbHubTabIntent} />;
       case "ai":
         return <AiAssistantPage />;
       case "settings":
@@ -247,7 +261,7 @@ export function AppShell() {
       default:
         return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
     }
-  }, [activePage, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
+  }, [activePage, dbHubTabIntent, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
@@ -315,7 +329,20 @@ export function AppShell() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label="Primary">
-          {navigationItems.map((item) => renderNavButton({ item, activePage, setActivePage: navigateToPage, sidebarCollapsed }))}
+          {navigationItems.map((item) => (
+            <div key={item.id}>
+              {renderNavButton({ item, activePage, setActivePage: navigateToPage, sidebarCollapsed })}
+              {/* Second level: the DBHub data sources, directly under the
+                  sidebar entry (Glue Catalog + pinned connections). */}
+              {item.id === "glue" && activePage === "glue" ? (
+                <DbHubSubNav
+                  activeSubTab={dbHubTabIntent ?? OVERVIEW_TAB}
+                  onSelect={openDbHubTab}
+                  collapsed={sidebarCollapsed}
+                />
+              ) : null}
+            </div>
+          ))}
         </nav>
       </aside>
 

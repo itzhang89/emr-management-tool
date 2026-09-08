@@ -34,17 +34,29 @@ type TabConnection = {
  * DbConnection flows into ConnectionQueryTab through the same list — the tab
  * content below maps back into it by id.
  */
-const OVERVIEW_TAB = "overview";
-const GLUE_TAB = "glue";
+export const OVERVIEW_TAB = "overview";
+export const GLUE_TAB = "glue";
 
-function connectionTabValue(connectionId: string) {
+export function connectionTabValue(connectionId: string) {
   return `connection:${connectionId}`;
 }
 
-export function DbHubPage() {
+export function DbHubPage({
+  initialTab
+}: {
+  /** Tab value to land on at mount (sidebar sub-navigation). One-shot: user
+   * clicks inside the page take over afterwards. */
+  initialTab?: string;
+}) {
   const connectionsQuery = useDbConnections();
   const connections = connectionsQuery.data ?? [];
-  const [activeTab, setActiveTab] = useState(OVERVIEW_TAB);
+  const [activeTab, setActiveTab] = useState(initialTab ?? OVERVIEW_TAB);
+
+  // When the page re-mounts with a different landing intent (e.g. the sidebar
+  // switched from Overview to a connection), follow it.
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   const dynamicTabs = connections.filter((connection) => connection.showAsTab);
 

@@ -1578,7 +1578,11 @@ pub struct DbConnectionUpdateInput {
 /// port to the target through an SSH server (jump servers arrive in batch 6);
 /// `Socks5` dials the target through a SOCKS5 proxy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+// `rename_all` covers the variant tag ("ssh-tunnel"/"socks5");
+// `rename_all_fields` covers the fields inside each variant (camelCase on the
+// wire, matching every other DTO — without it the frontend's authMethod /
+// credentialsSaved keys silently fail deserialization).
+#[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum NetworkTransport {
     #[serde(rename = "ssh-tunnel")]
     SshTunnel {
@@ -1657,4 +1661,57 @@ pub struct DbQueryRequest {
     pub sql: String,
     #[serde(default)]
     pub max_rows: Option<usize>,
+}
+
+#[cfg(test)]
+mod dbhub_wire_tests {
+    use super::*;
+
+    /// The frontend posts transport payloads with camelCase fields inside the
+    /// tagged enum (NetworkProfilesSection build). Regression: before
+    /// `rename_all_fields`, snake_case expectations made every profile save
+    /// fail deserialization — the "Failed to create profile" bug.
+    #[test]
+    fn transport_deserializes_camel_case_fields() {
+        let payload = serde_json::json!({
+            "type": "ssh-tunnel",
+            "host": "10.20.30.40",
+            "port": 22,
+            "username": "root",
+            "authMethod": "password",
+            "credentialsSaved": false
+        });
+        let transport: NetworkTransport =
+            serde_json::from_value(payload).expect("camelCase payload must parse");
+        match &transport {
+            NetworkTransport::SshTunnel { auth_method, credentials_saved, .. } => {
+                assert_eq!(auth_method, "password");
+                assert!(!credentials_saved);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+
+        // And serializes back the same shape the UI reads.
+        let json = serde_json::to_value(&transport).expect("serialize");
+        assert_eq!(json["type"], "ssh-tunnel");
+        assert_eq!(json["authMethod"], "password");
+        assert_eq!(json["credentialsSaved"], false);
+    }
+
+    #[test]
+    fn socks5_transport_roundtrips_camel_case() {
+        let payload = serde_json::json!({
+            "type": "socks5",
+            "host": "127.0.0.1",
+            "port": 1080,
+            "credentialsSaved": true
+        });
+        let transport: NetworkTransport =
+            serde_json::from_value(payload).expect("camelCase payload must parse");
+        let json = serde_json::to_value(&transport).expect("serialize");
+        assert_eq!(json["type"], "socks5");
+        assert_eq!(json["credentialsSaved"], true);
+        // Optional username absent stays absent.
+        assert!(json.get("username").is_none());
+    }
 }
