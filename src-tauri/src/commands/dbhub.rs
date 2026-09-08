@@ -236,13 +236,14 @@ pub async fn delete_db_connection(app: AppHandle, connection_id: String) -> AppR
     dbhub::list_connections(&pool, &account_id).await
 }
 
-/// Handshake-only probe. The real driver dial arrives with batch 3; this
-/// validates the stored shape (profile reference exists and is enabled, host/
-/// port present) so the wizard can give early feedback. Always answers with a
-/// result object rather than an error — a failed test is a *result*, not a
-/// command failure.
+/// Real connectivity probe: open the wire connection (direct for now — tunnel
+/// routing lands with the tunnel batch), run `SELECT 1`, read the server
+/// version. The password comes from the secrets store; a connection without a
+/// stored password tests with an empty one and the driver reports auth
+/// failure, which reads clearly. Always answers with a result object rather
+/// than an error — a failed test is a *result*, not a command failure.
 #[tauri::command]
-pub async fn test_db_connection(connection_id: String) -> AppResult<DbTestResult> {
+pub async fn test_db_connection(app: AppHandle, connection_id: String) -> AppResult<DbTestResult> {
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
@@ -267,14 +268,32 @@ pub async fn test_db_connection(connection_id: String) -> AppResult<DbTestResult
                 latency_ms: started.elapsed().as_millis() as u64,
             });
         }
+        return Ok(DbTestResult {
+            ok: false,
+            message: format!(
+                "Network profile \"{}\" routing lands with the tunnel batch — clear the profile to test a direct connection.",
+                profile.name
+            ),
+            latency_ms: started.elapsed().as_millis() as u64,
+        });
     }
 
-    Ok(DbTestResult {
-        ok: true,
-        message: "Configuration is valid. Wire-level dial lands with DBHub batch 3."
-            .to_string(),
-        latency_ms: started.elapsed().as_millis() as u64,
-    })
+    let password = crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
+        .unwrap_or(None);
+
+    let elapsed = started.elapsed().as_millis() as u64;
+    match crate::db::dbhub_driver::test_connection(&connection, password).await {
+        Ok(version) => Ok(DbTestResult {
+            ok: true,
+            message: format!("Connected. Server: {version}"),
+            latency_ms: elapsed,
+        }),
+        Err(error) => Ok(DbTestResult {
+            ok: false,
+            message: error.message.to_string(),
+            latency_ms: elapsed,
+        }),
+    }
 }
 
 // --- Network profiles -------------------------------------------------------

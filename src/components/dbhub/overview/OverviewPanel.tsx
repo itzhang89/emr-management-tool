@@ -1,20 +1,35 @@
+import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDbConnections, useNetworkProfiles } from "@/hooks/useDbHub";
+import type { DbConnection } from "@/types/domain";
 import { ConnectionCard } from "./ConnectionCard";
+import { ConnectionFormDialog } from "./ConnectionFormDialog";
 import { NetworkProfilesSection } from "./NetworkProfilesSection";
 
 /**
  * The DBHub Overview tab (design section 1): the management hub for the active
  * AWS account. Connection cards (with the Show-as-tab / Enabled-for-AI
  * switches) sit on top; the Network Profiles Master–Detail board sits below.
- * The add-connection wizard replaces the disabled button in batch 3.
+ * Add Connection / the card edit pencil open the DBeaver-style wizard.
  */
 export function OverviewPanel() {
   const connectionsQuery = useDbConnections();
   const profilesQuery = useNetworkProfiles();
   const connections = connectionsQuery.data ?? [];
   const profiles = profilesQuery.data ?? [];
+
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [editing, setEditing] = useState<DbConnection>();
+
+  const openCreate = () => {
+    setEditing(undefined);
+    setWizardOpen(true);
+  };
+  const openEdit = (connection: DbConnection) => {
+    setEditing(connection);
+    setWizardOpen(true);
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
@@ -28,7 +43,7 @@ export function OverviewPanel() {
                 : `${connections.length} connection(s), pinned to tabs: ${connections.filter((connection) => connection.showAsTab).length}`}
             </p>
           </div>
-          <Button type="button" size="sm" disabled>
+          <Button type="button" size="sm" onClick={openCreate}>
             <Plus data-icon="inline-start" />
             Add Connection
           </Button>
@@ -42,13 +57,24 @@ export function OverviewPanel() {
         {connections.length > 0 ? (
           <div className="grid gap-3 md:grid-cols-2">
             {connections.map((connection) => (
-              <ConnectionCard key={connection.id} connection={connection} profiles={profiles} />
+              <ConnectionCard
+                key={connection.id}
+                connection={connection}
+                profiles={profiles}
+                onEdit={openEdit}
+              />
             ))}
           </div>
         ) : null}
       </section>
 
       <NetworkProfilesSection />
+
+      <ConnectionFormDialog
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        connection={editing}
+      />
     </div>
   );
 }

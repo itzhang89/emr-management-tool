@@ -80,7 +80,7 @@ export function ConnectionCard({
                   <Pencil className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Edit (wizard lands in batch 3)</TooltipContent>
+              <TooltipContent>Edit connection</TooltipContent>
             </Tooltip>
           ) : null}
         </div>
