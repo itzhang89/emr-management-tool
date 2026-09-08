@@ -200,7 +200,11 @@ async fn resolve_shape(
     let password =
         crate::secrets::read_optional_secret(app, &format!("db/{connection_id}/password"))
             .unwrap_or(None);
-    Ok(dbhub_query::DbConnectionShape { connection, password })
+    Ok(dbhub_query::DbConnectionShape {
+        pool: repository::pool().await?,
+        connection,
+        password,
+    })
 }
 
 /// The rmcp `#[tool]` macro in `mcp/server.rs` turns these doc comments into

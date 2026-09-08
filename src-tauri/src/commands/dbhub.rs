@@ -252,6 +252,9 @@ pub async fn test_db_connection(app: AppHandle, connection_id: String) -> AppRes
         .await?
         .ok_or_else(|| AppError::validation("Connection was not found."))?;
 
+    // A profile-routed connection dials through its local forward; the
+    // disabled-profile check happens inside the router as well, but the early
+    // answer here names the profile instead of surfacing a driver error.
     if let Some(profile_id) = &connection.network_profile_id {
         let profile = dbhub::get_profile(&pool, &account_id, profile_id)
             .await?
@@ -268,21 +271,23 @@ pub async fn test_db_connection(app: AppHandle, connection_id: String) -> AppRes
                 latency_ms: started.elapsed().as_millis() as u64,
             });
         }
-        return Ok(DbTestResult {
-            ok: false,
-            message: format!(
-                "Network profile \"{}\" routing lands with the tunnel batch — clear the profile to test a direct connection.",
-                profile.name
-            ),
-            latency_ms: started.elapsed().as_millis() as u64,
-        });
+    }
+
+    // Open the local forward when the profile routes this connection; the
+    // driver then dials 127.0.0.1:<forward-port> instead of the literal host.
+    let forward =
+        crate::db::dbhub_tunnel::route_for_connection(&pool, &app, &connection).await?;
+    let mut routed = connection.clone();
+    if let Some((host, port, _)) = forward.as_ref() {
+        routed.host = host.clone();
+        routed.port = *port as i64;
     }
 
     let password = crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
         .unwrap_or(None);
 
     let elapsed = started.elapsed().as_millis() as u64;
-    match crate::db::dbhub_driver::test_connection(&connection, password).await {
+    match crate::db::dbhub_driver::test_connection(&routed, password).await {
         Ok(version) => Ok(DbTestResult {
             ok: true,
             message: format!("Connected. Server: {version}"),
@@ -381,10 +386,12 @@ pub async fn delete_network_profile(profile_id: String) -> AppResult<()> {
     Ok(())
 }
 
-/// SSH/SOCKS handshake-only probe (batch 2 wiring arrives with the UI; this
-/// validates the stored shape). Always answers with a result object.
+/// Profile test button: bind a local forward through this profile's
+/// transport. This proves the local bind and accept loop are sound; the
+/// far-side SSH/SOCKS handshake surfaces when a connection actually dials
+/// (the honest scope of a configuration-only probe — recorded in the design).
 #[tauri::command]
-pub async fn test_network_profile(profile_id: String) -> AppResult<DbTestResult> {
+pub async fn test_network_profile(app: AppHandle, profile_id: String) -> AppResult<DbTestResult> {
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
@@ -393,15 +400,6 @@ pub async fn test_network_profile(profile_id: String) -> AppResult<DbTestResult>
         .await?
         .ok_or_else(|| AppError::validation("Profile was not found."))?;
 
-    let (host, port, username_present) = match &profile.transport {
-        crate::models::NetworkTransport::SshTunnel { host, port, username, .. } => {
-            (host.clone(), *port, !username.is_empty())
-        }
-        crate::models::NetworkTransport::Socks5 { host, port, username, .. } => {
-            (host.clone(), *port, username.is_some())
-        }
-    };
-
     if !profile.enabled {
         return Ok(DbTestResult {
             ok: false,
@@ -409,22 +407,29 @@ pub async fn test_network_profile(profile_id: String) -> AppResult<DbTestResult>
             latency_ms: started.elapsed().as_millis() as u64,
         });
     }
-    if host.trim().is_empty() || port <= 0 || port > 65535 {
-        return Ok(DbTestResult {
-            ok: false,
-            message: "Host or port is not configured.".to_string(),
-            latency_ms: started.elapsed().as_millis() as u64,
-        });
-    }
 
-    let auth_note = if username_present { "" } else { " (no user configured — anonymous)" };
-    Ok(DbTestResult {
-        ok: true,
-        message: format!(
-            "Configuration is valid for {host}:{port}{auth_note}. Handshake dial lands with DBHub batch 2."
-        ),
-        latency_ms: started.elapsed().as_millis() as u64,
-    })
+    let secret = crate::secrets::read_optional_secret(&app, &profile_secret_key(&profile_id))
+        .unwrap_or(None);
+    match crate::db::dbhub_tunnel::probe_profile(&profile, move |_| Ok(secret)).await {
+        Ok(port) => {
+            let (host, port_target) = match &profile.transport {
+                crate::models::NetworkTransport::SshTunnel { host, port, .. } => (host.clone(), *port),
+                crate::models::NetworkTransport::Socks5 { host, port, .. } => (host.clone(), *port),
+            };
+            Ok(DbTestResult {
+                ok: true,
+                message: format!(
+                    "Local forward bound on 127.0.0.1:{port} (target {host}:{port_target}). Far-side handshake is exercised when a connection dials."
+                ),
+                latency_ms: started.elapsed().as_millis() as u64,
+            })
+        }
+        Err(error) => Ok(DbTestResult {
+            ok: false,
+            message: error.message.to_string(),
+            latency_ms: started.elapsed().as_millis() as u64,
+        }),
+    }
 }
 
 // --- Read-only query execution (workspace + AI tools) ------------------------

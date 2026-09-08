@@ -68,12 +68,23 @@ const PING_VERSION_PG: &str = "select version()";
 /// Build a MySQL connection URL. Percent-encodes every user-supplied piece so
 /// a password containing `@` or `/` cannot rewrite the URL's meaning.
 pub(crate) fn mysql_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
+    mysql_url_routed(connection, password, None)
+}
+
+/// URL with an optional dial-target rewrite (network profile local forward).
+pub(crate) fn mysql_url_routed(
+    connection: &DbConnection,
+    password: Option<&str>,
+    route_override: Option<(&str, u16)>,
+) -> AppResult<String> {
+    let host = route_override.map(|(host, _)| host.to_string()).unwrap_or_else(|| connection.host.clone());
+    let port = route_override.map(|(_, port)| port as i64).unwrap_or(connection.port);
     let mut url = format!(
         "mysql://{}:{}@{}:{}/{}",
         urlencoding::encode(&connection.username),
         urlencoding::encode(password.unwrap_or_default()),
-        urlencoding::encode(&connection.host),
-        connection.port,
+        urlencoding::encode(&host),
+        port,
         urlencoding::encode(connection.database.as_deref().unwrap_or(""))
     );
     if connection.database.as_deref().unwrap_or("").is_empty() {
@@ -81,8 +92,8 @@ pub(crate) fn mysql_url(connection: &DbConnection, password: Option<&str>) -> Ap
             "mysql://{}:{}@{}:{}",
             urlencoding::encode(&connection.username),
             urlencoding::encode(password.unwrap_or_default()),
-            urlencoding::encode(&connection.host),
-            connection.port
+            urlencoding::encode(&host),
+            port
         );
     }
     Ok(url)
@@ -90,13 +101,24 @@ pub(crate) fn mysql_url(connection: &DbConnection, password: Option<&str>) -> Ap
 
 /// Build a PostgreSQL connection URL (also used for Yellowbrick's wire).
 pub(crate) fn postgres_url(connection: &DbConnection, password: Option<&str>) -> AppResult<String> {
+    postgres_url_routed(connection, password, None)
+}
+
+/// URL with an optional dial-target rewrite (network profile local forward).
+pub(crate) fn postgres_url_routed(
+    connection: &DbConnection,
+    password: Option<&str>,
+    route_override: Option<(&str, u16)>,
+) -> AppResult<String> {
     let database = connection.database.as_deref().filter(|value| !value.is_empty()).unwrap_or("postgres");
+    let host = route_override.map(|(host, _)| host.to_string()).unwrap_or_else(|| connection.host.clone());
+    let port = route_override.map(|(_, port)| port as i64).unwrap_or(connection.port);
     Ok(format!(
         "postgresql://{}:{}@{}:{}/{}",
         urlencoding::encode(&connection.username),
         urlencoding::encode(password.unwrap_or_default()),
-        urlencoding::encode(&connection.host),
-        connection.port,
+        urlencoding::encode(&host),
+        port,
         urlencoding::encode(database)
     ))
 }

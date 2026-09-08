@@ -3,7 +3,7 @@
 //! (dbhub_driver) and per-dialect metadata reads for the query workspace's
 //! catalog tree.
 
-use crate::db::{dbhub, dbhub_driver, dbhub_engine, repository};
+use crate::db::{dbhub, dbhub_driver, dbhub_engine, dbhub_tunnel, repository};
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnectionKind;
 use serde::Serialize;
@@ -35,8 +35,10 @@ fn pool_secret_key(id: &str) -> String {
 }
 
 /// The fields the executor needs, split out so tests can build one without a
-/// Tauri handle.
+/// Tauri handle. `pool` is the app's SQLite pool (used to resolve the network
+/// profile when routing).
 pub(crate) struct DbConnectionShape {
+    pub pool: sqlx::SqlitePool,
     pub connection: crate::models::DbConnection,
     pub password: Option<String>,
 }
@@ -54,10 +56,21 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
 /// driver then opens a short-lived pool (a query tab fires at human cadence,
 /// pooling across calls is a later optimisation), runs the statement inside a
 /// read-only transaction where the driver supports one, and caps the rows.
+/// `route_override` rewrites the dial target when a network profile forwards
+/// this connection through a local tunnel port (`(host, port)` of 127.0.0.1:N).
 pub(crate) async fn execute_read_only(
     shape: &DbConnectionShape,
     sql: &str,
     max_rows: usize,
+) -> AppResult<DbQueryResult> {
+    execute_read_only_routed(shape, sql, max_rows, None).await
+}
+
+pub(crate) async fn execute_read_only_routed(
+    shape: &DbConnectionShape,
+    sql: &str,
+    max_rows: usize,
+    route_override: Option<(&str, u16)>,
 ) -> AppResult<DbQueryResult> {
     if let dbhub_engine::StatementClass::Blocked { reason } = dbhub_engine::classify(sql) {
         return Err(AppError::validation(format!(
@@ -69,9 +82,9 @@ pub(crate) async fn execute_read_only(
     let started = std::time::Instant::now();
 
     let (columns, rows, truncated) = match shape.connection.kind {
-        DbConnectionKind::Mysql => run_mysql(shape, sql, cap).await?,
+        DbConnectionKind::Mysql => run_mysql(shape, sql, cap, route_override).await?,
         DbConnectionKind::Postgres | DbConnectionKind::Yellowbrick => {
-            run_postgres(shape, sql, cap).await?
+            run_postgres(shape, sql, cap, route_override).await?
         }
     };
 
@@ -88,8 +101,9 @@ async fn run_mysql(
     shape: &DbConnectionShape,
     sql: &str,
     cap: usize,
+    route_override: Option<(&str, u16)>,
 ) -> AppResult<(Vec<String>, Vec<serde_json::Value>, bool)> {
-    let url = dbhub_driver::mysql_url(&shape.connection, shape.password.as_deref())?;
+    let url = dbhub_driver::mysql_url_routed(&shape.connection, shape.password.as_deref(), route_override)?;
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .acquire_timeout(dbhub_driver::TEST_TIMEOUT)
         .max_connections(1)
@@ -156,8 +170,9 @@ async fn run_postgres(
     shape: &DbConnectionShape,
     sql: &str,
     cap: usize,
+    route_override: Option<(&str, u16)>,
 ) -> AppResult<(Vec<String>, Vec<serde_json::Value>, bool)> {
-    let url = dbhub_driver::postgres_url(&shape.connection, shape.password.as_deref())?;
+    let url = dbhub_driver::postgres_url_routed(&shape.connection, shape.password.as_deref(), route_override)?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(dbhub_driver::TEST_TIMEOUT)
         .max_connections(1)
@@ -236,14 +251,17 @@ fn normalize(value: serde_json::Value) -> serde_json::Value {
 
 /// Databases/schemata the account's user can see. MySQL: information_schema
 /// schemata. Postgres/Yellowbrick: non-template databases.
-pub(crate) async fn list_databases(shape: &DbConnectionShape) -> AppResult<Vec<DbCatalogEntry>> {
+pub(crate) async fn list_databases_routed(
+    shape: &DbConnectionShape,
+    route_override: Option<(&str, u16)>,
+) -> AppResult<Vec<DbCatalogEntry>> {
     let sql = match shape.connection.kind {
         DbConnectionKind::Mysql => {
             "select schema_name as name, null as kind from information_schema.schemata"
         }
         _ => "select datname as name, null as kind from pg_database where not datistemplate",
     };
-    let result = execute_read_only(shape, sql, MAX_PAGE_ROWS as usize).await?;
+    let result = execute_read_only_routed(shape, sql, MAX_PAGE_ROWS as usize, route_override).await?;
     Ok(result
         .rows
         .iter()
@@ -258,9 +276,10 @@ pub(crate) async fn list_databases(shape: &DbConnectionShape) -> AppResult<Vec<D
 /// Tables/views of one database. MySQL: information_schema.tables filtered by
 /// schema; Postgres: information_schema.tables of the connected database's
 /// public schema (cross-database queries need a second connection in PG land).
-pub(crate) async fn list_tables(
+pub(crate) async fn list_tables_routed(
     shape: &DbConnectionShape,
     database: &str,
+    route_override: Option<(&str, u16)>,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let sql = match shape.connection.kind {
         DbConnectionKind::Mysql => format!(
@@ -274,7 +293,7 @@ pub(crate) async fn list_tables(
             .to_string()
         }
     };
-    let result = execute_read_only(shape, &sql, MAX_PAGE_ROWS as usize).await?;
+    let result = execute_read_only_routed(shape, &sql, MAX_PAGE_ROWS as usize, route_override).await?;
     Ok(result
         .rows
         .iter()
@@ -296,6 +315,8 @@ mod tests {
 
     fn shape_for_gate_test() -> DbConnectionShape {
         DbConnectionShape {
+            pool: sqlx::sqlite::SqlitePool::connect_lazy("sqlite::memory:")
+                .expect("lazy pool"),
             connection: DbConnection {
                 id: "c1".into(),
                 account_id: "acct-a".into(),
@@ -340,7 +361,13 @@ pub async fn run_for_command(
     max_rows: Option<usize>,
 ) -> AppResult<DbQueryResult> {
     let shape = shape_for(app, connection_id, require_ai_enabled).await?;
-    execute_read_only(&shape, sql, max_rows.unwrap_or(MAX_PAGE_ROWS as usize)).await
+    // The forward (when a profile routes this connection) must outlive the
+    // driver dial; binding it to this scope does exactly that.
+    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+    let override_target = forward
+        .as_ref()
+        .map(|(host, port, _)| (host.as_str(), *port));
+    execute_read_only_routed(&shape, sql, max_rows.unwrap_or(MAX_PAGE_ROWS as usize), override_target).await
 }
 
 pub async fn catalog_databases_for_command(
@@ -348,7 +375,11 @@ pub async fn catalog_databases_for_command(
     connection_id: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
-    list_databases(&shape).await
+    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+    let override_target = forward
+        .as_ref()
+        .map(|(host, port, _)| (host.as_str(), *port));
+    list_databases_routed(&shape, override_target).await
 }
 
 pub async fn catalog_tables_for_command(
@@ -357,7 +388,11 @@ pub async fn catalog_tables_for_command(
     database: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
-    list_tables(&shape, database).await
+    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+    let override_target = forward
+        .as_ref()
+        .map(|(host, port, _)| (host.as_str(), *port));
+    list_tables_routed(&shape, database, override_target).await
 }
 
 async fn shape_for(
@@ -377,5 +412,5 @@ async fn shape_for(
     }
     let password =
         crate::secrets::read_optional_secret(app, &pool_secret_key(connection_id)).unwrap_or(None);
-    Ok(DbConnectionShape { connection, password })
+    Ok(DbConnectionShape { pool, connection, password })
 }

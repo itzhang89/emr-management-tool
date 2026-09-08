@@ -3,6 +3,7 @@ pub mod dbhub;
 pub mod dbhub_driver;
 pub mod dbhub_engine;
 pub mod dbhub_query;
+pub mod dbhub_tunnel;
 pub mod llm;
 pub mod redact;
 pub mod repository;
