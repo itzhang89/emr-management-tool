@@ -111,22 +111,26 @@ async fn run_mysql(
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
-    // Read-only transaction: MySQL 5.7+/8 honours this for InnoDB; the gate
-    // already refused writes so this is defence in depth.
-    let mut tx = pool
-        .begin()
+    // Read-only enforcement, MySQL-correct: `SET TRANSACTION READ ONLY` must be
+    // issued *before* the transaction it governs, so running it inside a
+    // `tx.begin()` fails ("cannot start a transaction within a transaction"
+    // / server refuses SET inside a transaction). The session-level form puts
+    // the whole session into read-only mode; every autocommit statement that
+    // follows (this one) is then refused if it writes. The gate already
+    // blocked writes — this is defence in depth that actually runs.
+    let mut conn = pool
+        .acquire()
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
-    sqlx::query("set transaction read only")
-        .execute(&mut *tx)
+    sqlx::query("set session transaction read only")
+        .execute(&mut *conn)
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
-    tx.commit().await.ok();
     pool.close().await;
 
     Ok(project_mysql_rows(&rows, cap))
@@ -180,22 +184,33 @@ async fn run_postgres(
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
-    let mut tx = pool
-        .begin()
+    // `BEGIN READ ONLY` is the explicit, portable way to open a read-only
+    // transaction on Postgres (Yellowbrick rides this wire too). Issuing
+    // `SET TRANSACTION READ ONLY` after a bare `BEGIN` is *also* legal as the
+    // first statement, but the read-only BEGIN makes the intent unmistakable
+    // and needs no ordering care.
+    let mut conn = pool
+        .acquire()
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
-    sqlx::query("set transaction read only")
-        .execute(&mut *tx)
+    sqlx::query("begin read only")
+        .execute(&mut *conn)
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-        .fetch_all(&mut *tx)
+    let outcome = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+        .fetch_all(&mut *conn)
         .await
-        .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
-    tx.commit().await.ok();
+        .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)));
+
+    // Close the read-only transaction either way — COMMIT on success,
+    // ROLLBACK when the statement failed.
+    let _ = sqlx::query(if outcome.is_ok() { "commit" } else { "rollback" })
+        .execute(&mut *conn)
+        .await;
     pool.close().await;
 
+    let rows = outcome?;
     Ok(project_postgres_rows(&rows, cap))
 }
 

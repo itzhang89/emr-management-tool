@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Database, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
+import { ArrowLeft, Database, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,7 +48,10 @@ export function ConnectionQueryTab({ connection }: { connection: DbConnection })
     setSql(state.sql || "SELECT 1;");
     setResultTabs(state.resultTabs);
     setActiveResultId(state.activeResultTabId ?? state.resultTabs.at(-1)?.id);
-    setSelectedDatabase(state.selectedDatabase);
+    // If the connection declares a default database and the workspace has no
+    // remembered selection, land inside it so the tree shows its tables
+    // immediately (user request, mirroring how Glue restores a catalog view).
+    setSelectedDatabase(state.selectedDatabase ?? connection.database);
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, connection.id]);
@@ -117,6 +120,7 @@ export function ConnectionQueryTab({ connection }: { connection: DbConnection })
         error={databases.error ?? tables.error}
         onSelectDatabase={setSelectedDatabase}
         onSelectTable={handleSelectTable}
+        onBack={() => setSelectedDatabase(undefined)}
       />
       <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex shrink-0 items-center gap-2">
@@ -173,7 +177,8 @@ function CatalogPane({
   loadingTables,
   error,
   onSelectDatabase,
-  onSelectTable
+  onSelectTable,
+  onBack
 }: {
   databases: Array<{ name: string; kind?: string }>;
   tables: Array<{ name: string; kind?: string }>;
@@ -183,55 +188,103 @@ function CatalogPane({
   error: unknown;
   onSelectDatabase: (name: string) => void;
   onSelectTable: (name: string) => void;
+  /** Back out of the current database to the full database list. */
+  onBack: () => void;
 }) {
   const [filter, setFilter] = useState("");
+
+  // Inside a database → its tables; at the top level → all databases.
+  const inDatabase = Boolean(selectedDatabase);
   const filtered = tables.filter((table) =>
     table.name.toLowerCase().includes(filter.toLowerCase())
   );
+  const errorMessage = error
+    ? error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Failed to load metadata."
+    : undefined;
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
-      <div className="border-b p-2">
-        <Input
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter tables…"
-          className="h-7 text-xs"
-          aria-label="Filter tables"
-        />
-      </div>
+    <aside className="flex w-60 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
+      {inDatabase ? (
+        <div className="flex items-center gap-1 border-b px-1 py-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            aria-label="Back to all databases"
+            onClick={onBack}
+          >
+            <ArrowLeft className="size-3.5" />
+          </Button>
+          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium">
+            <Database className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="truncate">{selectedDatabase}</span>
+          </span>
+          <Input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Filter…"
+            className="ml-auto h-6 w-20 text-xs"
+            aria-label="Filter tables"
+          />
+        </div>
+      ) : (
+        <div className="border-b px-2 py-1.5 text-xs font-medium text-muted-foreground">
+          Databases
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto p-2 text-sm">
-        {error ? <p className="text-xs text-destructive">Metadata unavailable.</p> : null}
-        {loadingDatabases ? <SkeletonRows /> : null}
-        {databases.map((database) => (
-          <button
-            key={database.name}
-            type="button"
-            onClick={() => onSelectDatabase(database.name)}
-            className={cn(
-              "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs",
-              database.name === selectedDatabase
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-secondary/60"
-            )}
-          >
-            <Database className="size-3 shrink-0" aria-hidden />
-            <span className="truncate">{database.name}</span>
-          </button>
-        ))}
-        <div className="my-1 border-t" />
-        {loadingTables ? <SkeletonRows /> : null}
-        {filtered.map((table) => (
-          <button
-            key={table.name}
-            type="button"
-            onClick={() => onSelectTable(table.name)}
-            className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-secondary/60"
-          >
-            <Table2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="truncate">{table.name}</span>
-          </button>
-        ))}
+        {errorMessage ? (
+          <p className="text-xs leading-relaxed text-destructive" role="alert">
+            {errorMessage}
+          </p>
+        ) : null}
+
+        {!inDatabase ? (
+          <>
+            {loadingDatabases ? <SkeletonRows /> : null}
+            {databases.map((database) => (
+              <button
+                key={database.name}
+                type="button"
+                onClick={() => {
+                  onSelectDatabase(database.name);
+                  setFilter("");
+                }}
+                className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs text-muted-foreground hover:bg-secondary/60"
+              >
+                <Database className="size-3 shrink-0" aria-hidden />
+                <span className="truncate">{database.name}</span>
+              </button>
+            ))}
+            {!loadingDatabases && databases.length === 0 && !errorMessage ? (
+              <p className="p-1 text-xs text-muted-foreground">No databases.</p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {loadingTables ? <SkeletonRows /> : null}
+            {filtered.map((table) => (
+              <button
+                key={table.name}
+                type="button"
+                onClick={() => onSelectTable(table.name)}
+                className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-secondary/60"
+              >
+                <Table2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate">{table.name}</span>
+              </button>
+            ))}
+            {!loadingTables && tables.length === 0 && !errorMessage ? (
+              <p className="p-1 text-xs text-muted-foreground">No tables.</p>
+            ) : null}
+          </>
+        )}
       </div>
     </aside>
   );
