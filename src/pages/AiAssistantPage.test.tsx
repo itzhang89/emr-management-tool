@@ -55,7 +55,8 @@ describe("AiAssistantPage", () => {
   it("shows the five AI tabs with Chat selected first", () => {
     renderPage();
 
-    expect(screen.getByRole("heading", { name: "AI Assistant" })).toBeInTheDocument();
+    // The page header (and its heading) was removed in e647b97; the tab bar
+    // is the page's identity now.
     for (const name of ["Chat", "Providers", "Redaction", "MCP Server", "Audit"]) {
       expect(screen.getByRole("tab", { name })).toBeInTheDocument();
     }

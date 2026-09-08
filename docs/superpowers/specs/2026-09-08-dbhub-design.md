@@ -402,7 +402,10 @@ Bootstrap，统一走 `@/components/ui/*`。）
 批次按「先不动 Glue 行为 → 数据层 → 管理面 → 查询面 → AI 面」排序；每批结束
 `npm test` + `cargo test` 必须全绿。
 
-### Batch 0 — 重命名与双固定 tab 容器（无新后端）
+> **状态：批次 0–6 全部实现完成**（2026-09-08，同日）。实现与设计的偏离记录在第
+> 13 节。批次 7（README/deviations/既有测试修复）亦已完成。
+
+### Batch 0 — 重命名与双固定 tab 容器（无新后端）✅
 - `pageMeta` label「Data Catalog」→「DBHub」、description/icon
 - 新建 `DbHubPage.tsx`：固定 tab `[Overview][Glue Catalog]`，默认落 Overview（占位
   空状态 + 「Add Connection / Network Profiles」按钮置灰）
@@ -491,3 +494,52 @@ Bootstrap，统一走 `@/components/ui/*`。）
   (3.1 schema 惯例、4.2 enabled_tools 过滤、5 安全、7 deviations)。
 - 参考：`memory/dbhub-feature`（本会话新建）、`memory/mcp-builtin-feature`、
   `memory/configurable-redaction`。
+
+---
+
+## 13. 实现与设计的偏离（批次 0–7 落地时记录）
+
+按落地顺序记录实现中做出的、值得写下来的判断：
+
+**SSH host-key 首版不校验（accept-any）。** `dbhub_tunnel.rs` 的
+`check_server_key` 恒返回 true —— 与设计「test-first 隧道体验」一致，但与
+SSH 最佳实践相悖。known_hosts 指纹固定是明确的后续加固项，在使用文档（README
+DBHub 节）中已明示。SOCKS5 路径无此问题（CONNECT 协议本身不含服务端身份）。
+
+**隧道采用本地端口转发，而非驱动级 IO 路由。** 设计只说「把字节流接给
+sqlx」。实现选择：profiled 连接先在 `127.0.0.1` 绑一个 OS 分配端口做本地
+转发（russh direct-tcpip channel / SOCKS5 CONNECT），驱动拨本地端口、URL
+仅改写 host/port。这让 `dbhub_driver`/`dbhub_query` 对直连与 profiled 连接
+完全一致，避免触碰 sqlx 的自定义传输 API。代价：每次执行新开转发 + SSH 会话
+（无会话复用），高并发场景是后续优化点。
+
+**`AssertSqlSafe` 用于用户 SQL。** sqlx 0.9 拒绝动态 SQL 字符串；用户语句
+本质是动态的，经 `sqlx::AssertSqlSafe(sql.to_string())` 放行。风险由三道已
+有防线覆盖：只读门禁分类（任何非 SELECT 词形拒绝）、`SET TRANSACTION READ
+ONLY`（wire 级兜底）、以及该 API 仅在「门禁已分类」之后调用。CRUD 路径
+（表名列名拼接）仍走编译期 `update_column!` 宏的 `concat!`，未用 Assert。
+
+**结果投影按对象数组而非列数组。** 设计 §8 写的是「列 + 行」，前端结果网格
+按列名取值更直接，Rust 侧投影为 `Vec<serde_json::Value>`（JSON object per
+row）。列清单单独携带用于表头。PG 侧首版全列按字符串解码（驱动的规范渲染），
+数字原生解码留给结果网格打磨批次。
+
+**工作区缓存额外持久化目录树选中态。** 设计 §7 列了「SQL 草稿/历史/favorites/
+结果元数据」，未单列 catalog 选中项；实现把 `selectedDatabase` 并入同一键，
+恢复时目录树回到上次位置，符合「不丢」的用户原意。
+
+**Profile 测试按钮只验证本地绑定。** 设计说「测试按钮仅握手计时」。实现里
+SSH/SOCKS 远端握手失败与配置错误在本地无法区分（目标库可能本来就不通），
+`test_network_profile` 只证明本地 forward 绑定成功并回报端口，远端握手在真实
+查询时由驱动错误如实呈现 —— 诚实边界写进了按钮的返回文案。
+
+**查询工作区首版未接 CodeMirror。** Glue 工作区用的是 `AthenaSqlEditor`
+（CodeMirror + 补全）。连接 tab 首版用普通 textarea + Cmd/Ctrl+Enter（补全
+需 per-dialect 关键字表，属于独立工作量），布局与状态缓存与 Glue tab 一致。
+接 CodeMirror 记为后续批次。
+
+**顺手修复 3 个既有测试失败。** `AiAssistantPage` heading 断言（e647b97 删
+PageHeader 未同步）、`AppShell` 的 "Data Catalog" heading 断言（同 commit）、
+`releaseConfig` 两条（7ec7ba3 升级 setup-node@v5 未同步断言；signer argv
+数组写法与 `signer sign` 字面量断言不匹配）。修复方式均为让断言贴合实现
+现状，非放松语义。

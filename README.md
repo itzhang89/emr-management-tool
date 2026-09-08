@@ -11,6 +11,7 @@ EMR Management Tool is a desktop GUI for submitting and managing Amazon EMR on E
 - View local job history and clone previous submissions.
 - Read EMR job logs and browse S3 log/output files.
 - Analyse job failures with an AI assistant, or expose the same read-only tools to external agents over MCP (see [AI Assistant](#ai-assistant)).
+- Query MySQL, PostgreSQL, and Yellowbrick databases directly — over SSH tunnels or SOCKS5 proxies — from the DBHub page (see [DBHub](#dbhub)).
 - Check for application updates on supported stable releases.
 
 ## Install
@@ -190,6 +191,47 @@ Rename downloads the object and writes it back under a new key, so it needs `s3:
 - If Virtual Clusters is empty, first confirm the account region in Settings matches the region shown in the AWS console for your EMR virtual cluster.
 - If Job History is empty after submitting jobs elsewhere, select the correct virtual cluster in the page header so the app can call `ListJobRuns`.
 - Open **Help → View Logs** to inspect AWS API failures. The log file is stored under your local app data directory in `emr-management-tool/logs/app.log`.
+
+## DBHub
+
+The **DBHub** page is the entry point for every queryable data source. It has two
+fixed tabs — **Overview** and **Glue Catalog** — plus one dynamic tab per
+connection you pin.
+
+**Overview** manages the active AWS account's database connections and network
+profiles. Each connection card shows its routing (direct, or through a named
+profile) and carries two switches: **Show as tab** pins the connection as its
+own query tab next to Glue Catalog, and **Enabled for AI** registers a read-only
+SQL tool into the AI Chat and the MCP endpoint. The **Connect to a database**
+form follows the DBeaver layout — Host/URL dual mode, Server and Authentication
+groups — and **Test Connection** dials the server for real.
+
+**Network Profiles** live in Overview too: an SSH-tunnel or SOCKS5 profile is a
+saved route a connection can reference. Profiled connections are reached through
+a local forward (the app binds `127.0.0.1` on a free port and relays through the
+tunnel/proxy), so the SQL drivers stay identical for direct and profiled
+connections.
+
+**Connection tabs** reuse the Glue workspace layout: a catalog tree
+(databases and tables read through the driver) on the left, a SQL editor and a
+result grid on the right. Workspaces persist locally per account and connection —
+your SQL draft, tree selection, and result-tab metadata survive switching pages
+or AWS accounts; large result sets keep only their metadata with a rerun hint.
+
+### DBHub safety rules
+
+- **Everything is scoped to the active AWS account.** Connections, profiles,
+  tabs, and local caches of one account are invisible to every other account.
+- **Queries are read-only twice over.** A statement gate refuses anything that
+  is not SELECT/SHOW/DESCRIBE/EXPLAIN (including writes hidden behind comments
+  or CTEs), and each statement additionally runs inside a read-only transaction.
+- **Passwords never enter the app database or the UI.** They live in the OS
+  credential store; the frontend sees only a masked hint.
+- **The AI sees names, not addresses.** `list_databases` exposes connection ids,
+  names, kinds, and databases — never hosts, ports, or usernames. Calls against
+  disabled or foreign-account connections refuse identically.
+- **Every AI-driven query is audited** in the same tool-audit table as the
+  other MCP tools.
 
 ## AI Assistant
 

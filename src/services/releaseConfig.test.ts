@@ -201,7 +201,7 @@ describe("release configuration", () => {
     expect(workflow).toContain("uses: ./.github/actions/setup-tauri");
     expect(workflow).toContain("uses: ./.github/actions/prepare-artifacts");
     expect(workflow).not.toContain("scripts/stage-artifacts.py");
-    expect(setupAction).toContain("actions/setup-node@v4");
+    expect(setupAction).toContain("actions/setup-node@v5");
     expect(setupAction).toContain("cache-dependency-path: package-lock.json");
     expect(setupAction).toContain("dtolnay/rust-toolchain@stable");
     expect(setupAction).toContain("Swatinem/rust-cache@v2");
@@ -334,7 +334,9 @@ describe("release configuration", () => {
 
     expect(script).toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(script).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
-    expect(script).toContain("signer sign");
+    // The script invokes the Tauri CLI as ["signer", "sign", zipPath] —
+    // argv-array form, not the literal string the old assertion expected.
+    expect(script).toContain('"signer", "sign"');
     expect(script).toContain(".sig");
   });
 
