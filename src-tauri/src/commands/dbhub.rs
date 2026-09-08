@@ -11,8 +11,9 @@
 use crate::db::{dbhub, repository};
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DbConnection, DbConnectionFlags, DbConnectionInput, DbConnectionUpdateInput, DbTestResult,
-    NetworkProfile, NetworkProfileInput,
+    DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput,
+    DbConnectionRef, DbConnectionUpdateInput, DbTestResult, NetworkProfile,
+    NetworkProfileInput, NetworkProfileRef,
 };
 use tauri::AppHandle;
 
@@ -63,25 +64,25 @@ pub async fn list_db_connections() -> AppResult<Vec<DbConnection>> {
 #[tauri::command]
 pub async fn create_db_connection(
     app: AppHandle,
-    input: DbConnectionInput,
+    request: DbConnectionInput,
 ) -> AppResult<DbConnection> {
-    if input.name.trim().is_empty() {
+    if request.name.trim().is_empty() {
         return Err(AppError::validation("Connection name is required."));
     }
-    if input.host.trim().is_empty() {
+    if request.host.trim().is_empty() {
         return Err(AppError::validation("Connection host is required."));
     }
-    if input.port <= 0 || input.port > 65535 {
+    if request.port <= 0 || request.port > 65535 {
         return Err(AppError::validation("Connection port must be 1-65535."));
     }
-    if input.username.trim().is_empty() {
+    if request.username.trim().is_empty() {
         return Err(AppError::validation("Connection username is required."));
     }
 
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
 
-    if let Some(profile_id) = input.network_profile_id.as_deref() {
+    if let Some(profile_id) = request.network_profile_id.as_deref() {
         if !dbhub::profile_belongs_to_account(&pool, &account_id, profile_id).await? {
             return Err(AppError::validation(
                 "Network profile was not found in the active account.",
@@ -93,24 +94,24 @@ pub async fn create_db_connection(
     let connection = DbConnection {
         id: uuid::Uuid::new_v4().to_string(),
         account_id: account_id.clone(),
-        kind: input.kind,
-        name: input.name.trim().to_string(),
-        host: input.host.trim().to_string(),
-        port: input.port,
-        database: input.database.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
-        username: input.username.trim().to_string(),
-        network_profile_id: input.network_profile_id,
-        show_as_tab: input.show_as_tab,
-        enabled_for_ai: input.enabled_for_ai,
-        ai_read_only_policy: input.ai_read_only_policy.unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
-        sort_order: input.sort_order.unwrap_or_else(|| 0),
+        kind: request.kind,
+        name: request.name.trim().to_string(),
+        host: request.host.trim().to_string(),
+        port: request.port,
+        database: request.database.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        username: request.username.trim().to_string(),
+        network_profile_id: request.network_profile_id,
+        show_as_tab: request.show_as_tab,
+        enabled_for_ai: request.enabled_for_ai,
+        ai_read_only_policy: request.ai_read_only_policy.unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
+        sort_order: request.sort_order.unwrap_or_else(|| 0),
         created_at: now,
         updated_at: now,
     };
 
     dbhub::insert_connection(&pool, &connection).await?;
 
-    if let Some(password) = input.password.filter(|value| !value.is_empty()) {
+    if let Some(password) = request.password.filter(|value| !value.is_empty()) {
         crate::secrets::write_secret(&app, &connection_secret_key(&connection.id), &password)?;
     }
 
@@ -120,17 +121,17 @@ pub async fn create_db_connection(
 #[tauri::command]
 pub async fn update_db_connection(
     app: AppHandle,
-    mut input: DbConnectionUpdateInput,
+    mut request: DbConnectionUpdateInput,
 ) -> AppResult<DbConnection> {
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
 
     // Resolve within the account scope first — a foreign id reads as missing.
-    let existing = dbhub::get_connection(&pool, &account_id, &input.id)
+    let existing = dbhub::get_connection(&pool, &account_id, &request.id)
         .await?
         .ok_or_else(|| AppError::validation("Connection was not found."))?;
 
-    if let Some(profile_id) = input.network_profile_id.as_deref() {
+    if let Some(profile_id) = request.network_profile_id.as_deref() {
         if !profile_id.is_empty()
             && !dbhub::profile_belongs_to_account(&pool, &account_id, profile_id).await?
         {
@@ -140,33 +141,33 @@ pub async fn update_db_connection(
         }
     }
 
-    let password = input.password.take();
+    let password = request.password.take();
     dbhub::update_connection(
         &pool,
         &account_id,
-        &input.id,
+        &request.id,
         &dbhub::ConnectionPatch {
-            name: input.name.as_deref().map(str::trim).filter(|value| !value.is_empty()),
-            host: input.host.as_deref().map(str::trim).filter(|value| !value.is_empty()),
-            port: input.port,
+            name: request.name.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            host: request.host.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            port: request.port,
             // `None` keeps the stored value; `Some(None)` clears it.
-            database: input
+            database: request
                 .database
                 .as_deref()
                 .map(|value| value.trim())
                 .map(|value| if value.is_empty() { None } else { Some(value) }),
-            username: input.username.as_deref().map(str::trim).filter(|value| !value.is_empty()),
-            network_profile_id: input.network_profile_id.as_deref().map(|value| {
+            username: request.username.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            network_profile_id: request.network_profile_id.as_deref().map(|value| {
                 if value.is_empty() {
                     None
                 } else {
                     Some(value)
                 }
             }),
-            show_as_tab: input.show_as_tab,
-            enabled_for_ai: input.enabled_for_ai,
-            ai_read_only_policy: input.ai_read_only_policy,
-            sort_order: input.sort_order,
+            show_as_tab: request.show_as_tab,
+            enabled_for_ai: request.enabled_for_ai,
+            ai_read_only_policy: request.ai_read_only_policy,
+            sort_order: request.sort_order,
         },
     )
     .await?;
@@ -174,12 +175,12 @@ pub async fn update_db_connection(
     if let Some(password) = password {
         crate::secrets::write_optional_secret(
             &app,
-            &connection_secret_key(&input.id),
+            &connection_secret_key(&request.id),
             Some(password.as_str()).filter(|value| !value.is_empty()),
         )?;
     }
 
-    dbhub::get_connection(&pool, &account_id, &input.id)
+    dbhub::get_connection(&pool, &account_id, &request.id)
         .await?
         .map(|connection| {
             let _ = existing; // scope check already ran through get_connection
@@ -191,9 +192,9 @@ pub async fn update_db_connection(
 #[tauri::command]
 pub async fn set_db_connection_flags(
     _app: AppHandle,
-    request: DbConnectionFlags,
-    connection_id: String,
+    request: DbConnectionFlagsRequest,
 ) -> AppResult<DbConnection> {
+    let connection_id = request.connection_id;
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
 
@@ -208,9 +209,9 @@ pub async fn set_db_connection_flags(
             database: None,
             username: None,
             network_profile_id: None,
-            show_as_tab: request.show_as_tab,
-            enabled_for_ai: request.enabled_for_ai,
-            ai_read_only_policy: request.ai_read_only_policy,
+            show_as_tab: request.flags.show_as_tab,
+            enabled_for_ai: request.flags.enabled_for_ai,
+            ai_read_only_policy: request.flags.ai_read_only_policy,
             sort_order: None,
         },
     )
@@ -222,7 +223,8 @@ pub async fn set_db_connection_flags(
 }
 
 #[tauri::command]
-pub async fn delete_db_connection(app: AppHandle, connection_id: String) -> AppResult<Vec<DbConnection>> {
+pub async fn delete_db_connection(app: AppHandle, request: DbConnectionRef) -> AppResult<Vec<DbConnection>> {
+    let connection_id = request.connection_id;
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
 
@@ -236,14 +238,15 @@ pub async fn delete_db_connection(app: AppHandle, connection_id: String) -> AppR
     dbhub::list_connections(&pool, &account_id).await
 }
 
-/// Real connectivity probe: open the wire connection (direct for now — tunnel
-/// routing lands with the tunnel batch), run `SELECT 1`, read the server
-/// version. The password comes from the secrets store; a connection without a
-/// stored password tests with an empty one and the driver reports auth
-/// failure, which reads clearly. Always answers with a result object rather
-/// than an error — a failed test is a *result*, not a command failure.
+/// Real connectivity probe: open the wire connection (direct or through the
+/// profile's local forward), run `SELECT 1`, read the server version. The
+/// password comes from the secrets store; a connection without a stored
+/// password tests with an empty one and the driver reports auth failure,
+/// which reads clearly. Always answers with a result object rather than an
+/// error — a failed test is a *result*, not a command failure.
 #[tauri::command]
-pub async fn test_db_connection(app: AppHandle, connection_id: String) -> AppResult<DbTestResult> {
+pub async fn test_db_connection(app: AppHandle, request: DbConnectionRef) -> AppResult<DbTestResult> {
+    let connection_id = request.connection_id;
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
@@ -313,25 +316,25 @@ pub async fn list_network_profiles() -> AppResult<Vec<NetworkProfile>> {
 #[tauri::command]
 pub async fn save_network_profile(
     app: AppHandle,
-    input: NetworkProfileInput,
+    request: NetworkProfileInput,
 ) -> AppResult<NetworkProfile> {
-    if input.name.trim().is_empty() {
+    if request.name.trim().is_empty() {
         return Err(AppError::validation("Profile name is required."));
     }
 
-    let (transport, secret_present) = match &input.transport {
+    let (transport, secret_present) = match &request.transport {
         crate::models::NetworkTransport::SshTunnel { .. }
         | crate::models::NetworkTransport::Socks5 { .. } => {
             // Strip any credentials the WebView might have echoed back into the
-            // transport payload — secrets travel in `input.secret` only.
-            let mut transport = input.transport.clone();
+            // transport payload — secrets travel in `request.secret` only.
+            let mut transport = request.transport.clone();
             match &mut transport {
                 crate::models::NetworkTransport::SshTunnel { credentials_saved, .. }
                 | crate::models::NetworkTransport::Socks5 { credentials_saved, .. } => {
                     *credentials_saved = false;
                 }
             }
-            (transport, input.secret.as_deref().filter(|value| !value.is_empty()).is_some())
+            (transport, request.secret.as_deref().filter(|value| !value.is_empty()).is_some())
         }
     };
 
@@ -341,7 +344,7 @@ pub async fn save_network_profile(
     let now = chrono::Utc::now();
     // Create assigns an id; update reuses the given one (scoped upsert reads
     // it back below, so a foreign id cannot be smuggled in).
-    let id = match input.id.as_deref().filter(|value| !value.is_empty()) {
+    let id = match request.id.as_deref().filter(|value| !value.is_empty()) {
         Some(id) => {
             dbhub::get_profile(&pool, &account_id, id)
                 .await?
@@ -360,16 +363,16 @@ pub async fn save_network_profile(
     let profile = NetworkProfile {
         id: id.clone(),
         account_id: account_id.clone(),
-        name: input.name.trim().to_string(),
+        name: request.name.trim().to_string(),
         transport: with_credentials_saved(transport, secret_present || previously_saved),
-        enabled: input.enabled,
+        enabled: request.enabled,
         created_at: now,
         updated_at: now,
     };
 
     dbhub::upsert_profile(&pool, &profile).await?;
 
-    if let Some(secret) = input.secret.as_deref().filter(|value| !value.is_empty()) {
+    if let Some(secret) = request.secret.as_deref().filter(|value| !value.is_empty()) {
         crate::secrets::write_secret(&app, &profile_secret_key(&id), secret)?;
     }
 
@@ -379,10 +382,10 @@ pub async fn save_network_profile(
 }
 
 #[tauri::command]
-pub async fn delete_network_profile(profile_id: String) -> AppResult<()> {
+pub async fn delete_network_profile(request: NetworkProfileRef) -> AppResult<()> {
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
-    dbhub::delete_profile(&pool, &account_id, &profile_id).await?;
+    dbhub::delete_profile(&pool, &account_id, &request.profile_id).await?;
     Ok(())
 }
 
@@ -391,7 +394,8 @@ pub async fn delete_network_profile(profile_id: String) -> AppResult<()> {
 /// far-side SSH/SOCKS handshake surfaces when a connection actually dials
 /// (the honest scope of a configuration-only probe — recorded in the design).
 #[tauri::command]
-pub async fn test_network_profile(app: AppHandle, profile_id: String) -> AppResult<DbTestResult> {
+pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) -> AppResult<DbTestResult> {
+    let profile_id = request.profile_id;
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
@@ -448,16 +452,15 @@ pub async fn run_db_query(
 #[tauri::command]
 pub async fn list_db_databases(
     app: AppHandle,
-    connection_id: String,
+    request: DbConnectionRef,
 ) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
-    crate::db::dbhub_query::catalog_databases_for_command(&app, &connection_id).await
+    crate::db::dbhub_query::catalog_databases_for_command(&app, &request.connection_id).await
 }
 
 #[tauri::command]
 pub async fn list_db_tables(
     app: AppHandle,
-    connection_id: String,
-    database: String,
+    request: DbCatalogRequest,
 ) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
-    crate::db::dbhub_query::catalog_tables_for_command(&app, &connection_id, &database).await
+    crate::db::dbhub_query::catalog_tables_for_command(&app, &request.connection_id, &request.database).await
 }

@@ -1714,4 +1714,117 @@ mod dbhub_wire_tests {
         // Optional username absent stays absent.
         assert!(json.get("username").is_none());
     }
+
+    /// The frontend wraps every payload in `{ request: ... }` (tauriClient's
+    /// `call`), so each command's single `request` argument must deserialize
+    /// from exactly the shape the services post. Regression for the second
+    /// half of the "Failed to create profile" bug: the commands originally
+    /// took bare `connection_id` / `input` parameters, which Tauri could not
+    /// match against the wrapped `{ request }` key — every parameterised DBHub
+    /// command failed, profile creation was just the first one hit.
+    #[test]
+    fn dbhub_command_request_payloads_parse() {
+        // save_network_profile: { request: NetworkProfileInput }
+        let payload = serde_json::json!({
+            "id": null,
+            "name": "Office tunnel",
+            "transport": {
+                "type": "ssh-tunnel",
+                "host": "10.20.30.40",
+                "port": 22,
+                "username": "root",
+                "authMethod": "password",
+                "credentialsSaved": false
+            },
+            "enabled": false,
+            "secret": "s3cret"
+        });
+        let input: NetworkProfileInput =
+            serde_json::from_value(payload).expect("profile input must parse");
+        assert_eq!(input.name, "Office tunnel");
+
+        // set_db_connection_flags: { request: { connectionId, showAsTab } }
+        let payload = serde_json::json!({ "connectionId": "c1", "showAsTab": true });
+        let flags: DbConnectionFlagsRequest =
+            serde_json::from_value(payload).expect("flags request must parse");
+        assert_eq!(flags.connection_id, "c1");
+        assert_eq!(flags.flags.show_as_tab, Some(true));
+
+        // delete/test single-id commands: { request: { connectionId } }
+        let request: DbConnectionRef =
+            serde_json::from_value(serde_json::json!({ "connectionId": "c2" }))
+                .expect("connection ref must parse");
+        assert_eq!(request.connection_id, "c2");
+
+        let request: NetworkProfileRef =
+            serde_json::from_value(serde_json::json!({ "profileId": "p1" }))
+                .expect("profile ref must parse");
+        assert_eq!(request.profile_id, "p1");
+
+        // create connection: { request: DbConnectionInput }
+        let payload = serde_json::json!({
+            "kind": "mysql",
+            "name": "Sales",
+            "host": "10.0.0.1",
+            "port": 3306,
+            "username": "reader",
+            "showAsTab": true,
+            "enabledForAi": true,
+            "password": "hunter2"
+        });
+        let input: DbConnectionInput =
+            serde_json::from_value(payload).expect("connection input must parse");
+        assert_eq!(input.kind, DbConnectionKind::Mysql);
+
+        // run_db_query: { request: DbQueryRequest }
+        let request: DbQueryRequest = serde_json::from_value(serde_json::json!({
+            "connectionId": "c1", "sql": "SELECT 1", "maxRows": 100
+        }))
+        .expect("query request must parse");
+        assert_eq!(request.connection_id, "c1");
+
+        // list_db_tables: { request: { connectionId, database } }
+        let request: DbCatalogRequest = serde_json::from_value(serde_json::json!({
+            "connectionId": "c1", "database": "sales"
+        }))
+        .expect("catalog request must parse");
+        assert_eq!(request.database, "sales");
+    }
+}
+
+// --- DBHub command request wrappers ------------------------------------------
+// The frontend's tauriClient wraps every payload in `{ request: ... }` (the
+// repo-wide IPC convention), so each command takes exactly one `request`
+// argument of one of these shapes.
+
+/// `{ connectionId }` — the single-id commands (delete/test/catalog).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionRef {
+    pub connection_id: String,
+}
+
+/// `{ profileId }` — the single-id profile commands.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProfileRef {
+    pub profile_id: String,
+}
+
+/// Overview-card flag updates: `{ connectionId, showAsTab?, enabledForAi?,
+/// aiReadOnlyPolicy? }`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionFlagsRequest {
+    pub connection_id: String,
+    #[serde(flatten)]
+    pub flags: DbConnectionFlags,
+}
+
+/// Workspace catalog: `{ connectionId, database }`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbCatalogRequest {
+    pub connection_id: String,
+    pub database: String,
 }
