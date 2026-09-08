@@ -18,7 +18,8 @@ function renderDbHubPage() {
 
 // GlueCatalogTab reaches for AWS through react-query; without a Tauri runtime
 // those queries fail with the demo-mode error. Silence the console noise and
-// let the tab render its idle/empty states.
+// let the tab render its idle/empty states. The DBHub queries hit the same
+// demo-mode path and resolve to nothing.
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -32,7 +33,7 @@ describe("DbHubPage", () => {
       "active"
     );
     expect(screen.getByRole("tab", { name: "Glue Catalog" })).toBeInTheDocument();
-    expect(screen.getByText("DBHub Overview")).toBeInTheDocument();
+    expect(await screen.findByText("Database connections")).toBeInTheDocument();
   });
 
   it("shows the Glue Catalog workspace when its tab is activated", async () => {
@@ -67,7 +68,7 @@ describe("DbHubPage", () => {
     expect(runButton).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByText("DBHub Overview")).toBeInTheDocument();
+    expect(await screen.findByText("Database connections")).toBeInTheDocument();
 
     // Same element instance → the workspace was never unmounted.
     await user.click(screen.getByRole("tab", { name: "Glue Catalog" }));

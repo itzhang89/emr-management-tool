@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Database } from "lucide-react";
 import { GlueCatalogTab } from "@/components/dbhub/workspace/GlueCatalogTab";
+import { OverviewPanel } from "@/components/dbhub/overview/OverviewPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import { useDbConnections } from "@/hooks/useDbHub";
 
 /**
@@ -67,7 +67,7 @@ export function DbHubPage() {
           value={OVERVIEW_TAB}
           className="mt-0 min-h-0 min-w-0 flex-1 overflow-y-auto"
         >
-          <OverviewPlaceholder connectionCount={connections.length} />
+          <OverviewPanel />
         </TabsContent>
 
         <TabsContent
@@ -130,29 +130,6 @@ function PersistMount({
 
   if (!mounted) return null;
   return <div className={className}>{children}</div>;
-}
-
-function OverviewPlaceholder({ connectionCount }: { connectionCount: number }) {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <div className="max-w-md space-y-3 text-center">
-        <h2 className="text-lg font-semibold">DBHub Overview</h2>
-        <p className="text-sm text-muted-foreground">
-          Manage database connections and network profiles for the active AWS account.
-          {connectionCount > 0 ? ` ${connectionCount} connection(s) registered.` : ""}
-        </p>
-        <div className="flex justify-center gap-2">
-          <Button type="button" variant="outline" size="sm" disabled>
-            Add Connection
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled>
-            Network Profiles
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">Coming in the next DBHub batch.</p>
-      </div>
-    </div>
-  );
 }
 
 function ConnectionTabPlaceholder({ connection }: { connection: TabConnection }) {
