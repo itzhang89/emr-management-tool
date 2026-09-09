@@ -29,7 +29,10 @@ pub fn prime() {
 /// Best-effort log of a load failure (e.g. an unreadable DB) without crashing
 /// launch — redaction silently falls back to defaults.
 fn diagnostics_for_failure(error: &AppError) {
-    crate::diagnostics::append_log_line("WARN", &format!("Failed to load redaction rules: {error}"));
+    crate::diagnostics::append_log_line(
+        "WARN",
+        &format!("Failed to load redaction rules: {error}"),
+    );
 }
 
 async fn load_rules_from_db() -> AppResult<Vec<RedactRule>> {
@@ -53,7 +56,10 @@ fn ensure_custom_ids(rules: Vec<RedactRule>) -> Vec<RedactRule> {
         .into_iter()
         .map(|rule| {
             if rule.kind == RedactRuleKind::Custom && rule.id.trim().is_empty() {
-                RedactRule { id: uuid::Uuid::new_v4().to_string(), ..rule }
+                RedactRule {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    ..rule
+                }
             } else {
                 rule
             }
@@ -67,9 +73,10 @@ pub async fn redact_save_config(request: RedactSaveRequest) -> AppResult<RedactC
         if rule.kind == RedactRuleKind::Custom {
             let pattern = rule.pattern.as_deref().unwrap_or_default().trim();
             if pattern.is_empty() {
-                return Err(AppError::validation(
-                    format!("Rule \"{}\" has no pattern to match on.", rule.name),
-                ));
+                return Err(AppError::validation(format!(
+                    "Rule \"{}\" has no pattern to match on.",
+                    rule.name
+                )));
             }
         }
     }
@@ -107,5 +114,8 @@ pub async fn redact_test(request: RedactTestRequest) -> AppResult<RedactTestResu
 
 fn unique_in_order(names: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    names.into_iter().filter(|name| seen.insert(name.clone())).collect()
+    names
+        .into_iter()
+        .filter(|name| seen.insert(name.clone()))
+        .collect()
 }

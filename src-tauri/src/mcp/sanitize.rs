@@ -126,7 +126,10 @@ impl BuiltinRule {
     }
 
     pub fn from_slug(slug: &str) -> Option<BuiltinRule> {
-        BuiltinRule::ALL.iter().copied().find(|rule| rule.slug() == slug)
+        BuiltinRule::ALL
+            .iter()
+            .copied()
+            .find(|rule| rule.slug() == slug)
     }
 }
 
@@ -221,7 +224,10 @@ fn compile_rules(rules: &[RedactRule]) -> RuleSet {
         }
         specs.push(RuleSpec::Custom(CompiledCustom {
             name: rule.name.clone(),
-            regex: rule.pattern.as_deref().and_then(|pattern| Regex::new(pattern).ok()),
+            regex: rule
+                .pattern
+                .as_deref()
+                .and_then(|pattern| Regex::new(pattern).ok()),
             replacement: rule.replacement.clone().unwrap_or_default(),
         }));
     }
@@ -262,9 +268,7 @@ static DEFAULT_SNAPSHOT: OnceLock<Arc<RuleSet>> = OnceLock::new();
 fn current_snapshot() -> Arc<RuleSet> {
     match current_rules().lock() {
         Ok(guard) => guard.clone(),
-        Err(_) => Arc::clone(
-            DEFAULT_SNAPSHOT.get_or_init(|| Arc::new(default_rules())),
-        ),
+        Err(_) => Arc::clone(DEFAULT_SNAPSHOT.get_or_init(|| Arc::new(default_rules()))),
     }
 }
 
@@ -286,7 +290,11 @@ pub fn sanitize_with_rules(text: &str, rules: &[RedactRule]) -> RedactOutcome {
 
 fn run(set: &RuleSet, text: &str) -> RedactOutcome {
     if text.is_empty() {
-        return RedactOutcome { text: text.to_string(), hits: Vec::new(), count: 0 };
+        return RedactOutcome {
+            text: text.to_string(),
+            hits: Vec::new(),
+            count: 0,
+        };
     }
 
     let mut current = text.to_string();
@@ -296,7 +304,10 @@ fn run(set: &RuleSet, text: &str) -> RedactOutcome {
     for spec in &set.specs {
         let produced;
         match spec {
-            RuleSpec::Builtin { rule, enabled: true } => {
+            RuleSpec::Builtin {
+                rule,
+                enabled: true,
+            } => {
                 produced = apply_builtin(*rule, &current);
             }
             RuleSpec::Builtin { enabled: false, .. } => continue,
@@ -326,15 +337,16 @@ fn run(set: &RuleSet, text: &str) -> RedactOutcome {
         }
     }
 
-    RedactOutcome { text: current, hits, count }
+    RedactOutcome {
+        text: current,
+        hits,
+        count,
+    }
 }
 
 /// Apply a built-in's own fixed masking to `text`, returning the new text and
 /// how many spans it replaced. Returns `None` when nothing matched.
-fn apply_builtin(
-    builtin: BuiltinRule,
-    text: &str,
-) -> Option<(String, usize)> {
+fn apply_builtin(builtin: BuiltinRule, text: &str) -> Option<(String, usize)> {
     match builtin {
         BuiltinRule::Arn => mask_pattern_all(text, arn_re(), "[ARN]"),
         BuiltinRule::S3Bucket => mask_pattern_all(text, s3_bucket_re(), "s3://[S3_BUCKET]/"),
@@ -417,11 +429,19 @@ fn apply_custom(compiled: &CompiledCustom, text: &str) -> Option<(String, usize)
 /// The reference "Shield" mask macro semantics, ported from `applyReplacement`
 /// (ai-desensitizer web UI). Called with the whole matched token.
 fn apply_replacement(matched: &str, replacement: &str) -> String {
-    let repl = if replacement.is_empty() { "***" } else { replacement };
+    let repl = if replacement.is_empty() {
+        "***"
+    } else {
+        replacement
+    };
 
     if repl == "__MASK_ALL__" {
         let len = matched.chars().count();
-        return if len == 0 { "*".repeat(3) } else { "*".repeat(len) };
+        return if len == 0 {
+            "*".repeat(3)
+        } else {
+            "*".repeat(len)
+        };
     }
 
     if let Some(spec) = parse_keep_head_tail(repl) {
@@ -582,7 +602,10 @@ mod tests {
 
     /// A default-enabled built-in model from the seed, optionally overridden.
     fn builtin(slug: &str, enabled: bool) -> RedactRule {
-        let mut rule = default_rule_models().into_iter().find(|raw| raw.id == slug).expect("builtin");
+        let mut rule = default_rule_models()
+            .into_iter()
+            .find(|raw| raw.id == slug)
+            .expect("builtin");
         rule.enabled = enabled;
         rule
     }
@@ -603,8 +626,16 @@ mod tests {
             "role arn:aws:iam::123456789012:role/R via s3://etl-prod-bucket/jobs/ and 10.0.0.1",
             &rules,
         );
-        assert!(out.text.contains("etl-prod-bucket"), "s3 disabled keeps bucket, got: {}", out.text);
-        assert!(out.text.contains("[IP_ADDRESS]"), "ipv4 still masks, got: {}", out.text);
+        assert!(
+            out.text.contains("etl-prod-bucket"),
+            "s3 disabled keeps bucket, got: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains("[IP_ADDRESS]"),
+            "ipv4 still masks, got: {}",
+            out.text
+        );
         assert!(!out.hits.contains(&"S3 bucket (keeps s3://)".to_string()));
     }
 
@@ -637,7 +668,13 @@ mod tests {
 
     #[test]
     fn keep_head_tail_custom_replacement() {
-        let rule = custom("card", "Card tail", r"\b\d{16}\b", "__KEEP_HEAD_TAIL_4_4__", 0);
+        let rule = custom(
+            "card",
+            "Card tail",
+            r"\b\d{16}\b",
+            "__KEEP_HEAD_TAIL_4_4__",
+            0,
+        );
         let out = sanitize_with_rules("card 1234567812345678 end", &[rule]);
         assert_eq!(out.text, "card 1234********5678 end");
     }

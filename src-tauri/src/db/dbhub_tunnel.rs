@@ -51,6 +51,14 @@ impl std::fmt::Debug for LiveForward {
     }
 }
 
+impl Drop for LiveForward {
+    fn drop(&mut self) {
+        // A JoinHandle detaches by default. Abort explicitly so a timed-out
+        // query cannot leave a forward worker and SSH session behind.
+        self._worker.abort();
+    }
+}
+
 /// Open a local forward to `target` through the given profile. `resolve_secret`
 /// fetches the profile's password from the secrets store (typed so the secrets
 /// key naming stays in one place). Disabled profiles are refused — real
@@ -89,9 +97,9 @@ async fn open_forward_inner(
         )));
     }
 
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|error| AppError::storage(format!("Failed to bind a local forward port: {error}")))?;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| {
+        AppError::storage(format!("Failed to bind a local forward port: {error}"))
+    })?;
     let local_addr = listener
         .local_addr()
         .map_err(|error| AppError::storage(error.to_string()))?;
@@ -121,7 +129,12 @@ async fn open_forward_inner(
                 forward_ssh(listener, endpoint, (target_host, target_port)).await;
             })
         }
-        NetworkTransport::Socks5 { host, port, username, .. } => {
+        NetworkTransport::Socks5 {
+            host,
+            port,
+            username,
+            ..
+        } => {
             let password = resolve_secret(&profile.id)?.unwrap_or_default();
             let proxy_host = host.clone();
             let proxy_port = *port as u16;
@@ -155,11 +168,7 @@ async fn open_forward_inner(
 /// endpoint + credentials arrive pre-resolved: `ssh-config` alias mode has
 /// already been expanded into concrete (host, port, user, key) by
 /// `resolve_ssh_endpoint` before this runs.
-async fn forward_ssh(
-    listener: TcpListener,
-    endpoint: SshEndpoint,
-    target: (String, u16),
-) {
+async fn forward_ssh(listener: TcpListener, endpoint: SshEndpoint, target: (String, u16)) {
     // One SSH session serves every forward connection while the listener
     // lives; losing it mid-flight tears down the relays, which the SQL pool
     // reports as a broken connection — the honest failure mode.
@@ -208,13 +217,8 @@ async fn forward_socks(
             let target_addr = (target.0.as_str(), target.1);
             let opened = if let Some(user) = username {
                 let pass = password.as_deref().unwrap_or("");
-                Socks5Stream::connect_with_password(
-                    proxy_addr.as_str(),
-                    target_addr,
-                    &user,
-                    pass,
-                )
-                .await
+                Socks5Stream::connect_with_password(proxy_addr.as_str(), target_addr, &user, pass)
+                    .await
             } else {
                 Socks5Stream::connect(proxy_addr.as_str(), target_addr).await
             };
@@ -240,7 +244,10 @@ pub enum SshAuth {
     /// Secret from the store (the profile's password field).
     Password { secret: String },
     /// Private key file on disk; optional passphrase from the store.
-    PrivateKey { key_path: String, passphrase: Option<String> },
+    PrivateKey {
+        key_path: String,
+        passphrase: Option<String>,
+    },
 }
 
 /// Expand a profile's SSH transport into a concrete endpoint. In
@@ -262,7 +269,9 @@ pub fn resolve_ssh_endpoint(
             host: host.to_string(),
             port: port as u16,
             username: username.to_string(),
-            auth: SshAuth::Password { secret: secret.unwrap_or_default() },
+            auth: SshAuth::Password {
+                secret: secret.unwrap_or_default(),
+            },
         }),
         crate::models::SshAuthMethod::PrivateKey => {
             let key_path = private_key_path
@@ -353,15 +362,27 @@ pub fn resolve_ssh_config_alias(alias: &str) -> AppResult<ResolvedSshAlias> {
                 // first-obtained-value semantics).
                 if matched.is_none() && in_block {
                     matched = Some(ResolvedSshAlias {
-                        host: if host.is_empty() { alias.to_string() } else { host.clone() },
+                        host: if host.is_empty() {
+                            alias.to_string()
+                        } else {
+                            host.clone()
+                        },
                         port,
-                        username: if username.is_empty() { default_ssh_user() } else { username.clone() },
-                        identity_file: if saw_identity { identity.clone() } else { default_identity_file() },
+                        username: if username.is_empty() {
+                            default_ssh_user()
+                        } else {
+                            username.clone()
+                        },
+                        identity_file: if saw_identity {
+                            identity.clone()
+                        } else {
+                            default_identity_file()
+                        },
                     });
                 }
-                in_block = value.split_whitespace().any(|pattern| {
-                    pattern.eq_ignore_ascii_case(alias)
-                });
+                in_block = value
+                    .split_whitespace()
+                    .any(|pattern| pattern.eq_ignore_ascii_case(alias));
                 host.clear();
                 port = 22;
                 username.clear();
@@ -384,10 +405,22 @@ pub fn resolve_ssh_config_alias(alias: &str) -> AppResult<ResolvedSshAlias> {
     // The final block, if it matched and nothing before it did.
     if matched.is_none() && in_block {
         matched = Some(ResolvedSshAlias {
-            host: if host.is_empty() { alias.to_string() } else { host },
+            host: if host.is_empty() {
+                alias.to_string()
+            } else {
+                host
+            },
             port,
-            username: if username.is_empty() { default_ssh_user() } else { username },
-            identity_file: if saw_identity { identity } else { default_identity_file() },
+            username: if username.is_empty() {
+                default_ssh_user()
+            } else {
+                username
+            },
+            identity_file: if saw_identity {
+                identity
+            } else {
+                default_identity_file()
+            },
         });
     }
 
@@ -418,9 +451,7 @@ fn expand_tilde(path: &str) -> String {
 }
 
 /// Authenticate and connect, dispatching on the resolved auth variant.
-async fn connect_ssh(
-    endpoint: &SshEndpoint,
-) -> AppResult<russh::client::Handle<AcceptAnyHostKey>> {
+async fn connect_ssh(endpoint: &SshEndpoint) -> AppResult<russh::client::Handle<AcceptAnyHostKey>> {
     let config = Arc::new(russh::client::Config::default());
     let mut session = russh::client::connect(
         config,
@@ -440,7 +471,10 @@ async fn connect_ssh(
             .authenticate_password(&endpoint.username, secret)
             .await
             .map_err(|error| AppError::validation(format!("SSH auth failed: {error}")))?,
-        SshAuth::PrivateKey { key_path, passphrase } => {
+        SshAuth::PrivateKey {
+            key_path,
+            passphrase,
+        } => {
             let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
                 .map_err(|error| {
                     AppError::validation(format!(
@@ -498,11 +532,16 @@ pub async fn route_for_connection(
         return Ok(None);
     };
     let profile = dbhub_profile(pool, &connection.account_id, profile_id).await?;
-    let secret = crate::secrets::read_optional_secret(app, &format!("profile/{profile_id}/password"))
-        .unwrap_or(None);
-    let forward =
-        open_forward(&profile, &connection.host, connection.port as u16, move |_| Ok(secret))
-            .await?;
+    let secret =
+        crate::secrets::read_optional_secret(app, &format!("profile/{profile_id}/password"))
+            .unwrap_or(None);
+    let forward = open_forward(
+        &profile,
+        &connection.host,
+        connection.port as u16,
+        move |_| Ok(secret),
+    )
+    .await?;
     Ok(Some(("127.0.0.1".to_string(), forward.port(), forward)))
 }
 
@@ -513,9 +552,7 @@ async fn dbhub_profile(
 ) -> AppResult<NetworkProfile> {
     crate::db::dbhub::get_profile(pool, account_id, profile_id)
         .await?
-        .ok_or_else(|| {
-            AppError::validation("The connection's network profile no longer exists.")
-        })
+        .ok_or_else(|| AppError::validation("The connection's network profile no longer exists."))
 }
 
 /// Probe path for the profile test button: bind + open a relay path to the
@@ -570,7 +607,10 @@ mod tests {
     #[test]
     fn transport_target_reads_both_kinds() {
         let ssh = ssh_profile();
-        assert_eq!(transport_target(&ssh.transport), ("10.20.30.40".to_string(), 22));
+        assert_eq!(
+            transport_target(&ssh.transport),
+            ("10.20.30.40".to_string(), 22)
+        );
 
         let socks = NetworkTransport::Socks5 {
             host: "127.0.0.1".into(),
@@ -634,8 +674,9 @@ mod tests {
 
     #[test]
     fn resolver_routes_password_and_private_key() {
-        let endpoint = resolve_ssh_endpoint("10.1.2.3", 22, "ops", "password", None, Some("pw".into()))
-            .expect("password endpoint");
+        let endpoint =
+            resolve_ssh_endpoint("10.1.2.3", 22, "ops", "password", None, Some("pw".into()))
+                .expect("password endpoint");
         assert_eq!(endpoint.host, "10.1.2.3");
         assert!(matches!(endpoint.auth, SshAuth::Password { .. }));
 
@@ -649,7 +690,10 @@ mod tests {
         )
         .expect("key endpoint");
         match endpoint.auth {
-            SshAuth::PrivateKey { key_path, passphrase } => {
+            SshAuth::PrivateKey {
+                key_path,
+                passphrase,
+            } => {
                 assert!(key_path.ends_with("id_rsa_work"));
                 assert_eq!(passphrase.as_deref(), Some("phrase"));
             }
@@ -667,9 +711,11 @@ mod tests {
 
     #[test]
     fn unknown_auth_method_names_the_supported_set() {
-        let error = resolve_ssh_endpoint("h", 22, "u", "kerberos", None, None)
-            .expect_err("must refuse");
-        assert!(error.message.contains("password, private-key or ssh-config"));
+        let error =
+            resolve_ssh_endpoint("h", 22, "u", "kerberos", None, None).expect_err("must refuse");
+        assert!(error
+            .message
+            .contains("password, private-key or ssh-config"));
     }
 
     #[test]

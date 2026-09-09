@@ -28,7 +28,14 @@ import { cn } from "@/lib/utils";
  * page and coming back restores the draft, the last selection and result-tab
  * metadata (big result bodies are dropped; a rerun restores them).
  */
-export function ConnectionQueryTab({ connection }: { connection: DbConnection }) {
+export function ConnectionQueryTab({
+  connection,
+  active = true
+}: {
+  connection: DbConnection;
+  /** Catalog reads start when this dynamic tab becomes visible. */
+  active?: boolean;
+}) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const runQuery = useRunDbQuery();
@@ -67,8 +74,8 @@ export function ConnectionQueryTab({ connection }: { connection: DbConnection })
     });
   }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase]);
 
-  const databases = useDbDatabases(connection.id);
-  const tables = useDbTables(connection.id, selectedDatabase);
+  const databases = useDbDatabases(connection.id, active);
+  const tables = useDbTables(connection.id, selectedDatabase, active);
 
   const activeResult = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultId) ?? resultTabs.at(-1),

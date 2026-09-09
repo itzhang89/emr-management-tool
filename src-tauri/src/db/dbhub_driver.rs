@@ -17,14 +17,14 @@ pub const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 const PING: &str = "SELECT 1";
 
 /// Open a connection, run `SELECT 1`, and return the server version.
-pub async fn test_connection(connection: &DbConnection, password: Option<String>) -> AppResult<String> {
+pub async fn test_connection(
+    connection: &DbConnection,
+    password: Option<String>,
+) -> AppResult<String> {
     match connection.kind {
-        crate::models::DbConnectionKind::Mysql => {
-            test_mysql(connection, password).await
-        }
-        crate::models::DbConnectionKind::Postgres | crate::models::DbConnectionKind::Yellowbrick => {
-            test_postgres(connection, password).await
-        }
+        crate::models::DbConnectionKind::Mysql => test_mysql(connection, password).await,
+        crate::models::DbConnectionKind::Postgres
+        | crate::models::DbConnectionKind::Yellowbrick => test_postgres(connection, password).await,
     }
 }
 
@@ -77,8 +77,12 @@ pub(crate) fn mysql_url_routed(
     password: Option<&str>,
     route_override: Option<(&str, u16)>,
 ) -> AppResult<String> {
-    let host = route_override.map(|(host, _)| host.to_string()).unwrap_or_else(|| connection.host.clone());
-    let port = route_override.map(|(_, port)| port as i64).unwrap_or(connection.port);
+    let host = route_override
+        .map(|(host, _)| host.to_string())
+        .unwrap_or_else(|| connection.host.clone());
+    let port = route_override
+        .map(|(_, port)| port as i64)
+        .unwrap_or(connection.port);
     let mut url = format!(
         "mysql://{}:{}@{}:{}/{}",
         urlencoding::encode(&connection.username),
@@ -110,9 +114,17 @@ pub(crate) fn postgres_url_routed(
     password: Option<&str>,
     route_override: Option<(&str, u16)>,
 ) -> AppResult<String> {
-    let database = connection.database.as_deref().filter(|value| !value.is_empty()).unwrap_or("postgres");
-    let host = route_override.map(|(host, _)| host.to_string()).unwrap_or_else(|| connection.host.clone());
-    let port = route_override.map(|(_, port)| port as i64).unwrap_or(connection.port);
+    let database = connection
+        .database
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("postgres");
+    let host = route_override
+        .map(|(host, _)| host.to_string())
+        .unwrap_or_else(|| connection.host.clone());
+    let port = route_override
+        .map(|(_, port)| port as i64)
+        .unwrap_or(connection.port);
     Ok(format!(
         "postgresql://{}:{}@{}:{}/{}",
         urlencoding::encode(&connection.username),
@@ -129,26 +141,31 @@ pub(crate) fn describe_dial_error(error: &dyn std::fmt::Display) -> String {
     let text = error.to_string();
     let first_line = text.lines().next().unwrap_or(&text);
     // Keep it bounded — driver timeouts embed long socket dumps.
-    crate::error::capped(first_line.trim(), 300)
-        .unwrap_or_else(|| first_line.trim().to_string())
+    crate::error::capped(first_line.trim(), 300).unwrap_or_else(|| first_line.trim().to_string())
 }
 
 /// Convenience used by commands: run `SELECT 1` on an open MySQL pool.
 /// Kept next to the test helpers so the gate's "read-only" story stays in one
 /// module family.
-pub async fn ping_pool_mysql(
-    pool: &sqlx::MySqlPool,
-) -> AppResult<()> {
-    let mut conn = pool.acquire().await.map_err(|error| AppError::storage(error.to_string()))?;
-    conn.execute(PING).await.map_err(|error| AppError::storage(error.to_string()))?;
+pub async fn ping_pool_mysql(pool: &sqlx::MySqlPool) -> AppResult<()> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    conn.execute(PING)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
 }
 
-pub async fn ping_pool_postgres(
-    pool: &sqlx::PgPool,
-) -> AppResult<()> {
-    let mut conn = pool.acquire().await.map_err(|error| AppError::storage(error.to_string()))?;
-    conn.execute(PING).await.map_err(|error| AppError::storage(error.to_string()))?;
+pub async fn ping_pool_postgres(pool: &sqlx::PgPool) -> AppResult<()> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    conn.execute(PING)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
 }
 
@@ -179,8 +196,7 @@ mod tests {
 
     #[test]
     fn mysql_url_percent_encodes_user_pieces() {
-        let url = mysql_url(&connection(DbConnectionKind::Mysql), Some("p@ss/word"))
-            .expect("url");
+        let url = mysql_url(&connection(DbConnectionKind::Mysql), Some("p@ss/word")).expect("url");
         // The spaces in user/database and the @ / in the password must not
         // change the URL's structure — everything rides in percent-encoded.
         assert!(url.starts_with("mysql://bi%20reader:p%40ss%2Fword@db.internal:3306/sales%20db"));

@@ -270,12 +270,9 @@ impl McpTools {
             let app = app?;
             dbhub_sql::sql_query_text(&app, &future_args).await
         };
-        self.run_tool(
-            "sql_query_text",
-            &args,
-            result,
-            |message| dbhub_sql::SqlQueryTextResult::refused(&args.connection_id, &args.sql, message),
-        )
+        self.run_tool("sql_query_text", &args, result, |message| {
+            dbhub_sql::SqlQueryTextResult::refused(&args.connection_id, &args.sql, message)
+        })
         .await
     }
 }

@@ -8,10 +8,10 @@
 use crate::chat::{models_sync, providers};
 use crate::error::AppResult;
 use crate::models::{
-    AddLlmApiKeyRequest, AddLlmModelsRequest, CreateLlmProviderRequest, LlmApiKey,
-    LlmProviderTestResult, LlmIdRequest, LlmModelCandidate, LlmProtocol, LlmProvider,
-    LlmProviderIdRequest, SetLlmProviderHeadersRequest, UpdateLlmApiKeyRequest,
-    UpdateLlmModelRequest, UpdateLlmProviderRequest,
+    AddLlmApiKeyRequest, AddLlmModelsRequest, CreateLlmProviderRequest, LlmApiKey, LlmIdRequest,
+    LlmModelCandidate, LlmProtocol, LlmProvider, LlmProviderIdRequest, LlmProviderTestResult,
+    SetLlmProviderHeadersRequest, UpdateLlmApiKeyRequest, UpdateLlmModelRequest,
+    UpdateLlmProviderRequest,
 };
 use serde::Deserialize;
 use std::time::Instant;
@@ -93,7 +93,13 @@ pub async fn add_llm_api_key(app: AppHandle, request: AddLlmApiKeyRequest) -> Ap
 #[tauri::command]
 pub async fn update_llm_api_key(request: UpdateLlmApiKeyRequest) -> AppResult<()> {
     let pool = crate::db::repository::pool().await?;
-    providers::update_api_key(&pool, &request.id, request.label.as_deref(), request.sort_order).await
+    providers::update_api_key(
+        &pool,
+        &request.id,
+        request.label.as_deref(),
+        request.sort_order,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -128,9 +134,7 @@ pub async fn probe_llm_api_keys(
         };
         match models_sync::list_models(protocol, &base_url, &value, &headers).await {
             Ok(_) => providers::mark_healthy(&pool, &key.id).await?,
-            Err(error) => {
-                providers::mark_unhealthy(&pool, &key.id, error.message.as_ref()).await?
-            }
+            Err(error) => providers::mark_unhealthy(&pool, &key.id, error.message.as_ref()).await?,
         }
     }
 

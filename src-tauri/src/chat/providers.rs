@@ -8,8 +8,8 @@
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AddLlmModelInput, LlmApiKey, LlmApiKeyStatus, LlmProviderTestResult, LlmHeaderInput,
-    LlmModelCandidate, LlmProtocol, LlmProvider,
+    AddLlmModelInput, LlmApiKey, LlmApiKeyStatus, LlmHeaderInput, LlmModelCandidate, LlmProtocol,
+    LlmProvider, LlmProviderTestResult,
 };
 use crate::secrets;
 use sqlx::SqlitePool;
@@ -278,7 +278,8 @@ pub fn error_retires_key(error: &AppError) -> bool {
 
 /// Records that a key was refused, so later sends skip it.
 pub async fn mark_unhealthy(pool: &SqlitePool, key_id: &str, message: &str) -> AppResult<()> {
-    crate::db::llm::set_api_key_status(pool, key_id, LlmApiKeyStatus::Unhealthy, Some(message)).await
+    crate::db::llm::set_api_key_status(pool, key_id, LlmApiKeyStatus::Unhealthy, Some(message))
+        .await
 }
 
 /// Records that a key answered, clearing any earlier refusal.
@@ -484,10 +485,16 @@ mod tests {
         use crate::chat::protocol::http_failure;
 
         assert!(error_retires_key(&http_failure(401, "bad key".to_string())));
-        assert!(error_retires_key(&http_failure(403, "forbidden".to_string())));
+        assert!(error_retires_key(&http_failure(
+            403,
+            "forbidden".to_string()
+        )));
         // Being rate limited proves the key works.
         assert!(!error_retires_key(&http_failure(429, "slow".to_string())));
-        assert!(!error_retires_key(&http_failure(400, "bad body".to_string())));
+        assert!(!error_retires_key(&http_failure(
+            400,
+            "bad body".to_string()
+        )));
         // A transport failure says nothing about the key.
         assert!(!error_retires_key(&AppError::internal("dns failure")));
     }

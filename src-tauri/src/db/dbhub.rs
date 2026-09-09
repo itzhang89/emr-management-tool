@@ -139,10 +139,7 @@ pub async fn get_connection(
 }
 
 /// Insert a connection row. `id` is assigned by the caller.
-pub async fn insert_connection(
-    pool: &SqlitePool,
-    connection: &DbConnection,
-) -> AppResult<()> {
+pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> AppResult<()> {
     sqlx::query(
         "insert into db_connections
             (id, account_id, kind, name, host, port, database, username, network_profile_id,
@@ -228,7 +225,13 @@ pub async fn update_connection(
         update_column!(pool, id, account_id, "port", value)?;
     }
     if let Some(value) = patch.database {
-        update_column!(pool, id, account_id, "database", value.map(|s| s.to_string()))?;
+        update_column!(
+            pool,
+            id,
+            account_id,
+            "database",
+            value.map(|s| s.to_string())
+        )?;
     }
     if let Some(value) = patch.username {
         update_column!(pool, id, account_id, "username", value.to_string())?;
@@ -281,12 +284,13 @@ pub async fn profile_belongs_to_account(
     account_id: &str,
     profile_id: &str,
 ) -> AppResult<bool> {
-    let row = sqlx::query("select 1 as one from network_profiles where id = ?1 and account_id = ?2")
-        .bind(profile_id)
-        .bind(account_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    let row =
+        sqlx::query("select 1 as one from network_profiles where id = ?1 and account_id = ?2")
+            .bind(profile_id)
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(row.is_some())
 }
 
@@ -528,9 +532,18 @@ mod tests {
 
         // Account-scoped get: A cannot resolve B's connection id — reads like
         // a missing row, which is what every command treats it as.
-        assert!(get_connection(&pool, "acct-a", "c2").await.unwrap().is_none());
-        assert!(get_connection(&pool, "acct-b", "c1").await.unwrap().is_none());
-        assert!(get_connection(&pool, "acct-a", "c1").await.unwrap().is_some());
+        assert!(get_connection(&pool, "acct-a", "c2")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(get_connection(&pool, "acct-b", "c1")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -623,9 +636,15 @@ mod tests {
 
         // A's connection fell back to direct; B's untouched (its p1 is its own
         // account's namespace and was not part of this delete).
-        let a = get_connection(&pool, "acct-a", "c1").await.unwrap().unwrap();
+        let a = get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(a.network_profile_id.is_none());
-        let b = get_connection(&pool, "acct-b", "c2").await.unwrap().unwrap();
+        let b = get_connection(&pool, "acct-b", "c2")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(b.network_profile_id.as_deref(), Some("p1"));
     }
 
@@ -688,8 +707,9 @@ mod tests {
             .await
             .expect("insert");
 
-        let (connections, profiles) =
-            delete_all_for_account(&pool, "acct-a").await.expect("cascade");
+        let (connections, profiles) = delete_all_for_account(&pool, "acct-a")
+            .await
+            .expect("cascade");
 
         assert_eq!(connections, vec!["c1", "c2"]);
         assert_eq!(profiles, vec!["p1"]);
@@ -702,7 +722,9 @@ mod tests {
         let pool = test_pool().await;
         let mut yellowbrick = connection("acct-a", "yb1", "YB Prod");
         yellowbrick.kind = DbConnectionKind::Yellowbrick;
-        insert_connection(&pool, &yellowbrick).await.expect("insert");
+        insert_connection(&pool, &yellowbrick)
+            .await
+            .expect("insert");
 
         let loaded = get_connection(&pool, "acct-a", "yb1")
             .await

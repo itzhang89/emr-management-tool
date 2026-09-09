@@ -1582,7 +1582,11 @@ pub struct DbConnectionUpdateInput {
 // `rename_all_fields` covers the fields inside each variant (camelCase on the
 // wire, matching every other DTO — without it the frontend's authMethod /
 // credentialsSaved keys silently fail deserialization).
-#[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum NetworkTransport {
     #[serde(rename = "ssh-tunnel")]
     SshTunnel {
@@ -1724,7 +1728,11 @@ mod dbhub_wire_tests {
         let transport: NetworkTransport =
             serde_json::from_value(payload).expect("camelCase payload must parse");
         match &transport {
-            NetworkTransport::SshTunnel { auth_method, credentials_saved, .. } => {
+            NetworkTransport::SshTunnel {
+                auth_method,
+                credentials_saved,
+                ..
+            } => {
                 assert_eq!(auth_method, "password");
                 assert!(!credentials_saved);
             }

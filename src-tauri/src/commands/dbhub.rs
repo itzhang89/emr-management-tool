@@ -11,9 +11,8 @@
 use crate::db::{dbhub, repository};
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput,
-    DbConnectionRef, DbConnectionUpdateInput, DbTestResult, NetworkProfile,
-    NetworkProfileInput, NetworkProfileRef,
+    DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput, DbConnectionRef,
+    DbConnectionUpdateInput, DbTestResult, NetworkProfile, NetworkProfileInput, NetworkProfileRef,
 };
 use tauri::AppHandle;
 
@@ -24,7 +23,9 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
     repository::active_aws_account(pool)
         .await?
         .map(|account| account.id)
-        .ok_or_else(|| AppError::validation("No active AWS account. Configure one in Settings first."))
+        .ok_or_else(|| {
+            AppError::validation("No active AWS account. Configure one in Settings first.")
+        })
 }
 
 fn connection_secret_key(id: &str) -> String {
@@ -42,10 +43,14 @@ fn with_credentials_saved(
     saved: bool,
 ) -> crate::models::NetworkTransport {
     match &mut transport {
-        crate::models::NetworkTransport::SshTunnel { credentials_saved, .. } => {
+        crate::models::NetworkTransport::SshTunnel {
+            credentials_saved, ..
+        } => {
             *credentials_saved = saved;
         }
-        crate::models::NetworkTransport::Socks5 { credentials_saved, .. } => {
+        crate::models::NetworkTransport::Socks5 {
+            credentials_saved, ..
+        } => {
             *credentials_saved = saved;
         }
     }
@@ -98,12 +103,17 @@ pub async fn create_db_connection(
         name: request.name.trim().to_string(),
         host: request.host.trim().to_string(),
         port: request.port,
-        database: request.database.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
+        database: request
+            .database
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         username: request.username.trim().to_string(),
         network_profile_id: request.network_profile_id,
         show_as_tab: request.show_as_tab,
         enabled_for_ai: request.enabled_for_ai,
-        ai_read_only_policy: request.ai_read_only_policy.unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
+        ai_read_only_policy: request
+            .ai_read_only_policy
+            .unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
         sort_order: request.sort_order.unwrap_or_else(|| 0),
         created_at: now,
         updated_at: now,
@@ -147,8 +157,16 @@ pub async fn update_db_connection(
         &account_id,
         &request.id,
         &dbhub::ConnectionPatch {
-            name: request.name.as_deref().map(str::trim).filter(|value| !value.is_empty()),
-            host: request.host.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            name: request
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+            host: request
+                .host
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
             port: request.port,
             // `None` keeps the stored value; `Some(None)` clears it.
             database: request
@@ -156,7 +174,11 @@ pub async fn update_db_connection(
                 .as_deref()
                 .map(|value| value.trim())
                 .map(|value| if value.is_empty() { None } else { Some(value) }),
-            username: request.username.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+            username: request
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
             network_profile_id: request.network_profile_id.as_deref().map(|value| {
                 if value.is_empty() {
                     None
@@ -223,7 +245,10 @@ pub async fn set_db_connection_flags(
 }
 
 #[tauri::command]
-pub async fn delete_db_connection(app: AppHandle, request: DbConnectionRef) -> AppResult<Vec<DbConnection>> {
+pub async fn delete_db_connection(
+    app: AppHandle,
+    request: DbConnectionRef,
+) -> AppResult<Vec<DbConnection>> {
     let connection_id = request.connection_id;
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
@@ -245,7 +270,10 @@ pub async fn delete_db_connection(app: AppHandle, request: DbConnectionRef) -> A
 /// which reads clearly. Always answers with a result object rather than an
 /// error — a failed test is a *result*, not a command failure.
 #[tauri::command]
-pub async fn test_db_connection(app: AppHandle, request: DbConnectionRef) -> AppResult<DbTestResult> {
+pub async fn test_db_connection(
+    app: AppHandle,
+    request: DbConnectionRef,
+) -> AppResult<DbTestResult> {
     let connection_id = request.connection_id;
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
@@ -278,16 +306,16 @@ pub async fn test_db_connection(app: AppHandle, request: DbConnectionRef) -> App
 
     // Open the local forward when the profile routes this connection; the
     // driver then dials 127.0.0.1:<forward-port> instead of the literal host.
-    let forward =
-        crate::db::dbhub_tunnel::route_for_connection(&pool, &app, &connection).await?;
+    let forward = crate::db::dbhub_tunnel::route_for_connection(&pool, &app, &connection).await?;
     let mut routed = connection.clone();
     if let Some((host, port, _)) = forward.as_ref() {
         routed.host = host.clone();
         routed.port = *port as i64;
     }
 
-    let password = crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
-        .unwrap_or(None);
+    let password =
+        crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
+            .unwrap_or(None);
 
     let elapsed = started.elapsed().as_millis() as u64;
     match crate::db::dbhub_driver::test_connection(&routed, password).await {
@@ -329,12 +357,23 @@ pub async fn save_network_profile(
             // transport payload — secrets travel in `request.secret` only.
             let mut transport = request.transport.clone();
             match &mut transport {
-                crate::models::NetworkTransport::SshTunnel { credentials_saved, .. }
-                | crate::models::NetworkTransport::Socks5 { credentials_saved, .. } => {
+                crate::models::NetworkTransport::SshTunnel {
+                    credentials_saved, ..
+                }
+                | crate::models::NetworkTransport::Socks5 {
+                    credentials_saved, ..
+                } => {
                     *credentials_saved = false;
                 }
             }
-            (transport, request.secret.as_deref().filter(|value| !value.is_empty()).is_some())
+            (
+                transport,
+                request
+                    .secret
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .is_some(),
+            )
         }
     };
 
@@ -390,7 +429,8 @@ pub async fn delete_network_profile(request: NetworkProfileRef) -> AppResult<()>
     // the user to unbind first, and this guard is the backstop that keeps a
     // call from any path (or a stale UI) from silently leaving connections
     // direct.
-    let referencing = dbhub::list_referencing_connections(&pool, &account_id, &request.profile_id).await?;
+    let referencing =
+        dbhub::list_referencing_connections(&pool, &account_id, &request.profile_id).await?;
     if !referencing.is_empty() {
         let names = referencing
             .iter()
@@ -419,7 +459,10 @@ pub async fn delete_network_profile(request: NetworkProfileRef) -> AppResult<()>
 /// ("disabled" forever) whenever the user had not applied the toggle — the
 /// test now validates the configuration as stored.
 #[tauri::command]
-pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) -> AppResult<DbTestResult> {
+pub async fn test_network_profile(
+    app: AppHandle,
+    request: NetworkProfileRef,
+) -> AppResult<DbTestResult> {
     let profile_id = request.profile_id;
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
@@ -434,7 +477,9 @@ pub async fn test_network_profile(app: AppHandle, request: NetworkProfileRef) ->
     match crate::db::dbhub_tunnel::probe_profile(&profile, move |_| Ok(secret)).await {
         Ok(port) => {
             let (host, port_target) = match &profile.transport {
-                crate::models::NetworkTransport::SshTunnel { host, port, .. } => (host.clone(), *port),
+                crate::models::NetworkTransport::SshTunnel { host, port, .. } => {
+                    (host.clone(), *port)
+                }
                 crate::models::NetworkTransport::Socks5 { host, port, .. } => (host.clone(), *port),
             };
             let enabled_note = if profile.enabled {
@@ -468,7 +513,14 @@ pub async fn run_db_query(
     app: AppHandle,
     request: crate::models::DbQueryRequest,
 ) -> AppResult<crate::db::dbhub_query::DbQueryResult> {
-    crate::db::dbhub_query::run_for_command(&app, &request.connection_id, false, &request.sql, request.max_rows).await
+    crate::db::dbhub_query::run_for_command(
+        &app,
+        &request.connection_id,
+        false,
+        &request.sql,
+        request.max_rows,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -484,5 +536,10 @@ pub async fn list_db_tables(
     app: AppHandle,
     request: DbCatalogRequest,
 ) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
-    crate::db::dbhub_query::catalog_tables_for_command(&app, &request.connection_id, &request.database).await
+    crate::db::dbhub_query::catalog_tables_for_command(
+        &app,
+        &request.connection_id,
+        &request.database,
+    )
+    .await
 }

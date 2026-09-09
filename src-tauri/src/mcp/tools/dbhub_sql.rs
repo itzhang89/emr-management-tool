@@ -109,7 +109,10 @@ impl SqlQueryTextResult {
     }
 }
 
-pub async fn sql_query_text(app: &tauri::AppHandle, args: &SqlQueryTextArgs) -> AppResult<SqlQueryTextResult> {
+pub async fn sql_query_text(
+    app: &tauri::AppHandle,
+    args: &SqlQueryTextArgs,
+) -> AppResult<SqlQueryTextResult> {
     let max_rows = args.max_rows.unwrap_or(50).clamp(1, TOOL_MAX_ROWS);
 
     // Resolution happens per call inside the active account: a connection that
@@ -236,7 +239,10 @@ mod tests {
     fn cell_caps_mark_truncation() {
         let row = serde_json::json!({ "note": "x".repeat(5_000), "id": 7 });
         let capped = cap_cells(row, CELL_CAP);
-        let note = capped.get("note").and_then(|value| value.as_str()).expect("string");
+        let note = capped
+            .get("note")
+            .and_then(|value| value.as_str())
+            .expect("string");
         assert!(note.len() < 5_000);
         assert!(note.ends_with("[truncated]"));
         // Non-string values untouched.

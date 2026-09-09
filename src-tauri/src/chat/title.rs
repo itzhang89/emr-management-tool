@@ -146,7 +146,10 @@ fn clean_title(answer: &str) -> Option<String> {
 /// First line, collapsed whitespace, capped length. Shared by both paths so a
 /// model answer and a raw message are shortened the same way.
 fn condense(text: &str, limit: usize) -> String {
-    let first_line = text.lines().find(|line| !line.trim().is_empty()).unwrap_or("");
+    let first_line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
     let collapsed = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
 
     if collapsed.chars().count() <= limit {
@@ -164,7 +167,10 @@ mod tests {
 
     #[test]
     fn a_short_question_becomes_the_title_unchanged() {
-        assert_eq!(fallback_title("why did job-abc fail?"), "why did job-abc fail?");
+        assert_eq!(
+            fallback_title("why did job-abc fail?"),
+            "why did job-abc fail?"
+        );
     }
 
     #[test]

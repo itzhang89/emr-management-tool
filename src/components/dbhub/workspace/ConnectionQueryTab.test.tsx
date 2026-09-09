@@ -86,12 +86,12 @@ function connection(overrides: Partial<{ database?: string }> = {}) {
   };
 }
 
-function renderWorkspace(conn = connection()) {
+function renderWorkspace(conn = connection(), active = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ConnectionQueryTab connection={conn as never} />
+        <ConnectionQueryTab connection={conn as never} active={active} />
       </TooltipProvider>
     </QueryClientProvider>
   );
@@ -104,6 +104,24 @@ beforeEach(() => {
 });
 
 describe("ConnectionQueryTab", () => {
+  it("does not request catalog metadata until the connection tab is active", async () => {
+    const view = renderWorkspace(connection(), false);
+
+    await waitFor(() => expect(listDbDatabases).not.toHaveBeenCalled());
+    expect(listDbTables).not.toHaveBeenCalled();
+
+    view.rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <TooltipProvider>
+          <ConnectionQueryTab connection={connection() as never} active />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => expect(listDbDatabases).toHaveBeenCalledWith("c1"));
+    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales"));
+  });
+
   it("lands inside the connection's default database and shows its tables", async () => {
     renderWorkspace();
 

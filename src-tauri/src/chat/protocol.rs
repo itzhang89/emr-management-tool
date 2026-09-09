@@ -103,7 +103,11 @@ pub fn envelope_fields(body: &str) -> (Option<String>, Option<String>) {
         .and_then(|inner| inner.get("error"))
         .and_then(|inner| inner.get("message"))
         .and_then(|message| message.as_str())
-        .or_else(|| error.and_then(|inner| inner.get("message")).and_then(|m| m.as_str()))
+        .or_else(|| {
+            error
+                .and_then(|inner| inner.get("message"))
+                .and_then(|m| m.as_str())
+        })
         .or_else(|| value.get("message").and_then(|m| m.as_str()))
         .map(|message| message.chars().take(300).collect::<String>());
     let code = error
@@ -176,7 +180,12 @@ pub fn stream_error(
         response_body,
         provider_reason: Some(payload.message.clone()),
         error_code: payload.error_code.clone(),
-        error_kind: Some(payload.error_kind.clone().unwrap_or_else(|| "stream".to_string())),
+        error_kind: Some(
+            payload
+                .error_kind
+                .clone()
+                .unwrap_or_else(|| "stream".to_string()),
+        ),
         stack: None,
     };
     AppError::validation(format!(

@@ -338,10 +338,11 @@ pub async fn stream_response(
             None,
         );
         // Tagged so a caller holding several keys can retire this one and retry.
-        return Err(
-            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
-                .with_details(details),
-        );
+        return Err(super::protocol::http_failure(
+            status_code,
+            describe_failure(status_code, &text),
+        )
+        .with_details(details));
     }
 
     let mut parser = super::sse::SseParser::new();
@@ -613,7 +614,9 @@ mod tests {
     #[test]
     fn unknown_and_unparseable_events_are_ignored() {
         let mut folder = StreamFolder::new();
-        assert!(folder.push_event(Some("ping"), r#"{"type":"ping"}"#).is_empty());
+        assert!(folder
+            .push_event(Some("ping"), r#"{"type":"ping"}"#)
+            .is_empty());
         assert!(folder.push_event(None, "not json").is_empty());
         assert!(!folder.is_finished());
     }

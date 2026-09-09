@@ -338,10 +338,11 @@ pub async fn stream_response(
             None,
         );
         // Tagged so a caller holding several keys can retire this one and retry.
-        return Err(
-            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
-                .with_details(details),
-        );
+        return Err(super::protocol::http_failure(
+            status_code,
+            describe_failure(status_code, &text),
+        )
+        .with_details(details));
     }
 
     let mut parser = super::sse::SseParser::new();
@@ -569,7 +570,8 @@ mod tests {
     #[test]
     fn usage_is_captured_when_reported() {
         let mut folder = StreamFolder::new();
-        folder.push_payload(r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#);
+        folder
+            .push_payload(r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#);
         assert_eq!(folder.usage().input_tokens, Some(12));
         assert_eq!(folder.usage().output_tokens, Some(34));
     }
@@ -587,8 +589,8 @@ mod tests {
     fn a_mid_stream_error_envelope_is_surfaced_not_swallowed() {
         // OpenAI-compatible gateways can report a failure as a body with HTTP 200.
         let mut folder = StreamFolder::new();
-        let events =
-            folder.push_payload(r#"{"error":{"message":"model overloaded","code":"overloaded_error"}}"#);
+        let events = folder
+            .push_payload(r#"{"error":{"message":"model overloaded","code":"overloaded_error"}}"#);
         assert!(events.is_empty());
         assert!(folder.is_finished());
         let payload = folder.take_error().expect("error payload recorded");

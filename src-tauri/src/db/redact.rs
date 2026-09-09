@@ -26,8 +26,7 @@ fn kind_from_column(value: &str) -> RedactRuleKind {
 }
 
 pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
-    for statement in [
-        "create table if not exists redact_rules (
+    for statement in ["create table if not exists redact_rules (
             id text primary key,
             name text not null,
             category text not null default 'custom',
@@ -39,8 +38,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             sort_order integer not null default 0,
             created_at text not null,
             updated_at text not null
-        )",
-    ] {
+        )"]
+    {
         sqlx::query(statement)
             .execute(pool)
             .await
@@ -222,7 +221,10 @@ mod tests {
 
         let saved = list_rules(&p).await.unwrap();
         assert_eq!(
-            saved.iter().filter(|r| r.kind == RedactRuleKind::Custom).count(),
+            saved
+                .iter()
+                .filter(|r| r.kind == RedactRuleKind::Custom)
+                .count(),
             1,
             "custom rule persisted"
         );
@@ -230,7 +232,9 @@ mod tests {
         reset_to_defaults(&p).await.unwrap();
         let rules = list_rules(&p).await.unwrap();
         assert!(
-            rules.iter().all(|rule| rule.kind == RedactRuleKind::Builtin),
+            rules
+                .iter()
+                .all(|rule| rule.kind == RedactRuleKind::Builtin),
             "reset drops custom rules"
         );
         assert_eq!(rules.len(), 6);

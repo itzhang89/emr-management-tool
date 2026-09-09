@@ -179,12 +179,11 @@ async fn seed_built_in_assistant(pool: &SqlitePool) -> AppResult<()> {
 // --- Assistants ------------------------------------------------------------
 
 pub async fn list_assistants(pool: &SqlitePool) -> AppResult<Vec<ChatAssistant>> {
-    let rows = sqlx::query(
-        "select * from chat_assistants order by sort_order, name collate nocase",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
+    let rows =
+        sqlx::query("select * from chat_assistants order by sort_order, name collate nocase")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.into_iter()
         .map(|row| {
@@ -379,7 +378,10 @@ async fn ensure_assistant_exists(pool: &SqlitePool, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-async fn session_ids_for_assistant(pool: &SqlitePool, assistant_id: &str) -> AppResult<Vec<String>> {
+async fn session_ids_for_assistant(
+    pool: &SqlitePool,
+    assistant_id: &str,
+) -> AppResult<Vec<String>> {
     let rows = sqlx::query("select id from chat_sessions where assistant_id = ?1")
         .bind(assistant_id)
         .fetch_all(pool)
@@ -676,15 +678,14 @@ pub async fn delete_message_version(
     session_id: &str,
     version_id: &str,
 ) -> AppResult<u64> {
-    let affected = sqlx::query(
-        "delete from chat_message_versions where id = ?1 and session_id = ?2",
-    )
-    .bind(version_id)
-    .bind(session_id)
-    .execute(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?
-    .rows_affected();
+    let affected =
+        sqlx::query("delete from chat_message_versions where id = ?1 and session_id = ?2")
+            .bind(version_id)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+            .rows_affected();
     Ok(affected)
 }
 
@@ -904,8 +905,7 @@ fn attach_versions(messages: &mut [ChatMessage], rows: &[sqlx::sqlite::SqliteRow
         let content: Option<String> = row.get("content");
         let tool_calls: Option<String> = row.get("tool_calls");
         let has_answer = error.is_none()
-            && (content.as_deref().is_some_and(|c| !c.trim().is_empty())
-                || tool_calls.is_some());
+            && (content.as_deref().is_some_and(|c| !c.trim().is_empty()) || tool_calls.is_some());
         if !has_answer {
             continue;
         }
@@ -939,7 +939,8 @@ pub async fn list_messages(pool: &SqlitePool, session_id: &str) -> AppResult<Vec
         .await
         .map_err(|error| AppError::storage(error.to_string()))?;
 
-    let mut messages: Vec<ChatMessage> = rows.iter().map(row_to_message).collect::<AppResult<_>>()?;
+    let mut messages: Vec<ChatMessage> =
+        rows.iter().map(row_to_message).collect::<AppResult<_>>()?;
     let version_rows = sqlx::query(
         "select * from chat_message_versions where session_id = ?1 order by created_at",
     )
@@ -957,23 +958,21 @@ pub async fn get_message(
     session_id: &str,
     message_id: &str,
 ) -> AppResult<ChatMessage> {
-    sqlx::query(
-        "select * from chat_messages where id = ?1 and session_id = ?2",
-    )
-    .bind(message_id)
-    .bind(session_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?
-    // `fetch_optional` hands back an owned row; the shared converter reads a
-    // borrowed one, so wrap it rather than pass the function by value.
-    .map(|row| row_to_message(&row))
-    .transpose()?
-    .ok_or_else(|| {
-        AppError::validation(format!(
-            "Chat message {message_id} was not found in this conversation."
-        ))
-    })
+    sqlx::query("select * from chat_messages where id = ?1 and session_id = ?2")
+        .bind(message_id)
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        // `fetch_optional` hands back an owned row; the shared converter reads a
+        // borrowed one, so wrap it rather than pass the function by value.
+        .map(|row| row_to_message(&row))
+        .transpose()?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "Chat message {message_id} was not found in this conversation."
+            ))
+        })
 }
 
 /// The messages that make up the next request's conversation history: everything
@@ -1040,14 +1039,13 @@ pub async fn append_message(
     } = message;
     ensure_session_exists(pool, session_id).await?;
 
-    let next_seq: i64 = sqlx::query(
-        "select coalesce(max(seq), -1) + 1 from chat_messages where session_id = ?1",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?
-    .get(0);
+    let next_seq: i64 =
+        sqlx::query("select coalesce(max(seq), -1) + 1 from chat_messages where session_id = ?1")
+            .bind(session_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+            .get(0);
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -1061,8 +1059,7 @@ pub async fn append_message(
     };
     let error_details_json = match error_details {
         Some(details) => Some(
-            serde_json::to_string(details)
-                .map_err(|error| AppError::storage(error.to_string()))?,
+            serde_json::to_string(details).map_err(|error| AppError::storage(error.to_string()))?,
         ),
         None => None,
     };
@@ -1135,8 +1132,7 @@ pub async fn finish_assistant_message(
     };
     let error_details_json = match error_details {
         Some(details) => Some(
-            serde_json::to_string(details)
-                .map_err(|error| AppError::storage(error.to_string()))?,
+            serde_json::to_string(details).map_err(|error| AppError::storage(error.to_string()))?,
         ),
         None => None,
     };
@@ -1341,7 +1337,11 @@ mod tests {
         .unwrap();
         let assistants = list_assistants(&pool).await.unwrap();
         assert_eq!(
-            assistants.iter().find(|a| a.id == id).unwrap().enabled_tools,
+            assistants
+                .iter()
+                .find(|a| a.id == id)
+                .unwrap()
+                .enabled_tools,
             None
         );
     }
@@ -1523,9 +1523,11 @@ mod tests {
             Some("timed out")
         );
 
-        assert!(finish_assistant_message(&pool, "missing", None, &[], None, None, None)
-            .await
-            .is_err());
+        assert!(
+            finish_assistant_message(&pool, "missing", None, &[], None, None, None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1598,9 +1600,17 @@ mod tests {
         )
         .await
         .unwrap();
-        finish_assistant_message(&pool, &reply.id, Some("driver OOM"), &[], Some(12), None, None)
-            .await
-            .unwrap();
+        finish_assistant_message(
+            &pool,
+            &reply.id,
+            Some("driver OOM"),
+            &[],
+            Some(12),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let messages = list_messages(&pool, &session_id).await.unwrap();
         assert_eq!(messages[0].versions.len(), 1);
@@ -1608,7 +1618,9 @@ mod tests {
         let version_id = messages[0].versions[0].id.clone();
 
         // An in-place overwrite drops the superseded version by id.
-        delete_message_version(&pool, &session_id, &version_id).await.unwrap();
+        delete_message_version(&pool, &session_id, &version_id)
+            .await
+            .unwrap();
         let messages = list_messages(&pool, &session_id).await.unwrap();
         assert!(messages[0].versions.is_empty());
     }
@@ -1628,9 +1640,17 @@ mod tests {
         )
         .await
         .unwrap();
-        finish_assistant_message(&pool, &a.id, Some("a real answer"), &[], Some(12), None, None)
-            .await
-            .unwrap();
+        finish_assistant_message(
+            &pool,
+            &a.id,
+            Some("a real answer"),
+            &[],
+            Some(12),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         // Stale version rows that archived a failed or empty attempt — written
         // before the archive rule, or backfilled from a pre-versioning row — must
@@ -1658,7 +1678,10 @@ mod tests {
 
         let messages = list_messages(&pool, &session_id).await.unwrap();
         assert_eq!(messages[0].versions.len(), 1);
-        assert_eq!(messages[0].versions[0].model_id.as_deref(), Some("model-ok"));
+        assert_eq!(
+            messages[0].versions[0].model_id.as_deref(),
+            Some("model-ok")
+        );
     }
 
     #[tokio::test]
@@ -1686,7 +1709,9 @@ mod tests {
         let assistant_id = create_assistant(&pool, "Throwaway", None, None, None, None)
             .await
             .unwrap();
-        let session_id = create_session(&pool, &assistant_id, None, None).await.unwrap();
+        let session_id = create_session(&pool, &assistant_id, None, None)
+            .await
+            .unwrap();
         user_message(&pool, &session_id, "hello").await;
 
         delete_assistant(&pool, &assistant_id).await.unwrap();
@@ -1757,7 +1782,9 @@ mod tests {
         assert_eq!(sessions[0].title, "Driver OOM on job-abc");
 
         // A second generated title must not clobber the first.
-        assert!(!rename_if_untitled(&pool, &id, "Something else").await.unwrap());
+        assert!(!rename_if_untitled(&pool, &id, "Something else")
+            .await
+            .unwrap());
         // Nor may an empty one blank the name.
         assert!(!rename_if_untitled(&pool, &id, "   ").await.unwrap());
     }
@@ -1770,7 +1797,9 @@ mod tests {
             .await
             .unwrap();
 
-        update_session(&pool, &id, Some("my own name"), None).await.unwrap();
+        update_session(&pool, &id, Some("my own name"), None)
+            .await
+            .unwrap();
         assert!(!rename_if_untitled(&pool, &id, "Generated").await.unwrap());
         assert_eq!(list_sessions(&pool).await.unwrap()[0].title, "my own name");
     }
@@ -1780,7 +1809,9 @@ mod tests {
         let pool = test_pool().await;
 
         assert!(create_session(&pool, "nope", None, None).await.is_err());
-        assert!(update_session(&pool, "nope", Some("x"), None).await.is_err());
+        assert!(update_session(&pool, "nope", Some("x"), None)
+            .await
+            .is_err());
         assert!(update_assistant(
             &pool,
             "nope",
@@ -1813,14 +1844,9 @@ mod tests {
         // version children must be sweepable.
         let pool = fk_pool().await;
         let session_id = session(&pool).await;
-        let q = append_message(
-            &pool,
-            &session_id,
-            ChatRole::User,
-            NewMessage::text("why?"),
-        )
-        .await
-        .unwrap();
+        let q = append_message(&pool, &session_id, ChatRole::User, NewMessage::text("why?"))
+            .await
+            .unwrap();
         let a = append_message(
             &pool,
             &session_id,
@@ -1837,14 +1863,18 @@ mod tests {
             .await
             .unwrap();
 
-        delete_messages_from(&pool, &session_id, q.seq + 1).await.unwrap();
+        delete_messages_from(&pool, &session_id, q.seq + 1)
+            .await
+            .unwrap();
         let remaining = list_messages(&pool, &session_id).await.unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].content.as_deref(), Some("why?"));
 
         // The version row now points at a deleted message; the orphan sweep
         // removes it rather than leaving it to break a later FK write.
-        purge_orphan_message_versions(&pool, &session_id).await.unwrap();
+        purge_orphan_message_versions(&pool, &session_id)
+            .await
+            .unwrap();
         let items: i64 = sqlx::query("select count(*) from chat_message_versions")
             .fetch_one(&pool)
             .await
@@ -1889,10 +1919,12 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("create index idx_chat_message_versions_message on chat_message_versions(message_id)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "create index idx_chat_message_versions_message on chat_message_versions(message_id)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let q = append_message(&pool, &session_id, ChatRole::User, NewMessage::text("why?"))
             .await
@@ -1900,7 +1932,9 @@ mod tests {
 
         // Running migrate heals the schema: the FK table is dropped and the
         // create list rebuilds it without the constraint.
-        migrate(&pool).await.expect("migrate drops the legacy table");
+        migrate(&pool)
+            .await
+            .expect("migrate drops the legacy table");
         let schema: String = sqlx::query(
             "select sql from sqlite_master
              where type = 'table' and name = 'chat_message_versions'",
@@ -2022,7 +2056,9 @@ mod tests {
         user_message(&pool, &session_id, "third").await;
 
         let second = list_messages(&pool, &session_id).await.unwrap()[1].clone();
-        delete_messages_from(&pool, &session_id, second.seq).await.unwrap();
+        delete_messages_from(&pool, &session_id, second.seq)
+            .await
+            .unwrap();
 
         let remaining = list_messages(&pool, &session_id).await.unwrap();
         assert_eq!(remaining.len(), 1);
@@ -2042,10 +2078,15 @@ mod tests {
         .await
         .unwrap();
 
-        update_message_content(&pool, &q.id, "why did it fail on 8G?").await.unwrap();
+        update_message_content(&pool, &q.id, "why did it fail on 8G?")
+            .await
+            .unwrap();
 
         let messages = list_messages(&pool, &session_id).await.unwrap();
-        assert_eq!(messages[0].content.as_deref(), Some("why did it fail on 8G?"));
+        assert_eq!(
+            messages[0].content.as_deref(),
+            Some("why did it fail on 8G?")
+        );
 
         // A blank revision and a missing row are both rejected.
         assert!(update_message_content(&pool, &q.id, "   ").await.is_err());

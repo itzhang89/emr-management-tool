@@ -78,7 +78,10 @@ fn split_statements(sql: &str) -> Vec<String> {
     if !current.trim().is_empty() {
         parts.push(current);
     }
-    parts.into_iter().filter(|part| !strip_comments(part).trim().is_empty()).collect()
+    parts
+        .into_iter()
+        .filter(|part| !strip_comments(part).trim().is_empty())
+        .collect()
 }
 
 /// Remove leading/trailing whitespace and comment lines so the statement's
@@ -93,9 +96,7 @@ fn strip_comments(statement: &str) -> String {
             // Skip to the closing */, tolerating a missing one (the whole
             // remainder is then comment for our purposes).
             index += 2;
-            while index + 1 < chars.len()
-                && !(chars[index] == '*' && chars[index + 1] == '/')
-            {
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
                 index += 1;
             }
             index = (index + 2).min(chars.len());
@@ -147,9 +148,24 @@ fn classify_single(statement: &str) -> StatementClass {
 fn audit_with_statement(cleaned: &str, first_word: &str) -> StatementClass {
     let upper = cleaned.to_ascii_uppercase();
     for keyword in [
-        " INSERT ", " UPDATE ", " DELETE ", " MERGE ", " REPLACE ", " INTO ", " CALL ",
-        " GRANT ", " REVOKE ", " ALTER ", " DROP ", " CREATE ", " TRUNCATE ", " SET ",
-        " LOCK ", " KILL ", " LOAD ", " HANDLER ",
+        " INSERT ",
+        " UPDATE ",
+        " DELETE ",
+        " MERGE ",
+        " REPLACE ",
+        " INTO ",
+        " CALL ",
+        " GRANT ",
+        " REVOKE ",
+        " ALTER ",
+        " DROP ",
+        " CREATE ",
+        " TRUNCATE ",
+        " SET ",
+        " LOCK ",
+        " KILL ",
+        " LOAD ",
+        " HANDLER ",
     ] {
         if upper.contains(keyword) {
             return StatementClass::Blocked {
@@ -238,10 +254,7 @@ mod tests {
 
     #[test]
     fn writes_inside_cte_are_blocked() {
-        assert_blocked(
-            "WITH t AS (SELECT 1) INSERT INTO log VALUES (1)",
-            "INSERT",
-        );
+        assert_blocked("WITH t AS (SELECT 1) INSERT INTO log VALUES (1)", "INSERT");
     }
 
     #[test]
@@ -254,10 +267,7 @@ mod tests {
     #[test]
     fn semicolons_inside_strings_do_not_split() {
         assert_read("SELECT * FROM orders WHERE note = 'a;b' ");
-        assert_blocked(
-            "SELECT * FROM t WHERE note = 'x'; DROP TABLE t",
-            "DROP",
-        );
+        assert_blocked("SELECT * FROM t WHERE note = 'x'; DROP TABLE t", "DROP");
     }
 
     #[test]

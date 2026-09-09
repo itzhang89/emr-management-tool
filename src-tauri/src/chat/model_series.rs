@@ -54,7 +54,10 @@ mod tests {
         assert_eq!(model_series("claude-opus-4-8"), "claude-opus");
         assert_eq!(model_series("claude-opus-5"), "claude-opus");
         assert_eq!(model_series("claude-sonnet-4-5-20250929"), "claude-sonnet");
-        assert_eq!(model_series("claude-3-7-sonnet-latest"), "claude-3-7-sonnet");
+        assert_eq!(
+            model_series("claude-3-7-sonnet-latest"),
+            "claude-3-7-sonnet"
+        );
     }
 
     #[test]

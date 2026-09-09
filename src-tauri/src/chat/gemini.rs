@@ -112,7 +112,10 @@ fn to_gemini_schema(schema: &serde_json::Value) -> serde_json::Value {
             .iter()
             .map(|(name, value)| (name.clone(), to_gemini_schema(value)))
             .collect();
-        out.insert("properties".to_string(), serde_json::Value::Object(converted));
+        out.insert(
+            "properties".to_string(),
+            serde_json::Value::Object(converted),
+        );
         // An object schema with properties but no declared type still has to say
         // it is an object.
         out.entry("type").or_insert_with(|| json!("object"));
@@ -249,7 +252,10 @@ fn is_results(content: &serde_json::Value) -> bool {
             .get("parts")
             .and_then(|parts| parts.as_array())
             .is_some_and(|parts| {
-                !parts.is_empty() && parts.iter().all(|part| part.get("functionResponse").is_some())
+                !parts.is_empty()
+                    && parts
+                        .iter()
+                        .all(|part| part.get("functionResponse").is_some())
             })
 }
 
@@ -368,8 +374,7 @@ impl StreamFolder {
                             // API puts it on the part, but some builds nest it inside
                             // `functionCall`, so both places are read. Only the first
                             // call of a step has one; the rest stay `None`.
-                            signature: thought_signature(part)
-                                .or_else(|| thought_signature(call)),
+                            signature: thought_signature(part).or_else(|| thought_signature(call)),
                         });
                     }
                 }
@@ -507,10 +512,11 @@ pub async fn stream_response(
             None,
         );
         // Tagged so a caller holding several keys can retire this one and retry.
-        return Err(
-            super::protocol::http_failure(status_code, describe_failure(status_code, &text))
-                .with_details(details),
-        );
+        return Err(super::protocol::http_failure(
+            status_code,
+            describe_failure(status_code, &text),
+        )
+        .with_details(details));
     }
 
     let mut parser = super::sse::SseParser::new();
@@ -622,7 +628,9 @@ mod tests {
         );
         // Keywords this API answers with a 400 are stripped rather than sent.
         assert!(declaration["parameters"].get("$schema").is_none());
-        assert!(declaration["parameters"].get("additionalProperties").is_none());
+        assert!(declaration["parameters"]
+            .get("additionalProperties")
+            .is_none());
     }
 
     #[test]
@@ -739,7 +747,10 @@ mod tests {
         assert!(converted.get("nullable").is_none());
 
         // A type that is only "null" says nothing the proto can carry.
-        assert_eq!(to_gemini_schema(&json!({"type": "null"})), json!({"type": "object"}));
+        assert_eq!(
+            to_gemini_schema(&json!({"type": "null"})),
+            json!({"type": "object"})
+        );
     }
 
     /// The real MCP tool schemas, not handwritten fixtures — these are what
@@ -894,10 +905,7 @@ mod tests {
     fn a_round_sends_every_call_then_every_result() {
         // The shape the API insists on: `[FC1, FC2] [FR1, FR2]`. Interleaving them
         // as `[FC1] [FR1] [FC2] [FR2]` is a 400.
-        let calls = vec![
-            call("list_accounts", Some("sig-1")),
-            call("find_job", None),
-        ];
+        let calls = vec![call("list_accounts", Some("sig-1")), call("find_job", None)];
         let body = build_request(
             None,
             &[],
@@ -948,11 +956,11 @@ mod tests {
         assert_eq!(
             shape,
             vec![
-                ("user".to_string(), 1),   // the question
-                ("model".to_string(), 2),  // both calls together
-                ("user".to_string(), 2),   // both results together
-                ("model".to_string(), 1),  // the next step's call
-                ("user".to_string(), 1),   // and its result
+                ("user".to_string(), 1),  // the question
+                ("model".to_string(), 2), // both calls together
+                ("user".to_string(), 2),  // both results together
+                ("model".to_string(), 1), // the next step's call
+                ("user".to_string(), 1),  // and its result
             ]
         );
     }
@@ -999,7 +1007,10 @@ mod tests {
         let events = folder.push_payload(
             r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"the driver "}]}}]}"#,
         );
-        assert_eq!(events, vec![StreamEvent::TextDelta("the driver ".to_string())]);
+        assert_eq!(
+            events,
+            vec![StreamEvent::TextDelta("the driver ".to_string())]
+        );
         assert!(!folder.is_finished());
     }
 
@@ -1091,8 +1102,9 @@ mod tests {
     #[test]
     fn an_argument_less_call_defaults_to_an_empty_object() {
         let mut folder = StreamFolder::new();
-        let events = folder
-            .push_payload(r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_accounts"}}]}}]}"#);
+        let events = folder.push_payload(
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"list_accounts"}}]}}]}"#,
+        );
         assert_eq!(
             events,
             vec![StreamEvent::ToolCall {
@@ -1136,8 +1148,7 @@ mod tests {
     #[test]
     fn an_in_stream_error_is_kept_for_the_stream_response_to_lift() {
         let mut folder = StreamFolder::new();
-        let events =
-            folder.push_payload(r#"{"error":{"code":429,"message":"quota exhausted"}}"#);
+        let events = folder.push_payload(r#"{"error":{"code":429,"message":"quota exhausted"}}"#);
         // The envelope is surfaced, not folded into a silent Done.
         assert!(events.is_empty());
         assert!(folder.is_finished());

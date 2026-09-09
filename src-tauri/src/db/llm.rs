@@ -27,10 +27,25 @@ use super::parse_timestamp;
 /// but each has its own host, and the address is the whole point of a preset.
 const BUILT_IN_PROVIDERS: [(&str, &str, LlmProtocol, Option<&'static str>); 7] = [
     ("builtin-openai", "OpenAI", LlmProtocol::Openai, None),
-    ("builtin-anthropic", "Anthropic", LlmProtocol::Anthropic, None),
+    (
+        "builtin-anthropic",
+        "Anthropic",
+        LlmProtocol::Anthropic,
+        None,
+    ),
     ("builtin-gemini", "Gemini", LlmProtocol::Gemini, None),
-    ("builtin-deepseek", "DeepSeek", LlmProtocol::Openai, Some("https://api.deepseek.com")),
-    ("builtin-kimi", "Kimi", LlmProtocol::Openai, Some("https://api.moonshot.cn/v1")),
+    (
+        "builtin-deepseek",
+        "DeepSeek",
+        LlmProtocol::Openai,
+        Some("https://api.deepseek.com"),
+    ),
+    (
+        "builtin-kimi",
+        "Kimi",
+        LlmProtocol::Openai,
+        Some("https://api.moonshot.cn/v1"),
+    ),
     (
         "builtin-zhipu",
         "Zhipu AI",
@@ -407,7 +422,9 @@ async fn protocol_and_url(
         .fetch_optional(pool)
         .await
         .map_err(|error| AppError::storage(error.to_string()))?
-        .ok_or_else(|| AppError::validation(format!("LLM provider {provider_id} was not found.")))?;
+        .ok_or_else(|| {
+            AppError::validation(format!("LLM provider {provider_id} was not found."))
+        })?;
 
     let protocol_text: String = row.get("protocol");
     let protocol = LlmProtocol::parse(&protocol_text)
@@ -552,12 +569,15 @@ pub async fn duplicate_provider(
         return Err(AppError::validation("Provider name is required."));
     }
 
-    let source = sqlx::query("select protocol, base_url, header_names from llm_providers where id = ?1")
-        .bind(source_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .ok_or_else(|| AppError::validation(format!("LLM provider {source_id} was not found.")))?;
+    let source =
+        sqlx::query("select protocol, base_url, header_names from llm_providers where id = ?1")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+            .ok_or_else(|| {
+                AppError::validation(format!("LLM provider {source_id} was not found."))
+            })?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
@@ -622,14 +642,15 @@ pub async fn delete_provider(pool: &SqlitePool, id: &str) -> AppResult<DeletedSe
         return Ok(DeletedSecrets::default());
     }
 
-    let api_key_ids: Vec<String> = sqlx::query("select id from llm_api_keys where provider_id = ?1")
-        .bind(id)
-        .fetch_all(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?
-        .into_iter()
-        .map(|row| row.get("id"))
-        .collect();
+    let api_key_ids: Vec<String> =
+        sqlx::query("select id from llm_api_keys where provider_id = ?1")
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+            .into_iter()
+            .map(|row| row.get("id"))
+            .collect();
 
     for statement in [
         "delete from llm_models where provider_id = ?1",
@@ -982,7 +1003,13 @@ mod tests {
         // that must NOT be the protocol default, or they would point at OpenAI.
         let seeded: Vec<(&str, LlmProtocol, &str)> = providers
             .iter()
-            .map(|provider| (provider.name.as_str(), provider.protocol, provider.base_url.as_str()))
+            .map(|provider| {
+                (
+                    provider.name.as_str(),
+                    provider.protocol,
+                    provider.base_url.as_str(),
+                )
+            })
             .collect();
         assert_eq!(
             seeded,
@@ -1086,11 +1113,21 @@ mod tests {
     #[tokio::test]
     async fn base_urls_are_normalised_and_validated() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
-
-        update_provider(&pool, &id, None, None, Some("https://x.example/v1/"), None, None)
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
             .await
-            .expect("trailing slash is trimmed");
+            .unwrap();
+
+        update_provider(
+            &pool,
+            &id,
+            None,
+            None,
+            Some("https://x.example/v1/"),
+            None,
+            None,
+        )
+        .await
+        .expect("trailing slash is trimmed");
         assert_eq!(
             list_providers(&pool).await.unwrap()[0].base_url,
             "https://x.example/v1"
@@ -1101,24 +1138,30 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(update_provider(&pool, &id, Some(""), None, None, None, None)
-            .await
-            .is_err());
+        assert!(
+            update_provider(&pool, &id, Some(""), None, None, None, None)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     async fn a_provider_without_an_address_cannot_be_enabled() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
         update_provider(&pool, &id, None, None, Some(""), None, None)
             .await
             .unwrap();
 
         // Enabling means "requests may go here", so a blank address is refused
         // rather than accepted and failed at send time.
-        assert!(update_provider(&pool, &id, None, None, None, Some(true), None)
-            .await
-            .is_err());
+        assert!(
+            update_provider(&pool, &id, None, None, None, Some(true), None)
+                .await
+                .is_err()
+        );
 
         update_provider(
             &pool,
@@ -1137,11 +1180,21 @@ mod tests {
     #[tokio::test]
     async fn the_protocol_can_be_switched_on_an_existing_provider() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
-
-        update_provider(&pool, &id, None, Some(LlmProtocol::Gemini), None, None, None)
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
             .await
             .unwrap();
+
+        update_provider(
+            &pool,
+            &id,
+            None,
+            Some(LlmProtocol::Gemini),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             provider_protocol(&pool, &id).await.unwrap(),
             LlmProtocol::Gemini
@@ -1168,7 +1221,9 @@ mod tests {
         set_provider_header_names(&pool, &source, &["X-Api-Token".to_string()])
             .await
             .unwrap();
-        add_api_key(&pool, &source, "AIz••••abcd", None).await.unwrap();
+        add_api_key(&pool, &source, "AIz••••abcd", None)
+            .await
+            .unwrap();
         add_models(&pool, &source, &[model("gemini-3.5-flash")])
             .await
             .unwrap();
@@ -1214,7 +1269,10 @@ mod tests {
         // Models are copied — re-importing a catalogue by hand is the tedious part.
         assert_eq!(copy.models.len(), 1);
         assert_eq!(copy.models[0].model_id, "gemini-3.5-flash");
-        assert_ne!(copy.models[0].id, source_model_id, "the copy is its own row");
+        assert_ne!(
+            copy.models[0].id, source_model_id,
+            "the copy is its own row"
+        );
         // Exactly one model is the global default, so the copy must not contend.
         assert!(!copy.models[0].is_default);
 
@@ -1225,11 +1283,17 @@ mod tests {
     #[tokio::test]
     async fn header_names_round_trip_and_tolerate_junk() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
-
-        set_provider_header_names(&pool, &id, &["X-Api-Token".to_string(), "X-Org".to_string()])
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
             .await
             .unwrap();
+
+        set_provider_header_names(
+            &pool,
+            &id,
+            &["X-Api-Token".to_string(), "X-Org".to_string()],
+        )
+        .await
+        .unwrap();
         assert_eq!(
             list_providers(&pool).await.unwrap()[0].header_names,
             vec!["X-Api-Token".to_string(), "X-Org".to_string()]
@@ -1250,7 +1314,9 @@ mod tests {
     #[tokio::test]
     async fn api_keys_keep_their_order_and_status() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
 
         let first = add_api_key(&pool, &id, "sk-••••aaaa", Some("primary"))
             .await
@@ -1281,7 +1347,9 @@ mod tests {
     #[tokio::test]
     async fn a_new_model_defaults_to_a_tool_calling_chat_model() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Gemini).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Gemini)
+            .await
+            .unwrap();
         add_models(&pool, &id, &[model("gemini-3.5-flash")])
             .await
             .unwrap();
@@ -1300,7 +1368,9 @@ mod tests {
     #[tokio::test]
     async fn capabilities_and_token_limits_round_trip() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Gemini).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Gemini)
+            .await
+            .unwrap();
         add_models(
             &pool,
             &id,
@@ -1360,7 +1430,9 @@ mod tests {
     #[tokio::test]
     async fn adding_a_model_twice_is_ignored() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
 
         let first = add_models(&pool, &id, &[model("gpt-4o")]).await.unwrap();
         let second = add_models(&pool, &id, &[model("gpt-4o"), model("o3")])
@@ -1376,17 +1448,31 @@ mod tests {
         // The uniqueness constraint is per provider: two accounts on the same
         // gateway legitimately offer the same model.
         let pool = empty_pool().await;
-        let first = create_provider(&pool, "a", LlmProtocol::Openai).await.unwrap();
-        let second = create_provider(&pool, "b", LlmProtocol::Openai).await.unwrap();
+        let first = create_provider(&pool, "a", LlmProtocol::Openai)
+            .await
+            .unwrap();
+        let second = create_provider(&pool, "b", LlmProtocol::Openai)
+            .await
+            .unwrap();
 
-        assert_eq!(add_models(&pool, &first, &[model("gpt-4o")]).await.unwrap(), 1);
-        assert_eq!(add_models(&pool, &second, &[model("gpt-4o")]).await.unwrap(), 1);
+        assert_eq!(
+            add_models(&pool, &first, &[model("gpt-4o")]).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            add_models(&pool, &second, &[model("gpt-4o")])
+                .await
+                .unwrap(),
+            1
+        );
     }
 
     #[tokio::test]
     async fn only_one_model_is_default_across_providers() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
         add_models(&pool, &id, &[model("gpt-4o"), model("o3")])
             .await
             .unwrap();
@@ -1398,7 +1484,17 @@ mod tests {
             .collect();
         for model_id in &ids {
             update_model(
-                &pool, model_id, None, None, None, None, None, Some(true), None, None, None,
+                &pool,
+                model_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -1416,7 +1512,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_model_picks_an_override_model_by_row_id() {
         let pool = empty_pool().await;
-        let provider_id = create_provider(&pool, "gemini", LlmProtocol::Gemini).await.unwrap();
+        let provider_id = create_provider(&pool, "gemini", LlmProtocol::Gemini)
+            .await
+            .unwrap();
         // One default + one explicit model, so the override has something to
         // out-rank.
         add_models(
@@ -1462,8 +1560,9 @@ mod tests {
             .unwrap();
 
         // The row id names the non-default model directly.
-        let resolved =
-            crate::chat::session::resolve_model(&pool, &session_id, Some(&row_id)).await.unwrap();
+        let resolved = crate::chat::session::resolve_model(&pool, &session_id, Some(&row_id))
+            .await
+            .unwrap();
         assert_eq!(resolved.model_id, "gemini-4-flash");
         assert_eq!(resolved.provider_id, provider_id);
     }
@@ -1471,7 +1570,9 @@ mod tests {
     #[tokio::test]
     async fn deleting_a_provider_reports_every_orphaned_secret() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
         let key_id = add_api_key(&pool, &id, "sk-••••aaaa", None).await.unwrap();
         add_models(&pool, &id, &[model("gpt-4o")]).await.unwrap();
 
@@ -1495,7 +1596,9 @@ mod tests {
     #[tokio::test]
     async fn provider_target_reports_the_protocol_and_refuses_a_blank_address() {
         let pool = empty_pool().await;
-        let id = create_provider(&pool, "p", LlmProtocol::Gemini).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Gemini)
+            .await
+            .unwrap();
         update_provider(&pool, &id, None, None, Some(""), None, None)
             .await
             .unwrap();
@@ -1529,19 +1632,35 @@ mod tests {
     #[tokio::test]
     async fn writes_to_missing_rows_are_rejected() {
         let pool = empty_pool().await;
-        assert!(update_provider(&pool, "nope", Some("x"), None, None, None, None)
-            .await
-            .is_err());
+        assert!(
+            update_provider(&pool, "nope", Some("x"), None, None, None, None)
+                .await
+                .is_err()
+        );
         assert!(update_model(
-            &pool, "nope", None, Some("x"), None, None, None, None, None, None, None
+            &pool,
+            "nope",
+            None,
+            Some("x"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
         )
         .await
         .is_err());
         assert!(add_models(&pool, "nope", &[model("gpt-4o")]).await.is_err());
-        assert!(add_api_key(&pool, "nope", "sk-••••aaaa", None).await.is_err());
-        assert!(set_api_key_status(&pool, "nope", LlmApiKeyStatus::Healthy, None)
+        assert!(add_api_key(&pool, "nope", "sk-••••aaaa", None)
             .await
             .is_err());
+        assert!(
+            set_api_key_status(&pool, "nope", LlmApiKeyStatus::Healthy, None)
+                .await
+                .is_err()
+        );
         // Deleting what is not there is not an error — the end state matches.
         assert!(delete_model(&pool, "nope").await.is_ok());
         assert!(delete_api_key(&pool, "nope").await.is_ok());
@@ -1601,12 +1720,10 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query(
-            "create table llm_api_keys (id text primary key, endpoint_id text not null)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("create table llm_api_keys (id text primary key, endpoint_id text not null)")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("insert into llm_api_keys (id, endpoint_id) values ('k-old', 'ep-old')")
             .execute(&pool)
             .await
@@ -1617,7 +1734,9 @@ mod tests {
 
         // The rebuilt tables take the new columns, so a write that the old shape
         // rejected now succeeds.
-        let id = create_provider(&pool, "p", LlmProtocol::Openai).await.unwrap();
+        let id = create_provider(&pool, "p", LlmProtocol::Openai)
+            .await
+            .unwrap();
         add_api_key(&pool, &id, "sk-••••abcd", None)
             .await
             .expect("keys are scoped by provider now");

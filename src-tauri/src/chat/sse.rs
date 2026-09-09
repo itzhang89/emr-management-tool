@@ -139,7 +139,10 @@ mod tests {
     fn parses_anthropic_style_named_events() {
         let mut parser = SseParser::new();
         let events = parser.push("event: content_block_delta\ndata: {\"x\":1}\n\n");
-        assert_eq!(events, vec![event(Some("content_block_delta"), "{\"x\":1}")]);
+        assert_eq!(
+            events,
+            vec![event(Some("content_block_delta"), "{\"x\":1}")]
+        );
     }
 
     #[test]

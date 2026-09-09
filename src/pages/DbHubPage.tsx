@@ -111,7 +111,7 @@ export function DbHubPage({
                 visible={activeTab === value}
                 className="flex min-h-0 w-full flex-col"
               >
-                <ConnectionQueryTab connection={connection} />
+                <ConnectionQueryTab connection={connection} active={activeTab === value} />
               </PersistMount>
             </TabsContent>
           );

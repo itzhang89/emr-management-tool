@@ -6,12 +6,16 @@
 use crate::db::{dbhub, dbhub_driver, dbhub_engine, dbhub_tunnel, repository};
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnectionKind;
+use futures_util::TryStreamExt;
 use serde::Serialize;
 use sqlx::{Column, Row};
 
 /// Hard cap on rows returned to the UI per page — result pages fetch more via
 /// the token only if the driver exposes one (first cut: offset paging).
 const MAX_PAGE_ROWS: i64 = 500;
+// Bound route setup, dialing, and query execution so a stalled database or
+// network forward always returns an actionable Tauri error to the WebView.
+const DATABASE_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +54,28 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
         .ok_or_else(|| {
             AppError::validation("No active AWS account. Configure one in Settings first.")
         })
+}
+
+async fn complete_within<T>(
+    duration: std::time::Duration,
+    operation: &str,
+    work: impl std::future::Future<Output = AppResult<T>>,
+) -> AppResult<T> {
+    tokio::time::timeout(duration, work)
+        .await
+        .map_err(|_| {
+            AppError::validation(format!(
+                "Database {operation} timed out after {} seconds. Check the connection and network profile, then try again.",
+                duration.as_secs().max(1)
+            ))
+        })?
+}
+
+async fn complete_database_operation<T>(
+    operation: &str,
+    work: impl std::future::Future<Output = AppResult<T>>,
+) -> AppResult<T> {
+    complete_within(DATABASE_OPERATION_TIMEOUT, operation, work).await
 }
 
 /// The single execution path for read-only SQL. The gate runs first; the
@@ -103,7 +129,11 @@ async fn run_mysql(
     cap: usize,
     route_override: Option<(&str, u16)>,
 ) -> AppResult<(Vec<String>, Vec<serde_json::Value>, bool)> {
-    let url = dbhub_driver::mysql_url_routed(&shape.connection, shape.password.as_deref(), route_override)?;
+    let url = dbhub_driver::mysql_url_routed(
+        &shape.connection,
+        shape.password.as_deref(),
+        route_override,
+    )?;
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .acquire_timeout(dbhub_driver::TEST_TIMEOUT)
         .max_connections(1)
@@ -127,13 +157,28 @@ async fn run_mysql(
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
+    // Fetch one page plus a sentinel row. `fetch_all` reads a whole result set
+    // before the UI cap is applied, so a large query could appear pending even
+    // though the workspace will only render its first page.
+    let outcome: AppResult<Vec<sqlx::mysql::MySqlRow>> = async {
+        let mut rows = Vec::with_capacity(cap.saturating_add(1));
+        let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch(&mut *conn);
+        while rows.len() <= cap {
+            let Some(row) = stream
+                .try_next()
+                .await
+                .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?
+            else {
+                break;
+            };
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+    .await;
     pool.close().await;
 
-    Ok(project_mysql_rows(&rows, cap))
+    Ok(project_mysql_rows(&outcome?, cap))
 }
 
 fn project_mysql_rows(
@@ -173,7 +218,11 @@ async fn run_postgres(
     cap: usize,
     route_override: Option<(&str, u16)>,
 ) -> AppResult<(Vec<String>, Vec<serde_json::Value>, bool)> {
-    let url = dbhub_driver::postgres_url_routed(&shape.connection, shape.password.as_deref(), route_override)?;
+    let url = dbhub_driver::postgres_url_routed(
+        &shape.connection,
+        shape.password.as_deref(),
+        route_override,
+    )?;
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(dbhub_driver::TEST_TIMEOUT)
         .max_connections(1)
@@ -195,20 +244,37 @@ async fn run_postgres(
         .await
         .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?;
 
-    let outcome = sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)));
+    // Read one page plus a sentinel row instead of exhausting the result set
+    // before applying the UI limit.
+    let outcome: AppResult<Vec<sqlx::postgres::PgRow>> = async {
+        let mut rows = Vec::with_capacity(cap.saturating_add(1));
+        let mut stream = sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).fetch(&mut *conn);
+        while rows.len() <= cap {
+            let Some(row) = stream
+                .try_next()
+                .await
+                .map_err(|error| AppError::validation(dbhub_driver::describe_dial_error(&error)))?
+            else {
+                break;
+            };
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+    .await;
 
     // Close the read-only transaction either way — COMMIT on success,
     // ROLLBACK when the statement failed.
-    let _ = sqlx::query(if outcome.is_ok() { "commit" } else { "rollback" })
-        .execute(&mut *conn)
-        .await;
+    let _ = sqlx::query(if outcome.is_ok() {
+        "commit"
+    } else {
+        "rollback"
+    })
+    .execute(&mut *conn)
+    .await;
     pool.close().await;
 
-    let rows = outcome?;
-    Ok(project_postgres_rows(&rows, cap))
+    Ok(project_postgres_rows(&outcome?, cap))
 }
 
 fn project_postgres_rows(
@@ -312,7 +378,8 @@ pub(crate) async fn list_databases_routed(
         }
         _ => "select datname as name, null as kind from pg_database where not datistemplate",
     };
-    let result = execute_read_only_routed(shape, sql, MAX_PAGE_ROWS as usize, route_override).await?;
+    let result =
+        execute_read_only_routed(shape, sql, MAX_PAGE_ROWS as usize, route_override).await?;
     Ok(result
         .rows
         .iter()
@@ -341,10 +408,11 @@ pub(crate) async fn list_tables_routed(
             let _ = database;
             "select table_name as name, table_type as kind from information_schema.tables \
              where table_schema = 'public' order by table_name"
-            .to_string()
+                .to_string()
         }
     };
-    let result = execute_read_only_routed(shape, &sql, MAX_PAGE_ROWS as usize, route_override).await?;
+    let result =
+        execute_read_only_routed(shape, &sql, MAX_PAGE_ROWS as usize, route_override).await?;
     Ok(result
         .rows
         .iter()
@@ -366,8 +434,7 @@ mod tests {
 
     fn shape_for_gate_test() -> DbConnectionShape {
         DbConnectionShape {
-            pool: sqlx::sqlite::SqlitePool::connect_lazy("sqlite::memory:")
-                .expect("lazy pool"),
+            pool: sqlx::sqlite::SqlitePool::connect_lazy("sqlite::memory:").expect("lazy pool"),
             connection: DbConnection {
                 id: "c1".into(),
                 account_id: "acct-a".into(),
@@ -398,6 +465,20 @@ mod tests {
             .expect_err("must be blocked");
         assert!(error.message.contains("read-only gate"));
     }
+
+    #[tokio::test]
+    async fn database_operation_timeout_is_returned_to_the_caller() {
+        let error = complete_within(
+            std::time::Duration::from_millis(1),
+            "query",
+            std::future::pending::<AppResult<()>>(),
+        )
+        .await
+        .expect_err("the pending operation must time out");
+        assert!(error
+            .message
+            .contains("Database query timed out after 1 seconds"));
+    }
 }
 
 // --- Command-facing helpers --------------------------------------------------
@@ -412,13 +493,23 @@ pub async fn run_for_command(
     max_rows: Option<usize>,
 ) -> AppResult<DbQueryResult> {
     let shape = shape_for(app, connection_id, require_ai_enabled).await?;
-    // The forward (when a profile routes this connection) must outlive the
-    // driver dial; binding it to this scope does exactly that.
-    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
-    let override_target = forward
-        .as_ref()
-        .map(|(host, port, _)| (host.as_str(), *port));
-    execute_read_only_routed(&shape, sql, max_rows.unwrap_or(MAX_PAGE_ROWS as usize), override_target).await
+    complete_database_operation("query", async {
+        // The forward (when a profile routes this connection) must outlive the
+        // driver dial; binding it to this scope does exactly that.
+        let forward =
+            dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+        let override_target = forward
+            .as_ref()
+            .map(|(host, port, _)| (host.as_str(), *port));
+        execute_read_only_routed(
+            &shape,
+            sql,
+            max_rows.unwrap_or(MAX_PAGE_ROWS as usize),
+            override_target,
+        )
+        .await
+    })
+    .await
 }
 
 pub async fn catalog_databases_for_command(
@@ -426,11 +517,15 @@ pub async fn catalog_databases_for_command(
     connection_id: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
-    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
-    let override_target = forward
-        .as_ref()
-        .map(|(host, port, _)| (host.as_str(), *port));
-    list_databases_routed(&shape, override_target).await
+    complete_database_operation("database catalog request", async {
+        let forward =
+            dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+        let override_target = forward
+            .as_ref()
+            .map(|(host, port, _)| (host.as_str(), *port));
+        list_databases_routed(&shape, override_target).await
+    })
+    .await
 }
 
 pub async fn catalog_tables_for_command(
@@ -439,11 +534,15 @@ pub async fn catalog_tables_for_command(
     database: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
-    let forward = dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
-    let override_target = forward
-        .as_ref()
-        .map(|(host, port, _)| (host.as_str(), *port));
-    list_tables_routed(&shape, database, override_target).await
+    complete_database_operation("table catalog request", async {
+        let forward =
+            dbhub_tunnel::route_for_connection(&shape.pool, app, &shape.connection).await?;
+        let override_target = forward
+            .as_ref()
+            .map(|(host, port, _)| (host.as_str(), *port));
+        list_tables_routed(&shape, database, override_target).await
+    })
+    .await
 }
 
 async fn shape_for(
@@ -463,5 +562,9 @@ async fn shape_for(
     }
     let password =
         crate::secrets::read_optional_secret(app, &pool_secret_key(connection_id)).unwrap_or(None);
-    Ok(DbConnectionShape { pool, connection, password })
+    Ok(DbConnectionShape {
+        pool,
+        connection,
+        password,
+    })
 }

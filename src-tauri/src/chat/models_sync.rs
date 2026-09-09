@@ -302,7 +302,8 @@ mod tests {
 
     #[test]
     fn the_gemini_parser_drops_duplicates_and_rejects_the_other_shape() {
-        let body = r#"{"models":[{"name":"models/a"},{"name":"models/a"},{"name":"  "},{"name":"b"}]}"#;
+        let body =
+            r#"{"models":[{"name":"models/a"},{"name":"models/a"},{"name":"  "},{"name":"b"}]}"#;
         let models = parse_gemini_model_list(body).expect("parses");
         let ids: Vec<&str> = models.iter().map(|m| m.model_id.as_str()).collect();
         // An unprefixed name is taken as-is.
@@ -338,8 +339,11 @@ mod tests {
 
     #[test]
     fn http_failures_explain_the_likely_cause() {
-        let unauthorized =
-            describe_http_failure(LlmProtocol::Openai, 401, r#"{"error":{"message":"bad key"}}"#);
+        let unauthorized = describe_http_failure(
+            LlmProtocol::Openai,
+            401,
+            r#"{"error":{"message":"bad key"}}"#,
+        );
         assert!(unauthorized.contains("API key"), "{unauthorized}");
         assert!(unauthorized.contains("bad key"), "{unauthorized}");
 

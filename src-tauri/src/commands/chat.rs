@@ -152,8 +152,8 @@ pub async fn regenerate_chat_message(
 
     // Find the message being regenerated and the question it answered. A reply
     // can only be re-answered while that question still exists above it.
-    let target = crate::db::chat::get_message(&pool, &request.session_id, &request.message_id)
-        .await?;
+    let target =
+        crate::db::chat::get_message(&pool, &request.session_id, &request.message_id).await?;
     if target.role != crate::models::ChatRole::Assistant {
         return Err(AppError::validation(
             "Only an assistant message can be regenerated.",
@@ -166,9 +166,7 @@ pub async fn regenerate_chat_message(
         .rev()
         .find(|m| m.role == crate::models::ChatRole::User && m.seq <= target.seq)
         .cloned()
-        .ok_or_else(|| {
-            AppError::validation("There is no question to regenerate an answer for.")
-        })?;
+        .ok_or_else(|| AppError::validation("There is no question to regenerate an answer for."))?;
 
     // Regenerating on the *same* model overwrites the answer in place — the
     // numbered version the user is looking at is replaced, not added to. Only a
@@ -180,10 +178,12 @@ pub async fn regenerate_chat_message(
         .is_some_and(|picked| picked != target.model_id.as_deref().unwrap_or_default());
     // The version currently shown, captured before the row is discarded so an
     // in-place overwrite can drop it and a failed re-answer can restore it.
-    let previously_active = prior
-        .iter()
-        .find(|m| m.id == old_message_id)
-        .and_then(|m| m.versions.iter().find(|version| version.is_active).map(|v| v.id.clone()));
+    let previously_active = prior.iter().find(|m| m.id == old_message_id).and_then(|m| {
+        m.versions
+            .iter()
+            .find(|version| version.is_active)
+            .map(|v| v.id.clone())
+    });
 
     // The model must resolve before anything is discarded: if the picked model
     // cannot be found (e.g. its provider was removed), regenerating should leave
@@ -201,13 +201,8 @@ pub async fn regenerate_chat_message(
     crate::db::chat::delete_messages_from(&pool, &request.session_id, question.seq + 1).await?;
     assert_last_user(&pool, &request.session_id).await?;
 
-    let outcome = run_send_on_existing_turn(
-        &app,
-        &app_state,
-        &request.session_id,
-        model_override,
-    )
-    .await;
+    let outcome =
+        run_send_on_existing_turn(&app, &app_state, &request.session_id, model_override).await;
 
     // Whether the re-answer succeeded or left an error row, the answer loop
     // appended exactly one assistant message right after the question. Move the
@@ -223,12 +218,9 @@ pub async fn regenerate_chat_message(
             // tell whether this attempt actually landed.
             let fresh_answer_landed = replacement.versions.iter().any(|version| version.is_active);
 
-            let _ = crate::db::chat::reattach_message_versions(
-                &pool,
-                &old_message_id,
-                &replacement.id,
-            )
-            .await;
+            let _ =
+                crate::db::chat::reattach_message_versions(&pool, &old_message_id, &replacement.id)
+                    .await;
 
             if !fresh_answer_landed {
                 // The re-answer failed or came back empty — it must not eat the
@@ -249,12 +241,9 @@ pub async fn regenerate_chat_message(
                 // so its version row goes with it — the count stays put instead of
                 // the number marching up on every regenerate.
                 if let Some(active) = &previously_active {
-                    let _ = crate::db::chat::delete_message_version(
-                        &pool,
-                        &request.session_id,
-                        active,
-                    )
-                    .await;
+                    let _ =
+                        crate::db::chat::delete_message_version(&pool, &request.session_id, active)
+                            .await;
                 }
             }
             // A different model (@) that landed keeps every past answer, and the
@@ -293,8 +282,8 @@ pub async fn update_chat_message(
     request: ChatUpdateMessageRequest,
 ) -> AppResult<String> {
     let pool = crate::db::repository::pool().await?;
-    let target = crate::db::chat::get_message(&pool, &request.session_id, &request.message_id)
-        .await?;
+    let target =
+        crate::db::chat::get_message(&pool, &request.session_id, &request.message_id).await?;
     if target.role != crate::models::ChatRole::User {
         return Err(AppError::validation(
             "Only a question of yours can be edited.",
@@ -423,10 +412,10 @@ pub async fn delete_chat_message(request: ChatMessageIdRequest) -> AppResult<()>
 #[tauri::command]
 pub async fn delete_chat_messages_from(request: ChatMessageIdRequest) -> AppResult<u64> {
     let pool = crate::db::repository::pool().await?;
-    let target = crate::db::chat::get_message(&pool, &request.session_id, &request.message_id)
-        .await?;
-    let removed = crate::db::chat::delete_messages_from(&pool, &request.session_id, target.seq)
-        .await?;
+    let target =
+        crate::db::chat::get_message(&pool, &request.session_id, &request.message_id).await?;
+    let removed =
+        crate::db::chat::delete_messages_from(&pool, &request.session_id, target.seq).await?;
     // The removed rows' version children are no longer reachable.
     let _ = crate::db::chat::purge_orphan_message_versions(&pool, &request.session_id).await;
     Ok(removed)

@@ -137,9 +137,7 @@ pub async fn resolve_model(
     let session = sessions
         .into_iter()
         .find(|session| session.id == session_id)
-        .ok_or_else(|| {
-            AppError::validation(format!("Chat session {session_id} was not found."))
-        })?;
+        .ok_or_else(|| AppError::validation(format!("Chat session {session_id} was not found.")))?;
 
     let assistants = crate::db::chat::list_assistants(pool).await?;
     let assistant = assistants
@@ -830,8 +828,7 @@ async fn stream_once(
 
     let usage = match target.protocol {
         LlmProtocol::Openai => {
-            let body =
-                super::openai::build_request(&target.model_id, system_prompt, tools, turns);
+            let body = super::openai::build_request(&target.model_id, system_prompt, tools, turns);
             super::openai::stream_response(
                 &target.base_url,
                 &target.api_key,

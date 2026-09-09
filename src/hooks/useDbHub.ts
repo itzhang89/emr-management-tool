@@ -119,23 +119,23 @@ export function useRunDbQuery() {
 }
 
 /** Catalog tree: databases of the connection. */
-export function useDbDatabases(connectionId?: string) {
+export function useDbDatabases(connectionId?: string, active = true) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   return useQuery({
     queryKey: ["dbhub-databases", accountId, connectionId],
     queryFn: () => dbHubService.listDatabases(connectionId!),
-    enabled: Boolean(accountId && connectionId)
+    enabled: Boolean(active && accountId && connectionId)
   });
 }
 
 /** Catalog tree: tables of one database. */
-export function useDbTables(connectionId?: string, database?: string) {
+export function useDbTables(connectionId?: string, database?: string, active = true) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   return useQuery({
     queryKey: ["dbhub-tables", accountId, connectionId, database],
     queryFn: () => dbHubService.listTables(connectionId!, database!),
-    enabled: Boolean(accountId && connectionId && database)
+    enabled: Boolean(active && accountId && connectionId && database)
   });
 }
