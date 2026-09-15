@@ -8,7 +8,9 @@
 //! straight to the secrets store; they are never stored in SQLite and never
 //! echoed back.
 
-use crate::db::{dbhub, repository};
+use crate::db::dbhub::driver::DbDial;
+use crate::db::dbhub::{self, query};
+use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput, DbConnectionRef,
@@ -306,22 +308,24 @@ pub async fn test_db_connection(
 
     // Open the local forward when the profile routes this connection; the
     // driver then dials 127.0.0.1:<forward-port> instead of the literal host.
-    let forward = crate::db::dbhub_tunnel::route_for_connection(&pool, &app, &connection).await?;
-    let mut routed = connection.clone();
-    if let Some((host, port, _)) = forward.as_ref() {
-        routed.host = host.clone();
-        routed.port = *port as i64;
-    }
+    // `_forward` (not `_`) so it lives until this scope ends — dropping it
+    // would close the tunnel mid-dial.
+    let (target, _forward) =
+        crate::db::dbhub::tunnel::dial_target_for(&pool, &app, &connection).await?;
 
     let password =
         crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
             .unwrap_or(None);
 
+    let dial = DbDial::new(&connection, &target, password.as_deref());
     let elapsed = started.elapsed().as_millis() as u64;
-    match crate::db::dbhub_driver::test_connection(&routed, password).await {
-        Ok(version) => Ok(DbTestResult {
+    match crate::db::dbhub::driver::driver_for(connection.kind)
+        .initialize(&dial)
+        .await
+    {
+        Ok(info) => Ok(DbTestResult {
             ok: true,
-            message: format!("Connected. Server: {version}"),
+            message: format!("Connected. Server: {}", info.version),
             latency_ms: elapsed,
         }),
         Err(error) => Ok(DbTestResult {
@@ -474,7 +478,7 @@ pub async fn test_network_profile(
 
     let secret = crate::secrets::read_optional_secret(&app, &profile_secret_key(&profile_id))
         .unwrap_or(None);
-    match crate::db::dbhub_tunnel::probe_profile(&profile, move |_| Ok(secret)).await {
+    match crate::db::dbhub::tunnel::probe_profile(&profile, move |_| Ok(secret)).await {
         Ok(port) => {
             let (host, port_target) = match &profile.transport {
                 crate::models::NetworkTransport::SshTunnel { host, port, .. } => {
@@ -512,8 +516,8 @@ pub async fn test_network_profile(
 pub async fn run_db_query(
     app: AppHandle,
     request: crate::models::DbQueryRequest,
-) -> AppResult<crate::db::dbhub_query::DbQueryResult> {
-    crate::db::dbhub_query::run_for_command(
+) -> AppResult<query::DbQueryResult> {
+    query::run_for_command(
         &app,
         &request.connection_id,
         false,
@@ -527,19 +531,15 @@ pub async fn run_db_query(
 pub async fn list_db_databases(
     app: AppHandle,
     request: DbConnectionRef,
-) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
-    crate::db::dbhub_query::catalog_databases_for_command(&app, &request.connection_id).await
+) -> AppResult<Vec<dbhub::DbCatalogEntry>> {
+    dbhub::catalog::catalog_databases_for_command(&app, &request.connection_id).await
 }
 
 #[tauri::command]
 pub async fn list_db_tables(
     app: AppHandle,
     request: DbCatalogRequest,
-) -> AppResult<Vec<crate::db::dbhub_query::DbCatalogEntry>> {
-    crate::db::dbhub_query::catalog_tables_for_command(
-        &app,
-        &request.connection_id,
-        &request.database,
-    )
-    .await
+) -> AppResult<Vec<dbhub::DbCatalogEntry>> {
+    dbhub::catalog::catalog_tables_for_command(&app, &request.connection_id, &request.database)
+        .await
 }

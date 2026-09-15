@@ -6,8 +6,8 @@
 //! OS-assigned port, and every byte written there comes out at the target
 //! `host:port` (through the SSH server or the SOCKS proxy). The SQL driver
 //! then dials the local port with an unmodified URL — the wire protocol and
-//! the driver stay oblivious to the path, which keeps `dbhub_driver` and
-//! `dbhub_query` identical for direct and profiled connections.
+//! the driver stay oblivious to the path, so every driver in `dbhub::driver`
+//! serves direct and profiled connections with the same code.
 //!
 //! Lifetimes: a forward lives as long as the pool that dialed through it. The
 //! executors acquire a forward, run, and drop it — the tunnel's SSH session
@@ -21,6 +21,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use super::driver::DialTarget;
 use crate::error::{AppError, AppResult};
 use crate::models::{NetworkProfile, NetworkTransport};
 use russh::client::Msg;
@@ -519,17 +520,21 @@ impl russh::client::Handler for AcceptAnyHostKey {
     }
 }
 
-/// Resolve a connection's route: when it carries a network profile, open a
-/// local forward and return the rewritten (host, port) the driver must dial
-/// plus the forward itself — the caller keeps it alive for the duration of
-/// the run; dropping it closes the tunnel. `None` = direct connection.
-pub async fn route_for_connection(
+/// Resolve a connection's route: the address a driver must dial, plus the
+/// forward that makes it reachable (`None` when the connection goes straight
+/// to the database).
+///
+/// When the connection carries a network profile this opens the local forward
+/// and answers with the loopback port it bound. **The caller keeps the
+/// forward alive for the duration of the run** — dropping it closes the
+/// listener and the SSH session inside it.
+pub async fn dial_target_for(
     pool: &sqlx::SqlitePool,
     app: &tauri::AppHandle,
     connection: &crate::models::DbConnection,
-) -> AppResult<Option<(String, u16, LiveForward)>> {
+) -> AppResult<(DialTarget, Option<LiveForward>)> {
     let Some(profile_id) = &connection.network_profile_id else {
-        return Ok(None);
+        return Ok((DialTarget::direct(connection), None));
     };
     let profile = dbhub_profile(pool, &connection.account_id, profile_id).await?;
     let secret =
@@ -542,7 +547,8 @@ pub async fn route_for_connection(
         move |_| Ok(secret),
     )
     .await?;
-    Ok(Some(("127.0.0.1".to_string(), forward.port(), forward)))
+    let target = DialTarget::new("127.0.0.1", forward.port());
+    Ok((target, Some(forward)))
 }
 
 async fn dbhub_profile(

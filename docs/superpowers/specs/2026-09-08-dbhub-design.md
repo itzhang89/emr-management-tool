@@ -573,3 +573,44 @@ use」列出绑定连接、未绑走确认对话框。
 早期 DBHub 命令参数名是 `connection_id`/`profile_id`/`input` → Tauri 按名匹配不到。
 已全部改为 `DbConnectionRef`/`NetworkProfileRef`/`DbConnectionFlagsRequest`/
 `DbCatalogRequest` 单一 request，并加 serde 回归测试逐条演练前端 payload 形状。
+
+**驱动层重构：`DbDriver` trait + 每引擎一个模块（2026-09-15）。** 原实现把
+`match connection.kind` 散在查询、列库、列表三处，`run_mysql`/`run_postgres` 有
+~90% 重复（建池 → 只读事务 → 流式取行 → 投影），只读强制手段（MySQL 会话级 /
+PG 事务级）硬编码在 executor 里。重构为：
+
+```
+src-tauri/src/db/dbhub/
+  mod.rs      门面（store 的 CRUD 保持 `dbhub::get_connection` 等原扁平名）
+  store.rs    连接 + 网络 profile 持久化（原 dbhub.rs，内容未动）
+  driver/     mod.rs = trait + 注册表 + 共享类型；mysql/postgres/yellowbrick.rs
+  query.rs    执行编排（门禁 → 驱动 → JSON 页）
+  catalog.rs  列库/列表
+  gate.rs     只读 SQL 分类器（原 dbhub_engine.rs，内容未动）
+  session.rs  sqlx 共享机械（超时、URL、错误投影、行投影）
+  tunnel.rs   SSH/SOCKS 路由（原 dbhub_tunnel.rs，仅路由返回值改造）
+```
+
+`DbDriver` 接口是**驱动无关**的：签名里不出现任何 sqlx 类型，入参是
+`DbDial { connection, target, secret }`，出参是 `ServerInfo` /
+`DbCatalogEntry` / `QueryPage`（单元格一律 `serde_json::Value`）。这是为
+MSSQL/Oracle 留的门 —— sqlx 0.9 不支持这两者，`tiberius`/`oracle-rs` 只能实现
+一个不含 sqlx 类型的 trait。全仓库只剩 `driver_for()` 一处 `match kind`；
+新增引擎 = 一个模块 + 一个 arm。
+
+`DialTarget` 取代原来的 `Option<(&str, u16)>` route_override 透传：路由解析在
+`tunnel::dial_target_for` 一次完成（返回 target + 必须活到运行结束的 forward），
+驱动永远只看到"要拨哪儿"，不知道背后有没有隧道。
+
+**修掉一个真实缺陷：`pool.close()` 死锁。** 原 `run_mysql`/`run_postgres` 在
+`conn` 仍是 checked-out 的状态下调用 `pool.close().await` —— sqlx 的
+`Pool::close()` 会先 `semaphore.acquire(max_connections)`，即等待所有连接归还，
+而 `conn` 要到函数作用域结束才 drop。结果是**每次查询都卡满 30 秒
+`DATABASE_OPERATION_TIMEOUT` 后报超时**，而不是返回行。现已显式 `drop(conn)`
+再 close。（sqlite 探针测试实证：close 在有 checked-out 连接时确实阻塞。）
+
+**已知缺口（本次未改，保持行为不变）：MCP 的 `sql_query_text` 不经网络 profile。**
+`dbhub_query::run_for_command` 会开本地转发，而 mcp 路径直接
+`DialTarget::direct(&shape.connection)` —— 配了 Network Profile 的连接在 AI 工具
+侧拨的是字面 host。修法是调用 `tunnel::dial_target_for`（该路径已持有 app handle
+与 secrets 权限），但那是行为变更，留待确认。

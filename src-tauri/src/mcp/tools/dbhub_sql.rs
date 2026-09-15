@@ -6,14 +6,16 @@
 //! rule `list_accounts` follows). `sql_query_text` re-resolves the connection
 //! at call time inside the active account, refuses disabled ones and foreign
 //! ids alike, then runs the statement through the read-only gate + read-only
-//! transaction in `dbhub_query`. Both routes write an audit row through the
+//! session in `dbhub::query`. Both routes write an audit row through the
 //! server's `run_tool`, so Chat-driven and agent-driven calls are audited
 //! exactly once like every other tool.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{dbhub, dbhub_query, repository};
+use crate::db::dbhub::driver::DialTarget;
+use crate::db::dbhub::{self, query};
+use crate::db::repository;
 use crate::error::{AppError, AppResult};
 
 /// Hard cap on rows one tool call may return (design: protect the model's
@@ -120,7 +122,11 @@ pub async fn sql_query_text(
     // here rather than at advertisement time (tools are static; data is not).
     let shape = resolve_shape(app, &args.connection_id).await?;
 
-    let result = dbhub_query::execute_read_only(&shape, &args.sql, max_rows).await?;
+    // Dialed directly: unlike the workspace commands, this path does not open
+    // a network forward, so a connection behind a Network Profile is not
+    // reachable from here.
+    let target = DialTarget::direct(&shape.connection);
+    let result = query::execute_read_only(&shape, &target, &args.sql, max_rows).await?;
 
     // Text-size honesty: serialize the page once; if the model-facing text
     // overshoots the cap it is cut at a char boundary and marked — the model
@@ -185,7 +191,7 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
 async fn resolve_shape(
     app: &tauri::AppHandle,
     connection_id: &str,
-) -> AppResult<dbhub_query::DbConnectionShape> {
+) -> AppResult<query::DbConnectionShape> {
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
     let connection = dbhub::get_connection(&pool, &account_id, connection_id)
@@ -203,7 +209,7 @@ async fn resolve_shape(
     let password =
         crate::secrets::read_optional_secret(app, &format!("db/{connection_id}/password"))
             .unwrap_or(None);
-    Ok(dbhub_query::DbConnectionShape {
+    Ok(query::DbConnectionShape {
         pool: repository::pool().await?,
         connection,
         password,

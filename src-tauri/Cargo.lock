@@ -2065,6 +2065,7 @@ name = "emr-management-tool"
 version = "0.1.0"
 dependencies = [
  "apple-native-keyring-store",
+ "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-athena",
