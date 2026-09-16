@@ -22,9 +22,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use super::driver::DialTarget;
+use super::session::CONNECT_TIMEOUT;
 use crate::error::{AppError, AppResult};
 use crate::models::{NetworkProfile, NetworkTransport};
 use russh::client::Msg;
+use russh::keys::HashAlg;
 use russh::ChannelStream;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_socks::tcp::socks5::Socks5Stream;
@@ -125,9 +127,16 @@ async fn open_forward_inner(
                 private_key_path.as_deref(),
                 secret,
             )?;
+            // Dial and authenticate *here*, before a port is handed back. The
+            // accept loop used to do it asynchronously and swallow the failure
+            // (`Err(_) => return`): a rejected key or an unreachable bastion
+            // then reached the user as the driver's "Connection reset by
+            // peer", which reads like a network fault and hides the one line
+            // that says what actually happened.
+            let session = Arc::new(connect_ssh(&endpoint).await?);
             let target_host = target_host.to_string();
             tokio::spawn(async move {
-                forward_ssh(listener, endpoint, (target_host, target_port)).await;
+                forward_ssh(listener, session, (target_host, target_port)).await;
             })
         }
         NetworkTransport::Socks5 {
@@ -164,19 +173,18 @@ async fn open_forward_inner(
     })
 }
 
-/// Accept loop: every inbound connection is relayed through the SSH server.
-/// Runs until the listener is dropped (when `LiveForward` is). The ssh
-/// endpoint + credentials arrive pre-resolved: `ssh-config` alias mode has
-/// already been expanded into concrete (host, port, user, key) by
-/// `resolve_ssh_endpoint` before this runs.
-async fn forward_ssh(listener: TcpListener, endpoint: SshEndpoint, target: (String, u16)) {
-    // One SSH session serves every forward connection while the listener
-    // lives; losing it mid-flight tears down the relays, which the SQL pool
-    // reports as a broken connection — the honest failure mode.
-    let session = match connect_ssh(&endpoint).await {
-        Ok(session) => Arc::new(session),
-        Err(_) => return, // the dialing executor reports the failure itself
-    };
+/// Accept loop: every inbound connection is relayed through the SSH session
+/// the caller established. Runs until the listener is dropped (when
+/// `LiveForward` is).
+///
+/// One SSH session serves every forward connection while the listener lives;
+/// losing it mid-flight tears down the relays, which the SQL pool reports as
+/// a broken connection — the honest failure mode.
+async fn forward_ssh(
+    listener: TcpListener,
+    session: Arc<russh::client::Handle<AcceptAnyHostKey>>,
+    target: (String, u16),
+) {
     loop {
         let Ok((mut inbound, _)) = listener.accept().await else {
             return;
@@ -451,8 +459,23 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
-/// Authenticate and connect, dispatching on the resolved auth variant.
+/// Authenticate and connect, bounded like every other dial: a bastion that
+/// accepts the SYN and then goes quiet must not hold the caller — or the
+/// profile test button — open indefinitely.
 async fn connect_ssh(endpoint: &SshEndpoint) -> AppResult<russh::client::Handle<AcceptAnyHostKey>> {
+    tokio::time::timeout(CONNECT_TIMEOUT, dial_ssh(endpoint))
+        .await
+        .map_err(|_| {
+            AppError::validation(format!(
+                "SSH connect to {}:{} timed out after {} seconds. Check the host, port and that the network profile is reachable.",
+                endpoint.host,
+                endpoint.port,
+                CONNECT_TIMEOUT.as_secs()
+            ))
+        })?
+}
+
+async fn dial_ssh(endpoint: &SshEndpoint) -> AppResult<russh::client::Handle<AcceptAnyHostKey>> {
     let config = Arc::new(russh::client::Config::default());
     let mut session = russh::client::connect(
         config,
@@ -482,10 +505,27 @@ async fn connect_ssh(endpoint: &SshEndpoint) -> AppResult<russh::client::Handle<
                         "Could not load the private key at {key_path}: {error}. Check the path and passphrase."
                     ))
                 })?;
+            // An RSA key signed with no hash named is signed `ssh-rsa`, i.e.
+            // SHA-1 — which OpenSSH has shipped disabled by default since 8.8.
+            // Leave it unnamed and a perfectly good key looks unauthorized
+            // against every modern server while other SSH clients, which
+            // negotiate the hash, connect fine. Ask the server what it takes.
+            let hash_alg = if key.algorithm().is_rsa() {
+                match session.best_supported_rsa_hash().await {
+                    // Some(Some(alg)) → use it; Some(None) → the server's only
+                    // option is the legacy hash, so name nothing.
+                    Ok(Some(hash)) => hash,
+                    // No `server-sig-algs` extension: assume rsa-sha2-512,
+                    // which every OpenSSH since 7.2 accepts.
+                    _ => Some(HashAlg::Sha512),
+                }
+            } else {
+                None
+            };
             session
                 .authenticate_publickey(
                     &endpoint.username,
-                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
                 )
                 .await
                 .map_err(|error| AppError::validation(format!("SSH key auth failed: {error}")))?
@@ -561,9 +601,10 @@ async fn dbhub_profile(
         .ok_or_else(|| AppError::validation("The connection's network profile no longer exists."))
 }
 
-/// Probe path for the profile test button: bind + open a relay path to the
-/// profile's own host:port. Only proves the local bind and the accept loop —
-/// the far-side handshake failure surfaces when a connection actually dials.
+/// Probe path for the profile test button: bind, then open a relay path to the
+/// profile's own host:port — which includes dialing and authenticating the SSH
+/// leg, so a rejected key or an unreachable bastion fails *here*, in those
+/// words, rather than at the first query as a driver-level socket reset.
 pub async fn probe_profile(
     profile: &NetworkProfile,
     resolve_secret: impl FnOnce(&str) -> AppResult<Option<String>>,
@@ -662,20 +703,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn probe_profile_returns_a_live_port() {
+    async fn probe_profile_reports_an_unreachable_bastion_in_its_own_words() {
         let mut profile = ssh_profile();
-        // Point at a local SSH-ish port that is closed; the probe still binds
-        // and answers with its port — far-side handshake is not its scope.
         profile.transport = NetworkTransport::SshTunnel {
             host: "127.0.0.1".into(),
-            port: 1,
+            port: 1, // closed
             username: "root".into(),
             auth_method: "password".into(),
             private_key_path: None,
             credentials_saved: false,
         };
-        let port = probe_profile(&profile, |_| Ok(None)).await.expect("probe");
-        assert!(port > 0);
+        // The probe dials the SSH leg, so an unreachable bastion fails here —
+        // naming the bastion — instead of surfacing later as the driver's
+        // "Connection reset by peer" against a loopback port.
+        let error = probe_profile(&profile, |_| Ok(None))
+            .await
+            .expect_err("the probe must fail");
+        assert!(
+            error.message.contains("SSH connect to 127.0.0.1:1 failed"),
+            "{error:?}"
+        );
     }
 
     #[test]

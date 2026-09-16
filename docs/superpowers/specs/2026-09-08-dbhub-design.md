@@ -650,3 +650,46 @@ profile 名），配 `Display`；`session::dial_error` 统一产出
 `Could not reach 127.0.0.1:54321 (via Network Profile "Bastion"): Connection refused (os error 61)`，
 整体仍限长 300 字符且目标在前（保证必存）。仅 `connect()` 失败走这条；`initialize` 的
 取版本失败（如 Access denied）保持原样，因为驱动自身的报错已经说清了。
+
+**RSA 私钥 SSH 认证失败：`ssh-rsa`(SHA-1) 被现代服务器拒绝（2026-09-16）。**
+真机现象：新建连接走 `jumpbox-prod-region` 这个 ssh-config 别名 profile，报
+`Could not reach 127.0.0.1:51109 (via Network Profile "jumpbox-prod-region"):
+error communicating with database: Connection reset by peer (os error 54)`；同一套密钥 +
+跳板机在 DBeaver 里正常。
+
+根因是**签名算法**，不是网络也不是密钥：`connect_ssh` 里写的是
+`PrivateKeyWithHashAlg::new(Arc::new(key), None)`，而 russh 自己的文档写得很清楚
+（`russh-0.52.1/src/keys/key.rs:66-77`）：**「For RSA, passing `None` is mapped to the
+legacy `sha-rsa` (SHA-1)」**。该用户的 key 是 RSA（`ssh-keygen -y -f key -P ""` 输出
+`ssh-rsa`，且未加密，所以 `credentialsSaved:false` 并不是问题），而 AWS 上的 Ubuntu
+跳板机跑的是 OpenSSH ≥ 8.8 —— **默认已禁用 `ssh-rsa`**。DBeaver 能通是因为它的 SSH
+库会协商 `rsa-sha2-512`。
+
+修法：非 RSA 密钥不查询（避免白等）；RSA 则用 russh 的公开 API
+`Handle::best_supported_rsa_hash()` 按服务器广播的 `server-sig-algs`(RFC 8308) 选哈希：
+
+```rust
+let hash_alg = if key.algorithm().is_rsa() {
+    match session.best_supported_rsa_hash().await {
+        Ok(Some(hash)) => hash,          // Some(Some(alg)) 用具名哈希；Some(None) 说明服务器只认旧哈希
+        _ => Some(HashAlg::Sha512),      // 没有该扩展：按文档建议赌 rsa-sha2-512
+    }
+} else { None };
+```
+
+该 API 内部 `await_extension_info` 自带 1 秒超时（`client/mod.rs:545`），不会挂住。
+
+**同时修掉「错误被吞」——它才是这次绕远路的原因。** `forward_ssh` 原本在
+spawn 出来的 accept loop 里才 `connect_ssh`，失败就 `Err(_) => return`，注释还写着
+「the dialing executor reports the failure itself」——**实际并不会**：任务返回后 listener
+被 drop，驱动连到 127.0.0.1 要么被 RST、要么在 backlog 里被重置，最终报出来的就是那句
+极具误导性的 `Connection reset by peer`，把「密钥被拒/跳板机连不上」伪装成网络故障。
+现在**先建会话、拿到端口之前就认证**，失败直接以原文冒泡（如
+`SSH connect to 127.0.0.1:1 failed: Connection refused (os error 61)`）。顺带给 SSH 拨号
+加上 `CONNECT_TIMEOUT` 上限，免得对端只收 SYN 不回时把调用方（和 Profile 测试按钮）挂住。
+
+**连带影响（语义变更，需知悉）：profile 的 Test 按钮现在真的会拨 SSH 了。** 因为
+`probe_forward` 与 `open_forward` 共用同一条路径，原先「只证明本地能 bind、不碰对端」
+（§13 早前记录的口径）不再成立 —— 现在密钥被拒、跳板机不可达都会在 Test 阶段就用明确
+文案失败。这是好事（正是本次踩的坑），但原 `probe_profile_returns_a_live_port` 测试的
+前提被推翻，已改写为 `probe_profile_reports_an_unreachable_bastion_in_its_own_words`。

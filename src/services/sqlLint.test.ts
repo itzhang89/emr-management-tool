@@ -77,7 +77,7 @@ STORED AS INPUTFORMAT
   'org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat'
 OUTPUTFORMAT
   'org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat'
-LOCATION 's3://manila-bigdata-etl/spark-warehouse/test.db/job_execution_history'`;
+LOCATION 's3://region-bigdata-etl/spark-warehouse/test.db/job_execution_history'`;
 
     expect(analyzeDdlSyntax(sql)).toEqual([]);
     expect(validateSqlForRun(sql).ok).toBe(true);
