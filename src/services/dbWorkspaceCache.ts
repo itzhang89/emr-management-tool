@@ -38,6 +38,8 @@ export interface DbWorkspaceState {
    * saying "this engine has no schema level", which is where MySQL lands.
    */
   selectedSchema?: string;
+  /** Whether the catalog pane is out of the way. */
+  catalogCollapsed?: boolean;
 }
 
 function storageKey(accountId: string, connectionId: string) {

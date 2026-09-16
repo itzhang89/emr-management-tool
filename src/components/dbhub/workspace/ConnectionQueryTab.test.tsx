@@ -272,6 +272,20 @@ describe("ConnectionQueryTab", () => {
     expect(screen.queryByRole("button", { name: /^Close / })).not.toBeInTheDocument();
   });
 
+  it("hides the catalog and brings it back", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "customers" });
+    await user.click(screen.getByRole("button", { name: "Collapse catalog panel" }));
+
+    // Out of the way, with only the way back left behind.
+    expect(screen.queryByRole("button", { name: "customers" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Expand catalog panel" }));
+
+    expect(await screen.findByRole("button", { name: "customers" })).toBeInTheDocument();
+  });
+
   it("steps back one level at a time", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "analytics" }));

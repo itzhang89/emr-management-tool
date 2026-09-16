@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Database, Folder, Loader2, Play, Plus, RefreshCw, Table2 } from "lucide-react";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Database, Folder, Loader2, PanelLeftOpen, Play, Plus, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -57,6 +57,8 @@ export function ConnectionQueryTab({
   const [activeResultId, setActiveResultId] = useState<string>();
   const [hydrated, setHydrated] = useState(false);
   const [running, setRunning] = useState(false);
+  const [catalogCollapsed, setCatalogCollapsed] = useState(false);
+  const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
 
   // Rehydrate once per mount+account: switching AWS accounts swaps the cache
   // key space, so each account's draft is restored independently. The tree
@@ -72,6 +74,7 @@ export function ConnectionQueryTab({
     // immediately (user request, mirroring how Glue restores a catalog view).
     setSelectedDatabase(state.selectedDatabase ?? connection.database);
     setSelectedSchema(state.selectedSchema);
+    setCatalogCollapsed(state.catalogCollapsed ?? false);
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, connection.id]);
@@ -84,9 +87,10 @@ export function ConnectionQueryTab({
       activeResultTabId: activeResultId,
       resultTabs,
       selectedDatabase,
-      selectedSchema
+      selectedSchema,
+      catalogCollapsed
     });
-  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema]);
+  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema, catalogCollapsed]);
 
   const databases = useDbDatabases(connection.id, active);
   const schemas = useDbSchemas(connection.id, selectedDatabase, active);
@@ -179,6 +183,27 @@ export function ConnectionQueryTab({
     [resultTabs, running, activeResult]
   );
 
+  const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = catalogPaneWidth;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      setCatalogPaneWidth(clampPaneWidth(startWidth + moveEvent.clientX - startX));
+    };
+    const handleUp = () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
   const handleSelectTable = (table: string) => {
     // Qualify by schema, not by database: Postgres rejects `database.table`
     // outright, and on MySQL the schema *is* the database, so the qualifier is
@@ -190,7 +215,31 @@ export function ConnectionQueryTab({
 
   return (
     <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
-      <CatalogPane
+      {catalogCollapsed ? (
+        <div className="flex shrink-0 flex-col items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-7"
+                aria-label="Expand catalog panel"
+                onClick={() => setCatalogCollapsed(false)}
+              >
+                <PanelLeftOpen className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Show catalog</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : (
+        <>
+          <section
+            className="flex min-h-0 shrink-0 flex-col overflow-hidden"
+            style={{ width: catalogPaneWidth }}
+          >
+            <CatalogPane
         databases={databases.data ?? []}
         schemas={schemaList}
         tables={tables.data ?? []}
@@ -210,8 +259,22 @@ export function ConnectionQueryTab({
           if (selectedSchema !== undefined) setSelectedSchema(undefined);
           else setSelectedDatabase(undefined);
         }}
-        onRefresh={refreshCatalog}
-      />
+              onRefresh={refreshCatalog}
+              onCollapse={() => setCatalogCollapsed(true)}
+            />
+          </section>
+
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuenow={catalogPaneWidth}
+            className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+            onMouseDown={beginCatalogPaneResize}
+          >
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border group-hover:bg-primary/50" />
+          </div>
+        </>
+      )}
       <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex shrink-0 items-center gap-2">
           <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -302,6 +365,12 @@ function dialectFor(kind: DbConnection["kind"]) {
   return kind === "mysql" ? MySQL : PostgreSQL;
 }
 
+/** How narrow and how wide the catalog pane may be dragged. */
+const MIN_CATALOG_WIDTH = 220;
+const MAX_CATALOG_WIDTH = 720;
+const clampPaneWidth = (width: number) =>
+  Math.min(MAX_CATALOG_WIDTH, Math.max(MIN_CATALOG_WIDTH, width));
+
 /** How many result tabs a workspace keeps before the oldest rolls off. */
 const MAX_RESULT_TABS = 10;
 
@@ -329,7 +398,8 @@ function CatalogPane({
   onSelectSchema,
   onSelectTable,
   onBack,
-  onRefresh
+  onRefresh,
+  onCollapse
 }: {
   databases: Array<{ name: string; kind?: string }>;
   schemas: Array<{ name: string; kind?: string }>;
@@ -350,6 +420,7 @@ function CatalogPane({
   /** Step back one level: schema → database → all databases. */
   onBack: () => void;
   onRefresh: () => void;
+  onCollapse: () => void;
 }) {
   const [filter, setFilter] = useState("");
 
@@ -388,6 +459,7 @@ function CatalogPane({
         filterPlaceholder={inDatabase ? "Filter tables" : "Filter databases"}
         onRefresh={onRefresh}
         refreshing={refreshing}
+        onCollapse={onCollapse}
       />
 
       <div className="min-h-0 flex-1 overflow-auto rounded-md border text-xs">
