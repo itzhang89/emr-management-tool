@@ -146,10 +146,14 @@ pub(crate) async fn read_page(
         .await
         .map_err(|error| AppError::validation(session::describe_error(&error)))?;
 
-    sqlx::query("begin read only")
-        .execute(&mut *conn)
-        .await
-        .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+    sqlx::query(if dial.writable {
+        "begin"
+    } else {
+        "begin read only"
+    })
+    .execute(&mut *conn)
+    .await
+    .map_err(|error| AppError::validation(session::describe_error(&error)))?;
 
     let rows = session::fetch_capped(
         sqlx::query(sqlx::AssertSqlSafe(sql.to_string())),
@@ -206,6 +210,7 @@ mod tests {
             show_as_tab: false,
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            allow_writes: false,
             sort_order: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

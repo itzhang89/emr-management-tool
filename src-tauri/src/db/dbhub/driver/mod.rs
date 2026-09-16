@@ -110,6 +110,13 @@ pub struct DbDial<'a> {
     /// Read this database instead of the connection's own — the catalog tree's
     /// selection. See [`DbDial::reading`].
     pub database: Option<&'a str>,
+    /// Whether this session may write.
+    ///
+    /// `false` everywhere by default, and always for the AI paths: a driver
+    /// that cannot write is what makes "the model cannot change your database"
+    /// a property of the code rather than of a setting. Only a connection the
+    /// user explicitly opted into carries `true`.
+    pub writable: bool,
 }
 
 impl<'a> DbDial<'a> {
@@ -123,7 +130,14 @@ impl<'a> DbDial<'a> {
             target,
             secret,
             database: None,
+            writable: false,
         }
+    }
+
+    /// The same dial, in a session that may write.
+    pub fn writable(mut self) -> Self {
+        self.writable = true;
+        self
     }
 
     /// The same dial, reading another database.
@@ -138,6 +152,7 @@ impl<'a> DbDial<'a> {
             target: self.target,
             secret: self.secret,
             database: Some(database),
+            writable: self.writable,
         }
     }
 
@@ -296,6 +311,7 @@ mod tests {
             show_as_tab: false,
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            allow_writes: false,
             sort_order: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

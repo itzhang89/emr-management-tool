@@ -130,12 +130,16 @@ pub async fn sql_query_text(
     // One page: the tool's caller narrows the query rather than paging
     // through it, which keeps the model's context bounded.
     // The tool call runs to its own timeout; nothing stops it mid-flight.
-    let result = query::execute_read_only(
+    // `writable: false` is hardcoded here and not read from the connection:
+    // however the user has configured it for their own typing, the model never
+    // gets a session that can write.
+    let result = query::execute(
         &shape,
         &target,
         &args.sql,
         max_rows,
         0,
+        false,
         &QueryCancellation::never(),
     )
     .await?;

@@ -21,6 +21,7 @@ const createConnection = vi.fn().mockResolvedValue({
   showAsTab: true,
   enabledForAi: true,
   aiReadOnlyPolicy: "select-only",
+  allowWrites: false,
   sortOrder: 0
 });
 // Echo the id back the way the command does — a test that follows a create
@@ -196,6 +197,7 @@ describe("ConnectionFormDialog", () => {
         showAsTab: false,
         enabledForAi: true,
         aiReadOnlyPolicy: "select-only",
+        allowWrites: false,
         sortOrder: 0,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"
@@ -234,6 +236,7 @@ describe("ConnectionFormDialog", () => {
         showAsTab: false,
         enabledForAi: true,
         aiReadOnlyPolicy: "select-only",
+        allowWrites: false,
         sortOrder: 0,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"

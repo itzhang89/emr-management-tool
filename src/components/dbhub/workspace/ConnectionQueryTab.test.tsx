@@ -102,7 +102,7 @@ vi.stubGlobal("localStorage", {
   key: () => null
 });
 
-function connection(overrides: Partial<{ database?: string; kind: string }> = {}) {
+function connection(overrides: Partial<{ database?: string; kind: string; allowWrites: boolean }> = {}) {
   return {
     id: "c1",
     accountId: "acct-a",
@@ -115,6 +115,7 @@ function connection(overrides: Partial<{ database?: string; kind: string }> = {}
     showAsTab: true,
     enabledForAi: true,
     aiReadOnlyPolicy: "select-only",
+    allowWrites: false,
     sortOrder: 0,
     createdAt: "2026-09-08T00:00:00Z",
     updatedAt: "2026-09-08T00:00:00Z",
@@ -409,6 +410,15 @@ describe("ConnectionQueryTab", () => {
     // Keyed by account *and* connection: SQL is dialect-specific, so one
     // connection's history is not another's.
     expect(storage["emr-eks:dbhub-sql-history:acct-a:conn:c1"]).toContain("SELECT 1;");
+  });
+
+  it("says whether this connection may write", async () => {
+    renderWorkspace(connection({ allowWrites: true }));
+
+    // The badge is the only place the workspace says which side of the line
+    // the statement about to run is on.
+    expect(await screen.findByText("Write")).toBeInTheDocument();
+    expect(screen.getByText(/writes allowed here/)).toBeInTheDocument();
   });
 
   it("steps back one level at a time", async () => {

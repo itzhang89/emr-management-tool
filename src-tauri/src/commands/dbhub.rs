@@ -117,6 +117,9 @@ pub async fn create_db_connection(
         ai_read_only_policy: request
             .ai_read_only_policy
             .unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
+        // Off unless asked for: a connection that can write is one that can be
+        // written to by mistake.
+        allow_writes: request.allow_writes,
         sort_order: request.sort_order.unwrap_or_else(|| 0),
         created_at: now,
         updated_at: now,
@@ -192,6 +195,7 @@ pub async fn update_db_connection(
             show_as_tab: request.show_as_tab,
             enabled_for_ai: request.enabled_for_ai,
             ai_read_only_policy: request.ai_read_only_policy,
+            allow_writes: request.allow_writes,
             sort_order: request.sort_order,
         },
     )
@@ -237,6 +241,7 @@ pub async fn set_db_connection_flags(
             show_as_tab: request.flags.show_as_tab,
             enabled_for_ai: request.flags.enabled_for_ai,
             ai_read_only_policy: request.flags.ai_read_only_policy,
+            allow_writes: request.flags.allow_writes,
             sort_order: None,
         },
     )
@@ -352,6 +357,7 @@ pub async fn test_db_connection_draft(
         show_as_tab: false,
         enabled_for_ai: false,
         ai_read_only_policy: crate::models::DbReadOnlyPolicy::SelectOnly,
+        allow_writes: false,
         sort_order: 0,
         created_at: now,
         updated_at: now,

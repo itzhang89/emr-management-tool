@@ -31,6 +31,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             network_profile_id text,
             show_as_tab integer not null default 0,
             enabled_for_ai integer not null default 1,
+            allow_writes integer not null default 0,
             ai_read_only_policy text not null default 'select-only',
             sort_order integer not null default 0,
             created_at text not null,
@@ -54,7 +55,34 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .await
             .map_err(|error| AppError::storage(error.to_string()))?;
     }
+
+    // Columns added after the table shipped. `create table if not exists`
+    // leaves an existing database exactly as it was, so a column that arrives
+    // later arrives here or not at all.
+    for (column, definition) in [(
+        "allow_writes",
+        "alter table db_connections add column allow_writes integer not null default 0",
+    )] {
+        if !connection_column_exists(pool, column).await? {
+            sqlx::query(definition)
+                .execute(pool)
+                .await
+                .map_err(|error| AppError::storage(error.to_string()))?;
+        }
+    }
     Ok(())
+}
+
+/// Whether `db_connections` already has a column — the guard that keeps the
+/// `alter table` above from failing on a database that already ran it.
+async fn connection_column_exists(pool: &SqlitePool, column: &str) -> AppResult<bool> {
+    let columns = sqlx::query("pragma table_info(db_connections)")
+        .fetch_all(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == column))
 }
 
 // --- Connections ------------------------------------------------------------
@@ -100,6 +128,7 @@ fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> 
         network_profile_id: row.get("network_profile_id"),
         show_as_tab: row.get::<i64, _>("show_as_tab") != 0,
         enabled_for_ai: row.get::<i64, _>("enabled_for_ai") != 0,
+        allow_writes: row.get::<i64, _>("allow_writes") != 0,
         ai_read_only_policy: policy_from_column(&row.get::<String, _>("ai_read_only_policy"))?,
         sort_order: row.get::<i64, _>("sort_order"),
         created_at: crate::db::parse_timestamp(&row.get::<String, _>("created_at")),
@@ -143,8 +172,9 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     sqlx::query(
         "insert into db_connections
             (id, account_id, kind, name, host, port, database, username, network_profile_id,
-             show_as_tab, enabled_for_ai, ai_read_only_policy, sort_order, created_at, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+             show_as_tab, enabled_for_ai, ai_read_only_policy, allow_writes,
+             sort_order, created_at, updated_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
     )
     .bind(&connection.id)
     .bind(&connection.account_id)
@@ -158,6 +188,7 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     .bind(connection.show_as_tab as i64)
     .bind(connection.enabled_for_ai as i64)
     .bind(policy_column(connection.ai_read_only_policy))
+    .bind(connection.allow_writes as i64)
     .bind(connection.sort_order)
     .bind(connection.created_at.to_rfc3339())
     .execute(pool)
@@ -180,6 +211,7 @@ pub struct ConnectionPatch<'a> {
     pub show_as_tab: Option<bool>,
     pub enabled_for_ai: Option<bool>,
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    pub allow_writes: Option<bool>,
     pub sort_order: Option<i64>,
 }
 
@@ -247,6 +279,9 @@ pub async fn update_connection(
     }
     if let Some(value) = patch.show_as_tab {
         update_column!(pool, id, account_id, "show_as_tab", i64::from(value))?;
+    }
+    if let Some(value) = patch.allow_writes {
+        update_column!(pool, id, account_id, "allow_writes", i64::from(value))?;
     }
     if let Some(value) = patch.enabled_for_ai {
         update_column!(pool, id, account_id, "enabled_for_ai", i64::from(value))?;
@@ -491,6 +526,7 @@ mod tests {
             show_as_tab: true,
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            allow_writes: false,
             sort_order: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -567,6 +603,7 @@ mod tests {
                 show_as_tab: None,
                 enabled_for_ai: Some(false),
                 ai_read_only_policy: None,
+                allow_writes: None,
                 sort_order: None,
             },
         )
@@ -608,6 +645,7 @@ mod tests {
                 show_as_tab: None,
                 enabled_for_ai: None,
                 ai_read_only_policy: None,
+                allow_writes: None,
                 sort_order: None,
             },
         )
@@ -732,5 +770,73 @@ mod tests {
             .expect("exists");
         assert_eq!(loaded.kind, DbConnectionKind::Yellowbrick);
         assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
+        assert!(!loaded.allow_writes);
+    }
+
+    #[tokio::test]
+    async fn allow_writes_survives_a_round_trip() {
+        // Its own test because the insert binds this column next to the
+        // read-only policy: swapping those two writes one field's value into
+        // the other's column, silently, and only an assertion notices.
+        let pool = test_pool().await;
+        let mut connection = connection("acct-a", "c1", "Writable");
+        connection.allow_writes = true;
+        connection.ai_read_only_policy = DbReadOnlyPolicy::SelectOnly;
+        insert_connection(&pool, &connection).await.expect("insert");
+
+        let loaded = get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .expect("exists");
+        assert!(loaded.allow_writes);
+        assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
+    }
+
+    #[tokio::test]
+    async fn migrate_adds_the_write_column_to_an_older_database() {
+        // `create table if not exists` leaves an existing database alone, so
+        // the column that arrived later has to be added by hand — and this is
+        // the path every existing install takes. A pool of its own, because
+        // `test_pool` has already migrated.
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect");
+        sqlx::query(
+            "create table db_connections (
+                id text primary key,
+                account_id text not null,
+                kind text not null,
+                name text not null,
+                host text not null,
+                port integer not null,
+                database text,
+                username text not null,
+                network_profile_id text,
+                show_as_tab integer not null default 0,
+                enabled_for_ai integer not null default 1,
+                ai_read_only_policy text not null default 'select-only',
+                sort_order integer not null default 0,
+                created_at text not null,
+                updated_at text not null
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("an older table");
+
+        migrate(&pool).await.expect("migrate");
+
+        let mut connection = connection("acct-a", "c1", "Existing");
+        connection.allow_writes = true;
+        insert_connection(&pool, &connection).await.expect("insert");
+        assert!(
+            get_connection(&pool, "acct-a", "c1")
+                .await
+                .unwrap()
+                .expect("exists")
+                .allow_writes
+        );
     }
 }

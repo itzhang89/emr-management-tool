@@ -31,6 +31,7 @@ vi.mock("@/services/tauriClient", () => ({
         showAsTab: true,
         enabledForAi: false,
         aiReadOnlyPolicy: "select-only",
+        allowWrites: false,
         sortOrder: 0,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"
@@ -47,6 +48,7 @@ vi.mock("@/services/tauriClient", () => ({
         showAsTab: false,
         enabledForAi: true,
         aiReadOnlyPolicy: "select-only",
+        allowWrites: false,
         sortOrder: 1,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"
@@ -110,11 +112,12 @@ describe("OverviewPanel", () => {
     expect(screen.getByText(/Office tunnel \(ssh-tunnel\)/)).toBeInTheDocument();
     expect(screen.getByText(/Direct connection/)).toBeInTheDocument();
 
-    // 2 cards × 2 switches (the profiles board lives in a dialog now), each
+    // 2 cards × 3 switches (the profiles board lives in a dialog now), each
     // labelled by id.
-    expect(screen.getAllByRole("switch")).toHaveLength(4);
+    expect(screen.getAllByRole("switch")).toHaveLength(6);
     expect(document.getElementById("tab-c1")).not.toBeNull();
     expect(document.getElementById("ai-c1")).not.toBeNull();
+    expect(document.getElementById("writes-c1")).not.toBeNull();
   });
 
   it("flips Enabled for AI through the flag command", async () => {
@@ -133,6 +136,18 @@ describe("OverviewPanel", () => {
         "c1",
         { enabledForAi: true }
       );
+    });
+  });
+
+  it("flips allow writes through the flag command", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+
+    await screen.findByText("Sales MySQL");
+    await user.click(document.getElementById("writes-c1")!);
+
+    await waitFor(() => {
+      expect(setConnectionFlags).toHaveBeenCalledWith("c1", { allowWrites: true });
     });
   });
 

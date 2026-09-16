@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useSetDbConnectionFlags } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import { toast } from "sonner";
-import type { DbConnection, NetworkProfile } from "@/types/domain";
+import type { DbConnection, DbConnectionFlags, NetworkProfile } from "@/types/domain";
 
 /**
  * One connection on the Overview board: identity + routing info plus the three
@@ -29,7 +29,7 @@ export function ConnectionCard({
 }) {
   const setFlags = useSetDbConnectionFlags();
 
-  const update = (flags: { showAsTab?: boolean; enabledForAi?: boolean }) => {
+  const update = (flags: DbConnectionFlags) => {
     setFlags.mutate(
       { connectionId: connection.id, flags },
       {
@@ -126,6 +126,22 @@ export function ConnectionCard({
             checked={connection.showAsTab}
             disabled={setFlags.isPending}
             onCheckedChange={(checked) => update({ showAsTab: checked })}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label htmlFor={`writes-${connection.id}`} className="text-sm font-normal">
+              Allow writes
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Your own queries may modify this database — the AI still cannot
+            </p>
+          </div>
+          <Switch
+            id={`writes-${connection.id}`}
+            checked={connection.allowWrites}
+            disabled={setFlags.isPending}
+            onCheckedChange={(checked) => update({ allowWrites: checked })}
           />
         </div>
         <div className="flex items-center justify-between gap-2">

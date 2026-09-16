@@ -12,6 +12,7 @@ import {
   Table2
 } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -407,8 +408,16 @@ export function ConnectionQueryTab({
             <Database className="size-3.5 text-muted-foreground" aria-hidden />
             {connection.name}
           </span>
+          <Badge
+            variant={connection.allowWrites ? "destructive" : "outline"}
+            className="text-[10px]"
+          >
+            {connection.allowWrites ? "Write" : "Read-only"}
+          </Badge>
           <span className="text-xs text-muted-foreground">
-            {connection.kind} · read-only · {connection.enabledForAi ? "enabled for AI" : "manual"}
+            {connection.kind} ·{" "}
+            {connection.allowWrites ? "writes allowed here" : "the AI reads this one"} ·{" "}
+            {connection.enabledForAi ? "enabled for AI" : "manual"}
           </span>
           <div className="ml-auto flex items-center gap-1">
             <SqlTemplatesButton

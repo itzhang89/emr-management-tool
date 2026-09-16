@@ -1075,6 +1075,13 @@ export interface DbConnection {
   /** Register the read-only SQL tool for this connection into the AI Chat. */
   enabledForAi: boolean;
   aiReadOnlyPolicy: DbReadOnlyPolicy;
+  /**
+   * Whether queries typed in this connection's own workspace may write.
+   *
+   * The read-only promise exists to bound what the AI can do, and the AI paths
+   * ignore this flag. This is the human's escape hatch — off by default.
+   */
+  allowWrites: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -1122,6 +1129,7 @@ export interface DbConnectionFlags {
   showAsTab?: boolean;
   enabledForAi?: boolean;
   aiReadOnlyPolicy?: DbReadOnlyPolicy;
+  allowWrites?: boolean;
 }
 
 /** Transport details of one network profile (tagged union on `type`). */

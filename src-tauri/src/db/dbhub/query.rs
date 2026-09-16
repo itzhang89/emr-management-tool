@@ -91,25 +91,34 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
         })
 }
 
-/// The single execution path for read-only SQL.
+/// The single execution path.
 ///
-/// The gate runs first and refuses anything it cannot prove is a read; the
-/// driver then opens its own short-lived read-only session (a query tab fires
-/// at human cadence — pooling across calls is a later optimisation), runs the
-/// statement and caps the page. `target` is where the driver dials: the
-/// connection's own address, or a network profile's local forward.
-pub(crate) async fn execute_read_only(
+/// Read-only unless the caller says otherwise, and read-only is the default
+/// *everywhere* — including every AI path, which passes `false` unconditionally
+/// so that "the model cannot change your database" stays a property of the code
+/// rather than of a setting.
+///
+/// `writable` is the human's opt-in, and it waives both defences at once: the
+/// gate stops classifying, and the driver stops opening its session read-only.
+/// The driver's session is the second line of defence behind the gate, so
+/// leaving it in place while skipping the gate would refuse every write with a
+/// database-level error — the user would have asked for writes and been told
+/// no by the thing that was supposed to be helping.
+pub(crate) async fn execute(
     shape: &DbConnectionShape,
     target: &DialTarget,
     sql: &str,
     max_rows: usize,
     offset: usize,
+    writable: bool,
     cancel: &QueryCancellation<'_>,
 ) -> AppResult<DbQueryResult> {
-    if let gate::StatementClass::Blocked { reason } = gate::classify(sql) {
-        return Err(AppError::validation(format!(
-            "Blocked by the read-only gate: {reason}"
-        )));
+    if !writable {
+        if let gate::StatementClass::Blocked { reason } = gate::classify(sql) {
+            return Err(AppError::validation(format!(
+                "Blocked by the read-only gate: {reason}"
+            )));
+        }
     }
 
     let cap = max_rows.clamp(1, MAX_PAGE_ROWS);
@@ -128,8 +137,10 @@ pub(crate) async fn execute_read_only(
     };
 
     let started = std::time::Instant::now();
+    let dial = shape.dial(target);
+    let dial = if writable { dial.writable() } else { dial };
     let page = driver::driver_for(shape.connection.kind)
-        .query(&shape.dial(target), &statement, cap, cancel)
+        .query(&dial, &statement, cap, cancel)
         .await?;
     let row_count = page.rows.len();
 
@@ -195,12 +206,14 @@ pub async fn run_for_command(
         // driver dial; binding it to this scope does exactly that.
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        execute_read_only(
+        execute(
             &shape,
             &target,
             sql,
             max_rows.unwrap_or(MAX_PAGE_ROWS),
             offset,
+            // The one place the switch is read. Nothing on an AI path asks.
+            shape.connection.allow_writes,
             &QueryCancellation::new(&token),
         )
         .await
@@ -241,6 +254,7 @@ mod tests {
                 show_as_tab: false,
                 enabled_for_ai: true,
                 ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+                allow_writes: false,
                 sort_order: 0,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
@@ -268,12 +282,13 @@ mod tests {
         shape.connection.port = 1;
         let target = DialTarget::direct(&shape.connection);
 
-        let error = execute_read_only(
+        let error = execute(
             &shape,
             &target,
             "SHOW TABLES",
             100,
             500,
+            false,
             &QueryCancellation::never(),
         )
         .await
@@ -286,12 +301,13 @@ mod tests {
         // No real connection needed — the gate rejects before any dial.
         let shape = shape_for_gate_test();
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(
+        let error = execute(
             &shape,
             &target,
             "DELETE FROM orders",
             100,
             0,
+            false,
             &QueryCancellation::never(),
         )
         .await
@@ -307,12 +323,13 @@ mod tests {
         shape.connection.host = "127.0.0.1".into();
         shape.connection.port = 1;
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(
+        let error = execute(
             &shape,
             &target,
             "SELECT 1",
             100,
             0,
+            false,
             &QueryCancellation::never(),
         )
         .await

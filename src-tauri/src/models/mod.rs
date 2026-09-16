@@ -1496,6 +1496,13 @@ pub struct DbConnection {
     /// Register the read-only SQL tool for this connection into the AI Chat.
     pub enabled_for_ai: bool,
     pub ai_read_only_policy: DbReadOnlyPolicy,
+    /// Whether queries typed in this connection's own workspace may write.
+    ///
+    /// The read-only promise exists to bound what the *AI* can do, and the AI
+    /// paths ignore this flag entirely. This is the human's escape hatch: off
+    /// by default, because a connection that can write is a connection that
+    /// can be written to by mistake.
+    pub allow_writes: bool,
     pub sort_order: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -1521,6 +1528,10 @@ pub struct DbConnectionInput {
     pub enabled_for_ai: bool,
     #[serde(default)]
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    /// Opt in to a workspace that can write. Absent means read-only, which is
+    /// the safe half of the choice to get wrong.
+    #[serde(default)]
+    pub allow_writes: bool,
     #[serde(default)]
     pub sort_order: Option<i64>,
     #[serde(default)]
@@ -1583,6 +1594,8 @@ pub struct DbConnectionFlags {
     pub enabled_for_ai: Option<bool>,
     #[serde(default)]
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    #[serde(default)]
+    pub allow_writes: Option<bool>,
 }
 
 /// Update body for a connection. Absent/None fields keep their stored values;
@@ -1609,6 +1622,8 @@ pub struct DbConnectionUpdateInput {
     pub enabled_for_ai: Option<bool>,
     #[serde(default)]
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    #[serde(default)]
+    pub allow_writes: Option<bool>,
     #[serde(default)]
     pub sort_order: Option<i64>,
     #[serde(default)]
