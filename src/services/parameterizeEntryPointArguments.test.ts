@@ -18,10 +18,10 @@ describe("parameterizeEntryPointArguments", () => {
       "batch-job",
       "--latest-only=false",
       "--merge-job=false",
-      "--names=shiji_transaction",
+      "--names=project_transaction",
       "--period=5",
       "--env=qa",
-      "--property=s3://manila-bigdata-etl/conf/etl-qa.properties",
+      "--property=s3://region-bigdata-etl/conf/etl-qa.properties",
       "--default-start=2026-05-16 23:00:00"
     ]);
 
@@ -55,7 +55,7 @@ describe("parameterizeEntryPointArguments", () => {
         name: "names",
         label: "Names",
         type: "text",
-        defaultValue: "shiji_transaction",
+        defaultValue: "project_transaction",
         required: true
       },
       {
@@ -76,7 +76,7 @@ describe("parameterizeEntryPointArguments", () => {
         name: "property",
         label: "Property",
         type: "text",
-        defaultValue: "s3://manila-bigdata-etl/conf/etl-qa.properties",
+        defaultValue: "s3://region-bigdata-etl/conf/etl-qa.properties",
         required: true
       },
       {
