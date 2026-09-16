@@ -1,92 +1,25 @@
-import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
-import {
-  EditorView,
-  keymap,
-  lineNumbers,
-  placeholder as placeholderExt,
-  drawSelection,
-  highlightActiveLine,
-  tooltips
-} from "@codemirror/view";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { tags as t } from "@lezer/highlight";
-import { sql, SQLDialect } from "@codemirror/lang-sql";
+import { SQLDialect } from "@codemirror/lang-sql";
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { useEffect, useMemo, useRef } from "react";
-import { cn } from "@/lib/utils";
+import { useMemo, useRef } from "react";
 import { lineNumberToPosition, parseAthenaErrorLine } from "@/services/athenaSqlErrors";
 import { createSqlCompletion, type SqlCatalogContext } from "@/services/athenaSqlCompletion";
 import { analyzeSql, type SqlLintOptions } from "@/services/sqlLint";
+import { SqlEditor } from "@/components/sql/SqlEditor";
+
+/**
+ * The Athena SQL editor: the shared [`SqlEditor`] plus everything that is
+ * Athena's own — the Hive dialect, the SQL linter, the execution-error
+ * reporter and catalog-driven completion.
+ *
+ * A JDBC connection gets none of those and uses `SqlEditor` directly; keeping
+ * the Athena services here rather than in the shared component is what lets
+ * both be first-class instead of one being a crippled version of the other.
+ */
 
 const hiveDialect = SQLDialect.define({
   keywords:
     "select from where group by order having limit join left right inner outer cross on as and or not in is null distinct create external drop alter table database schema view msck repair describe extended formatted show stored partitioned location serde tblproperties dbproperties comment orc parquet"
-});
-
-const sqlHighlightStyle = HighlightStyle.define([
-  { tag: t.keyword, color: "hsl(221.2 83.2% 53.3%)", fontWeight: "600" },
-  { tag: t.operator, color: "hsl(222.2 47.4% 35%)" },
-  { tag: t.number, color: "hsl(25 95% 45%)" },
-  { tag: [t.string, t.special(t.string)], color: "hsl(142 76% 36%)" },
-  { tag: t.comment, color: "hsl(215.4 16.3% 46.9%)", fontStyle: "italic" },
-  { tag: t.typeName, color: "hsl(271 81% 56%)" },
-  { tag: t.propertyName, color: "hsl(199 89% 38%)" },
-  { tag: t.variableName, color: "hsl(199 89% 38%)" },
-  { tag: t.function(t.variableName), color: "hsl(199 89% 38%)" },
-  { tag: t.punctuation, color: "hsl(215.4 16.3% 46.9%)" },
-  { tag: t.invalid, color: "hsl(0 84.2% 60.2%)" }
-]);
-
-const editorTheme = EditorView.theme({
-  // Height rules must target &.cm-editor only — tooltips({ parent: document.body })
-  // mounts a sibling wrapper on <body> that shares theme classes but not .cm-editor.
-  "&.cm-editor": {
-    fontSize: "11px",
-    fontFamily: "var(--font-mono)",
-    backgroundColor: "var(--color-background)",
-    color: "var(--color-foreground)",
-    height: "100%",
-    minHeight: "140px"
-  },
-  ".cm-scroller": {
-    overflow: "auto",
-    fontFamily: "inherit"
-  },
-  "&.cm-focused": {
-    outline: "2px solid color-mix(in srgb, var(--color-ring) 35%, transparent)",
-    outlineOffset: "-1px"
-  },
-  ".cm-content": {
-    padding: "8px 0",
-    minHeight: "124px",
-    caretColor: "var(--color-foreground)"
-  },
-  ".cm-gutters": {
-    backgroundColor: "var(--color-muted)",
-    color: "var(--color-muted-foreground)",
-    borderRight: "1px solid var(--color-border)"
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "color-mix(in srgb, var(--color-muted) 85%, var(--color-foreground) 15%)"
-  },
-  ".cm-activeLine": {
-    backgroundColor: "color-mix(in srgb, var(--color-muted) 65%, transparent)"
-  },
-  ".cm-diagnostic-error": {
-    borderLeft: "3px solid var(--color-destructive)"
-  },
-  ".cm-diagnostic-warning": {
-    borderLeft: "3px solid hsl(45 93% 47%)"
-  },
-  ".cm-tooltip.cm-tooltip-autocomplete": {
-    fontSize: "11px",
-    fontFamily: "var(--font-mono)",
-    backgroundColor: "var(--color-popover)",
-    color: "var(--color-popover-foreground)",
-    border: "1px solid var(--color-border)"
-  }
 });
 
 function createSqlLinter(getOptions: () => SqlLintOptions) {
@@ -158,150 +91,48 @@ export function AthenaSqlEditor({
   className?: string;
   readOnly?: boolean;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const onChangeRef = useRef(onChange);
-  const onRunRef = useRef(onRun);
-  const onRunNewTabRef = useRef(onRunNewTab);
+  // Both sources read through refs, so the extensions only need rebuilding
+  // when their inputs change — never to stay current between those changes.
   const lintOptionsRef = useRef<SqlLintOptions>({ selectedDatabase });
   const catalogContextRef = useRef(catalogContext);
   const executionErrorRef = useRef(executionError);
 
-  onChangeRef.current = onChange;
-  onRunRef.current = onRun;
-  onRunNewTabRef.current = onRunNewTab;
   lintOptionsRef.current = { selectedDatabase };
   catalogContextRef.current = catalogContext;
   executionErrorRef.current = executionError;
 
-  const compartments = useMemo(
-    () => ({
-      lint: new Compartment(),
-      completion: new Compartment(),
-      execution: new Compartment(),
-      readOnly: new Compartment()
-    }),
-    []
+  const diagnostics = useMemo(
+    () => [
+      lintGutter(),
+      createSqlLinter(() => lintOptionsRef.current),
+      createExecutionErrorLinter(() => executionErrorRef.current)
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedDatabase, executionError]
   );
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const runQuery = (view: EditorView, openNewTab: boolean) => {
-      const sql = view.state.doc.toString();
-      if (openNewTab) {
-        onRunNewTabRef.current?.(sql);
-      } else {
-        onRunRef.current?.(sql);
-      }
-      return true;
-    };
-
-    const runKeymap = Prec.highest(
-      keymap.of([
-        {
-          key: "Mod-Shift-Enter",
-          run: (view) => runQuery(view, true)
-        },
-        {
-          key: "Mod-Enter",
-          run: (view) => runQuery(view, false)
-        }
-      ])
-    );
-
-    const updateListener = EditorView.updateListener.of((update) => {
-      if (!update.docChanged) return;
-      onChangeRef.current(update.state.doc.toString());
-    });
-
-    const extensions: Extension[] = [
-      lineNumbers(),
-      drawSelection(),
-      highlightActiveLine(),
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      runKeymap,
-      sql({ dialect: hiveDialect, upperCaseKeywords: true }),
-      syntaxHighlighting(sqlHighlightStyle),
-      tooltips({ parent: document.body }),
-      editorTheme,
-      lintGutter(),
-      compartments.lint.of(createSqlLinter(() => lintOptionsRef.current)),
-      compartments.execution.of(createExecutionErrorLinter(() => executionErrorRef.current)),
-      compartments.completion.of(
-        autocompletion({
-          activateOnTyping: true,
-          override: [createSqlCompletion(() => catalogContextRef.current)]
-        })
-      ),
-      compartments.readOnly.of(EditorState.readOnly.of(false)),
-      updateListener,
-      placeholderExt("Write Athena SQL here…")
-    ];
-
-    const view = new EditorView({
-      state: EditorState.create({
-        doc: value,
-        extensions
+  const completion = useMemo(
+    () =>
+      autocompletion({
+        activateOnTyping: true,
+        override: [createSqlCompletion(() => catalogContextRef.current)]
       }),
-      parent: containerRef.current
-    });
-
-    viewRef.current = view;
-
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
-  }, [compartments]);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    if (view.state.doc.toString() !== value) {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: value }
-      });
-    }
-  }, [value]);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: [
-        compartments.lint.reconfigure(createSqlLinter(() => lintOptionsRef.current)),
-        compartments.completion.reconfigure(
-          autocompletion({
-            activateOnTyping: true,
-            override: [createSqlCompletion(() => catalogContextRef.current)]
-          })
-        )
-      ]
-    });
-  }, [catalogContext, selectedDatabase, compartments]);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.execution.reconfigure(createExecutionErrorLinter(() => executionErrorRef.current))
-    });
-  }, [executionError, compartments.execution]);
-
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    view.dispatch({
-      effects: compartments.readOnly.reconfigure(EditorState.readOnly.of(readOnly))
-    });
-  }, [readOnly, compartments.readOnly]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catalogContext]
+  );
 
   return (
-    <div
-      ref={containerRef}
-      className={cn("athena-sql-editor min-h-[140px] shrink-0 rounded-lg border bg-background", className)}
+    <SqlEditor
+      value={value}
+      onChange={onChange}
+      onRun={onRun}
+      onRunNewTab={onRunNewTab}
+      dialect={hiveDialect}
+      placeholder="Write Athena SQL here…"
+      diagnostics={diagnostics}
+      completion={completion}
+      className={className}
+      readOnly={readOnly}
     />
   );
 }
