@@ -47,11 +47,28 @@ impl DbDriver for MysqlDriver {
         Ok(catalog_entries(&page))
     }
 
+    /// MySQL has no level below the database: `information_schema` calls a
+    /// schema what MySQL calls a database, and the tree's first level already
+    /// lists those. Answering empty is how the tree is told to skip a level
+    /// that would hold one meaningless choice.
+    async fn list_schemas(&self, _dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
+        Ok(Vec::new())
+    }
+
     async fn list_tables(
         &self,
         dial: &DbDial<'_>,
-        database: &str,
+        schema: &str,
     ) -> AppResult<Vec<DbCatalogEntry>> {
+        // MySQL reads a database's tables through `information_schema`, keyed
+        // by that database's name — which the dial carries. `schema` is the
+        // tree's third level, and MySQL has none, so it is empty here; the
+        // dial's database is the only name that means anything.
+        let database = if schema.is_empty() {
+            dial.database().unwrap_or_default()
+        } else {
+            schema
+        };
         // The name came back from our own catalog read, but it is still a
         // value: quote it rather than trusting the tree.
         let sql = format!(

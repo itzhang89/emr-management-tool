@@ -27,22 +27,25 @@ pub struct PostgresDriver;
 pub(crate) const DATABASES_SQL: &str =
     "select datname as name, null as kind from pg_database where not datistemplate";
 
-/// The schema the table list reads.
+/// The schemas the connected user can see.
 ///
-/// A known limitation, carried over from the first cut rather than silently
-/// widened here: the table list always reads `public` of the database the
-/// connection is *opened* on. Listing another database's tables needs a second
-/// connection — Postgres has no cross-database query — so the tree's database
-/// choice cannot retarget this query the way MySQL's does.
-pub(crate) const TABLE_SCHEMA: &str = "public";
+/// `information_schema.schemata` is privilege-aware — it holds the schemas the
+/// user owns or has some right on — so the tree does not offer a schema that
+/// would fail the moment it was opened. `pg_%` covers `pg_catalog`,
+/// `pg_toast` and the per-session `pg_temp_N`; `information_schema` itself is
+/// the only system schema not caught by that pattern. Both are noise in a
+/// query tool's tree.
+pub(crate) const SCHEMAS_SQL: &str = "select schema_name as name, null as kind \
+     from information_schema.schemata \
+     where schema_name not like 'pg\\_%' and schema_name <> 'information_schema' \
+     order by schema_name";
 
-/// Tables and views visible in [`TABLE_SCHEMA`], built from it so the two
-/// cannot drift apart.
-pub(crate) fn tables_sql() -> String {
+/// Tables and views of one schema.
+pub(crate) fn tables_sql(schema: &str) -> String {
     format!(
         "select table_name as name, table_type as kind from information_schema.tables \
          where table_schema = {} order by table_name",
-        session::quote_literal(TABLE_SCHEMA)
+        session::quote_literal(schema)
     )
 }
 
@@ -61,12 +64,17 @@ impl DbDriver for PostgresDriver {
         Ok(catalog_entries(&page))
     }
 
+    async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
+        let page = read_page(dial, SCHEMAS_SQL, MAX_PAGE_ROWS).await?;
+        Ok(catalog_entries(&page))
+    }
+
     async fn list_tables(
         &self,
         dial: &DbDial<'_>,
-        _database: &str,
+        schema: &str,
     ) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(dial, &tables_sql(), MAX_PAGE_ROWS).await?;
+        let page = read_page(dial, &tables_sql(schema), MAX_PAGE_ROWS).await?;
         Ok(catalog_entries(&page))
     }
 
@@ -176,6 +184,16 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn tables_sql_filters_on_the_given_schema() {
+        let sql = tables_sql("public");
+        assert!(sql.contains("where table_schema = 'public'"), "{sql}");
+
+        // The schema name is a value, not a fragment: a quote in it must not
+        // be able to end the literal.
+        assert!(tables_sql("o'brien").contains("'o''brien'"));
     }
 
     #[test]

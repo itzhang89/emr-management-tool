@@ -163,6 +163,7 @@ pub fn run() {
             commands::dbhub::test_network_profile_draft,
             commands::dbhub::run_db_query,
             commands::dbhub::list_db_databases,
+            commands::dbhub::list_db_schemas,
             commands::dbhub::list_db_tables,
         ]);
 

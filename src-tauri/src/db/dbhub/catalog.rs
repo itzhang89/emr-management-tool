@@ -1,10 +1,17 @@
 //! The query workspace's catalog tree: which databases a connection can see,
-//! and which tables live in one.
+//! which schemas live in one, and which tables live in one of those.
 //!
-//! Both questions are engine questions — MySQL reads `information_schema`,
-//! Postgres reads `pg_database` and then `information_schema.tables`, and
-//! whatever MSSQL and Oracle read is theirs to know. So all this module does
-//! is resolve the connection, open its route, and ask the driver.
+//! All three questions are engine questions — MySQL reads
+//! `information_schema`, Postgres reads `pg_database` and then
+//! `information_schema`, and whatever MSSQL and Oracle read is theirs to
+//! know. So all this module does is resolve the connection, open its route,
+//! and ask the driver.
+//!
+//! Every level below the first is read *from the database it names* (see
+//! [`DialTarget`]'s companion, `DbDial::reading`): a server that separates
+//! database from schema has no cross-database query, so reading another
+//! database's schemas means connecting to it. An engine with no schema level
+//! answers `list_schemas` with nothing, and the tree goes straight to tables.
 //!
 //! The SQL those calls run is authored here in the crate, not typed by a user,
 //! which is why it does not pass through the read-only gate: the gate is for
@@ -29,14 +36,28 @@ pub(crate) async fn list_databases(
         .await
 }
 
-/// The tables and views of one database.
-pub(crate) async fn list_tables(
+/// The schemas of one database.
+pub(crate) async fn list_schemas(
     shape: &DbConnectionShape,
     target: &DialTarget,
     database: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
+    let dial = shape.dial(target);
     driver::driver_for(shape.connection.kind)
-        .list_tables(&shape.dial(target), database)
+        .list_schemas(&dial.reading(database))
+        .await
+}
+
+/// The tables and views of one schema, in one database.
+pub(crate) async fn list_tables(
+    shape: &DbConnectionShape,
+    target: &DialTarget,
+    database: &str,
+    schema: &str,
+) -> AppResult<Vec<DbCatalogEntry>> {
+    let dial = shape.dial(target);
+    driver::driver_for(shape.connection.kind)
+        .list_tables(&dial.reading(database), schema)
         .await
 }
 
@@ -53,16 +74,31 @@ pub async fn catalog_databases_for_command(
     .await
 }
 
-pub async fn catalog_tables_for_command(
+pub async fn catalog_schemas_for_command(
     app: &AppHandle,
     connection_id: &str,
     database: &str,
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
+    complete_operation("schema catalog request", async {
+        let (target, _forward) =
+            tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        list_schemas(&shape, &target, database).await
+    })
+    .await
+}
+
+pub async fn catalog_tables_for_command(
+    app: &AppHandle,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+) -> AppResult<Vec<DbCatalogEntry>> {
+    let shape = shape_for(app, connection_id, false).await?;
     complete_operation("table catalog request", async {
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        list_tables(&shape, &target, database).await
+        list_tables(&shape, &target, database, schema).await
     })
     .await
 }
@@ -111,10 +147,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn table_listing_asks_the_driver_for_the_named_database() {
+    async fn mysql_schema_listing_is_empty_and_never_dials() {
+        // MySQL's schema *is* its database, so there is no third level to
+        // show. Answering empty is how the driver says so — and it says it
+        // without touching the network, which this unreachable host proves.
         let shape = shape_for_gate_test();
         let target = DialTarget::direct(&shape.connection);
-        let error = list_tables(&shape, &target, "sales")
+        let schemas = list_schemas(&shape, &target, "sales")
+            .await
+            .expect("no dial is needed to answer this");
+        assert!(schemas.is_empty());
+    }
+
+    #[tokio::test]
+    async fn table_listing_asks_the_driver_for_the_named_schema() {
+        let shape = shape_for_gate_test();
+        let target = DialTarget::direct(&shape.connection);
+        let error = list_tables(&shape, &target, "sales", "public")
             .await
             .expect_err("the dial must fail");
         assert!(!error.message.contains("read-only gate"));

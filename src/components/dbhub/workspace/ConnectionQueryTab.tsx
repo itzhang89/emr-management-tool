@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Database, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
+import { ArrowLeft, Database, Folder, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useDbDatabases, useDbTables, useRunDbQuery } from "@/hooks/useDbHub";
+import { useDbDatabases, useDbSchemas, useDbTables, useRunDbQuery } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import {
   readDbWorkspace,
@@ -40,6 +40,7 @@ export function ConnectionQueryTab({
   const accountId = activeAccount.data?.id;
   const runQuery = useRunDbQuery();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
+  const [selectedSchema, setSelectedSchema] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
   const [resultTabs, setResultTabs] = useState<CachedResultTab[]>([]);
   const [activeResultId, setActiveResultId] = useState<string>();
@@ -59,6 +60,7 @@ export function ConnectionQueryTab({
     // remembered selection, land inside it so the tree shows its tables
     // immediately (user request, mirroring how Glue restores a catalog view).
     setSelectedDatabase(state.selectedDatabase ?? connection.database);
+    setSelectedSchema(state.selectedSchema);
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, connection.id]);
@@ -70,12 +72,25 @@ export function ConnectionQueryTab({
       sql,
       activeResultTabId: activeResultId,
       resultTabs,
-      selectedDatabase
+      selectedDatabase,
+      selectedSchema
     });
-  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase]);
+  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema]);
 
   const databases = useDbDatabases(connection.id, active);
-  const tables = useDbTables(connection.id, selectedDatabase, active);
+  const schemas = useDbSchemas(connection.id, selectedDatabase, active);
+
+  // A level holding exactly one choice is a click for nothing — and an engine
+  // with no schema level at all answers with none. Either way the tree goes
+  // straight to tables and the schema becomes whatever that single entry was
+  // (empty for MySQL, which reads tables by the database the dial names).
+  const schemaList = schemas.data ?? [];
+  const skipsSchemaLevel = schemas.isSuccess && schemaList.length <= 1;
+  const activeSchema = skipsSchemaLevel
+    ? (schemaList[0]?.name ?? "")
+    : selectedSchema;
+
+  const tables = useDbTables(connection.id, selectedDatabase, activeSchema, active);
 
   const activeResult = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultId) ?? resultTabs.at(-1),
@@ -112,7 +127,11 @@ export function ConnectionQueryTab({
   );
 
   const handleSelectTable = (table: string) => {
-    const tableRef = selectedDatabase ? `${selectedDatabase}.${table}` : table;
+    // Qualify by schema, not by database: Postgres rejects `database.table`
+    // outright, and on MySQL the schema *is* the database, so the qualifier is
+    // the same word either way. Empty means the engine has no such level.
+    const qualifier = activeSchema || (skipsSchemaLevel ? selectedDatabase : undefined);
+    const tableRef = qualifier ? `${qualifier}.${table}` : table;
     setSql(`SELECT * FROM ${tableRef} LIMIT 100;`);
   };
 
@@ -120,14 +139,23 @@ export function ConnectionQueryTab({
     <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
       <CatalogPane
         databases={databases.data ?? []}
+        schemas={schemaList}
         tables={tables.data ?? []}
         selectedDatabase={selectedDatabase}
+        selectedSchema={activeSchema}
+        skipsSchemaLevel={skipsSchemaLevel}
         loadingDatabases={databases.isLoading}
+        loadingSchemas={schemas.isLoading}
         loadingTables={tables.isLoading}
-        error={databases.error ?? tables.error}
+        error={databases.error ?? schemas.error ?? tables.error}
         onSelectDatabase={setSelectedDatabase}
+        onSelectSchema={setSelectedSchema}
         onSelectTable={handleSelectTable}
-        onBack={() => setSelectedDatabase(undefined)}
+        onBack={() => {
+          // One level at a time: schema → database → every database.
+          if (selectedSchema !== undefined) setSelectedSchema(undefined);
+          else setSelectedDatabase(undefined);
+        }}
       />
       <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex shrink-0 items-center gap-2">
@@ -178,33 +206,49 @@ function buildTitle(sql: string) {
 
 function CatalogPane({
   databases,
+  schemas,
   tables,
   selectedDatabase,
+  selectedSchema,
+  skipsSchemaLevel,
   loadingDatabases,
+  loadingSchemas,
   loadingTables,
   error,
   onSelectDatabase,
+  onSelectSchema,
   onSelectTable,
   onBack
 }: {
   databases: Array<{ name: string; kind?: string }>;
+  schemas: Array<{ name: string; kind?: string }>;
   tables: Array<{ name: string; kind?: string }>;
   selectedDatabase?: string;
+  selectedSchema?: string;
+  /** One schema (or none) is a level with nothing to choose — skip it. */
+  skipsSchemaLevel: boolean;
   loadingDatabases: boolean;
+  loadingSchemas: boolean;
   loadingTables: boolean;
   error: unknown;
   onSelectDatabase: (name: string) => void;
+  onSelectSchema: (name: string) => void;
   onSelectTable: (name: string) => void;
-  /** Back out of the current database to the full database list. */
+  /** Step back one level: schema → database → all databases. */
   onBack: () => void;
 }) {
   const [filter, setFilter] = useState("");
 
-  // Inside a database → its tables; at the top level → all databases.
+  // The tree is a drill-down: databases, then schemas inside one (when there is
+  // a choice to make), then that schema's tables.
   const inDatabase = Boolean(selectedDatabase);
-  const filtered = tables.filter((table) =>
-    table.name.toLowerCase().includes(filter.toLowerCase())
+  const inSchemaList = inDatabase && !skipsSchemaLevel && selectedSchema === undefined;
+  const listing = inSchemaList ? schemas : inDatabase && !inSchemaList ? tables : databases;
+  const loading = inSchemaList ? loadingSchemas : inDatabase && !inSchemaList ? loadingTables : loadingDatabases;
+  const filtered = listing.filter((entry) =>
+    entry.name.toLowerCase().includes(filter.toLowerCase())
   );
+  const qualifier = selectedSchema ? `${selectedDatabase}.${selectedSchema}` : selectedDatabase;
   const errorMessage = error
     ? error instanceof Error
       ? error.message
@@ -222,14 +266,14 @@ function CatalogPane({
             variant="ghost"
             size="icon"
             className="size-6"
-            aria-label="Back to all databases"
+            aria-label="Back one level"
             onClick={onBack}
           >
             <ArrowLeft className="size-3.5" />
           </Button>
           <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium">
             <Database className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="truncate">{selectedDatabase}</span>
+            <span className="truncate">{qualifier}</span>
           </span>
           <Input
             value={filter}
@@ -252,46 +296,37 @@ function CatalogPane({
           </p>
         ) : null}
 
-        {!inDatabase ? (
-          <>
-            {loadingDatabases ? <SkeletonRows /> : null}
-            {databases.map((database) => (
-              <button
-                key={database.name}
-                type="button"
-                onClick={() => {
-                  onSelectDatabase(database.name);
-                  setFilter("");
-                }}
-                className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs text-muted-foreground hover:bg-secondary/60"
-              >
-                <Database className="size-3 shrink-0" aria-hidden />
-                <span className="truncate">{database.name}</span>
-              </button>
-            ))}
-            {!loadingDatabases && databases.length === 0 && !errorMessage ? (
-              <p className="p-1 text-xs text-muted-foreground">No databases.</p>
-            ) : null}
-          </>
-        ) : (
-          <>
-            {loadingTables ? <SkeletonRows /> : null}
-            {filtered.map((table) => (
-              <button
-                key={table.name}
-                type="button"
-                onClick={() => onSelectTable(table.name)}
-                className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-secondary/60"
-              >
-                <Table2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="truncate">{table.name}</span>
-              </button>
-            ))}
-            {!loadingTables && tables.length === 0 && !errorMessage ? (
-              <p className="p-1 text-xs text-muted-foreground">No tables.</p>
-            ) : null}
-          </>
-        )}
+        {loading ? <SkeletonRows /> : null}
+        {filtered.map((entry) => (
+          <button
+            key={entry.name}
+            type="button"
+            onClick={() => {
+              if (!inDatabase) onSelectDatabase(entry.name);
+              else if (inSchemaList) onSelectSchema(entry.name);
+              else onSelectTable(entry.name);
+              setFilter("");
+            }}
+            className={cn(
+              "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-secondary/60",
+              !inDatabase && "text-muted-foreground"
+            )}
+          >
+            {!inDatabase ? (
+              <Database className="size-3 shrink-0" aria-hidden />
+            ) : inSchemaList ? (
+              <Folder className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+            ) : (
+              <Table2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <span className="truncate">{entry.name}</span>
+          </button>
+        ))}
+        {!loading && listing.length === 0 && !errorMessage ? (
+          <p className="p-1 text-xs text-muted-foreground">
+            {!inDatabase ? "No databases." : inSchemaList ? "No schemas." : "No tables."}
+          </p>
+        ) : null}
       </div>
     </aside>
   );

@@ -106,6 +106,9 @@ pub struct DbDial<'a> {
     /// The password from the secrets store. `None` means the user chose not to
     /// save one — the driver dials without it and the server decides.
     pub secret: Option<&'a str>,
+    /// Read this database instead of the connection's own — the catalog tree's
+    /// selection. See [`DbDial::reading`].
+    pub database: Option<&'a str>,
 }
 
 impl<'a> DbDial<'a> {
@@ -118,15 +121,32 @@ impl<'a> DbDial<'a> {
             connection,
             target,
             secret,
+            database: None,
         }
     }
 
-    /// The database the connection names, when it names a non-empty one.
+    /// The same dial, reading another database.
+    ///
+    /// The catalog tree walks databases, and a server that separates database
+    /// from schema (Postgres, Yellowbrick) has no cross-database query — so
+    /// reading a database's schemas and tables means connecting *to* it, not
+    /// to whatever database the connection was saved with.
+    pub fn reading<'b>(&'b self, database: &'b str) -> DbDial<'b> {
+        DbDial {
+            connection: self.connection,
+            target: self.target,
+            secret: self.secret,
+            database: Some(database),
+        }
+    }
+
+    /// The database this dial reads: the tree's selection when it has one,
+    /// otherwise the connection's own.
     pub fn database(&self) -> Option<&str> {
-        self.connection
-            .database
-            .as_deref()
-            .filter(|name| !name.is_empty())
+        let named = |name: &&str| !name.is_empty();
+        self.database
+            .filter(named)
+            .or_else(|| self.connection.database.as_deref().filter(named))
     }
 
     /// The secret, with "no password saved" normalised to the empty string the
@@ -183,18 +203,30 @@ pub trait DbDriver: Send + Sync {
     /// it returns is what the user reads on the Test Connection button.
     async fn initialize(&self, dial: &DbDial<'_>) -> AppResult<ServerInfo>;
 
-    /// Databases (MySQL schemata, Postgres databases) this user can see.
+    /// The top level of the catalog tree: what this engine calls a database.
+    ///
+    /// MySQL's schemata and Postgres's databases are both this level — the
+    /// names differ, the tree does not.
     async fn list_databases(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>>;
 
-    /// The tables and views of one database.
+    /// The schemas inside the database this dial reads.
     ///
-    /// `database` is a name the tree handed back from `list_databases`, but it
-    /// is still a value — implementations must bind or quote it, never splice
-    /// it into SQL raw.
+    /// Engines whose "schema" *is* their database — MySQL — answer with an
+    /// empty list, which is how they say "this tree has no third level": the
+    /// tree skips a level that would hold exactly one meaningless choice.
+    async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>>;
+
+    /// The tables and views of one schema, inside the database this dial reads
+    /// (see [`DbDial::reading`]).
+    ///
+    /// `schema` is a name the tree handed back from `list_schemas`, but it is
+    /// still a value — implementations must bind or quote it, never splice it
+    /// into SQL raw. MySQL ignores it: its schema and its database are the
+    /// same thing, and the dial already names that.
     async fn list_tables(
         &self,
         dial: &DbDial<'_>,
-        database: &str,
+        schema: &str,
     ) -> AppResult<Vec<DbCatalogEntry>>;
 
     /// Run one **already-gated** read-only statement and return at most `cap`

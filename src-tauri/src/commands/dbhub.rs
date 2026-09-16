@@ -672,10 +672,24 @@ pub async fn list_db_databases(
 }
 
 #[tauri::command]
+pub async fn list_db_schemas(
+    app: AppHandle,
+    request: DbCatalogRequest,
+) -> AppResult<Vec<dbhub::DbCatalogEntry>> {
+    dbhub::catalog::catalog_schemas_for_command(&app, &request.connection_id, &request.database)
+        .await
+}
+
+#[tauri::command]
 pub async fn list_db_tables(
     app: AppHandle,
     request: DbCatalogRequest,
 ) -> AppResult<Vec<dbhub::DbCatalogEntry>> {
-    dbhub::catalog::catalog_tables_for_command(&app, &request.connection_id, &request.database)
-        .await
+    dbhub::catalog::catalog_tables_for_command(
+        &app,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+    )
+    .await
 }

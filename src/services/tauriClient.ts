@@ -298,8 +298,10 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
     listDbDatabases: (connectionId: string) =>
       call<DbCatalogEntry[]>("list_db_databases", { connectionId }),
-    listDbTables: (connectionId: string, database: string) =>
-      call<DbCatalogEntry[]>("list_db_tables", { connectionId, database })
+    listDbSchemas: (connectionId: string, database: string) =>
+      call<DbCatalogEntry[]>("list_db_schemas", { connectionId, database }),
+    listDbTables: (connectionId: string, database: string, schema: string) =>
+      call<DbCatalogEntry[]>("list_db_tables", { connectionId, database, schema })
   };
 }
 

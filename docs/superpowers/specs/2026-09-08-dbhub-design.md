@@ -726,3 +726,26 @@ schema 列，也没有"隐藏草稿行"这种需要覆盖全部读路径的状�
 分别说明实际验到了什么（SSH：已连接并完成认证；SOCKS5：仅绑定，代理按连接拨），
 并且**明确声明未验证的部分**："whether the far side reaches the database shows when a
 query runs" —— 即跳板机到目标库的可达性（安全组那类问题）仍然要等真正查询才暴露。
+
+**目录树支持 database > schema > tables 三级（2026-09-16）。** 原实现把 PG 的表读取写死成
+`public`（§13 早前记为「已知限制」），树只有两级，且 database 层对 PG 是**装饰性**的 ——
+展开任一库看到的都是所连库的 `public`。
+
+改动：`DbDriver` 增加 `list_schemas`，`list_tables` 收 `schema` 参数。关键的取舍是
+**「每一级都从它自己命名的那个库去读」**：Postgres 没有跨库查询，所以读另一个库的 schema
+必须真的连过去。实现上给 `DbDial` 加了一个 `database` 覆盖（`DbDial::reading(db)`），
+URL 构造仍然只看 `dial.database()`，**驱动内部一行没改**；catalog 层在每一级用
+`dial.reading(database)` 组装。
+
+「schema 只有一个就跳过」不是特判，而是**空集与单元素共用一条规则**：MySQL 的 schema 就是
+它的 database，`list_schemas` 返回空 —— 空集即「本引擎没有这一层」；恰好一个则「没什么可
+选的」。`schemaList.length <= 1` 同时覆盖两者，前端据此直接进 tables。于是 MySQL 是
+database > tables，PG/Yellowbrick 是 database > schema > tables，不需要前端知道引擎种类。
+
+顺带修掉一个会真报错的 bug：点击表插入 SQL 时原本拼的是 `database.table`，而
+**Postgres 不接受用库名做限定符**（必须是 schema）。现在按 schema 限定；MySQL 上
+schema 就是 database，拼出来一模一样。
+
+System schema（`pg_%`、`information_schema`）在读 schema 时被过滤掉 —— 与库层过滤
+`datistemplate` 同一条理由，且 `information_schema.schemata` 本身是权限感知的，列出的都是
+用户有权访问的。**如果你希望看到 pg_catalog，改 `SCHEMAS_SQL` 的 where 即可。**

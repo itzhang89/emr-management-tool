@@ -31,8 +31,10 @@ export const dbHubService = {
   testDraftProfile: (input: NetworkProfileTestInput) => tauriClient.testNetworkProfileDraft(input),
   runQuery: (request: DbQueryRequest) => tauriClient.runDbQuery(request),
   listDatabases: (connectionId: string) => tauriClient.listDbDatabases(connectionId),
-  listTables: (connectionId: string, database: string) =>
-    tauriClient.listDbTables(connectionId, database)
+  listSchemas: (connectionId: string, database: string) =>
+    tauriClient.listDbSchemas(connectionId, database),
+  listTables: (connectionId: string, database: string, schema: string) =>
+    tauriClient.listDbTables(connectionId, database, schema)
 };
 
 export type DbHubService = typeof dbHubService;

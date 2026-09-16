@@ -36,12 +36,17 @@ impl DbDriver for YellowbrickDriver {
         Ok(catalog_entries(&page))
     }
 
+    async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
+        let page = postgres::read_page(dial, postgres::SCHEMAS_SQL, MAX_PAGE_ROWS).await?;
+        Ok(catalog_entries(&page))
+    }
+
     async fn list_tables(
         &self,
         dial: &DbDial<'_>,
-        _database: &str,
+        schema: &str,
     ) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = postgres::read_page(dial, &postgres::tables_sql(), MAX_PAGE_ROWS).await?;
+        let page = postgres::read_page(dial, &postgres::tables_sql(schema), MAX_PAGE_ROWS).await?;
         Ok(catalog_entries(&page))
     }
 

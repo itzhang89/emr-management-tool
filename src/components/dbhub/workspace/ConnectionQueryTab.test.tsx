@@ -16,15 +16,32 @@ const listDbDatabases = vi.fn().mockResolvedValue([
   { name: "reporting" },
   { name: "system" }
 ]);
-const listDbTables = vi.fn().mockImplementation(async (_connectionId: string, database: string) => {
-  if (database === "sales") {
-    return [
-      { name: "orders", kind: "BASE TABLE" },
-      { name: "customers", kind: "BASE TABLE" }
-    ];
-  }
-  return [{ name: `${database}_rows`, kind: "BASE TABLE" }];
-});
+// Schemas per database, as the engines answer them: MySQL has no such level
+// (it answers with nothing, which is how the tree learns to skip it), while a
+// Postgres database may have several — or exactly one, which it also skips.
+const SCHEMAS: Record<string, string[]> = {
+  analytics: ["public", "staging"],
+  warehouse: ["public"]
+};
+const listDbSchemas = vi
+  .fn()
+  .mockImplementation(async (_connectionId: string, database: string) =>
+    (SCHEMAS[database] ?? []).map((name) => ({ name }))
+  );
+const listDbTables = vi
+  .fn()
+  .mockImplementation(async (_connectionId: string, database: string, schema: string) => {
+    if (database === "sales") {
+      return [
+        { name: "orders", kind: "BASE TABLE" },
+        { name: "customers", kind: "BASE TABLE" }
+      ];
+    }
+    if (database === "analytics") {
+      return [{ name: `${schema}_events`, kind: "BASE TABLE" }];
+    }
+    return [{ name: `${database}_rows`, kind: "BASE TABLE" }];
+  });
 const runDbQuery = vi.fn().mockResolvedValue({
   columns: ["id"],
   rows: [{ id: "1" }],
@@ -37,6 +54,7 @@ vi.mock("@/services/tauriClient", () => ({
   tauriClient: {
     listDbConnections: (...args: unknown[]) => listDbConnections(...args),
     listDbDatabases: (...args: unknown[]) => listDbDatabases(...args),
+    listDbSchemas: (...args: unknown[]) => listDbSchemas(...args),
     listDbTables: (...args: unknown[]) => listDbTables(...args),
     runDbQuery: (...args: unknown[]) => runDbQuery(...args)
   }
@@ -66,7 +84,7 @@ vi.stubGlobal("localStorage", {
   key: () => null
 });
 
-function connection(overrides: Partial<{ database?: string }> = {}) {
+function connection(overrides: Partial<{ database?: string; kind: string }> = {}) {
   return {
     id: "c1",
     accountId: "acct-a",
@@ -119,7 +137,7 @@ describe("ConnectionQueryTab", () => {
     );
 
     await waitFor(() => expect(listDbDatabases).toHaveBeenCalledWith("c1"));
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales"));
+    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales", ""));
   });
 
   it("lands inside the connection's default database and shows its tables", async () => {
@@ -129,7 +147,7 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByText("sales")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "orders" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "customers" })).toBeInTheDocument();
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales"));
+    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales", ""));
   });
 
   it("backs out to the full database list", async () => {
@@ -137,7 +155,7 @@ describe("ConnectionQueryTab", () => {
     renderWorkspace();
 
     await screen.findByRole("button", { name: "customers" });
-    await user.click(screen.getByRole("button", { name: "Back to all databases" }));
+    await user.click(screen.getByRole("button", { name: "Back one level" }));
 
     // All databases listed again; no table header.
     expect(await screen.findByRole("button", { name: "reporting" })).toBeInTheDocument();
@@ -150,11 +168,11 @@ describe("ConnectionQueryTab", () => {
     renderWorkspace();
 
     await screen.findByRole("button", { name: "customers" });
-    await user.click(screen.getByRole("button", { name: "Back to all databases" }));
+    await user.click(screen.getByRole("button", { name: "Back one level" }));
     await user.click(await screen.findByRole("button", { name: "reporting" }));
 
     expect(await screen.findByRole("button", { name: "reporting_rows" })).toBeInTheDocument();
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "reporting"));
+    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "reporting", ""));
   });
 
   it("without a default database it lists all databases first", async () => {
@@ -164,5 +182,59 @@ describe("ConnectionQueryTab", () => {
     expect(screen.getByRole("button", { name: "reporting" })).toBeInTheDocument();
     // No database entered → no table rows shown.
     expect(screen.queryByRole("button", { name: "customers" })).not.toBeInTheDocument();
+  });
+
+  it("walks database → schema → tables when the database has schemas to choose", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection({ kind: "postgres", database: "analytics" }));
+
+    // Inside "analytics" the choice is which schema, so no tables yet.
+    expect(await screen.findByRole("button", { name: "staging" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "public" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "public_events" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "staging" }));
+
+    expect(await screen.findByRole("button", { name: "staging_events" })).toBeInTheDocument();
+    expect(listDbTables).toHaveBeenCalledWith("c1", "analytics", "staging");
+  });
+
+  it("skips the schema level when the database has exactly one", async () => {
+    renderWorkspace(connection({ kind: "postgres", database: "warehouse" }));
+
+    // One schema is not a choice worth a click: its tables are already listed.
+    expect(await screen.findByRole("button", { name: "warehouse_rows" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "public" })).not.toBeInTheDocument();
+    expect(listDbTables).toHaveBeenCalledWith("c1", "warehouse", "public");
+  });
+
+  it("qualifies an inserted table by its schema, not its database", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection({ kind: "postgres", database: "warehouse" }));
+
+    await user.click(await screen.findByRole("button", { name: "warehouse_rows" }));
+
+    // Postgres rejects `database.table` outright — the qualifier has to be the
+    // schema. On MySQL the schema *is* the database, so this reads the same.
+    expect(screen.getByLabelText("SQL editor")).toHaveValue(
+      "SELECT * FROM public.warehouse_rows LIMIT 100;"
+    );
+  });
+
+  it("steps back one level at a time", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection({ kind: "postgres", database: "analytics" }));
+
+    await user.click(await screen.findByRole("button", { name: "staging" }));
+    await screen.findByRole("button", { name: "staging_events" });
+
+    // Tables → schemas, not all the way out to databases.
+    await user.click(screen.getByRole("button", { name: "Back one level" }));
+    expect(await screen.findByRole("button", { name: "public" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "reporting" })).not.toBeInTheDocument();
+
+    // Schemas → databases.
+    await user.click(screen.getByRole("button", { name: "Back one level" }));
+    expect(await screen.findByRole("button", { name: "reporting" })).toBeInTheDocument();
   });
 });

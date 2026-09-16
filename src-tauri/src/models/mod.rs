@@ -1916,4 +1916,8 @@ pub struct DbConnectionFlagsRequest {
 pub struct DbCatalogRequest {
     pub connection_id: String,
     pub database: String,
+    /// The schema to read tables from. Empty for engines with no schema level
+    /// (MySQL), and unused by the schema listing itself.
+    #[serde(default)]
+    pub schema: String,
 }

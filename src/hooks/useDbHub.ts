@@ -151,13 +151,33 @@ export function useDbDatabases(connectionId?: string, active = true) {
   });
 }
 
-/** Catalog tree: tables of one database. */
-export function useDbTables(connectionId?: string, database?: string, active = true) {
+/**
+ * Catalog tree: schemas of one database. Engines whose schema *is* their
+ * database — MySQL — answer with nothing, which is how the tree learns it has
+ * no third level to show.
+ */
+export function useDbSchemas(connectionId?: string, database?: string, active = true) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   return useQuery({
-    queryKey: ["dbhub-tables", accountId, connectionId, database],
-    queryFn: () => dbHubService.listTables(connectionId!, database!),
+    queryKey: ["dbhub-schemas", accountId, connectionId, database],
+    queryFn: () => dbHubService.listSchemas(connectionId!, database!),
     enabled: Boolean(active && accountId && connectionId && database)
+  });
+}
+
+/** Catalog tree: tables of one schema, read from the database that names it. */
+export function useDbTables(
+  connectionId?: string,
+  database?: string,
+  schema?: string,
+  active = true
+) {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useQuery({
+    queryKey: ["dbhub-tables", accountId, connectionId, database, schema],
+    queryFn: () => dbHubService.listTables(connectionId!, database!, schema!),
+    enabled: Boolean(active && accountId && connectionId && database && schema !== undefined)
   });
 }

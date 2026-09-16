@@ -33,6 +33,11 @@ export interface DbWorkspaceState {
   resultTabs: CachedResultTab[];
   /** Last selected database in the catalog tree. */
   selectedDatabase?: string;
+  /**
+   * Last selected schema. Empty string is meaningful: it is the tree's way of
+   * saying "this engine has no schema level", which is where MySQL lands.
+   */
+  selectedSchema?: string;
 }
 
 function storageKey(accountId: string, connectionId: string) {
