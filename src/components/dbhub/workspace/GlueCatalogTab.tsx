@@ -725,7 +725,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   });
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
+    // `h-full`, not `calc(100vh-3rem)`: this is a tab inside `DbHubPage`,
+    // which has already measured the viewport and taken the tab strip and the
+    // page's gaps out of it. Asking for the viewport again made the workspace
+    // taller than its box, so the ancestors' `overflow-hidden` clipped the
+    // bottom of it — with nothing left to scroll, the last rows simply were
+    // not there.
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
 
       <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
         {catalogCollapsed ? (
