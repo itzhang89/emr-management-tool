@@ -94,7 +94,7 @@ export function DbHubPage({
           className="mt-0 hidden min-h-0 min-w-0 flex-1 overflow-hidden data-[state=active]:flex"
         >
           <PersistMount visible={activeTab === GLUE_TAB} className="flex min-h-0 w-full flex-col">
-            <GlueCatalogTab />
+            <GlueCatalogTab active={activeTab === GLUE_TAB} />
           </PersistMount>
         </TabsContent>
 

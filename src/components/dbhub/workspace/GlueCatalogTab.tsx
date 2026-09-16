@@ -100,7 +100,7 @@ type MetadataKind = "table" | "database";
 
 const initialResultTab = createQueryResultTab(1);
 
-export function GlueCatalogTab() {
+export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const queryClient = useQueryClient();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -691,6 +691,12 @@ export function GlueCatalogTab() {
     activeResultTab?.execution?.state === "QUEUED" || activeResultTab?.execution?.state === "RUNNING";
 
   useEffect(() => {
+    // Only the workspace on screen answers its shortcuts. This tab stays
+    // mounted once opened (`PersistMount`), so an ungated listener fires from
+    // every other sub-tab too — and would toggle a second workspace's catalog
+    // alongside its own.
+    if (!active) return;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
 

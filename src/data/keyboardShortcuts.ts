@@ -121,7 +121,7 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     id: SHORTCUT_IDS.GLUE_CATALOG_TOGGLE,
     category: "glue",
     label: "Toggle catalog panel",
-    description: "Show or hide the Glue catalog sidebar",
+    description: "Show or hide the catalog sidebar of the workspace you are in",
     keys: [formatModShortcut("\\")]
   },
   {

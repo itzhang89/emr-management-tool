@@ -26,6 +26,7 @@ import { SqlEditor } from "@/components/sql/SqlEditor";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
 import { buildResultTabTitle } from "@/services/queryResultTabs";
+import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
@@ -266,6 +267,20 @@ export function ConnectionQueryTab({
     [resultTabs, running, runningTabId]
   );
 
+  // Only the visible workspace answers. The Glue tab is mounted for the life
+  // of the page once opened, so both listeners fire from any sub-tab unless
+  // each checks that it is the one on screen.
+  useEffect(() => {
+    if (!active) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "\\") return;
+      event.preventDefault();
+      setCatalogCollapsed((collapsed) => !collapsed);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [active]);
+
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -313,7 +328,7 @@ export function ConnectionQueryTab({
                 <PanelLeftOpen className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Show catalog</TooltipContent>
+            <TooltipContent>Show catalog · {CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
           </Tooltip>
         </div>
       ) : (
@@ -344,6 +359,7 @@ export function ConnectionQueryTab({
         }}
               onRefresh={refreshCatalog}
               onCollapse={() => setCatalogCollapsed(true)}
+              collapseShortcut={CATALOG_TOGGLE_SHORTCUT}
             />
           </section>
 
@@ -468,6 +484,9 @@ function dialectFor(kind: DbConnection["kind"]) {
   return kind === "mysql" ? MySQL : PostgreSQL;
 }
 
+/** The chord that shows and hides the catalog, shared with the Glue tab. */
+const CATALOG_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_CATALOG_TOGGLE);
+
 /** How narrow and how wide the catalog pane may be dragged. */
 const MIN_CATALOG_WIDTH = 220;
 const MAX_CATALOG_WIDTH = 720;
@@ -502,7 +521,8 @@ function CatalogPane({
   onSelectTable,
   onBack,
   onRefresh,
-  onCollapse
+  onCollapse,
+  collapseShortcut
 }: {
   databases: Array<{ name: string; kind?: string }>;
   schemas: Array<{ name: string; kind?: string }>;
@@ -524,6 +544,7 @@ function CatalogPane({
   onBack: () => void;
   onRefresh: () => void;
   onCollapse: () => void;
+  collapseShortcut: string;
 }) {
   const [filter, setFilter] = useState("");
 
@@ -567,6 +588,7 @@ function CatalogPane({
         onRefresh={onRefresh}
         refreshing={refreshing}
         onCollapse={onCollapse}
+        collapseShortcut={collapseShortcut}
       />
 
       <div className="min-h-0 flex-1 overflow-auto rounded-md border text-xs">

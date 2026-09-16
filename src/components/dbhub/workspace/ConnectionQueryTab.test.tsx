@@ -370,6 +370,23 @@ describe("ConnectionQueryTab", () => {
     expect(saveTextFile).toHaveBeenCalledWith("Result 2.csv", "id\n0\n1");
   });
 
+  it("answers the catalog shortcut only while it is the visible tab", async () => {
+    const user = userEvent.setup();
+
+    // Hidden: the chord belongs to whichever workspace is on screen. This tab
+    // is only *mounted*, and the Glue tab is mounted for good once opened, so
+    // both would otherwise collapse at once.
+    const hidden = renderWorkspace(connection(), false);
+    await user.keyboard("{Meta>}\\{/Meta}");
+    expect(screen.queryByRole("button", { name: "Expand catalog panel" })).not.toBeInTheDocument();
+    hidden.unmount();
+
+    renderWorkspace(connection(), true);
+    await screen.findByRole("button", { name: "customers" });
+    await user.keyboard("{Meta>}\\{/Meta}");
+    expect(await screen.findByRole("button", { name: "Expand catalog panel" })).toBeInTheDocument();
+  });
+
   it("steps back one level at a time", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "analytics" }));
