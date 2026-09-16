@@ -42,13 +42,23 @@ const listDbTables = vi
     }
     return [{ name: `${database}_rows`, kind: "BASE TABLE" }];
   });
-const runDbQuery = vi.fn().mockResolvedValue({
-  columns: ["id"],
-  rows: [{ id: "1" }],
-  rowCount: 1,
-  truncated: false,
-  durationMs: 3
-});
+const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
+const cancelDbQuery = vi.fn().mockResolvedValue(true);
+const saveTextFile = vi.fn().mockResolvedValue(undefined);
+
+/** One page of a ho-hum result; `next` decides whether there is another. */
+function page(rows: number, offset: number, truncated: boolean) {
+  return {
+    columns: ["id"],
+    rows: Array.from({ length: rows }, (_, index) => ({ id: offset + index })),
+    rowCount: rows,
+    truncated,
+    durationMs: 3,
+    offset,
+    nextOffset: truncated ? offset + rows : null,
+    pageable: true
+  };
+}
 
 vi.mock("@/services/tauriClient", () => ({
   tauriClient: {
@@ -56,8 +66,16 @@ vi.mock("@/services/tauriClient", () => ({
     listDbDatabases: (...args: unknown[]) => listDbDatabases(...args),
     listDbSchemas: (...args: unknown[]) => listDbSchemas(...args),
     listDbTables: (...args: unknown[]) => listDbTables(...args),
-    runDbQuery: (...args: unknown[]) => runDbQuery(...args)
+    runDbQuery: (...args: unknown[]) => runDbQuery(...args),
+    cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
+    saveTextFile: (...args: unknown[]) => saveTextFile(...args)
   }
+}));
+
+// Mocked at this layer, not at `tauriClient`: outside the Tauri runtime the
+// helper downloads through a browser blob, so the client is never reached.
+vi.mock("@/services/fileDownload", () => ({
+  saveTextFile: (...args: unknown[]) => saveTextFile(...args)
 }));
 
 vi.mock("@/hooks/useAwsSettings", () => ({
@@ -284,6 +302,72 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("button", { name: "Expand catalog panel" }));
 
     expect(await screen.findByRole("button", { name: "customers" })).toBeInTheDocument();
+  });
+
+  it("stops a run and says so in the tab rather than in an error", async () => {
+    const user = userEvent.setup();
+    // The backend answers a stop with its own code, and a stopped run is a
+    // state the user asked for — not a failure to apologise for.
+    runDbQuery.mockRejectedValueOnce({ code: "Cancelled", message: "Query cancelled." });
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("only offers the stop button while something is running", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    const stop = await screen.findByRole("button", { name: "Stop query" });
+    expect(stop).toBeDisabled();
+
+    // A run that never settles keeps the button live.
+    runDbQuery.mockImplementationOnce(() => new Promise(() => {}));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop query" })).toBeEnabled());
+
+    await user.click(screen.getByRole("button", { name: "Stop query" }));
+    // The run's id is the WebView's own, so only its shape is assertable.
+    expect(cancelDbQuery).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("adds the next page to the tab it belongs to", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(page(2, 0, true));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("button", { name: "Load more rows" });
+
+    runDbQuery.mockResolvedValueOnce(page(1, 2, false));
+    await user.click(screen.getByRole("button", { name: "Load more rows" }));
+
+    // The second page was asked for by offset, and its rows joined the first.
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenLastCalledWith(
+        expect.objectContaining({ offset: 2, sql: "SELECT 1;" })
+      )
+    );
+    await waitFor(() => expect(screen.getByText(/3 rows/)).toBeInTheDocument());
+    // Nothing left to load, so the offer goes away.
+    expect(screen.queryByRole("button", { name: "Load more rows" })).not.toBeInTheDocument();
+  });
+
+  it("exports the rows it has loaded", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(page(2, 0, false));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await user.click(await screen.findByRole("button", { name: "Export CSV" }));
+
+    await waitFor(() => expect(saveTextFile).toHaveBeenCalled());
+    // "Result 2": the blank placeholder counts towards the fallback index,
+    // which is what the Glue workspace does too.
+    expect(saveTextFile).toHaveBeenCalledWith("Result 2.csv", "id\n0\n1");
   });
 
   it("steps back one level at a time", async () => {

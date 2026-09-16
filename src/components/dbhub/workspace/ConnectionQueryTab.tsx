@@ -1,5 +1,16 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Database, Folder, Loader2, PanelLeftOpen, Play, Plus, RefreshCw, Table2 } from "lucide-react";
+import {
+  Database,
+  Download,
+  Folder,
+  Loader2,
+  PanelLeftOpen,
+  Play,
+  Plus,
+  RefreshCw,
+  Square,
+  Table2
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -7,6 +18,7 @@ import {
   useDbDatabases,
   useDbSchemas,
   useDbTables,
+  useCancelDbQuery,
   useRefreshDbCatalog,
   useRunDbQuery
 } from "@/hooks/useDbHub";
@@ -17,6 +29,8 @@ import { buildResultTabTitle } from "@/services/queryResultTabs";
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
+import { toCsv } from "@/services/dbCsv";
+import { saveTextFile } from "@/services/fileDownload";
 import {
   readDbWorkspace,
   writeDbWorkspace,
@@ -50,6 +64,7 @@ export function ConnectionQueryTab({
   const accountId = activeAccount.data?.id;
   const runQuery = useRunDbQuery();
   const refreshCatalog = useRefreshDbCatalog();
+  const cancelQuery = useCancelDbQuery();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
@@ -57,6 +72,10 @@ export function ConnectionQueryTab({
   const [activeResultId, setActiveResultId] = useState<string>();
   const [hydrated, setHydrated] = useState(false);
   const [running, setRunning] = useState(false);
+  /** Which tab the in-flight run belongs to, so only it shows the marker. */
+  const [runningTabId, setRunningTabId] = useState<string>();
+  /** The in-flight run's handle, for the stop button to name. */
+  const [activeRequestId, setActiveRequestId] = useState<string>();
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
 
@@ -123,33 +142,97 @@ export function ConnectionQueryTab({
     });
   }, []);
 
+  const markTab = useCallback((id: string, patch: Partial<CachedResultTab>) => {
+    setResultTabs((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)));
+  }, []);
+
+  /** A later page joins the rows the tab already holds rather than replacing them. */
+  const appendRows = useCallback((id: string, page: DbQueryResult) => {
+    setResultTabs((tabs) =>
+      tabs.map((tab) => {
+        if (tab.id !== id || !tab.result) return tab;
+        return {
+          ...tab,
+          result: {
+            ...page,
+            // A page past the end comes back with no rows and therefore no
+            // column names; the first page's are still the right ones.
+            columns: page.columns.length ? page.columns : tab.result.columns,
+            rows: [...tab.result.rows, ...page.rows],
+            rowCount: tab.result.rowCount + page.rowCount,
+            offset: tab.result.offset
+          }
+        };
+      })
+    );
+  }, []);
+
   const execute = useCallback(
-    async (statement: string, tabId?: string) => {
+    async (statement: string, tabId?: string, offset = 0) => {
       if (!statement.trim()) return;
       const id = tabId ?? crypto.randomUUID();
+      const requestId = crypto.randomUUID();
       setRunning(true);
+      setRunningTabId(id);
+      setActiveRequestId(requestId);
       try {
         const result = await runQuery.mutateAsync({
           connectionId: connection.id,
-          sql: statement
-        });
-        upsertTab({
-          id,
-          title: buildResultTabTitle(statement, resultTabs.length + 1),
           sql: statement,
-          ranAt: new Date().toISOString(),
-          durationMs: result.durationMs,
-          result
+          offset,
+          requestId
         });
+        if (offset > 0) {
+          appendRows(id, result);
+        } else {
+          upsertTab({
+            id,
+            title: buildResultTabTitle(statement, resultTabs.length + 1),
+            sql: statement,
+            ranAt: new Date().toISOString(),
+            durationMs: result.durationMs,
+            result
+          });
+        }
         setActiveResultId(id);
       } catch (error) {
-        toast.error(formatAppError(error, "Query failed."));
+        const appError = error as { code?: string; message?: string };
+        if (appError?.code === "Cancelled") {
+          // A stopped run is a state, not a failure — it belongs in the tab,
+          // not in a toast apologising for something the user asked for.
+          markTab(id, { runState: "cancelled", runError: undefined });
+        } else {
+          markTab(id, { runState: "failed", runError: appError?.message });
+          toast.error(formatAppError(error, "Query failed."));
+        }
       } finally {
         setRunning(false);
+        setRunningTabId(undefined);
+        setActiveRequestId(undefined);
       }
     },
-    [connection.id, runQuery, resultTabs.length, upsertTab]
+    [appendRows, connection.id, markTab, resultTabs.length, runQuery, upsertTab]
   );
+
+  /** Stop the run in flight. The backend answers `false` if it already ended. */
+  const handleStop = () => {
+    if (activeRequestId) void cancelQuery(activeRequestId);
+  };
+
+  const handleLoadMore = (tab?: CachedResultTab) => {
+    const offset = tab?.result?.nextOffset;
+    if (!tab || offset == null) return;
+    void execute(tab.sql, tab.id, offset);
+  };
+
+  const handleExport = async (tab: CachedResultTab) => {
+    if (!tab.result) return;
+    try {
+      await saveTextFile(`${tab.title || "result"}.csv`, toCsv(tab.result.columns, tab.result.rows));
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to export CSV."));
+    }
+  };
 
   /**
    * Which tab a run lands in, following the Glue workspace: a plain run
@@ -178,9 +261,9 @@ export function ConnectionQueryTab({
       resultTabs.map((tab) => ({
         ...tab,
         tooltip: tab.sql || tab.title,
-        running: running && tab.id === activeResult?.id
+        running: running && tab.id === runningTabId
       })),
-    [resultTabs, running, activeResult]
+    [resultTabs, running, runningTabId]
   );
 
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -292,6 +375,24 @@ export function ConnectionQueryTab({
                   variant="outline"
                   size="icon"
                   className="size-7"
+                  disabled={!running}
+                  aria-label="Stop query"
+                  onClick={handleStop}
+                >
+                  <Square className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Stop query · stops reading; the server notices when the connection closes
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-7"
                   disabled={running || runQuery.isPending}
                   aria-label="Run in new tab"
                   onClick={() => void handleRunNewTab()}
@@ -347,7 +448,9 @@ export function ConnectionQueryTab({
                 result={tab.result}
                 meta={tab}
                 rerunning={running}
-                onRerun={() => void handleRun(tab.sql)}
+                onRerun={() => void execute(tab.sql, tab.id)}
+                onLoadMore={() => handleLoadMore(tab)}
+                onExport={() => void handleExport(tab)}
               />
             )}
           </ResultTabsPanel>
@@ -429,7 +532,11 @@ function CatalogPane({
   const inDatabase = Boolean(selectedDatabase);
   const inSchemaList = inDatabase && !skipsSchemaLevel && selectedSchema === undefined;
   const listing = inSchemaList ? schemas : inDatabase && !inSchemaList ? tables : databases;
-  const loading = inSchemaList ? loadingSchemas : inDatabase && !inSchemaList ? loadingTables : loadingDatabases;
+  const loading = inSchemaList
+    ? loadingSchemas
+    : inDatabase && !inSchemaList
+      ? loadingTables
+      : loadingDatabases;
   const filtered = listing.filter((entry) =>
     entry.name.toLowerCase().includes(filter.toLowerCase())
   );
@@ -450,7 +557,7 @@ function CatalogPane({
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-hidden">
+    <aside className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
       <CatalogToolbar
         backLabel={inDatabase ? "Back one level" : undefined}
         onBack={onBack}
@@ -512,7 +619,7 @@ function CatalogPane({
 
 function SkeletonRows() {
   return (
-    <div className="space-y-1 p-1" aria-hidden>
+    <div className="space-y-1 p-2" aria-hidden>
       {[0, 1, 2].map((index) => (
         <div key={index} className="h-3.5 w-full animate-pulse rounded bg-muted" />
       ))}
@@ -520,16 +627,26 @@ function SkeletonRows() {
   );
 }
 
+/**
+ * One page of a result, with the two things a JDBC result can do that an
+ * Athena one cannot: read the next page, and be stopped mid-flight. Both are
+ * said in the user's terms — a page re-runs the query, and a cancelled run is
+ * a state rather than a failure.
+ */
 function ResultPane({
   result,
   meta,
   rerunning,
-  onRerun
+  onRerun,
+  onLoadMore,
+  onExport
 }: {
   result?: DbQueryResult;
   meta?: CachedResultTab;
   rerunning: boolean;
   onRerun: () => void;
+  onLoadMore: () => void;
+  onExport: () => void;
 }) {
   if (!meta) {
     return (
@@ -539,68 +656,111 @@ function ResultPane({
     );
   }
 
+  const state = meta.runState;
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
-      <div className="flex shrink-0 items-center gap-2 border-b bg-secondary/40 px-3 py-1.5 text-xs text-muted-foreground">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
         <span className="truncate font-medium text-foreground">{meta.title}</span>
+        {state === "cancelled" ? <span>Cancelled</span> : null}
+        {state === "failed" ? (
+          <span className="text-destructive">
+            Failed{meta.runError ? `: ${meta.runError}` : ""}
+          </span>
+        ) : null}
         {meta.durationMs !== undefined ? <span>{meta.durationMs}ms</span> : null}
         {result ? (
           <span>
             {result.rowCount} row{result.rowCount === 1 ? "" : "s"}
             {result.truncated ? " · truncated" : ""}
+            {result.offset > 0 ? ` · from row ${result.offset + 1}` : ""}
           </span>
-        ) : (
-          <span className="flex items-center gap-1">
-            results not cached
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-5 px-1 text-xs"
-              disabled={rerunning}
-              onClick={onRerun}
-            >
-              <RefreshCw className="size-3" aria-hidden />
-              rerun to restore
-            </Button>
-          </span>
-        )}
+        ) : null}
+        {result ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto size-6"
+                aria-label="Export CSV"
+                onClick={onExport}
+              >
+                <Download className="size-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Export CSV · the rows loaded here, not the whole result
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
+
       {result ? (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full border-collapse text-xs">
-            <thead className="sticky top-0 bg-background">
-              <tr>
-                {result.columns.map((column) => (
-                  <th
-                    key={column}
-                    className="border-b px-2 py-1.5 text-left font-medium"
-                  >
-                    {column}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.map((row, index) => (
-                <tr key={index} className="odd:bg-secondary/20">
+        <>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className="min-w-full border-collapse text-[10px]">
+              <thead className="sticky top-0 z-10 bg-muted/80">
+                <tr>
                   {result.columns.map((column) => (
-                    <td key={column} className="max-w-64 truncate px-2 py-1">
-                      {formatCell(row[column])}
-                    </td>
+                    <th key={column} className="border-b px-2 py-1 text-left font-medium">
+                      {column}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {result.rows.length === 0 ? (
-            <p className="p-3 text-xs text-muted-foreground">No rows.</p>
+              </thead>
+              <tbody>
+                {result.rows.map((row, index) => (
+                  <tr key={index} className="odd:bg-secondary/20">
+                    {result.columns.map((column) => (
+                      <td key={column} className="max-w-xs truncate px-2 py-1 font-mono">
+                        {formatCell(row[column])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {result.rows.length === 0 ? (
+              <p className="p-3 text-xs text-muted-foreground">Query returned no rows.</p>
+            ) : null}
+          </div>
+
+          {result.nextOffset != null ? (
+            <div className="flex shrink-0 items-center gap-2 border-t px-2 py-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-[10px]"
+                disabled={rerunning}
+                onClick={onLoadMore}
+              >
+                Load more rows
+              </Button>
+              {/* Said out loud because it is not obvious and it is not free:
+                  there is no cursor to resume from, so each page re-runs the
+                  statement and discards the rows it skips. */}
+              <span className="text-[10px] text-muted-foreground">
+                Each page re-runs the query. Add an ORDER BY so pages stay stable.
+              </span>
+            </div>
           ) : null}
-        </div>
+        </>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center p-4 text-center text-xs text-muted-foreground">
-          The result set exceeded the local cache budget, so only this tab&apos;s
-          metadata was kept. Run the query again to load fresh results.
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
+          <p>The result set exceeded the local cache budget, so only this tab's metadata was kept.</p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7"
+            disabled={rerunning}
+            onClick={onRerun}
+          >
+            Rerun to load fresh results
+          </Button>
         </div>
       )}
     </div>

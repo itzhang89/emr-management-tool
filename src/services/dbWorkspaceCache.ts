@@ -25,6 +25,9 @@ export interface CachedResultTab {
   durationMs?: number;
   /** Whole cached results when small enough; undefined when dropped. */
   result?: DbQueryResult;
+  /** Set when the last run did not simply succeed, so a reload still says so. */
+  runState?: "cancelled" | "failed";
+  runError?: string;
 }
 
 export interface DbWorkspaceState {

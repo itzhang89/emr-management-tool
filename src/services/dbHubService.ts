@@ -30,6 +30,7 @@ export const dbHubService = {
   testProfile: (profileId: string) => tauriClient.testNetworkProfile(profileId),
   testDraftProfile: (input: NetworkProfileTestInput) => tauriClient.testNetworkProfileDraft(input),
   runQuery: (request: DbQueryRequest) => tauriClient.runDbQuery(request),
+  cancelQuery: (requestId: string) => tauriClient.cancelDbQuery(requestId),
   listDatabases: (connectionId: string) => tauriClient.listDbDatabases(connectionId),
   listSchemas: (connectionId: string, database: string) =>
     tauriClient.listDbSchemas(connectionId, database),

@@ -1201,6 +1201,15 @@ export interface DbQueryResult {
   rowCount: number;
   truncated: boolean;
   durationMs: number;
+  /** Rows skipped to reach this page. */
+  offset: number;
+  /** Where the next page starts, when the backend says there is one. */
+  nextOffset?: number | null;
+  /**
+   * Whether this statement can be read a page at a time at all. Said on the
+   * first page so "load more" appears only where it would work.
+   */
+  pageable: boolean;
 }
 
 /** Body of the query-tab SQL run. */
@@ -1208,6 +1217,10 @@ export interface DbQueryRequest {
   connectionId: string;
   sql: string;
   maxRows?: number;
+  /** Rows to skip — non-zero asks for the next page of the same statement. */
+  offset?: number;
+  /** This run's handle, so the stop button can name it. */
+  requestId?: string;
 }
 
 /** One entry of the workspace catalog tree (database or table). */

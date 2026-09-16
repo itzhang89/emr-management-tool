@@ -14,7 +14,9 @@ function fakeResult(rows: number): DbQueryResult {
     rows: Array.from({ length: rows }, (_, index) => ({ id: index, name: `row-${index}` })),
     rowCount: rows,
     truncated: false,
-    durationMs: 12
+    durationMs: 12,
+    offset: 0,
+    pageable: true
   };
 }
 

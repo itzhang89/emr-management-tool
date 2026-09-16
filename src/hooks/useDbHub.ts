@@ -140,6 +140,21 @@ export function useRunDbQuery() {
   });
 }
 
+/**
+ * Stop a run by the id it was started with. Not a mutation: nothing is
+ * invalidated and an id that is no longer running is a no-op, not a failure.
+ */
+export function useCancelDbQuery() {
+  return async (requestId: string) => {
+    try {
+      await dbHubService.cancelQuery(requestId);
+    } catch {
+      // The run finished first, or the app is shutting down. Either way there
+      // is nothing left to stop and nothing worth telling the user.
+    }
+  };
+}
+
 /** Catalog tree: databases of the connection. */
 export function useDbDatabases(connectionId?: string, active = true) {
   const activeAccount = useActiveAwsAccount();

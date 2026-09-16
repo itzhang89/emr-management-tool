@@ -296,6 +296,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbTestResult>("test_network_profile_draft", request),
     // Read-only query execution for connection tabs (gate + read-only tx).
     runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
+    cancelDbQuery: (requestId: string) =>
+      call<boolean>("cancel_db_query", { requestId }),
     listDbDatabases: (connectionId: string) =>
       call<DbCatalogEntry[]>("list_db_databases", { connectionId }),
     listDbSchemas: (connectionId: string, database: string) =>
