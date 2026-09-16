@@ -83,7 +83,7 @@ async fn connect(dial: &DbDial<'_>) -> AppResult<MySqlPool> {
         .max_connections(1)
         .connect(&mysql_url(dial))
         .await
-        .map_err(|error| AppError::validation(session::describe_error(&error)))
+        .map_err(|error| session::dial_error(dial, &error))
 }
 
 /// One statement through a session pinned read-only, at most `cap` rows.
@@ -220,6 +220,14 @@ mod tests {
             .initialize(&dial)
             .await
             .expect_err("the dial must fail");
+        // The message names what was dialed and how — a bare errno leaves the
+        // reader guessing whether a tunnel was even involved.
+        assert!(
+            error
+                .message
+                .starts_with("Could not reach 127.0.0.1:1 (direct):"),
+            "{error:?}"
+        );
         assert!(error.message.len() <= 300);
     }
 }

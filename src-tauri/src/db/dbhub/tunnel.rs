@@ -547,7 +547,7 @@ pub async fn dial_target_for(
         move |_| Ok(secret),
     )
     .await?;
-    let target = DialTarget::new("127.0.0.1", forward.port());
+    let target = DialTarget::forwarded(&profile.name, forward.port());
     Ok((target, Some(forward)))
 }
 

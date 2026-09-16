@@ -98,6 +98,12 @@ mod tests {
             .initialize(&dial)
             .await
             .expect_err("the dial must fail");
+        assert!(
+            error
+                .message
+                .starts_with("Could not reach 127.0.0.1:1 (direct):"),
+            "{error:?}"
+        );
         assert!(error.message.len() <= 300);
     }
 }

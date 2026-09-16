@@ -35,7 +35,10 @@
       "icons/icon.ico"
     ],
     "resources": [],
-    "macOS": {}
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-"
+    }
   },
   "plugins": {
     "updater": {

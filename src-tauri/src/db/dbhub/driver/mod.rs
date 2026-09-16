@@ -37,29 +37,61 @@ pub mod yellowbrick;
 /// budget.
 pub const MAX_PAGE_ROWS: usize = 500;
 
-/// Where a driver dials.
+/// Where a driver dials, and how it gets there.
 ///
 /// Always already route-resolved: when a connection rides a Network Profile
 /// this is the local forward's loopback address, never the database's literal
 /// host. Drivers therefore never learn — and never need to care — how the
 /// bytes reach the server.
+///
+/// `via` is the one exception, and it is only ever read while building an
+/// error: without it, "No route to host" reads identically whether a tunnel
+/// was in play or the database was dialed straight.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DialTarget {
     pub host: String,
     pub port: u16,
+    pub via: Via,
+}
+
+/// How a dial target was reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Via {
+    /// Straight to the database host.
+    Direct,
+    /// Through a Network Profile's local forward, named as the user named it.
+    Profile { name: String },
 }
 
 impl DialTarget {
-    pub fn new(host: impl Into<String>, port: u16) -> Self {
+    /// The connection's own address — no network profile in play.
+    pub fn direct(connection: &DbConnection) -> Self {
         Self {
-            host: host.into(),
-            port,
+            host: connection.host.clone(),
+            port: connection.port as u16,
+            via: Via::Direct,
         }
     }
 
-    /// The connection's own address — no network profile in play.
-    pub fn direct(connection: &DbConnection) -> Self {
-        Self::new(connection.host.clone(), connection.port as u16)
+    /// The loopback port a Network Profile's local forward bound.
+    pub fn forwarded(profile_name: impl Into<String>, port: u16) -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port,
+            via: Via::Profile {
+                name: profile_name.into(),
+            },
+        }
+    }
+}
+
+impl std::fmt::Display for DialTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}:{}", self.host, self.port)?;
+        match &self.via {
+            Via::Direct => write!(formatter, " (direct)"),
+            Via::Profile { name } => write!(formatter, " (via Network Profile \"{name}\")"),
+        }
     }
 }
 
@@ -235,9 +267,25 @@ mod tests {
     #[test]
     fn dial_target_direct_reads_the_connection_address() {
         let connection = connection(DbConnectionKind::Mysql, "db.internal", 3306);
+        let target = DialTarget::direct(&connection);
+        assert_eq!(target.host, "db.internal");
+        assert_eq!(target.port, 3306);
+        assert_eq!(target.via, Via::Direct);
+    }
+
+    /// The route is what makes a failed dial readable: the same errno means
+    /// "your tunnel is down" or "that host is unreachable from here", and the
+    /// message has to say which.
+    #[test]
+    fn dial_target_says_how_it_was_reached() {
+        let connection = connection(DbConnectionKind::Mysql, "db.internal", 3306);
         assert_eq!(
-            DialTarget::direct(&connection),
-            DialTarget::new("db.internal", 3306)
+            DialTarget::direct(&connection).to_string(),
+            "db.internal:3306 (direct)"
+        );
+        assert_eq!(
+            DialTarget::forwarded("Office bastion", 54321).to_string(),
+            "127.0.0.1:54321 (via Network Profile \"Office bastion\")"
         );
     }
 

@@ -614,3 +614,39 @@ MSSQL/Oracle 留的门 —— sqlx 0.9 不支持这两者，`tiberius`/`oracle-r
 `DialTarget::direct(&shape.connection)` —— 配了 Network Profile 的连接在 AI 工具
 侧拨的是字面 host。修法是调用 `tunnel::dial_target_for`（该路径已持有 app handle
 与 secrets 权限），但那是行为变更，留待确认。
+
+**macOS 本地网络隐私（Local Network Privacy）拦截直连局域网数据库（2026-09-15）。**
+真机现象：连接 `192.168.xx.60:3306` 的 Test Connection 报
+`error communicating with database: No route to host (os error 65)`，latency 10ms；
+而同一台机器上 iTerm2 里 `nc -vz 192.168.xx.60 3306` 秒通。排查结论：**不是网络问题、
+不是隧道问题、也不是本次重构的回归**，而是 macOS 15+ 的 Local Network 授权。
+
+判据：`en0 = 192.168.xx.49/24`，目标 `192.168.xx.60` 同网段二层直达
+（`route get` 显示 `interface: en0, flags: LLINFO`）；系统日志中 `nehelper` 正在逐
+App 管控本地网络（Chrome 被弹过提示）。而被测的打包产物
+`/Applications/EMR Management Tool.app`（v0.2.1）`Info.plist entries=14`，
+**没有 `NSLocalNetworkUsageDescription`**，且 `Signature=adhoc`、无 Team Identifier ——
+授权按代码签名身份记录，adhoc 身份每次重建都变，提示弹不出、授权也留不住。被拒后
+`connect()` 的返回值就是 `EHOSTUNREACH(65)`，系统刻意把它伪装成「没路由」，所以极易误
+判为网络不通。
+
+处理：
+- 新增 `src-tauri/Info.plist`，声明 `NSLocalNetworkUsageDescription`（Tauri v2 会自动
+  合并与 tauri.conf.json 同目录的 Info.plist，且显式配了 `bundle.macOS.infoPlist`）。
+- `bundle.macOS.signingIdentity` 显式写成 `"-"`（= adhoc，即当前行为不变），**位置留好**：
+  拿到 Apple ID 后换成证书名（免费的 Apple Development 证书即可，不需要 $99 开发者账号），
+  授权才能真正持久。在此之前 Local Network 授权可能仍不生效。
+- 排查手法留档：判断「App 连不上但终端能连」的局域网问题时，先看
+  `plutil -p "/Applications/<App>.app/Contents/Info.plist" | grep NSLocalNetwork`
+  与 `codesign -dv <app>` 的 `Signature=`；macOS 上 `EHOSTUNREACH(65)` 约等于
+  「没路**或没权限**」，而 `ECONNREFUSED(61)` 才是「路由通、没人监听」。
+
+**失败拨号的错误信息补上目标与路径。** 原来的
+`No route to host (os error 65)` 读不出「拨的是字面 host 还是隧道口」「profile 到底绑没绑」
+——而这三者对应完全不同的修法，本次排查就是绕了远路才发现连接压根没绑 profile。
+`DialTarget` 增加 `via: Via::{Direct, Profile{name}}`（由 `tunnel::dial_target_for` 填
+profile 名），配 `Display`；`session::dial_error` 统一产出
+`Could not reach 192.168.xx.60:3306 (direct): No route to host (os error 65)` /
+`Could not reach 127.0.0.1:54321 (via Network Profile "Bastion"): Connection refused (os error 61)`，
+整体仍限长 300 字符且目标在前（保证必存）。仅 `connect()` 失败走这条；`initialize` 的
+取版本失败（如 Access denied）保持原样，因为驱动自身的报错已经说清了。

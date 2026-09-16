@@ -102,7 +102,7 @@ pub(crate) async fn connect(dial: &DbDial<'_>) -> AppResult<PgPool> {
         .max_connections(1)
         .connect(&postgres_url(dial))
         .await
-        .map_err(|error| AppError::validation(session::describe_error(&error)))
+        .map_err(|error| session::dial_error(dial, &error))
 }
 
 /// One statement inside a read-only transaction, at most `cap` rows.
@@ -211,6 +211,12 @@ mod tests {
             .initialize(&dial)
             .await
             .expect_err("the dial must fail");
+        assert!(
+            error
+                .message
+                .starts_with("Could not reach 127.0.0.1:1 (direct):"),
+            "{error:?}"
+        );
         assert!(error.message.len() <= 300);
     }
 }

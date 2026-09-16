@@ -57,6 +57,21 @@ pub(crate) fn describe_error(error: &dyn Display) -> String {
     crate::error::capped(first_line.trim(), 300).unwrap_or_else(|| first_line.trim().to_string())
 }
 
+/// A dial that failed, said in the user's terms: what we tried to reach, how
+/// we tried to reach it, and what the driver had to say about it.
+///
+/// The first two are the point. A bare "No route to host (os error 65)" reads
+/// the same whether a tunnel was in play, whether the profile was bound at
+/// all, or whether the database was dialed straight — and those need three
+/// different fixes.
+pub(crate) fn dial_error(dial: &DbDial<'_>, error: &dyn Display) -> AppError {
+    // Bound the whole sentence, not just the driver's half: the target prefix
+    // is short and always survives, while a driver timeout's socket dump does
+    // not crowd out the reason.
+    let message = format!("Could not reach {}: {}", dial.target, describe_error(error));
+    AppError::validation(crate::error::capped(&message, 300).unwrap_or(message))
+}
+
 /// `scheme://user:password@host:port[/database]`.
 ///
 /// Every user-supplied piece is percent-encoded, so a password containing `@`
@@ -192,7 +207,7 @@ mod tests {
     #[test]
     fn scheme_url_percent_encodes_every_user_piece() {
         let connection = connection();
-        let target = super::super::driver::DialTarget::new("127.0.0.1", 45678);
+        let target = super::super::driver::DialTarget::forwarded("Office bastion", 45678);
         let url = scheme_url(
             "mysql",
             &dial_with(&connection, &target, Some("p@ss/word")),
@@ -231,6 +246,45 @@ mod tests {
         let described = describe_error(&error);
         assert!(described.starts_with("could not connect: refused"));
         assert!(described.len() <= 300);
+    }
+
+    #[test]
+    fn dial_error_names_the_target_its_route_and_the_reason() {
+        let connection = connection();
+        let direct = super::super::driver::DialTarget::direct(&connection);
+        let error = dial_error(
+            &dial_with(&connection, &direct, None),
+            &"No route to host (os error 65)",
+        );
+        assert_eq!(
+            &*error.message,
+            "Could not reach db.internal:3306 (direct): No route to host (os error 65)"
+        );
+
+        let forwarded = super::super::driver::DialTarget::forwarded("Office bastion", 54321);
+        let error = dial_error(
+            &dial_with(&connection, &forwarded, None),
+            &"Connection refused (os error 61)",
+        );
+        assert_eq!(
+            &*error.message,
+            "Could not reach 127.0.0.1:54321 (via Network Profile \"Office bastion\"): \
+             Connection refused (os error 61)"
+        );
+    }
+
+    #[test]
+    fn dial_error_stays_bounded_with_the_target_first() {
+        // A driver timeout embeds a socket dump; the target must survive the
+        // cut and the dump must not.
+        let connection = connection();
+        let target = super::super::driver::DialTarget::direct(&connection);
+        let dump = format!("timed out\n{}", "socket ".repeat(200));
+        let error = dial_error(&dial_with(&connection, &target, None), &dump);
+        assert!(error.message.len() <= 300);
+        assert!(error
+            .message
+            .starts_with("Could not reach db.internal:3306 (direct):"));
     }
 
     #[tokio::test]
