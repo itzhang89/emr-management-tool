@@ -166,6 +166,20 @@ export function useDbSchemas(connectionId?: string, database?: string, active = 
   });
 }
 
+/**
+ * Refetch every catalog level for the active connection. Invalidate by the
+ * query key's first element so all three levels — whichever is on screen —
+ * come back together.
+ */
+export function useRefreshDbCatalog() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ["dbhub-databases"] });
+    void queryClient.invalidateQueries({ queryKey: ["dbhub-schemas"] });
+    void queryClient.invalidateQueries({ queryKey: ["dbhub-tables"] });
+  };
+}
+
 /** Catalog tree: tables of one schema, read from the database that names it. */
 export function useDbTables(
   connectionId?: string,

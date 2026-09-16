@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Database, Folder, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
+import { Database, Folder, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useDbDatabases, useDbSchemas, useDbTables, useRunDbQuery } from "@/hooks/useDbHub";
+import {
+  useDbDatabases,
+  useDbSchemas,
+  useDbTables,
+  useRefreshDbCatalog,
+  useRunDbQuery
+} from "@/hooks/useDbHub";
+import { CatalogRow } from "@/components/catalog/CatalogRow";
+import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
 import {
   readDbWorkspace,
@@ -13,7 +20,6 @@ import {
 } from "@/services/dbWorkspaceCache";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import type { DbConnection, DbQueryResult } from "@/types/domain";
-import { cn } from "@/lib/utils";
 
 /**
  * The per-connection query workspace rendered in the dynamic second-level tabs
@@ -39,6 +45,7 @@ export function ConnectionQueryTab({
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const runQuery = useRunDbQuery();
+  const refreshCatalog = useRefreshDbCatalog();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
@@ -147,6 +154,7 @@ export function ConnectionQueryTab({
         loadingDatabases={databases.isLoading}
         loadingSchemas={schemas.isLoading}
         loadingTables={tables.isLoading}
+        refreshing={databases.isFetching || schemas.isFetching || tables.isFetching}
         error={databases.error ?? schemas.error ?? tables.error}
         onSelectDatabase={setSelectedDatabase}
         onSelectSchema={setSelectedSchema}
@@ -156,6 +164,7 @@ export function ConnectionQueryTab({
           if (selectedSchema !== undefined) setSelectedSchema(undefined);
           else setSelectedDatabase(undefined);
         }}
+        onRefresh={refreshCatalog}
       />
       <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex shrink-0 items-center gap-2">
@@ -214,11 +223,13 @@ function CatalogPane({
   loadingDatabases,
   loadingSchemas,
   loadingTables,
+  refreshing,
   error,
   onSelectDatabase,
   onSelectSchema,
   onSelectTable,
-  onBack
+  onBack,
+  onRefresh
 }: {
   databases: Array<{ name: string; kind?: string }>;
   schemas: Array<{ name: string; kind?: string }>;
@@ -230,12 +241,15 @@ function CatalogPane({
   loadingDatabases: boolean;
   loadingSchemas: boolean;
   loadingTables: boolean;
+  /** Any level currently refetching — drives the toolbar's spinner. */
+  refreshing: boolean;
   error: unknown;
   onSelectDatabase: (name: string) => void;
   onSelectSchema: (name: string) => void;
   onSelectTable: (name: string) => void;
   /** Step back one level: schema → database → all databases. */
   onBack: () => void;
+  onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState("");
 
@@ -257,73 +271,65 @@ function CatalogPane({
         : "Failed to load metadata."
     : undefined;
 
-  return (
-    <aside className="flex w-60 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
-      {inDatabase ? (
-        <div className="flex items-center gap-1 border-b px-1 py-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            aria-label="Back one level"
-            onClick={onBack}
-          >
-            <ArrowLeft className="size-3.5" />
-          </Button>
-          <span className="flex min-w-0 items-center gap-1.5 truncate text-xs font-medium">
-            <Database className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="truncate">{qualifier}</span>
-          </span>
-          <Input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter…"
-            className="ml-auto h-6 w-20 text-xs"
-            aria-label="Filter tables"
-          />
-        </div>
-      ) : (
-        <div className="border-b px-2 py-1.5 text-xs font-medium text-muted-foreground">
-          Databases
-        </div>
-      )}
+  const select = (name: string) => {
+    if (!inDatabase) onSelectDatabase(name);
+    else if (inSchemaList) onSelectSchema(name);
+    else onSelectTable(name);
+    setFilter("");
+  };
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2 text-sm">
+  return (
+    <aside className="flex w-60 shrink-0 flex-col gap-2 overflow-hidden">
+      <CatalogToolbar
+        backLabel={inDatabase ? "Back one level" : undefined}
+        onBack={onBack}
+        filter={filter}
+        onFilterChange={setFilter}
+        filterPlaceholder={inDatabase ? "Filter tables" : "Filter databases"}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+      />
+
+      <div className="min-h-0 flex-1 overflow-auto rounded-md border text-xs">
+        {/* Which database and schema these rows belong to. The toolbar no
+            longer has room to say it, and a drill-down that cannot tell you
+            where you are is the one thing worse than no drill-down. */}
+        {inDatabase ? (
+          <div className="border-b bg-muted/30 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
+            <Database className="mr-1 inline size-3" aria-hidden />
+            {qualifier}
+          </div>
+        ) : null}
+
         {errorMessage ? (
-          <p className="text-xs leading-relaxed text-destructive" role="alert">
+          <p className="p-2 text-xs leading-relaxed text-destructive" role="alert">
             {errorMessage}
           </p>
         ) : null}
 
         {loading ? <SkeletonRows /> : null}
-        {filtered.map((entry) => (
-          <button
-            key={entry.name}
-            type="button"
-            onClick={() => {
-              if (!inDatabase) onSelectDatabase(entry.name);
-              else if (inSchemaList) onSelectSchema(entry.name);
-              else onSelectTable(entry.name);
-              setFilter("");
-            }}
-            className={cn(
-              "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-secondary/60",
-              !inDatabase && "text-muted-foreground"
-            )}
-          >
-            {!inDatabase ? (
-              <Database className="size-3 shrink-0" aria-hidden />
-            ) : inSchemaList ? (
-              <Folder className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            ) : (
-              <Table2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            )}
-            <span className="truncate">{entry.name}</span>
-          </button>
-        ))}
-        {!loading && listing.length === 0 && !errorMessage ? (
-          <p className="p-1 text-xs text-muted-foreground">
+        <ul className="divide-y">
+          {filtered.map((entry) => (
+            <li key={entry.name}>
+              <CatalogRow
+                name={entry.name}
+                emphasis={!inDatabase}
+                icon={
+                  !inDatabase ? (
+                    <Database className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  ) : inSchemaList ? (
+                    <Folder className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  ) : (
+                    <Table2 className="size-3.5 shrink-0" aria-hidden />
+                  )
+                }
+                onSelect={() => select(entry.name)}
+              />
+            </li>
+          ))}
+        </ul>
+        {!loading && filtered.length === 0 && !errorMessage ? (
+          <p className="p-2 text-xs text-muted-foreground">
             {!inDatabase ? "No databases." : inSchemaList ? "No schemas." : "No tables."}
           </p>
         ) : null}
