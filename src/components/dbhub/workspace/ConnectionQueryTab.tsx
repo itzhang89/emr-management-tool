@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Database, Folder, Loader2, Play, RefreshCw, Table2 } from "lucide-react";
+import { Database, Folder, Loader2, Play, Plus, RefreshCw, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -10,6 +10,10 @@ import {
   useRefreshDbCatalog,
   useRunDbQuery
 } from "@/hooks/useDbHub";
+import { SqlEditor } from "@/components/sql/SqlEditor";
+import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
+import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
+import { buildResultTabTitle } from "@/services/queryResultTabs";
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
@@ -61,7 +65,7 @@ export function ConnectionQueryTab({
     if (!accountId) return;
     const state = readDbWorkspace(accountId, connection.id);
     setSql(state.sql || "SELECT 1;");
-    setResultTabs(state.resultTabs);
+    setResultTabs(state.resultTabs.length ? state.resultTabs : [blankTab()]);
     setActiveResultId(state.activeResultTabId ?? state.resultTabs.at(-1)?.id);
     // If the connection declares a default database and the workspace has no
     // remembered selection, land inside it so the tree shows its tables
@@ -104,33 +108,75 @@ export function ConnectionQueryTab({
     [activeResultId, resultTabs]
   );
 
-  const handleRun = useCallback(
-    async (sqlOverride?: string) => {
-      const statement = sqlOverride ?? sql;
+  /** Replace a tab where it sits, or append it — the strip keeps its order. */
+  const upsertTab = useCallback((tab: CachedResultTab) => {
+    setResultTabs((tabs) => {
+      const at = tabs.findIndex((entry) => entry.id === tab.id);
+      if (at < 0) return [...tabs, tab].slice(-MAX_RESULT_TABS);
+      const next = [...tabs];
+      next[at] = tab;
+      return next;
+    });
+  }, []);
+
+  const execute = useCallback(
+    async (statement: string, tabId?: string) => {
       if (!statement.trim()) return;
+      const id = tabId ?? crypto.randomUUID();
       setRunning(true);
       try {
         const result = await runQuery.mutateAsync({
           connectionId: connection.id,
           sql: statement
         });
-        const tab: CachedResultTab = {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          title: buildTitle(statement),
+        upsertTab({
+          id,
+          title: buildResultTabTitle(statement, resultTabs.length + 1),
           sql: statement,
           ranAt: new Date().toISOString(),
           durationMs: result.durationMs,
           result
-        };
-        setResultTabs((tabs) => [...tabs.slice(-9), tab]);
-        setActiveResultId(tab.id);
+        });
+        setActiveResultId(id);
       } catch (error) {
         toast.error(formatAppError(error, "Query failed."));
       } finally {
         setRunning(false);
       }
     },
-    [connection.id, runQuery, sql]
+    [connection.id, runQuery, resultTabs.length, upsertTab]
+  );
+
+  /**
+   * Which tab a run lands in, following the Glue workspace: a plain run
+   * replaces what the tab on screen held, and a run-in-new-tab gets its own.
+   */
+  const handleRun = (sqlOverride?: string) => void execute(sqlOverride ?? sql, activeResult?.id);
+  const handleRunNewTab = (sqlOverride?: string) => void execute(sqlOverride ?? sql);
+
+  /** Closing the last tab leaves a blank one, so the strip is never empty. */
+  const closeResultTab = (tabId: string) => {
+    setResultTabs((tabs) => {
+      const kept = tabs.filter((tab) => tab.id !== tabId);
+      if (kept.length > 0) {
+        if (tabId === activeResultId) setActiveResultId(kept.at(-1)?.id);
+        return kept;
+      }
+      const fresh = blankTab();
+      setActiveResultId(fresh.id);
+      return [fresh];
+    });
+  };
+
+  /** What the strip renders: five scalars, not the whole cached tab. */
+  const stripTabs = useMemo(
+    () =>
+      resultTabs.map((tab) => ({
+        ...tab,
+        tooltip: tab.sql || tab.title,
+        running: running && tab.id === activeResult?.id
+      })),
+    [resultTabs, running, activeResult]
   );
 
   const handleSelectTable = (table: string) => {
@@ -180,8 +226,26 @@ export function ConnectionQueryTab({
               <TooltipTrigger asChild>
                 <Button
                   type="button"
-                  size="sm"
+                  variant="outline"
+                  size="icon"
+                  className="size-7"
                   disabled={running || runQuery.isPending}
+                  aria-label="Run in new tab"
+                  onClick={() => void handleRunNewTab()}
+                >
+                  <Plus className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Run in new tab</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="icon"
+                  className="size-7"
+                  disabled={running || runQuery.isPending}
+                  aria-label="Run query"
                   onClick={() => void handleRun()}
                 >
                   {running ? (
@@ -189,28 +253,64 @@ export function ConnectionQueryTab({
                   ) : (
                     <Play className="size-3.5" />
                   )}
-                  Run
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Run · the read-only gate blocks every non-SELECT statement
+                Run query · the read-only gate blocks every non-SELECT statement
               </TooltipContent>
             </Tooltip>
           </div>
         </div>
 
-        <SqlPane value={sql} onChange={setSql} onRun={() => void handleRun()} />
+        <SqlEditor
+          value={sql}
+          onChange={setSql}
+          dialect={dialectFor(connection.kind)}
+          placeholder={`Write ${connection.kind} SQL here…`}
+          onRun={() => void handleRun()}
+          onRunNewTab={() => void handleRunNewTab()}
+        />
 
-        <ResultPane result={activeResult?.result} meta={activeResult} rerunning={running} />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ResultTabsPanel
+            tabs={stripTabs}
+            activeTabId={activeResult?.id ?? ""}
+            onSelectTab={setActiveResultId}
+            onCloseTab={closeResultTab}
+          >
+            {(tab) => (
+              <ResultPane
+                key={tab.id}
+                result={tab.result}
+                meta={tab}
+                rerunning={running}
+                onRerun={() => void handleRun(tab.sql)}
+              />
+            )}
+          </ResultTabsPanel>
+        </div>
       </section>
     </div>
   );
 }
 
-function buildTitle(sql: string) {
-  const firstLine = sql.trim().split("\n")[0] ?? sql.trim();
-  const trimmed = firstLine.replace(/;+\s*$/, "");
-  return trimmed.length > 32 ? `${trimmed.slice(0, 29)}…` : trimmed;
+/**
+ * The dialect the editor highlights with. Yellowbrick speaks the Postgres
+ * wire, so it reads as Postgres here the same way it does in the driver.
+ */
+function dialectFor(kind: DbConnection["kind"]) {
+  return kind === "mysql" ? MySQL : PostgreSQL;
+}
+
+/** How many result tabs a workspace keeps before the oldest rolls off. */
+const MAX_RESULT_TABS = 10;
+
+/**
+ * A tab to stand in before anything has run — and the one closing the last
+ * result leaves behind, so the strip always has something to show.
+ */
+function blankTab(): CachedResultTab {
+  return { id: `blank-${Date.now()}`, title: "Result 1", sql: "", ranAt: "" };
 }
 
 function CatalogPane({
@@ -348,42 +448,16 @@ function SkeletonRows() {
   );
 }
 
-function SqlPane({
-  value,
-  onChange,
-  onRun
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onRun: () => void;
-}) {
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      onRun();
-    }
-  };
-  return (
-    <textarea
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      onKeyDown={handleKeyDown}
-      spellCheck={false}
-      rows={5}
-      aria-label="SQL editor"
-      className="w-full shrink-0 resize-none rounded-lg border bg-background p-3 font-mono text-sm outline-none focus:ring-1 focus:ring-ring"
-    />
-  );
-}
-
 function ResultPane({
   result,
   meta,
-  rerunning
+  rerunning,
+  onRerun
 }: {
   result?: DbQueryResult;
   meta?: CachedResultTab;
   rerunning: boolean;
+  onRerun: () => void;
 }) {
   if (!meta) {
     return (
@@ -412,7 +486,7 @@ function ResultPane({
               size="sm"
               className="h-5 px-1 text-xs"
               disabled={rerunning}
-              onClick={() => undefined}
+              onClick={onRerun}
             >
               <RefreshCw className="size-3" aria-hidden />
               rerun to restore

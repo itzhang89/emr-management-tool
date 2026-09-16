@@ -206,6 +206,7 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByRole("button", { name: "warehouse_rows" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "public" })).not.toBeInTheDocument();
     expect(listDbTables).toHaveBeenCalledWith("c1", "warehouse", "public");
+
   });
 
   it("qualifies an inserted table by its schema, not its database", async () => {
@@ -216,9 +217,59 @@ describe("ConnectionQueryTab", () => {
 
     // Postgres rejects `database.table` outright — the qualifier has to be the
     // schema. On MySQL the schema *is* the database, so this reads the same.
-    expect(screen.getByLabelText("SQL editor")).toHaveValue(
+    // The editor is a contenteditable, so its document reads as text; the
+    // accessible name is the part that stayed put across the swap.
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
       "SELECT * FROM public.warehouse_rows LIMIT 100;"
     );
+  });
+
+  it("runs into the tab on screen, titling it from the statement", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection({ kind: "postgres", database: "warehouse" }));
+
+    // One blank tab to begin with, so the strip is never empty.
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+
+    // Clicking a table writes its SELECT into the editor; running fills the
+    // blank tab in place rather than adding a second one. The table arrives
+    // with the catalog query, so this waits for it rather than assuming it
+    // landed alongside the tab strip.
+    await user.click(await screen.findByRole("button", { name: "warehouse_rows" }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
+    // Two buttons carry that name now — the tree's row and the tab the run
+    // filled in place, titled from the statement rather than "Result 1".
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "warehouse_rows" })).toHaveLength(2)
+    );
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+  });
+
+  it("gives a run-in-new-tab one of its own", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+
+    await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Result 2" })).toBeInTheDocument();
+  });
+
+  it("closes a result tab and drops the close buttons once one is left", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Close / })).toHaveLength(2));
+
+    await user.click(screen.getByRole("button", { name: "Close Result 1" }));
+
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Result 2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Close / })).not.toBeInTheDocument();
   });
 
   it("steps back one level at a time", async () => {
