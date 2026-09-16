@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +110,56 @@ describe("ProfileDetail", () => {
             authMethod: "ssh-config",
             host: "bastion-prod"
           })
+        })
+      );
+    });
+  });
+
+  it("keeps each transport's fields when switching tabs", async () => {
+    const user = userEvent.setup();
+    renderProfile();
+
+    // The profile is an SSH one; peeking at Proxy and coming back must not
+    // cost the host that was already there.
+    await user.click(screen.getByRole("tab", { name: "Proxy" }));
+    await user.clear(screen.getByLabelText("Host"));
+    await user.type(screen.getByLabelText("Host"), "127.0.0.1");
+    await user.click(screen.getByRole("tab", { name: "SSH Tunnel" }));
+
+    expect(screen.getByLabelText("Host/IP")).toHaveValue("10.20.30.40");
+  });
+
+  it("hands the profile to the other transport when that tab's switch goes on", async () => {
+    const user = userEvent.setup();
+    renderProfile();
+
+    // The profile is an SSH one, so that is the tab in use and the switch —
+    // which shows the tab you are looking at — is on.
+    expect(within(screen.getByRole("tab", { name: "SSH Tunnel" })).getByText("active")).toBeInTheDocument();
+    expect(screen.getByRole("switch")).toBeChecked();
+
+    await user.click(screen.getByRole("tab", { name: "Proxy" }));
+    // Same switch, other tab: it now shows Proxy's state, which is off.
+    expect(screen.getByRole("switch")).not.toBeChecked();
+
+    await user.clear(screen.getByLabelText("Host"));
+    await user.type(screen.getByLabelText("Host"), "10.0.0.9");
+    // Typing alone does not hand the profile over; the switch does.
+    expect(screen.getByRole("switch")).not.toBeChecked();
+    await user.click(screen.getByRole("switch"));
+    expect(within(screen.getByRole("tab", { name: "Proxy" })).getByText("active")).toBeInTheDocument();
+
+    // ...and the tab it left is no longer in use.
+    await user.click(screen.getByRole("tab", { name: "SSH Tunnel" }));
+    expect(screen.getByRole("switch")).not.toBeChecked();
+    expect(within(screen.getByRole("tab", { name: "SSH Tunnel" })).queryByText("active")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => {
+      expect(saveProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: true,
+          transport: expect.objectContaining({ type: "socks5", host: "10.0.0.9" })
         })
       );
     });

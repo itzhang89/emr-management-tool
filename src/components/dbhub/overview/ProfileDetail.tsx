@@ -9,67 +9,101 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSaveNetworkProfile, useTestNetworkProfile } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
-import type { NetworkProfile, NetworkTransport } from "@/types/domain";
+import type { NetworkProfile } from "@/types/domain";
 import { SSH_AUTH_METHODS } from "@/types/domain";
+import {
+  defaultSocksTransport,
+  defaultSshTransport,
+  type SocksTransport,
+  type SshTransport,
+  type TransportKind
+} from "./transports";
 
 /**
  * The detail form of one network profile (design section 6). Editing is a
- * local working copy committed with "Apply and Close" — the same commit-the-
- * whole-form model the account dialogs use. The SSH Tunnel | Proxy tabs swap
- * which transport this profile carries; switching tabs rewrites the transport
- * kind with that view's default fields.
+ * local working copy committed with "Apply" — the same commit-the-whole-form
+ * model the account dialogs use.
+ *
+ * SSH Tunnel and Proxy are a choice, not two halves of one profile. The pane
+ * nevertheless remembers **both**: switching tabs to look at the other one
+ * must not cost what you typed here. Which of the two is in use is not
+ * inferred from your typing — each tab carries its own Enabled switch, and the
+ * one that is on is the transport the profile routes through. Turning it on
+ * turns the other off; turning it off disables the profile.
  */
 export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   const saveProfile = useSaveNetworkProfile();
   const testProfile = useTestNetworkProfile();
 
+  const stored = profile.transport;
+  const [ssh, setSsh] = useState<SshTransport>(() =>
+    stored.type === "ssh-tunnel" ? stored : defaultSshTransport()
+  );
+  const [socks, setSocks] = useState<SocksTransport>(() =>
+    stored.type === "socks5" ? stored : defaultSocksTransport()
+  );
+  /** Which tab is on screen. Independent of which transport is in use. */
+  const [visible, setVisible] = useState<TransportKind>(stored.type);
+  /**
+   * The transport in use: the one Apply writes. Kept while the profile is
+   * disabled so turning its switch back on restores what it carried.
+   */
+  const [active, setActive] = useState<TransportKind>(stored.type);
+
   const [name, setName] = useState(profile.name);
-  const [transport, setTransport] = useState<NetworkTransport>(profile.transport);
   const [enabled, setEnabled] = useState(profile.enabled);
   const [secret, setSecret] = useState("");
   const [dirty, setDirty] = useState(false);
 
-  // Reset the working copy when a different profile is selected (the parent
-  // keys this component by profile id, so this only fires on real switches).
+  // A different profile resets the working copy. The parent keys this
+  // component by profile id, so this is belt-and-braces rather than the only
+  // thing standing between the two profiles.
   useEffect(() => {
-    setName(profile.name);
-    setTransport(profile.transport);
+    const next = profile.transport;
+    setSsh(next.type === "ssh-tunnel" ? next : defaultSshTransport());
+    setSocks(next.type === "socks5" ? next : defaultSocksTransport());
+    setVisible(next.type);
+    setActive(next.type);
     setEnabled(profile.enabled);
     setSecret("");
     setDirty(false);
-  }, [profile]);
+  }, [profile.id]);
 
-  const patchTransport = (patch: Partial<Extract<NetworkTransport, { type: "ssh-tunnel" }>>) => {
-    if (transport.type !== "ssh-tunnel") return;
-    setTransport({ ...transport, ...patch });
+  // A rename from the list is the one change that can arrive while this pane
+  // is open. Adopt the name; leave the transport fields — which the user may
+  // have edited without applying — exactly as they are.
+  useEffect(() => {
+    setName(profile.name);
+  }, [profile.name]);
+
+  const patchSsh = (patch: Partial<SshTransport>) => {
+    setSsh({ ...ssh, ...patch });
     setDirty(true);
   };
 
-  const patchSocks = (patch: Partial<Extract<NetworkTransport, { type: "socks5" }>>) => {
-    if (transport.type !== "socks5") return;
-    setTransport({ ...transport, ...patch });
+  const patchSocks = (patch: Partial<SocksTransport>) => {
+    setSocks({ ...socks, ...patch });
     setDirty(true);
   };
 
-  const switchKind = (kind: NetworkTransport["type"]) => {
-    if (transport.type === kind) return;
-    setTransport(
-      kind === "ssh-tunnel"
-        ? {
-            type: "ssh-tunnel",
-            host: transport.host,
-            port: 22,
-            username: "root",
-            authMethod: "password",
-            credentialsSaved: false
-          }
-        : { type: "socks5", host: transport.host, port: 1080, credentialsSaved: false }
-    );
+  /**
+   * Each tab's Enabled switch is the profile's transport choice, so turning
+   * one on turns the other off — not by an explicit hand-off but because the
+   * other switch is *derived* from `enabled` and `active`. Turning the live
+   * one off disables the profile and keeps its transport for the switch back.
+   */
+  const setUse = (kind: TransportKind, on: boolean) => {
     setDirty(true);
+    setEnabled(on);
+    if (on) setActive(kind);
   };
 
-  const isSsh = transport.type === "ssh-tunnel";
-  const sshAuthMethod = isSsh ? transport.authMethod : "password";
+  /** Whether a tab's switch reads as on. Only one tab can answer yes. */
+  const inUse = (kind: TransportKind) => enabled && active === kind;
+
+  /** The transport this pane will save. */
+  const transport = active === "ssh-tunnel" ? ssh : socks;
+  const sshAuthMethod = ssh.authMethod;
   const authLabels: Record<string, { secret: string; host: string }> = {
     password: { secret: "Password", host: "Host/IP" },
     "private-key": { secret: "Key passphrase", host: "Host/IP" },
@@ -80,14 +114,8 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   // Switching between auth modes re-frames what `host` means (IP vs alias),
   // so clear the old value to stop a stray IP becoming a phantom alias.
   const handleAuthChange = (value: string) => {
-    if (!isSsh) return;
     const clearingHost = value === "ssh-config" || sshAuthMethod === "ssh-config";
-    setTransport(
-      clearingHost
-        ? { ...transport, authMethod: value, host: "" }
-        : { ...transport, authMethod: value }
-    );
-    setDirty(true);
+    patchSsh(clearingHost ? { authMethod: value, host: "" } : { authMethod: value });
   };
 
   const handleApply = () => {
@@ -144,42 +172,41 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
-        <Label htmlFor={`profile-name-${profile.id}`} className="text-sm">
-          Name
-        </Label>
-        <Input
-          id={`profile-name-${profile.id}`}
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            setDirty(true);
-          }}
-          className="max-w-xs"
-          aria-label="Profile name"
-        />
-        <span className="ml-auto text-xs text-muted-foreground">Apply saves the name too.</span>
+        <span className="text-sm text-muted-foreground">Name</span>
+        {/* Shown, not edited: renaming happens where the name lives, in the
+            list. This line is here so a scrolled-away selection is still
+            legible while you edit the transport below. */}
+        <span className="min-w-0 truncate text-sm font-medium">{name}</span>
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+          Double-click the name in the list to rename.
+        </span>
       </div>
       <Tabs
-        value={transport.type}
-        onValueChange={(value) => switchKind(value as NetworkTransport["type"])}
+        value={visible}
+        onValueChange={(value) => setVisible(value as TransportKind)}
         className="flex min-h-0 flex-1 flex-col gap-4 p-4"
       >
         <div className="flex shrink-0 items-center justify-between gap-2">
           <TabsList>
-            <TabsTrigger value="ssh-tunnel">SSH Tunnel</TabsTrigger>
-            <TabsTrigger value="socks5">Proxy</TabsTrigger>
+            <TabsTrigger value="ssh-tunnel" className="gap-1.5">
+              SSH Tunnel
+              {inUse("ssh-tunnel") ? <ActiveMark /> : null}
+            </TabsTrigger>
+            <TabsTrigger value="socks5" className="gap-1.5">
+              Proxy
+              {inUse("socks5") ? <ActiveMark /> : null}
+            </TabsTrigger>
           </TabsList>
+          {/* One switch, showing the tab you are looking at: turning it on
+              makes this transport the profile's and turns the other one off. */}
           <div className="flex items-center gap-2">
             <Label htmlFor={`profile-enabled-${profile.id}`} className="text-sm">
-              {enabled ? "Enabled" : "Disabled"}
+              Enabled
             </Label>
             <Switch
               id={`profile-enabled-${profile.id}`}
-              checked={enabled}
-              onCheckedChange={(checked) => {
-                setEnabled(checked);
-                setDirty(true);
-              }}
+              checked={inUse(visible)}
+              onCheckedChange={(on) => setUse(visible, on)}
             />
           </div>
         </div>
@@ -201,16 +228,16 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             <Label htmlFor="ssh-host" className="text-right text-sm">{labels.host}</Label>
             <Input
               id="ssh-host"
-              value={transport.type === "ssh-tunnel" ? transport.host : ""}
-              onChange={(event) => patchTransport({ host: event.target.value })}
+              value={ssh.host}
+              onChange={(event) => patchSsh({ host: event.target.value })}
               placeholder={sshAuthMethod === "ssh-config" ? "bastion-prod" : "10.xx.xx.50"}
               className="max-w-xs"
             />
             <Label htmlFor="ssh-user" className="text-right text-sm">User Name</Label>
             <Input
               id="ssh-user"
-              value={transport.type === "ssh-tunnel" ? transport.username : ""}
-              onChange={(event) => patchTransport({ username: event.target.value })}
+              value={ssh.username}
+              onChange={(event) => patchSsh({ username: event.target.value })}
               disabled={sshAuthMethod === "ssh-config"}
               className="max-w-xs"
             />
@@ -218,7 +245,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             <div>
               <select
                 id="ssh-auth"
-                value={transport.type === "ssh-tunnel" ? transport.authMethod : "password"}
+                value={sshAuthMethod}
                 onChange={(event) => handleAuthChange(event.target.value)}
                 className="h-9 max-w-xs rounded-md border bg-background px-3 text-sm"
               >
@@ -232,10 +259,8 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
                 <Label htmlFor="ssh-key-path" className="text-right text-sm">Key file</Label>
                 <Input
                   id="ssh-key-path"
-                  value={
-                    transport.type === "ssh-tunnel" ? (transport.privateKeyPath ?? "") : ""
-                  }
-                  onChange={(event) => patchTransport({ privateKeyPath: event.target.value || undefined })}
+                  value={ssh.privateKeyPath ?? ""}
+                  onChange={(event) => patchSsh({ privateKeyPath: event.target.value || undefined })}
                   placeholder={sshAuthMethod === "ssh-config" ? "from ~/.ssh/config (IdentityFile)" : "~/.ssh/id_ed25519"}
                   disabled={sshAuthMethod === "ssh-config"}
                   className="max-w-xs font-mono text-xs"
@@ -252,20 +277,19 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
                   setSecret(event.target.value);
                   setDirty(true);
                 }}
-                placeholder={transport.type === "ssh-tunnel" && transport.credentialsSaved ? "••••••••" : ""}
+                placeholder={ssh.credentialsSaved ? "••••••••" : ""}
               />
             </div>
             <div />
             <div className="flex items-center gap-2">
               <Checkbox
                 id="ssh-save-cred"
-                checked={transport.type === "ssh-tunnel" ? transport.credentialsSaved : false}
-                onCheckedChange={(checked) => patchTransport({ credentialsSaved: checked === true })}
+                checked={ssh.credentialsSaved}
                 disabled
                 aria-label="Save credentials"
               />
               <Label htmlFor="ssh-save-cred" className="text-sm font-normal text-muted-foreground">
-                Save credentials {transport.type === "ssh-tunnel" && transport.credentialsSaved ? "(saved)" : ""}
+                Save credentials {ssh.credentialsSaved ? "(saved)" : ""}
               </Label>
             </div>
           </div>
@@ -279,7 +303,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             <Label htmlFor="socks-host" className="text-right text-sm">Host</Label>
             <Input
               id="socks-host"
-              value={transport.type === "socks5" ? transport.host : ""}
+              value={socks.host}
               onChange={(event) => patchSocks({ host: event.target.value })}
               placeholder="127.0.0.1"
               className="max-w-xs"
@@ -290,14 +314,14 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               type="number"
               min={1}
               max={65535}
-              value={transport.type === "socks5" ? transport.port : 1080}
+              value={socks.port}
               onChange={(event) => patchSocks({ port: Number(event.target.value) || 0 })}
               className="max-w-32"
             />
             <Label htmlFor="socks-user" className="text-right text-sm">User name</Label>
             <Input
               id="socks-user"
-              value={transport.type === "socks5" ? (transport.username ?? "") : ""}
+              value={socks.username ?? ""}
               onChange={(event) => patchSocks({ username: event.target.value || undefined })}
               className="max-w-xs"
             />
@@ -311,20 +335,19 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
                   setSecret(event.target.value);
                   setDirty(true);
                 }}
-                placeholder={transport.type === "socks5" && transport.credentialsSaved ? "••••••••" : ""}
+                placeholder={socks.credentialsSaved ? "••••••••" : ""}
               />
             </div>
             <div />
             <div className="flex items-center gap-2">
               <Checkbox
                 id="socks-save-cred"
-                checked={transport.type === "socks5" ? transport.credentialsSaved : false}
-                onCheckedChange={(checked) => patchSocks({ credentialsSaved: checked === true })}
+                checked={socks.credentialsSaved}
                 disabled
                 aria-label="Save password/passphrase"
               />
               <Label htmlFor="socks-save-cred" className="text-sm font-normal text-muted-foreground">
-                Save password {transport.type === "socks5" && transport.credentialsSaved ? "(saved)" : ""}
+                Save password {socks.credentialsSaved ? "(saved)" : ""}
               </Label>
             </div>
           </div>
@@ -335,7 +358,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" variant="outline" size="sm" onClick={handleTest}>
-                  {isSsh ? "Test tunnel configuration" : "Test proxy configuration"}
+                  {active === "ssh-tunnel" ? "Test tunnel configuration" : "Test proxy configuration"}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Handshake-only; no SQL runs.</TooltipContent>
@@ -349,5 +372,20 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
         </div>
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * Marks the tab whose transport Apply will write. `aria-hidden` on purpose:
+ * it is a visual cue, not part of the tab's name.
+ */
+function ActiveMark() {
+  return (
+    <span
+      aria-hidden
+      className="rounded bg-primary/15 px-1 py-0.5 text-[10px] font-medium leading-none text-primary"
+    >
+      active
+    </span>
   );
 }

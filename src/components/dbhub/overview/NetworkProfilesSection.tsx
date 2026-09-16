@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FileText, Plus, Copy, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -18,8 +19,9 @@ import {
   useSaveNetworkProfile
 } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
-import type { NetworkProfile, NetworkProfileInput, NetworkTransport } from "@/types/domain";
+import type { NetworkProfile, NetworkProfileInput } from "@/types/domain";
 import { ProfileDetail } from "./ProfileDetail";
+import { defaultSshTransport, transportLabel } from "./transports";
 
 /**
  * Network Profiles, rendered inside the DBHub Overview (design section 6):
@@ -54,7 +56,8 @@ export function NetworkProfilesSection() {
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h3 className="text-sm font-semibold">Network Profiles</h3>
         <p className="text-xs text-muted-foreground">
-          SSH tunnels and SOCKS5 proxies for the active AWS account.
+          SSH tunnels and SOCKS5 proxies for the active AWS account. Double-click a
+          name to rename it.
         </p>
       </div>
       <div className="grid min-h-[24rem] grid-cols-1 divide-y md:grid-cols-[16rem_1fr] md:divide-x md:divide-y-0">
@@ -170,25 +173,18 @@ function ProfileList({
   onSelect: (id: string) => void;
   onRequestDelete: (profile: NetworkProfile) => void;
 }) {
-  const createProfile = useSaveNetworkProfile();
+  const saveProfile = useSaveNetworkProfile();
 
   const handleCreate = () => {
     const input: NetworkProfileInput = {
       name: nextProfileName(profiles),
-      transport: {
-        type: "ssh-tunnel",
-        host: "",
-        port: 22,
-        username: "root",
-        authMethod: "password",
-        credentialsSaved: false
-      },
+      transport: defaultSshTransport(),
       // Enabled from birth: a brand-new profile is the user's active intent,
       // and the previous `false` default made every test click answer
       // "disabled" until Apply was found and pressed.
       enabled: true
     };
-    createProfile.mutate(input, {
+    saveProfile.mutate(input, {
       onSuccess: (profile) => {
         onSelect(profile.id);
         toast.success(`Profile "${profile.name}" created.`);
@@ -207,7 +203,7 @@ function ProfileList({
       // tweak it, not to have it inert.
       enabled: true
     };
-    createProfile.mutate(input, {
+    saveProfile.mutate(input, {
       onSuccess: (profile) => {
         onSelect(profile.id);
         toast.success(`Profile copied as "${profile.name}".`);
@@ -222,31 +218,88 @@ function ProfileList({
     if (profile) onRequestDelete(profile);
   };
 
+  // --- Rename in place -------------------------------------------------------
+  // Double-clicking a name turns that row into an input; Enter or clicking
+  // away commits, Escape abandons. It is its own save rather than a mark of
+  // the detail form's dirty state, so a rename is never lost by forgetting to
+  // press Apply.
+  const [renamingId, setRenamingId] = useState<string>();
+  const [draftName, setDraftName] = useState("");
+  // Enter unmounts the input, which can still deliver a blur on the way out.
+  // This keeps the rename from being sent twice.
+  const renameSettled = useRef(false);
+
+  const startRename = (profile: NetworkProfile) => {
+    onSelect(profile.id);
+    setDraftName(profile.name);
+    setRenamingId(profile.id);
+    renameSettled.current = false;
+  };
+
+  const finishRename = (profile: NetworkProfile, commit: boolean) => {
+    if (renamingId !== profile.id || renameSettled.current) return;
+    renameSettled.current = true;
+    setRenamingId(undefined);
+
+    const name = draftName.trim();
+    if (!commit || !name || name === profile.name) return;
+
+    saveProfile.mutate(
+      // The command upserts the whole profile, and `enabled` defaults to false
+      // when it is left out — so a rename has to send the stored profile back
+      // intact, or it would quietly disable the thing it renamed.
+      { id: profile.id, name, transport: profile.transport, enabled: profile.enabled },
+      {
+        onSuccess: () => toast.success("Profile renamed."),
+        onError: (error) => toast.error(formatAppError(error, "Failed to rename profile."))
+      }
+    );
+  };
+
   return (
     <div className="flex min-h-0 flex-col">
       <ul className="flex-1 space-y-1 overflow-y-auto p-2" aria-label="Network profiles">
         {loading ? <li className="p-2 text-sm text-muted-foreground">Loading…</li> : null}
-        {profiles.map((profile) => (
-          <li key={profile.id}>
-            <button
-              type="button"
-              onClick={() => onSelect(profile.id)}
-              aria-current={profile.id === selectedId}
-              className={
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm " +
-                (profile.id === selectedId
-                  ? "bg-accent text-accent-foreground"
-                  : "hover:bg-secondary/60")
-              }
-            >
-              <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 truncate">{profile.name}</span>
-              {!profile.enabled ? (
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">off</span>
-              ) : null}
-            </button>
-          </li>
-        ))}
+        {profiles.map((profile) => {
+          const selected = profile.id === selectedId;
+          const rowClass =
+            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm " +
+            (selected ? "bg-accent text-accent-foreground" : "hover:bg-secondary/60");
+
+          return (
+            <li key={profile.id}>
+              {profile.id === renamingId ? (
+                <div className={rowClass}>
+                  <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  <Input
+                    autoFocus
+                    value={draftName}
+                    aria-label="Profile name"
+                    className="h-7 min-w-0 flex-1 text-sm"
+                    onChange={(event) => setDraftName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") finishRename(profile, true);
+                      if (event.key === "Escape") finishRename(profile, false);
+                    }}
+                    onBlur={() => finishRename(profile, true)}
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelect(profile.id)}
+                  onDoubleClick={() => startRename(profile)}
+                  aria-current={selected}
+                  className={rowClass}
+                >
+                  <FileText className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="min-w-0 truncate">{profile.name}</span>
+                  <TransportTag name={transportLabel(profile.transport)} />
+                </button>
+              )}
+            </li>
+          );
+        })}
         {!loading && profiles.length === 0 ? (
           <li className="p-2 text-sm text-muted-foreground">No profiles yet.</li>
         ) : null}
@@ -260,7 +313,7 @@ function ProfileList({
               size="icon"
               className="size-7"
               aria-label="Create profile"
-              disabled={createProfile.isPending}
+              disabled={saveProfile.isPending}
               onClick={handleCreate}
             >
               <Plus className="size-3.5" />
@@ -292,7 +345,7 @@ function ProfileList({
               size="icon"
               className="size-7"
               aria-label="Copy profile"
-              disabled={!selectedId || createProfile.isPending}
+              disabled={!selectedId || saveProfile.isPending}
               onClick={handleCopy}
             >
               <Copy className="size-3.5" />
@@ -313,8 +366,15 @@ function nextProfileName(profiles: NetworkProfile[]) {
   return `${base} ${index}`;
 }
 
-export function transportDefaults(kind: NetworkTransport["type"]): NetworkTransport {
-  return kind === "ssh-tunnel"
-    ? { type: "ssh-tunnel", host: "", port: 22, username: "root", authMethod: "password", credentialsSaved: false }
-    : { type: "socks5", host: "127.0.0.1", port: 1080, credentialsSaved: false };
+/**
+ * Which transport a profile carries. SSH Tunnel and Proxy are a choice, so
+ * the list is where you see which one each profile made. A span, not a Badge:
+ * this sits inside the row's button, which only accepts phrasing content.
+ */
+function TransportTag({ name }: { name: string }) {
+  return (
+    <span className="ml-auto shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+      {name}
+    </span>
+  );
 }

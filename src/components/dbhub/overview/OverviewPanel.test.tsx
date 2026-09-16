@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -168,8 +168,9 @@ describe("OverviewPanel", () => {
     renderOverview();
 
     await user.click(screen.getByRole("button", { name: "Manage Network Profiles" }));
-    // p1 "Office tunnel" is bound to c2 "Warehouse" in the mock.
-    await user.click(await screen.findByRole("button", { name: "Office tunnel" }));
+    // p1 "Office tunnel" is bound to c2 "Warehouse" in the mock. The row also
+    // carries its transport tag, so its accessible name is "Office tunnel SSH".
+    await user.click(await screen.findByRole("button", { name: /^Office tunnel/ }));
     await user.click(screen.getByRole("button", { name: "Delete profile" }));
 
     expect(await screen.findByText("Profile is in use")).toBeInTheDocument();
@@ -178,5 +179,32 @@ describe("OverviewPanel", () => {
     // list inside the dialog is what matters.
     expect(screen.getAllByText("Warehouse").length).toBeGreaterThan(0);
     expect(deleteProfile).not.toHaveBeenCalled();
+  });
+
+  it("tags each profile with its transport and renames it on double-click", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+
+    await user.click(screen.getByRole("button", { name: "Manage Network Profiles" }));
+    const row = await screen.findByRole("button", { name: /^Office tunnel/ });
+    expect(within(row).getByText("SSH")).toBeInTheDocument();
+
+    await user.dblClick(row);
+    const input = screen.getByLabelText("Profile name");
+    await user.clear(input);
+    await user.type(input, "Bastion{Enter}");
+
+    await waitFor(() => {
+      expect(saveProfile).toHaveBeenCalledWith(
+        // The whole profile goes back: the command upserts every field, so a
+        // rename that omitted `enabled` would disable the thing it renamed.
+        expect.objectContaining({
+          id: "p1",
+          name: "Bastion",
+          enabled: true,
+          transport: expect.objectContaining({ type: "ssh-tunnel" })
+        })
+      );
+    });
   });
 });
