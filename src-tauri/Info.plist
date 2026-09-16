@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      macOS 15 (Sequoia) and later gate access to devices on the user's own
+      network ("Local Network" privacy). Without this key the system has no
+      explanation to show and refuses the connection — which surfaces not as a
+      permission error but as EHOSTUNREACH, "No route to host (os error 65)".
+
+      DBHub dials database servers by host and port, and on a corporate or
+      home LAN those are local-network devices. The entry appears in
+      System Settings -> Privacy & Security -> Local Network once the app
+      first asks.
+    -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>EMR Management Tool connects to database servers on your local network when you add a DBHub connection.</string>
+</dict>
+</plist>
