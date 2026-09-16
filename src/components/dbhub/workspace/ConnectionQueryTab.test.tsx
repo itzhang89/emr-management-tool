@@ -387,6 +387,30 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByRole("button", { name: "Expand catalog panel" })).toBeInTheDocument();
   });
 
+  it("offers templates a connection can actually run", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "SQL templates" }));
+
+    // Glue's list is Hive DDL, every line of which the read-only gate refuses;
+    // a JDBC workspace gets statements that will run.
+    expect(await screen.findByRole("button", { name: "Sample rows" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /CREATE DATABASE/ })).not.toBeInTheDocument();
+  });
+
+  it("remembers a query against the connection that ran it", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
+
+    // Keyed by account *and* connection: SQL is dialect-specific, so one
+    // connection's history is not another's.
+    expect(storage["emr-eks:dbhub-sql-history:acct-a:conn:c1"]).toContain("SELECT 1;");
+  });
+
   it("steps back one level at a time", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "analytics" }));

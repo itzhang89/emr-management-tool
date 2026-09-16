@@ -27,6 +27,14 @@ import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
 import { buildResultTabTitle } from "@/services/queryResultTabs";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
+import {
+  FavoriteNameDialog,
+  FavoritesMenu,
+  HistoryMenu,
+  SqlTemplatesButton
+} from "@/components/glue/SqlQueryMenus";
+import { dbSqlScope, dbSqlStore } from "@/services/dbSqlStorage";
+import { dbSqlTemplates } from "@/services/dbSqlTemplates";
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
@@ -38,7 +46,12 @@ import {
   type CachedResultTab
 } from "@/services/dbWorkspaceCache";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import type { DbConnection, DbQueryResult } from "@/types/domain";
+import type {
+  DbConnection,
+  DbQueryResult,
+  SqlFavoriteEntry,
+  SqlHistoryEntry
+} from "@/types/domain";
 
 /**
  * The per-connection query workspace rendered in the dynamic second-level tabs
@@ -77,6 +90,10 @@ export function ConnectionQueryTab({
   const [runningTabId, setRunningTabId] = useState<string>();
   /** The in-flight run's handle, for the stop button to name. */
   const [activeRequestId, setActiveRequestId] = useState<string>();
+  const [history, setHistory] = useState<SqlHistoryEntry[]>([]);
+  const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
+  /** The history entry a name is being asked for, when favouriting one. */
+  const [favoritePrompt, setFavoritePrompt] = useState<SqlHistoryEntry>();
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
 
@@ -95,6 +112,11 @@ export function ConnectionQueryTab({
     setSelectedDatabase(state.selectedDatabase ?? connection.database);
     setSelectedSchema(state.selectedSchema);
     setCatalogCollapsed(state.catalogCollapsed ?? false);
+    // History and favourites live outside the workspace cache: they outlive a
+    // draft and belong to the connection, not to this browser tab's session.
+    const scope = dbSqlScope(accountId, connection.id);
+    setHistory(dbSqlStore.readHistory(scope));
+    setFavorites(dbSqlStore.readFavorites(scope));
     setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, connection.id]);
@@ -186,6 +208,11 @@ export function ConnectionQueryTab({
         if (offset > 0) {
           appendRows(id, result);
         } else {
+          // Only a run that finished enters the history: a cancelled or failed
+          // statement is not something to offer back.
+          if (accountId) {
+            setHistory(dbSqlStore.addHistory(dbSqlScope(accountId, connection.id), statement));
+          }
           upsertTab({
             id,
             title: buildResultTabTitle(statement, resultTabs.length + 1),
@@ -384,6 +411,27 @@ export function ConnectionQueryTab({
             {connection.kind} · read-only · {connection.enabledForAi ? "enabled for AI" : "manual"}
           </span>
           <div className="ml-auto flex items-center gap-1">
+            <SqlTemplatesButton
+              templates={dbSqlTemplates(connection.kind)}
+              onSelect={setSql}
+            />
+            <HistoryMenu
+              history={history}
+              favoriteSqlSet={new Set(favorites.map((entry) => entry.sql.trim()))}
+              onSelect={(entry) => setSql(entry.sql)}
+              onFavorite={setFavoritePrompt}
+            />
+            <FavoritesMenu
+              favorites={favorites}
+              onSelect={(entry) => setSql(entry.sql)}
+              onRemove={(favoriteId) => {
+                if (accountId) {
+                  setFavorites(
+                    dbSqlStore.removeFavorite(dbSqlScope(accountId, connection.id), favoriteId)
+                  );
+                }
+              }}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -472,6 +520,26 @@ export function ConnectionQueryTab({
           </ResultTabsPanel>
         </div>
       </section>
+
+      <FavoriteNameDialog
+        open={Boolean(favoritePrompt)}
+        onOpenChange={(open) => {
+          if (!open) setFavoritePrompt(undefined);
+        }}
+        defaultName={favoritePrompt?.sql.slice(0, 40)}
+        onConfirm={(name) => {
+          if (accountId && favoritePrompt) {
+            setFavorites(
+              dbSqlStore.addFavorite(
+                dbSqlScope(accountId, connection.id),
+                name,
+                favoritePrompt.sql
+              )
+            );
+          }
+          setFavoritePrompt(undefined);
+        }}
+      />
     </div>
   );
 }

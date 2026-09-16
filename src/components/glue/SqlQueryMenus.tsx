@@ -78,7 +78,14 @@ export function FavoriteNameDialog({
   );
 }
 
-export function SqlTemplatesButton({ onSelect }: { onSelect: (sql: string) => void }) {
+export function SqlTemplatesButton({
+  onSelect,
+  templates = SQL_DDL_TEMPLATES
+}: {
+  onSelect: (sql: string) => void;
+  /** Defaults to Glue's Hive DDL list; a JDBC workspace brings its own. */
+  templates?: ReadonlyArray<{ label: string; sql: string }>;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -95,7 +102,7 @@ export function SqlTemplatesButton({ onSelect }: { onSelect: (sql: string) => vo
       </Tooltip>
       <PopoverContent align="start" className="w-56 p-1">
         <ul>
-          {SQL_DDL_TEMPLATES.map((template) => (
+          {templates.map((template) => (
             <li key={template.label}>
               <button
                 type="button"
