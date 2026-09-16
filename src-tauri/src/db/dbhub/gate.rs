@@ -118,14 +118,39 @@ fn strip_comments(statement: &str) -> String {
     cleaned
 }
 
-fn classify_single(statement: &str) -> StatementClass {
-    let cleaned = strip_comments(statement);
-    let first_word = cleaned
+/// The statement's first real word, uppercased.
+fn first_word(cleaned: &str) -> String {
+    cleaned
         .trim()
         .split(|char: char| char.is_whitespace() || char == '(')
         .find(|word| !word.is_empty())
         .unwrap_or("")
-        .to_ascii_uppercase();
+        .to_ascii_uppercase()
+}
+
+/// The one statement's text when it is a single SELECT-shaped statement that
+/// can be wrapped in a derived table, else `None`.
+///
+/// Reading a later page means re-running the statement with an offset, which
+/// means wrapping it: `select * from (<sql>) as page limit n offset m`. That
+/// is only valid for a statement that produces a result set — `SHOW TABLES`
+/// and `DESCRIBE` are not subqueries — and only when there is exactly one of
+/// them, since the wrapper holds a single statement.
+pub fn pageable_statement(sql: &str) -> Option<String> {
+    let statements = split_statements(sql);
+    if statements.len() != 1 {
+        return None;
+    }
+    let cleaned = strip_comments(&statements[0]);
+    match first_word(&cleaned).as_str() {
+        "SELECT" | "WITH" => Some(cleaned.trim().trim_end_matches(';').trim().to_string()),
+        _ => None,
+    }
+}
+
+fn classify_single(statement: &str) -> StatementClass {
+    let cleaned = strip_comments(statement);
+    let first_word = first_word(&cleaned);
 
     match first_word.as_str() {
         "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
@@ -268,6 +293,27 @@ mod tests {
     fn semicolons_inside_strings_do_not_split() {
         assert_read("SELECT * FROM orders WHERE note = 'a;b' ");
         assert_blocked("SELECT * FROM t WHERE note = 'x'; DROP TABLE t", "DROP");
+    }
+
+    #[test]
+    fn only_a_lone_select_can_be_paged() {
+        // Wrappable: one statement producing a result set.
+        assert_eq!(
+            pageable_statement("SELECT * FROM orders").as_deref(),
+            Some("SELECT * FROM orders")
+        );
+        assert!(pageable_statement("WITH t AS (SELECT 1) SELECT * FROM t").is_some());
+        // The trailing semicolon must not ride into the wrapper.
+        assert_eq!(pageable_statement("SELECT 1; ").as_deref(), Some("SELECT 1"));
+
+        // No result set to wrap: these are not subqueries.
+        assert!(pageable_statement("SHOW TABLES").is_none());
+        assert!(pageable_statement("DESCRIBE orders").is_none());
+        assert!(pageable_statement("EXPLAIN SELECT 1").is_none());
+
+        // The wrapper holds exactly one statement.
+        assert!(pageable_statement("SELECT 1; SELECT 2").is_none());
+        assert!(pageable_statement("-- nothing\n").is_none());
     }
 
     #[test]

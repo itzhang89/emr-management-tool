@@ -126,7 +126,9 @@ pub async fn sql_query_text(
     // a network forward, so a connection behind a Network Profile is not
     // reachable from here.
     let target = DialTarget::direct(&shape.connection);
-    let result = query::execute_read_only(&shape, &target, &args.sql, max_rows).await?;
+    // One page: the tool's caller narrows the query rather than paging
+    // through it, which keeps the model's context bounded.
+    let result = query::execute_read_only(&shape, &target, &args.sql, max_rows, 0).await?;
 
     // Text-size honesty: serialize the page once; if the model-facing text
     // overshoots the cap it is cut at a char boundary and marked — the model

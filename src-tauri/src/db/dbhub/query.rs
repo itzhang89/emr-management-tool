@@ -27,6 +27,13 @@ pub struct DbQueryResult {
     pub row_count: usize,
     pub truncated: bool,
     pub duration_ms: u64,
+    /// Which page this is, in rows skipped.
+    pub offset: usize,
+    /// Where the next page starts, when there is one to fetch.
+    pub next_offset: Option<usize>,
+    /// Whether this statement can be paged at all — said on the first page so
+    /// the UI offers a "load more" only where one would work.
+    pub pageable: bool,
 }
 
 fn pool_secret_key(id: &str) -> String {
@@ -95,6 +102,7 @@ pub(crate) async fn execute_read_only(
     target: &DialTarget,
     sql: &str,
     max_rows: usize,
+    offset: usize,
 ) -> AppResult<DbQueryResult> {
     if let gate::StatementClass::Blocked { reason } = gate::classify(sql) {
         return Err(AppError::validation(format!(
@@ -103,18 +111,52 @@ pub(crate) async fn execute_read_only(
     }
 
     let cap = max_rows.clamp(1, MAX_PAGE_ROWS);
+    let pageable = gate::pageable_statement(sql).is_some();
+    let statement = if offset == 0 {
+        sql.to_string()
+    } else {
+        // Refused here, before any dial: a statement that cannot be wrapped
+        // would otherwise be re-run in full and quietly return page one again.
+        let Some(pageable_sql) = gate::pageable_statement(sql) else {
+            return Err(AppError::validation(
+                "Only a single SELECT can be read a page at a time. Refine the query, or add a LIMIT.",
+            ));
+        };
+        page_sql(&pageable_sql, cap, offset)
+    };
+
     let started = std::time::Instant::now();
     let page = driver::driver_for(shape.connection.kind)
-        .query(&shape.dial(target), sql, cap)
+        .query(&shape.dial(target), &statement, cap)
         .await?;
+    let row_count = page.rows.len();
 
     Ok(DbQueryResult {
         columns: page.columns,
-        row_count: page.rows.len(),
+        row_count,
         rows: page.rows,
         truncated: page.truncated,
         duration_ms: started.elapsed().as_millis() as u64,
+        offset,
+        // No next page when the sentence cannot be paged, or when the sentinel
+        // row never arrived to say there was more.
+        next_offset: (page.truncated && pageable).then_some(offset + row_count),
+        pageable,
     })
+}
+
+/// Wrap one page of a statement.
+///
+/// The wrapper asks for one row past the page: that extra row is the sentinel
+/// the projection reads to decide `truncated`, and asking for exactly `cap`
+/// would make every page claim to be the whole result. Paging re-runs the
+/// statement and discards `offset` rows each time — a page of a slow query
+/// costs what the query costs.
+fn page_sql(statement: &str, cap: usize, offset: usize) -> String {
+    format!(
+        "select * from (\n{statement}\n) as dbhub_page limit {} offset {offset}",
+        cap.saturating_add(1)
+    )
 }
 
 /// The human query tab's entry point: resolve the connection, open its route,
@@ -125,6 +167,7 @@ pub async fn run_for_command(
     require_ai_enabled: bool,
     sql: &str,
     max_rows: Option<usize>,
+    offset: usize,
 ) -> AppResult<DbQueryResult> {
     let shape = shape_for(app, connection_id, require_ai_enabled).await?;
     complete_operation("query", async {
@@ -132,7 +175,7 @@ pub async fn run_for_command(
         // driver dial; binding it to this scope does exactly that.
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        execute_read_only(&shape, &target, sql, max_rows.unwrap_or(MAX_PAGE_ROWS)).await
+        execute_read_only(&shape, &target, sql, max_rows.unwrap_or(MAX_PAGE_ROWS), offset).await
     })
     .await
 }
@@ -166,12 +209,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_page_asks_for_one_row_past_itself() {
+        // The extra row is the sentinel `project` reads to set `truncated`;
+        // asking for exactly the cap would make every page look complete.
+        let sql = page_sql("select * from orders", 500, 1000);
+        assert!(sql.contains("limit 501 offset 1000"), "{sql}");
+        assert!(sql.contains("select * from orders"), "{sql}");
+    }
+
+    #[tokio::test]
+    async fn refusing_to_page_a_statement_happens_before_any_dial() {
+        // Offset paging wraps the statement in a subquery, which `SHOW` and
+        // friends are not. The refusal must land before the network — the
+        // host here is a closed port, so a dial would fail differently.
+        let mut shape = shape_for_gate_test();
+        shape.connection.host = "127.0.0.1".into();
+        shape.connection.port = 1;
+        let target = DialTarget::direct(&shape.connection);
+
+        let error = execute_read_only(&shape, &target, "SHOW TABLES", 100, 500)
+            .await
+            .expect_err("a SHOW has no second page");
+        assert!(error.message.contains("page at a time"), "{error:?}");
+    }
+
     #[tokio::test]
     async fn execute_refuses_writes_before_touching_a_driver() {
         // No real connection needed — the gate rejects before any dial.
         let shape = shape_for_gate_test();
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(&shape, &target, "DELETE FROM orders", 100)
+        let error = execute_read_only(&shape, &target, "DELETE FROM orders", 100, 0)
             .await
             .expect_err("must be blocked");
         assert!(error.message.contains("read-only gate"));
@@ -185,7 +253,7 @@ mod tests {
         shape.connection.host = "127.0.0.1".into();
         shape.connection.port = 1;
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(&shape, &target, "SELECT 1", 100)
+        let error = execute_read_only(&shape, &target, "SELECT 1", 100, 0)
             .await
             .expect_err("the dial must fail, not the gate");
         assert!(!error.message.contains("read-only gate"));

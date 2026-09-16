@@ -659,6 +659,7 @@ pub async fn run_db_query(
         false,
         &request.sql,
         request.max_rows,
+        request.offset.unwrap_or(0),
     )
     .await
 }

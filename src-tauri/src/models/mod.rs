@@ -1746,6 +1746,10 @@ pub struct DbQueryRequest {
     pub sql: String,
     #[serde(default)]
     pub max_rows: Option<usize>,
+    /// Rows to skip. Non-zero means "read the next page of this statement",
+    /// which re-runs it — offset paging has no cursor to resume from.
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
 #[cfg(test)]
