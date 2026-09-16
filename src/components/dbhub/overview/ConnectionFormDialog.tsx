@@ -16,11 +16,11 @@ import {
 import {
   useCreateDbConnection,
   useNetworkProfiles,
-  useTestDbConnection,
+  useTestDbConnectionDraft,
   useUpdateDbConnection
 } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
-import type { DbConnection, DbConnectionKind } from "@/types/domain";
+import type { DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
 
 /**
  * The "Connect to a database" form (design section 5): Server and
@@ -56,7 +56,7 @@ export function ConnectionFormDialog({
 }) {
   const createConnection = useCreateDbConnection();
   const updateConnection = useUpdateDbConnection();
-  const testConnection = useTestDbConnection();
+  const testDraftConnection = useTestDbConnectionDraft();
   const profilesQuery = useNetworkProfiles();
   const profiles = profilesQuery.data ?? [];
 
@@ -124,6 +124,24 @@ export function ConnectionFormDialog({
     password: password || undefined
   });
 
+  /** The form as a probe request. `id` is carried only so editing can reuse
+   *  the stored password when this field was left blank. */
+  const buildTest = (): DbConnectionTestInput => ({
+    id: connection?.id,
+    kind,
+    host: host.trim(),
+    port: Number(port),
+    database: database.trim() || undefined,
+    username: username.trim(),
+    networkProfileId: networkProfileId || undefined,
+    password: password || undefined
+  });
+
+  /**
+   * Probe the form's own values. Nothing is written — Test is a read-only act
+   * from the user's side, and a test that persisted would leave a connection
+   * behind for every click, plus another from the Save that followed.
+   */
   const handleTest = async () => {
     const problem = validate();
     if (problem) {
@@ -131,17 +149,12 @@ export function ConnectionFormDialog({
       return;
     }
     try {
-      // Test uses the unsaved form values: persist first (upsert), then probe.
-      const saved = connection
-        ? await updateConnection.mutateAsync({ id: connection.id, ...buildSave() })
-        : await createConnection.mutateAsync(buildSave());
-      const result = await testConnection.mutateAsync(saved.id);
+      const result = await testDraftConnection.mutateAsync(buildTest());
       if (result.ok) {
         toast.success(`${result.message} (${result.latencyMs}ms)`);
       } else {
         toast.error(result.message);
       }
-      onSaved?.(saved);
     } catch (error) {
       toast.error(formatAppError(error, "Test failed."));
     }
@@ -164,7 +177,10 @@ export function ConnectionFormDialog({
     }
   };
 
-  const busy = createConnection.isPending || updateConnection.isPending || testConnection.isPending;
+  const busy =
+    createConnection.isPending ||
+    updateConnection.isPending ||
+    testDraftConnection.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -181,21 +197,23 @@ export function ConnectionFormDialog({
 
         <div className="space-y-5">
           <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-            <Label className="text-right text-sm">Driver</Label>
-            <div className="flex gap-1">
+            <Label htmlFor="conn-driver" className="text-right text-sm">Driver</Label>
+            <select
+              id="conn-driver"
+              value={kind}
+              // The driver decides how the connection is spoken to; changing
+              // it on an existing connection would leave its stored credentials
+              // and port meaning something else.
+              disabled={Boolean(connection)}
+              onChange={(event) => handleKindChange(event.target.value as DbConnectionKind)}
+              className="h-9 max-w-xs rounded-md border bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
               {(Object.keys(KIND_LABELS) as DbConnectionKind[]).map((value) => (
-                <Button
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={kind === value ? "default" : "outline"}
-                  onClick={() => handleKindChange(value)}
-                  disabled={Boolean(connection)}
-                >
+                <option key={value} value={value}>
                   {KIND_LABELS[value]}
-                </Button>
+                </option>
               ))}
-            </div>
+            </select>
 
             <Label htmlFor="conn-name" className="text-right text-sm">Name</Label>
             <Input

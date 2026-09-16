@@ -556,7 +556,7 @@ passphrase。5 个 resolver 测试。
 
 **「Profile is disabled」卡死的两个坑。** (a) 新建 profile 默认 disabled 且 Enable
 只改本地 state（Apply 才落库），而 Test 探测数据库旧值 → 改：Test 先静默保存工作
-副本再探测（同连接向导语义）；新建/复制默认 enabled。(b) 语义修正：`enabled` 只
+副本再探测（**注意：这一条 2026-09-16 起已不再适用于连接向导**，见文末）；新建/复制默认 enabled。(b) 语义修正：`enabled` 只
 决定真实路由，不再阻止测试（测试是验证配置）。另在切换认证方式时清掉残留 host
 （防 IP 变幽灵别名）。
 
@@ -693,3 +693,36 @@ spawn 出来的 accept loop 里才 `connect_ssh`，失败就 `Err(_) => return`�
 （§13 早前记录的口径）不再成立 —— 现在密钥被拒、跳板机不可达都会在 Test 阶段就用明确
 文案失败。这是好事（正是本次踩的坑），但原 `probe_profile_returns_a_live_port` 测试的
 前提被推翻，已改写为 `probe_profile_reports_an_unreachable_bastion_in_its_own_words`。
+
+**连接向导的 Test 不再落库（2026-09-16）。** 原实现是「Test = 先静默保存工作副本再探测」
+（§「Profile is disabled 的两个坑」里记的口径，并注明同连接向导语义）。真机暴露的问题：
+新建连接时**每点一次 Test 就插入一条连接记录**，而且随后的 Save 还会再插一条 ——
+一次配置留下一串重复连接。用户裁决：Test 应是**只读动作**，只有明确保存才落库。
+
+改法：新增 `test_db_connection_draft` 命令，直接吃表单字段（`DbConnectionTestInput`），
+在内存里拼一个**不落库**的 `DbConnection` 去拨；与已存连接路径共用抽出来的
+`probe_connection`（profile 禁用检查、隧道、驱动、错误投影都在那一处）。**没有加任何
+schema 列，也没有"隐藏草稿行"这种需要覆盖全部读路径的状态** —— 后者曾作为备选方案讨论
+并被否掉，理由：`list_connections` 的读者不止 Overview（还有二级 tab、
+**MCP 的 `list_databases`，草稿会被当成 AI 可查询连接广播出去**、profile 的引用检查），
+且「先写后删」的孤儿行比「不写」多出一整类清理路径；编辑模式下 Cancel 更无法回滚已写的改动。
+
+安全细节：draft 路径会先用**激活账号**校验请求里的 `id`，只有属于本账号才允许回退到已存
+密码 —— 否则一个外部账号的 connectionId 就能把那个账号的密钥交给表单指定的任意主机。
+
+**未同步改动的一处：Network Profile 的 Test 仍是「先保存再探测」**（`ProfileDetail.tsx`
+的 `handleTest`）。连接向导不再这样做了，两边口径现在不一致；profile 侧是否照改待定。
+
+**Network Profile 的 Test 同样改为不落库（2026-09-16，接上一条）。** 与连接向导对齐：
+新增 `test_network_profile_draft`，吃 `NetworkProfileTestInput { id?, transport, secret? }`，
+在内存里拼一个 `NetworkProfile`（`enabled: true` —— 探测的是配置，`enabled` 只管真实路由）
+交给 `probe_profile`；与已存 profile 路径共用抽出来的 `probe_profile_for`。前端
+`ProfileDetail.handleTest` 不再 `saveProfile.mutateAsync(...)`，也不再清空密码框/清 dirty
+（那些是"已提交"的表现，而 Test 现在什么都没提交）。
+
+顺带修正了两处**因隧道改为急切连接而失真的文案**：`test_network_profile` 的文档注释
+原称"只证明本地 bind 与 accept loop，对端握手等连接真正拨号时才发生"，以及成功消息里的
+"Far-side handshake is exercised when a connection dials" —— 都不再成立。现在按传输类型
+分别说明实际验到了什么（SSH：已连接并完成认证；SOCKS5：仅绑定，代理按连接拨），
+并且**明确声明未验证的部分**："whether the far side reaches the database shows when a
+query runs" —— 即跳板机到目标库的可达性（安全组那类问题）仍然要等真正查询才暴露。

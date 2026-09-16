@@ -3,10 +3,12 @@ import type {
   DbConnection,
   DbConnectionFlags,
   DbConnectionInput,
+  DbConnectionTestInput,
   DbConnectionUpdateInput,
   DbQueryRequest,
   NetworkProfile,
-  NetworkProfileInput
+  NetworkProfileInput,
+  NetworkProfileTestInput
 } from "@/types/domain";
 
 /**
@@ -21,10 +23,12 @@ export const dbHubService = {
     tauriClient.setDbConnectionFlags(connectionId, flags),
   deleteConnection: (connectionId: string) => tauriClient.deleteDbConnection(connectionId),
   testConnection: (connectionId: string) => tauriClient.testDbConnection(connectionId),
+  testDraftConnection: (input: DbConnectionTestInput) => tauriClient.testDbConnectionDraft(input),
   listProfiles: () => tauriClient.listNetworkProfiles(),
   saveProfile: (input: NetworkProfileInput) => tauriClient.saveNetworkProfile(input),
   deleteProfile: (profileId: string) => tauriClient.deleteNetworkProfile(profileId),
   testProfile: (profileId: string) => tauriClient.testNetworkProfile(profileId),
+  testDraftProfile: (input: NetworkProfileTestInput) => tauriClient.testNetworkProfileDraft(input),
   runQuery: (request: DbQueryRequest) => tauriClient.runDbQuery(request),
   listDatabases: (connectionId: string) => tauriClient.listDbDatabases(connectionId),
   listTables: (connectionId: string, database: string) =>

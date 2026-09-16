@@ -23,8 +23,12 @@ const createConnection = vi.fn().mockResolvedValue({
   aiReadOnlyPolicy: "select-only",
   sortOrder: 0
 });
-const updateConnection = vi.fn().mockResolvedValue({ id: "c1" });
-const testConnection = vi.fn().mockResolvedValue({
+// Echo the id back the way the command does — a test that follows a create
+// with an update reads the id the second call actually used.
+const updateConnection = vi.fn().mockImplementation((input: { id: string }) =>
+  Promise.resolve({ id: input.id })
+);
+const testDraftConnection = vi.fn().mockResolvedValue({
   ok: true,
   message: "Connected. Server: 8.0.36",
   latencyMs: 12
@@ -53,7 +57,7 @@ vi.mock("@/services/tauriClient", () => ({
     ]),
     createDbConnection: (...args: unknown[]) => createConnection(...args),
     updateDbConnection: (...args: unknown[]) => updateConnection(...args),
-    testDbConnection: (...args: unknown[]) => testConnection(...args)
+    testDbConnectionDraft: (...args: unknown[]) => testDraftConnection(...args)
   }
 }));
 
@@ -135,22 +139,78 @@ describe("ConnectionFormDialog", () => {
     expect(createConnection).not.toHaveBeenCalled();
   });
 
-  it("saves then probes through test connection and reports success", async () => {
+  it("probes the form's values and writes nothing", async () => {
     const user = userEvent.setup();
-    renderDialog();
+    const { onSaved } = renderDialog();
 
     await fillRequiredFields();
     await user.click(screen.getByRole("button", { name: "Test Connection" }));
 
     await waitFor(() => {
-      expect(createConnection).toHaveBeenCalled();
+      expect(testDraftConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "mysql",
+          host: "10.0.0.1",
+          port: 3306,
+          username: "bi_reader"
+        })
+      );
     });
-    await waitFor(() => {
-      expect(testConnection).toHaveBeenCalledWith("new-1");
-    });
+    // Test is a read-only act from the user's side: no row, no refresh.
+    expect(createConnection).not.toHaveBeenCalled();
+    expect(updateConnection).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Connected"));
     });
+  });
+
+  it("keeps testing without queueing up connections", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await fillRequiredFields();
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(testDraftConnection).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(testDraftConnection).toHaveBeenCalledTimes(3));
+
+    // ...and the Save that follows is the only write this dialog makes.
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    await waitFor(() => expect(createConnection).toHaveBeenCalledTimes(1));
+    expect(updateConnection).not.toHaveBeenCalled();
+  });
+
+  it("hands the edited connection's id to the probe so a blank password can reuse the stored secret", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      connection: {
+        id: "c1",
+        accountId: "acct-a",
+        kind: "postgres",
+        name: "Warehouse",
+        host: "10.0.0.2",
+        port: 5432,
+        username: "reader",
+        showAsTab: false,
+        enabledForAi: true,
+        aiReadOnlyPolicy: "select-only",
+        sortOrder: 0,
+        createdAt: "2026-09-08T00:00:00Z",
+        updatedAt: "2026-09-08T00:00:00Z"
+      }
+    });
+
+    await user.click(screen.getByRole("button", { name: "Test Connection" }));
+
+    await waitFor(() => {
+      expect(testDraftConnection).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "c1", host: "10.0.0.2", port: 5432 })
+      );
+    });
+    // Editing and testing still writes nothing.
+    expect(updateConnection).not.toHaveBeenCalled();
   });
 
   it("lists network profiles in the routing picker", async () => {

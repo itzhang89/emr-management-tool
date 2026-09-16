@@ -75,11 +75,13 @@ import type {
   RedactTestResult,
   DbConnection,
   DbConnectionInput,
+  DbConnectionTestInput,
   DbConnectionUpdateInput,
   DbConnectionFlags,
   DbTestResult,
   NetworkProfile,
   NetworkProfileInput,
+  NetworkProfileTestInput,
   DbQueryResult,
   DbQueryRequest,
   DbCatalogEntry
@@ -281,6 +283,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbConnection[]>("delete_db_connection", { connectionId }),
     testDbConnection: (connectionId: string) =>
       call<DbTestResult>("test_db_connection", { connectionId }),
+    testDbConnectionDraft: (request: DbConnectionTestInput) =>
+      call<DbTestResult>("test_db_connection_draft", request),
     listNetworkProfiles: () => call<NetworkProfile[]>("list_network_profiles"),
     saveNetworkProfile: (request: NetworkProfileInput) =>
       call<NetworkProfile>("save_network_profile", request),
@@ -288,6 +292,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<void>("delete_network_profile", { profileId }),
     testNetworkProfile: (profileId: string) =>
       call<DbTestResult>("test_network_profile", { profileId }),
+    testNetworkProfileDraft: (request: NetworkProfileTestInput) =>
+      call<DbTestResult>("test_network_profile_draft", request),
     // Read-only query execution for connection tabs (gate + read-only tx).
     runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
     listDbDatabases: (connectionId: string) =>

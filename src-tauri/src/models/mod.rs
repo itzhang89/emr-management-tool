@@ -1527,6 +1527,47 @@ pub struct DbConnectionInput {
     pub password: Option<String>,
 }
 
+/// A connectivity test against values the user has typed but not saved.
+///
+/// Test must not write a connection row — from the user's side, probing a form
+/// is a read-only act — so the dialog sends the fields a dial needs instead of
+/// a connection id. `id` is carried only so an edit-time probe with a blank
+/// password field can fall back to the stored secret.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionTestInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub kind: DbConnectionKind,
+    pub host: String,
+    pub port: i64,
+    #[serde(default)]
+    pub database: Option<String>,
+    pub username: String,
+    #[serde(default)]
+    pub network_profile_id: Option<String>,
+    /// Only present when the user typed one in this sitting.
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// A profile test against the transport the user is still editing.
+///
+/// Same reason as `DbConnectionTestInput`: pressing Test must not commit a
+/// profile — and its secret — to the store.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProfileTestInput {
+    /// Set when the dialog is editing a saved profile, so a blank secret field
+    /// can fall back to the one already stored.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub transport: NetworkTransport,
+    /// Only when the user typed one in this sitting.
+    #[serde(default)]
+    pub secret: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }

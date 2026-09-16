@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   DbConnectionFlags,
   DbConnectionInput,
+  DbConnectionTestInput,
   DbConnectionUpdateInput,
   DbQueryRequest,
-  NetworkProfileInput
+  NetworkProfileInput,
+  NetworkProfileTestInput
 } from "@/types/domain";
 import { dbHubService } from "@/services/dbHubService";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -88,6 +90,16 @@ export function useTestDbConnection() {
   });
 }
 
+/**
+ * Probe a connection the dialog has not saved. Nothing is written and no cache
+ * is invalidated — a test leaves the list exactly as it found it.
+ */
+export function useTestDbConnectionDraft() {
+  return useMutation({
+    mutationFn: (input: DbConnectionTestInput) => dbHubService.testDraftConnection(input)
+  });
+}
+
 export function useSaveNetworkProfile() {
   const invalidate = useInvalidateDbHub();
   return useMutation({
@@ -107,6 +119,16 @@ export function useDeleteNetworkProfile() {
 export function useTestNetworkProfile() {
   return useMutation({
     mutationFn: (profileId: string) => dbHubService.testProfile(profileId)
+  });
+}
+
+/**
+ * Probe the transport the profile dialog is still editing. Writes nothing and
+ * leaves the saved profile — and its stored secret — alone.
+ */
+export function useTestNetworkProfileDraft() {
+  return useMutation({
+    mutationFn: (input: NetworkProfileTestInput) => dbHubService.testDraftProfile(input)
   });
 }
 

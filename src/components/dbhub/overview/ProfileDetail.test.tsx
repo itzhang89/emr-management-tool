@@ -12,14 +12,14 @@ vi.mock("sonner", () => ({
 }));
 
 const saveProfile = vi.fn().mockResolvedValue({ id: "p1" });
-const testProfile = vi.fn().mockResolvedValue({ ok: true, message: "ok", latencyMs: 3 });
+const testDraftProfile = vi.fn().mockResolvedValue({ ok: true, message: "ok", latencyMs: 3 });
 const deleteProfile = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@/services/tauriClient", () => ({
   tauriClient: {
     listNetworkProfiles: vi.fn().mockResolvedValue([]),
     saveNetworkProfile: (...args: unknown[]) => saveProfile(...args),
-    testNetworkProfile: (...args: unknown[]) => testProfile(...args),
+    testNetworkProfileDraft: (...args: unknown[]) => testDraftProfile(...args),
     deleteNetworkProfile: (...args: unknown[]) => deleteProfile(...args)
   }
 }));
@@ -165,19 +165,40 @@ describe("ProfileDetail", () => {
     });
   });
 
-  it("tests the working copy by saving it first (no stale 'disabled' trap)", async () => {
+  it("probes what the user just typed, without committing it", async () => {
     const user = userEvent.setup();
     renderProfile();
 
-    // Toggle enabled off, then test — the save must happen before the probe.
-    await user.click(screen.getByRole("switch"));
+    // Edit the transport, then test: the probe carries the working copy, so it
+    // cannot report on a stale stored profile (the old "disabled" trap).
+    await user.clear(screen.getByLabelText("Host/IP"));
+    await user.type(screen.getByLabelText("Host/IP"), "10.9.9.9");
     await user.click(screen.getByRole("button", { name: "Test tunnel configuration" }));
 
     await waitFor(() => {
-      expect(saveProfile).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+      expect(testDraftProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "p1",
+          transport: expect.objectContaining({ type: "ssh-tunnel", host: "10.9.9.9" })
+        })
+      );
     });
+    // A test is not a commit: the profile is untouched until Apply.
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("hands the typed secret to the probe and leaves it in the form", async () => {
+    const user = userEvent.setup();
+    renderProfile();
+
+    await user.type(screen.getByLabelText("Password"), "phrase");
+    await user.click(screen.getByRole("button", { name: "Test tunnel configuration" }));
+
     await waitFor(() => {
-      expect(testProfile).toHaveBeenCalledWith("p1");
+      expect(testDraftProfile).toHaveBeenCalledWith(expect.objectContaining({ secret: "phrase" }));
     });
+    expect(saveProfile).not.toHaveBeenCalled();
+    // The secret is not written, so it stays where the user put it.
+    expect(screen.getByLabelText("Password")).toHaveValue("phrase");
   });
 });

@@ -1101,6 +1101,22 @@ export interface DbConnectionUpdateInput extends Partial<Omit<DbConnectionInput,
   id: string;
 }
 
+/**
+ * A probe of values the dialog has not saved. Nothing is written: Test is a
+ * read-only act as far as the user is concerned. `id` is set when editing, so
+ * a blank password field can fall back to the stored secret.
+ */
+export interface DbConnectionTestInput {
+  id?: string;
+  kind: DbConnectionKind;
+  host: string;
+  port: number;
+  database?: string;
+  username: string;
+  networkProfileId?: string;
+  password?: string;
+}
+
 /** Overview-card switches; absent fields stay untouched. */
 export interface DbConnectionFlags {
   showAsTab?: boolean;
@@ -1157,6 +1173,17 @@ export interface NetworkProfileInput {
   name: string;
   transport: NetworkTransport;
   enabled?: boolean;
+  secret?: string;
+}
+
+/**
+ * A probe of a profile the dialog has not saved. Same rule as
+ * `DbConnectionTestInput`: Test writes nothing. `id` is set when editing, so a
+ * blank secret field can fall back to the stored one.
+ */
+export interface NetworkProfileTestInput {
+  id?: string;
+  transport: NetworkTransport;
   secret?: string;
 }
 

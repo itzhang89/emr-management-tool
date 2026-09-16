@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useSaveNetworkProfile, useTestNetworkProfile } from "@/hooks/useDbHub";
+import { useSaveNetworkProfile, useTestNetworkProfileDraft } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile } from "@/types/domain";
 import { SSH_AUTH_METHODS } from "@/types/domain";
@@ -33,7 +33,7 @@ import {
  */
 export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   const saveProfile = useSaveNetworkProfile();
-  const testProfile = useTestNetworkProfile();
+  const testDraftProfile = useTestNetworkProfileDraft();
 
   const stored = profile.transport;
   const [ssh, setSsh] = useState<SshTransport>(() =>
@@ -139,34 +139,24 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   };
 
   const handleTest = async () => {
-    // Test validates the *working copy*: save it first (silently, no toast),
-    // then probe. Otherwise the backend tests the last-applied state and the
-    // button lies about whatever the user just typed or toggled — the exact
-    // trap the old "Profile is disabled" forever-error came from.
+    // Probe the *working copy*, not the stored profile: what you just typed or
+    // toggled is what gets tested. Nothing is written — a test that persisted
+    // would commit a half-typed profile and its secret, and would leave the
+    // form looking applied when it had only been probed.
     try {
-      await saveProfile.mutateAsync({
+      const result = await testDraftProfile.mutateAsync({
         id: profile.id,
-        name,
         transport,
-        enabled,
         secret: secret || undefined
       });
-      setSecret("");
-      setDirty(false);
+      if (result.ok) {
+        toast.success(`${result.message} (${result.latencyMs}ms)`);
+      } else {
+        toast.error(result.message);
+      }
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to apply profile before testing."));
-      return;
+      toast.error(formatAppError(error, "Profile test failed."));
     }
-    testProfile.mutate(profile.id, {
-      onSuccess: (result) => {
-        if (result.ok) {
-          toast.success(`${result.message} (${result.latencyMs}ms)`);
-        } else {
-          toast.error(result.message);
-        }
-      },
-      onError: (error) => toast.error(formatAppError(error, "Profile test failed."))
-    });
   };
 
   return (
