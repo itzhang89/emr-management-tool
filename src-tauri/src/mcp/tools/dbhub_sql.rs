@@ -14,6 +14,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::db::dbhub::driver::DialTarget;
+use crate::db::dbhub::session::QueryCancellation;
 use crate::db::dbhub::{self, query};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
@@ -128,7 +129,16 @@ pub async fn sql_query_text(
     let target = DialTarget::direct(&shape.connection);
     // One page: the tool's caller narrows the query rather than paging
     // through it, which keeps the model's context bounded.
-    let result = query::execute_read_only(&shape, &target, &args.sql, max_rows, 0).await?;
+    // The tool call runs to its own timeout; nothing stops it mid-flight.
+    let result = query::execute_read_only(
+        &shape,
+        &target,
+        &args.sql,
+        max_rows,
+        0,
+        &QueryCancellation::never(),
+    )
+    .await?;
 
     // Text-size honesty: serialize the page once; if the model-facing text
     // overshoots the cap it is cut at a char boundary and marked — the model

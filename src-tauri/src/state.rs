@@ -19,6 +19,11 @@ pub struct AppState {
     /// One cancellation token per streaming chat send, keyed by session id, so
     /// the UI's stop button can interrupt the request it belongs to.
     pub chat_cancellations: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
+    /// The same arrangement for DBHub queries, keyed by the request id the
+    /// WebView chose. Keyed by request rather than by connection: one
+    /// connection can have several result tabs in flight, and cancelling one
+    /// must not stop the others.
+    pub db_query_cancellations: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
 }
 
 /// State for the in-process MCP server. The axum task is spawned inside the
@@ -45,6 +50,7 @@ impl Default for AppState {
             mcp_state: Mutex::new(McpState::default()),
             in_process_mcp: crate::mcp::in_process::InProcessClient::new(),
             chat_cancellations: Mutex::new(HashMap::new()),
+            db_query_cancellations: Mutex::new(HashMap::new()),
         }
     }
 }

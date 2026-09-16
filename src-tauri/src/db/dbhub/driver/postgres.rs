@@ -14,7 +14,7 @@ use sqlx::{PgPool, Row};
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnectionKind;
 
-use super::super::session::{self, CONNECT_TIMEOUT};
+use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
     catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
 };
@@ -60,26 +60,46 @@ impl DbDriver for PostgresDriver {
     }
 
     async fn list_databases(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(dial, DATABASES_SQL, MAX_PAGE_ROWS).await?;
+        let page = read_page(
+            dial,
+            DATABASES_SQL,
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
         Ok(catalog_entries(&page))
     }
 
     async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(dial, SCHEMAS_SQL, MAX_PAGE_ROWS).await?;
+        let page = read_page(
+            dial,
+            SCHEMAS_SQL,
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
         Ok(catalog_entries(&page))
     }
 
-    async fn list_tables(
+    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
+        let page = read_page(
+            dial,
+            &tables_sql(schema),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
+        Ok(catalog_entries(&page))
+    }
+
+    async fn query(
         &self,
         dial: &DbDial<'_>,
-        schema: &str,
-    ) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(dial, &tables_sql(schema), MAX_PAGE_ROWS).await?;
-        Ok(catalog_entries(&page))
-    }
-
-    async fn query(&self, dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage> {
-        read_page(dial, sql, cap).await
+        sql: &str,
+        cap: usize,
+        cancel: &QueryCancellation<'_>,
+    ) -> AppResult<QueryPage> {
+        read_page(dial, sql, cap, cancel).await
     }
 }
 
@@ -114,7 +134,12 @@ pub(crate) async fn connect(dial: &DbDial<'_>) -> AppResult<PgPool> {
 }
 
 /// One statement inside a read-only transaction, at most `cap` rows.
-pub(crate) async fn read_page(dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage> {
+pub(crate) async fn read_page(
+    dial: &DbDial<'_>,
+    sql: &str,
+    cap: usize,
+    cancel: &QueryCancellation<'_>,
+) -> AppResult<QueryPage> {
     let pool = connect(dial).await?;
     let mut conn = pool
         .acquire()
@@ -130,6 +155,7 @@ pub(crate) async fn read_page(dial: &DbDial<'_>, sql: &str, cap: usize) -> AppRe
         sqlx::query(sqlx::AssertSqlSafe(sql.to_string())),
         &mut *conn,
         cap,
+        cancel,
     )
     .await;
 

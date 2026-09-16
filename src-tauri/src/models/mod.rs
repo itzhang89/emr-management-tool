@@ -1750,6 +1750,18 @@ pub struct DbQueryRequest {
     /// which re-runs it — offset paging has no cursor to resume from.
     #[serde(default)]
     pub offset: Option<usize>,
+    /// The WebView's handle on this run, so the stop button can name it. Chosen
+    /// by the caller because a connection may have several runs in flight.
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+/// Names the run to stop. An id the backend no longer holds means the run
+/// already finished, which is not an error.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbQueryCancelRequest {
+    pub request_id: String,
 }
 
 #[cfg(test)]

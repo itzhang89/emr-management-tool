@@ -12,8 +12,9 @@ use crate::db::dbhub::{driver, gate, tunnel};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnection;
+use tauri::Manager;
 
-use super::session::complete_operation;
+use super::session::{complete_operation, QueryCancellation};
 use driver::{DbDial, DialTarget, MAX_PAGE_ROWS};
 
 pub use driver::DbCatalogEntry;
@@ -103,6 +104,7 @@ pub(crate) async fn execute_read_only(
     sql: &str,
     max_rows: usize,
     offset: usize,
+    cancel: &QueryCancellation<'_>,
 ) -> AppResult<DbQueryResult> {
     if let gate::StatementClass::Blocked { reason } = gate::classify(sql) {
         return Err(AppError::validation(format!(
@@ -127,7 +129,7 @@ pub(crate) async fn execute_read_only(
 
     let started = std::time::Instant::now();
     let page = driver::driver_for(shape.connection.kind)
-        .query(&shape.dial(target), &statement, cap)
+        .query(&shape.dial(target), &statement, cap, cancel)
         .await?;
     let row_count = page.rows.len();
 
@@ -168,16 +170,54 @@ pub async fn run_for_command(
     sql: &str,
     max_rows: Option<usize>,
     offset: usize,
+    request_id: Option<&str>,
 ) -> AppResult<DbQueryResult> {
     let shape = shape_for(app, connection_id, require_ai_enabled).await?;
-    complete_operation("query", async {
+
+    // The stop button's handle, registered before the dial so a stop that
+    // arrives while we are still connecting is not lost, and removed after so
+    // ids do not accumulate tokens for queries that are long over.
+    let token = tokio_util::sync::CancellationToken::new();
+    if let Some(id) = request_id {
+        let state = app.state::<crate::state::AppState>();
+        let mut cancellations = state.db_query_cancellations.lock().map_err(|error| {
+            AppError::internal(format!("Failed to acquire query lock: {error}"))
+        })?;
+        // A second run under the same id supersedes the first, as chat's send
+        // loop does for a session.
+        if let Some(previous) = cancellations.insert(id.to_string(), token.clone()) {
+            previous.cancel();
+        }
+    }
+
+    let outcome = complete_operation("query", async {
         // The forward (when a profile routes this connection) must outlive the
         // driver dial; binding it to this scope does exactly that.
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        execute_read_only(&shape, &target, sql, max_rows.unwrap_or(MAX_PAGE_ROWS), offset).await
+        execute_read_only(
+            &shape,
+            &target,
+            sql,
+            max_rows.unwrap_or(MAX_PAGE_ROWS),
+            offset,
+            &QueryCancellation::new(&token),
+        )
+        .await
     })
-    .await
+    .await;
+
+    if let Some(id) = request_id {
+        if let Ok(mut cancellations) = app
+            .state::<crate::state::AppState>()
+            .db_query_cancellations
+            .lock()
+        {
+            cancellations.remove(id);
+        }
+    }
+
+    outcome
 }
 
 #[cfg(test)]
@@ -228,9 +268,16 @@ mod tests {
         shape.connection.port = 1;
         let target = DialTarget::direct(&shape.connection);
 
-        let error = execute_read_only(&shape, &target, "SHOW TABLES", 100, 500)
-            .await
-            .expect_err("a SHOW has no second page");
+        let error = execute_read_only(
+            &shape,
+            &target,
+            "SHOW TABLES",
+            100,
+            500,
+            &QueryCancellation::never(),
+        )
+        .await
+        .expect_err("a SHOW has no second page");
         assert!(error.message.contains("page at a time"), "{error:?}");
     }
 
@@ -239,9 +286,16 @@ mod tests {
         // No real connection needed — the gate rejects before any dial.
         let shape = shape_for_gate_test();
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(&shape, &target, "DELETE FROM orders", 100, 0)
-            .await
-            .expect_err("must be blocked");
+        let error = execute_read_only(
+            &shape,
+            &target,
+            "DELETE FROM orders",
+            100,
+            0,
+            &QueryCancellation::never(),
+        )
+        .await
+        .expect_err("must be blocked");
         assert!(error.message.contains("read-only gate"));
     }
 
@@ -253,9 +307,16 @@ mod tests {
         shape.connection.host = "127.0.0.1".into();
         shape.connection.port = 1;
         let target = DialTarget::direct(&shape.connection);
-        let error = execute_read_only(&shape, &target, "SELECT 1", 100, 0)
-            .await
-            .expect_err("the dial must fail, not the gate");
+        let error = execute_read_only(
+            &shape,
+            &target,
+            "SELECT 1",
+            100,
+            0,
+            &QueryCancellation::never(),
+        )
+        .await
+        .expect_err("the dial must fail, not the gate");
         assert!(!error.message.contains("read-only gate"));
     }
 }

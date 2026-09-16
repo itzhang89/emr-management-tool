@@ -15,6 +15,7 @@ use futures_util::TryStreamExt;
 use serde_json::Value;
 use sqlx::query::Query;
 use sqlx::{Column, Database, Executor, IntoArguments, Row};
+use tokio_util::sync::CancellationToken;
 
 use super::driver::{DbDial, QueryPage};
 
@@ -144,6 +145,31 @@ where
     }
 }
 
+/// A handle onto a running query's stop request.
+///
+/// Deliberately not an `Option`: the catalog reads run under a token that is
+/// never cancelled, so every call site passes one and no implementation can
+/// quietly forget to look.
+#[derive(Clone)]
+pub struct QueryCancellation<'a>(&'a CancellationToken);
+
+impl<'a> QueryCancellation<'a> {
+    pub fn new(token: &'a CancellationToken) -> Self {
+        Self(token)
+    }
+
+    /// For work nothing can stop — the catalog reads, which are short and
+    /// app-authored.
+    pub fn never() -> QueryCancellation<'static> {
+        static NEVER: std::sync::OnceLock<CancellationToken> = std::sync::OnceLock::new();
+        QueryCancellation(NEVER.get_or_init(CancellationToken::new))
+    }
+
+    async fn cancelled(&self) {
+        self.0.cancelled().await
+    }
+}
+
 /// Stream at most `cap + 1` rows and stop.
 ///
 /// The extra row is the sentinel: fetching it (rather than exhausting the
@@ -153,6 +179,7 @@ pub(crate) async fn fetch_capped<'q, DB, A, E>(
     query: Query<'q, DB, A>,
     executor: E,
     cap: usize,
+    cancel: &QueryCancellation<'_>,
 ) -> AppResult<Vec<DB::Row>>
 where
     DB: Database,
@@ -162,10 +189,18 @@ where
     let mut rows = Vec::with_capacity(cap.saturating_add(1));
     let mut stream = query.fetch(executor);
     while rows.len() <= cap {
-        match stream.try_next().await {
-            Ok(Some(row)) => rows.push(row),
-            Ok(None) => break,
-            Err(error) => return Err(AppError::validation(describe_error(&error))),
+        // Raced against the stop request, not polled between rows: a query
+        // waiting on the socket for its first row would otherwise sit through
+        // the whole timeout with the Stop button apparently dead.
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                return Err(AppError::cancelled("Query cancelled."));
+            }
+            next = stream.try_next() => match next {
+                Ok(Some(row)) => rows.push(row),
+                Ok(None) => break,
+                Err(error) => return Err(AppError::validation(describe_error(&error))),
+            },
         }
     }
     Ok(rows)
@@ -246,6 +281,26 @@ mod tests {
         let described = describe_error(&error);
         assert!(described.starts_with("could not connect: refused"));
         assert!(described.len() <= 300);
+    }
+
+    #[tokio::test]
+    async fn a_stopped_query_is_observed_and_an_unstoppable_one_is_not() {
+        let token = CancellationToken::new();
+        let cancelling = QueryCancellation::new(&token);
+        token.cancel();
+        // Resolves immediately once the token is fired.
+        tokio::time::timeout(std::time::Duration::from_millis(50), cancelling.cancelled())
+            .await
+            .expect("a cancelled token resolves at once");
+
+        // The catalog's token is never fired, so it never resolves — which is
+        // exactly what makes it safe to race against.
+        let never = QueryCancellation::never();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), never.cancelled())
+                .await
+                .is_err()
+        );
     }
 
     #[test]

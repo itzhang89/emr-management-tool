@@ -304,7 +304,10 @@ mod tests {
         );
         assert!(pageable_statement("WITH t AS (SELECT 1) SELECT * FROM t").is_some());
         // The trailing semicolon must not ride into the wrapper.
-        assert_eq!(pageable_statement("SELECT 1; ").as_deref(), Some("SELECT 1"));
+        assert_eq!(
+            pageable_statement("SELECT 1; ").as_deref(),
+            Some("SELECT 1")
+        );
 
         // No result set to wrap: these are not subqueries.
         assert!(pageable_statement("SHOW TABLES").is_none());

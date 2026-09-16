@@ -318,13 +318,20 @@ pub async fn test_db_connection_draft(
     // account would otherwise hand that account's secret to whatever host the
     // form happens to name.
     let stored_id = match request.id.as_deref() {
-        Some(id) if dbhub::get_connection(&pool, &account_id, id).await?.is_some() => Some(id),
+        Some(id)
+            if dbhub::get_connection(&pool, &account_id, id)
+                .await?
+                .is_some() =>
+        {
+            Some(id)
+        }
         _ => None,
     };
     let password = match request.password.filter(|value| !value.is_empty()) {
         Some(typed) => Some(typed),
-        None => stored_id
-            .and_then(|id| crate::secrets::read_optional_secret(&app, &connection_secret_key(id)).unwrap_or(None)),
+        None => stored_id.and_then(|id| {
+            crate::secrets::read_optional_secret(&app, &connection_secret_key(id)).unwrap_or(None)
+        }),
     };
 
     let now = chrono::Utc::now();
@@ -389,7 +396,8 @@ async fn probe_connection(
     // driver then dials 127.0.0.1:<forward-port> instead of the literal host.
     // `_forward` (not `_`) so it lives until this scope ends — dropping it
     // would close the tunnel mid-dial.
-    let (target, _forward) = crate::db::dbhub::tunnel::dial_target_for(pool, app, connection).await?;
+    let (target, _forward) =
+        crate::db::dbhub::tunnel::dial_target_for(pool, app, connection).await?;
 
     let dial = DbDial::new(connection, &target, password.as_deref());
     let elapsed = started.elapsed().as_millis() as u64;
@@ -660,8 +668,38 @@ pub async fn run_db_query(
         &request.sql,
         request.max_rows,
         request.offset.unwrap_or(0),
+        request.request_id.as_deref(),
     )
     .await
+}
+
+/// Stop a run the WebView started and named.
+///
+/// This is cooperative: the row stream stops being read and its connection is
+/// dropped, which is what makes a server notice. It is **not** `KILL QUERY` —
+/// the server-side statement may live a moment longer than this returns.
+///
+/// Answers `false` for an id that is not running, so a stop that arrives after
+/// the query finished stays quiet instead of reporting a failure.
+#[tauri::command]
+pub async fn cancel_db_query(
+    app: AppHandle,
+    request: crate::models::DbQueryCancelRequest,
+) -> AppResult<bool> {
+    use tauri::Manager;
+
+    let state = app.state::<crate::state::AppState>();
+    let cancellations = state
+        .db_query_cancellations
+        .lock()
+        .map_err(|error| AppError::internal(format!("Failed to acquire query lock: {error}")))?;
+    match cancellations.get(&request.request_id) {
+        Some(token) => {
+            token.cancel();
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 #[tauri::command]

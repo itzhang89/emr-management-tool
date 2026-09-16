@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use crate::error::AppResult;
 use crate::models::DbConnectionKind;
 
+use super::super::session::QueryCancellation;
 use super::postgres;
 use super::{
     catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
@@ -32,26 +33,46 @@ impl DbDriver for YellowbrickDriver {
     }
 
     async fn list_databases(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = postgres::read_page(dial, postgres::DATABASES_SQL, MAX_PAGE_ROWS).await?;
+        let page = postgres::read_page(
+            dial,
+            postgres::DATABASES_SQL,
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
         Ok(catalog_entries(&page))
     }
 
     async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = postgres::read_page(dial, postgres::SCHEMAS_SQL, MAX_PAGE_ROWS).await?;
+        let page = postgres::read_page(
+            dial,
+            postgres::SCHEMAS_SQL,
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
         Ok(catalog_entries(&page))
     }
 
-    async fn list_tables(
+    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
+        let page = postgres::read_page(
+            dial,
+            &postgres::tables_sql(schema),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
+        Ok(catalog_entries(&page))
+    }
+
+    async fn query(
         &self,
         dial: &DbDial<'_>,
-        schema: &str,
-    ) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = postgres::read_page(dial, &postgres::tables_sql(schema), MAX_PAGE_ROWS).await?;
-        Ok(catalog_entries(&page))
-    }
-
-    async fn query(&self, dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage> {
-        postgres::read_page(dial, sql, cap).await
+        sql: &str,
+        cap: usize,
+        cancel: &QueryCancellation<'_>,
+    ) -> AppResult<QueryPage> {
+        postgres::read_page(dial, sql, cap, cancel).await
     }
 }
 

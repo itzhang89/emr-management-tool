@@ -24,6 +24,7 @@ use serde::Serialize;
 use crate::error::AppResult;
 use crate::models::{DbConnection, DbConnectionKind};
 
+use super::session::QueryCancellation;
 use mysql::MysqlDriver;
 use postgres::PostgresDriver;
 use yellowbrick::YellowbrickDriver;
@@ -223,21 +224,26 @@ pub trait DbDriver: Send + Sync {
     /// still a value — implementations must bind or quote it, never splice it
     /// into SQL raw. MySQL ignores it: its schema and its database are the
     /// same thing, and the dial already names that.
-    async fn list_tables(
-        &self,
-        dial: &DbDial<'_>,
-        schema: &str,
-    ) -> AppResult<Vec<DbCatalogEntry>>;
+    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>>;
 
     /// Run one **already-gated** read-only statement and return at most `cap`
     /// rows.
+    ///
+    /// `cancel` is the caller's stop request; implementations race it against
+    /// the row stream so a query the user abandoned stops in bounded time.
     ///
     /// The read-only gate (`dbhub::gate`) runs before this is called for user
     /// SQL, and each implementation opens its session read-only as the second
     /// line of defence. Callers other than `dbhub::query` — the catalog reads
     /// — pass SQL this crate authored, which is why classification is the
     /// caller's job rather than the driver's.
-    async fn query(&self, dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage>;
+    async fn query(
+        &self,
+        dial: &DbDial<'_>,
+        sql: &str,
+        cap: usize,
+        cancel: &QueryCancellation<'_>,
+    ) -> AppResult<QueryPage>;
 }
 
 /// The driver for one connection kind — the only `match` on kind left in the

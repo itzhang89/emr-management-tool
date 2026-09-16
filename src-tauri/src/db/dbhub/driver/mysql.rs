@@ -14,7 +14,7 @@ use sqlx::{MySqlPool, Row};
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnectionKind;
 
-use super::super::session::{self, CONNECT_TIMEOUT};
+use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
     catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
 };
@@ -43,7 +43,13 @@ impl DbDriver for MysqlDriver {
     }
 
     async fn list_databases(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(dial, DATABASES_SQL, MAX_PAGE_ROWS).await?;
+        let page = read_page(
+            dial,
+            DATABASES_SQL,
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
         Ok(catalog_entries(&page))
     }
 
@@ -55,11 +61,7 @@ impl DbDriver for MysqlDriver {
         Ok(Vec::new())
     }
 
-    async fn list_tables(
-        &self,
-        dial: &DbDial<'_>,
-        schema: &str,
-    ) -> AppResult<Vec<DbCatalogEntry>> {
+    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
         // MySQL reads a database's tables through `information_schema`, keyed
         // by that database's name — which the dial carries. `schema` is the
         // tree's third level, and MySQL has none, so it is empty here; the
@@ -76,12 +78,18 @@ impl DbDriver for MysqlDriver {
              where table_schema = {} order by table_name",
             session::quote_literal(database)
         );
-        let page = read_page(dial, &sql, MAX_PAGE_ROWS).await?;
+        let page = read_page(dial, &sql, MAX_PAGE_ROWS, &QueryCancellation::never()).await?;
         Ok(catalog_entries(&page))
     }
 
-    async fn query(&self, dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage> {
-        read_page(dial, sql, cap).await
+    async fn query(
+        &self,
+        dial: &DbDial<'_>,
+        sql: &str,
+        cap: usize,
+        cancel: &QueryCancellation<'_>,
+    ) -> AppResult<QueryPage> {
+        read_page(dial, sql, cap, cancel).await
     }
 }
 
@@ -104,7 +112,12 @@ async fn connect(dial: &DbDial<'_>) -> AppResult<MySqlPool> {
 }
 
 /// One statement through a session pinned read-only, at most `cap` rows.
-async fn read_page(dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryPage> {
+async fn read_page(
+    dial: &DbDial<'_>,
+    sql: &str,
+    cap: usize,
+    cancel: &QueryCancellation<'_>,
+) -> AppResult<QueryPage> {
     let pool = connect(dial).await?;
     let mut conn = pool
         .acquire()
@@ -120,6 +133,7 @@ async fn read_page(dial: &DbDial<'_>, sql: &str, cap: usize) -> AppResult<QueryP
         sqlx::query(sqlx::AssertSqlSafe(sql.to_string())),
         &mut *conn,
         cap,
+        cancel,
     )
     .await;
 

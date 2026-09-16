@@ -153,6 +153,21 @@ impl AppError {
         }
     }
 
+    /// A run the user stopped. Its own code because the UI shows it as a
+    /// cancelled result rather than as an error it should apologise for.
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self {
+            kind: "cancelled".into(),
+            code: "Cancelled".into(),
+            message: message.into().into(),
+            service: None,
+            request_id: None,
+            retryable: false,
+            account_id: None,
+            details: None,
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             kind: "internal".into(),
