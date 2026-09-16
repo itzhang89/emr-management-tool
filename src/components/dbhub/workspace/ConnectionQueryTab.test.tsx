@@ -28,20 +28,31 @@ const listDbSchemas = vi
   .mockImplementation(async (_connectionId: string, database: string) =>
     (SCHEMAS[database] ?? []).map((name) => ({ name }))
   );
-const listDbTables = vi
+// Kinds come back already normalised — the driver maps each engine's own
+// vocabulary onto these in SQL, so this is what the WebView actually receives.
+const listDbObjects = vi
   .fn()
-  .mockImplementation(async (_connectionId: string, database: string, schema: string) => {
-    if (database === "sales") {
-      return [
-        { name: "orders", kind: "BASE TABLE" },
-        { name: "customers", kind: "BASE TABLE" }
-      ];
+  .mockImplementation(
+    async (_connectionId: string, database: string, schema: string, kinds: string[]) => {
+      if (kinds.includes("view") && database === "sales") {
+        return [
+          { name: "orders", kind: "table" },
+          { name: "customers", kind: "table" },
+          { name: "recent_orders", kind: "view" }
+        ];
+      }
+      if (database === "sales") {
+        return [
+          { name: "orders", kind: "table" },
+          { name: "customers", kind: "table" }
+        ];
+      }
+      if (database === "analytics") {
+        return [{ name: `${schema}_events`, kind: "table" }];
+      }
+      return [{ name: `${database}_rows`, kind: "table" }];
     }
-    if (database === "analytics") {
-      return [{ name: `${schema}_events`, kind: "BASE TABLE" }];
-    }
-    return [{ name: `${database}_rows`, kind: "BASE TABLE" }];
-  });
+  );
 const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
 const cancelDbQuery = vi.fn().mockResolvedValue(true);
 const saveTextFile = vi.fn().mockResolvedValue(undefined);
@@ -65,7 +76,7 @@ vi.mock("@/services/tauriClient", () => ({
     listDbConnections: (...args: unknown[]) => listDbConnections(...args),
     listDbDatabases: (...args: unknown[]) => listDbDatabases(...args),
     listDbSchemas: (...args: unknown[]) => listDbSchemas(...args),
-    listDbTables: (...args: unknown[]) => listDbTables(...args),
+    listDbObjects: (...args: unknown[]) => listDbObjects(...args),
     runDbQuery: (...args: unknown[]) => runDbQuery(...args),
     cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
     saveTextFile: (...args: unknown[]) => saveTextFile(...args)
@@ -145,7 +156,7 @@ describe("ConnectionQueryTab", () => {
     const view = renderWorkspace(connection(), false);
 
     await waitFor(() => expect(listDbDatabases).not.toHaveBeenCalled());
-    expect(listDbTables).not.toHaveBeenCalled();
+    expect(listDbObjects).not.toHaveBeenCalled();
 
     view.rerender(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -156,7 +167,7 @@ describe("ConnectionQueryTab", () => {
     );
 
     await waitFor(() => expect(listDbDatabases).toHaveBeenCalledWith("c1"));
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales", ""));
+    await waitFor(() => expect(listDbObjects).toHaveBeenCalledWith("c1", "sales", "", ["table"]));
   });
 
   it("lands inside the connection's default database and shows its tables", async () => {
@@ -166,7 +177,7 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByText("sales")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "orders" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "customers" })).toBeInTheDocument();
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "sales", ""));
+    await waitFor(() => expect(listDbObjects).toHaveBeenCalledWith("c1", "sales", "", ["table"]));
   });
 
   it("backs out to the full database list", async () => {
@@ -191,7 +202,7 @@ describe("ConnectionQueryTab", () => {
     await user.click(await screen.findByRole("button", { name: "reporting" }));
 
     expect(await screen.findByRole("button", { name: "reporting_rows" })).toBeInTheDocument();
-    await waitFor(() => expect(listDbTables).toHaveBeenCalledWith("c1", "reporting", ""));
+    await waitFor(() => expect(listDbObjects).toHaveBeenCalledWith("c1", "reporting", "", ["table"]));
   });
 
   it("without a default database it lists all databases first", async () => {
@@ -215,7 +226,7 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("button", { name: "staging" }));
 
     expect(await screen.findByRole("button", { name: "staging_events" })).toBeInTheDocument();
-    expect(listDbTables).toHaveBeenCalledWith("c1", "analytics", "staging");
+    expect(listDbObjects).toHaveBeenCalledWith("c1", "analytics", "staging", ["table"]);
   });
 
   it("skips the schema level when the database has exactly one", async () => {
@@ -224,7 +235,7 @@ describe("ConnectionQueryTab", () => {
     // One schema is not a choice worth a click: its tables are already listed.
     expect(await screen.findByRole("button", { name: "warehouse_rows" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "public" })).not.toBeInTheDocument();
-    expect(listDbTables).toHaveBeenCalledWith("c1", "warehouse", "public");
+    expect(listDbObjects).toHaveBeenCalledWith("c1", "warehouse", "public", ["table"]);
 
   });
 
@@ -235,11 +246,11 @@ describe("ConnectionQueryTab", () => {
     await user.click(await screen.findByRole("button", { name: "warehouse_rows" }));
 
     // Postgres rejects `database.table` outright — the qualifier has to be the
-    // schema. On MySQL the schema *is* the database, so this reads the same.
-    // The editor is a contenteditable, so its document reads as text; the
-    // accessible name is the part that stayed put across the swap.
+    // schema — and it folds unquoted names to lower case, so both parts are
+    // quoted or a table named `MyTable` would be unreachable. The editor is a
+    // contenteditable, so its document reads as text.
     expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
-      "SELECT * FROM public.warehouse_rows LIMIT 100;"
+      'SELECT * FROM "public"."warehouse_rows" LIMIT 100;'
     );
   });
 
@@ -410,6 +421,50 @@ describe("ConnectionQueryTab", () => {
     // Keyed by account *and* connection: SQL is dialect-specific, so one
     // connection's history is not another's.
     expect(storage["emr-eks:dbhub-sql-history:acct-a:conn:c1"]).toContain("SELECT 1;");
+  });
+
+  it("quotes identifiers the way the engine does", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "orders" }));
+
+    // MySQL's backticks, not Postgres's double quotes.
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
+      "SELECT * FROM `sales`.`orders` LIMIT 100;"
+    );
+  });
+
+  it("shows the object kinds the engine has, tables alone to start", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "Choose what to show" }));
+
+    // MySQL's list, with tables ticked and the rest offered.
+    expect(await screen.findByRole("checkbox", { name: "Tables" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Views" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Procedures" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Events" })).toBeInTheDocument();
+    // Postgres-only kinds are not offered here.
+    expect(screen.queryByRole("checkbox", { name: "Materialized Views" })).not.toBeInTheDocument();
+  });
+
+  it("asks the backend for the kinds that are ticked", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "Choose what to show" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Views" }));
+
+    // Fetching the newly-ticked kind rather than filtering a list that never
+    // held it — and the view it brought back is listed alongside the tables.
+    await waitFor(() =>
+      expect(listDbObjects).toHaveBeenLastCalledWith("c1", "sales", "", ["table", "view"])
+    );
+    expect(await screen.findByRole("button", { name: "recent_orders" })).toBeInTheDocument();
   });
 
   it("says whether this connection may write", async () => {

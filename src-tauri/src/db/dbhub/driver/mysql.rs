@@ -16,7 +16,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
+    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
+    MAX_PAGE_ROWS,
 };
 
 /// The engine behind a MySQL connection.
@@ -25,6 +26,57 @@ pub struct MysqlDriver;
 /// Databases the connected user can see.
 const DATABASES_SQL: &str =
     "select schema_name as name, null as kind from information_schema.schemata";
+
+/// Tables and views of one schema, for whichever of the two were asked for.
+///
+/// One query covers both: `information_schema.tables` already says which is
+/// which, so a tree that shows only tables is filtering here rather than
+/// fetching the views and dropping them.
+fn relations_sql(schema: &str, kinds: &[SchemaObject]) -> Option<String> {
+    let types: Vec<&str> = kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            SchemaObject::Table => Some("'BASE TABLE'"),
+            SchemaObject::View => Some("'VIEW'"),
+            _ => None,
+        })
+        .collect();
+    (!types.is_empty()).then(|| {
+        format!(
+            "select table_name as name,              case table_type when 'VIEW' then 'view' else 'table' end as kind              from information_schema.tables where table_schema = {} and table_type in ({})              order by table_name",
+            session::quote_literal(schema),
+            types.join(", ")
+        )
+    })
+}
+
+/// Stored procedures and functions of one schema. One catalogue read covers
+/// both, told apart by `routine_type`.
+fn routines_sql(schema: &str, kinds: &[SchemaObject]) -> Option<String> {
+    let types: Vec<&str> = kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            SchemaObject::Procedure => Some("'PROCEDURE'"),
+            SchemaObject::Function => Some("'FUNCTION'"),
+            _ => None,
+        })
+        .collect();
+    (!types.is_empty()).then(|| {
+        format!(
+            "select routine_name as name,              case routine_type when 'PROCEDURE' then 'procedure' else 'function' end as kind              from information_schema.routines where routine_schema = {} and routine_type in ({})              order by routine_name",
+            session::quote_literal(schema),
+            types.join(", ")
+        )
+    })
+}
+
+/// Scheduled events of one schema.
+fn events_sql(schema: &str) -> String {
+    format!(
+        "select event_name as name, 'event' as kind from information_schema.events          where event_schema = {} order by event_name",
+        session::quote_literal(schema)
+    )
+}
 
 #[async_trait]
 impl DbDriver for MysqlDriver {
@@ -61,8 +113,13 @@ impl DbDriver for MysqlDriver {
         Ok(Vec::new())
     }
 
-    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
-        // MySQL reads a database's tables through `information_schema`, keyed
+    async fn list_objects(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        kinds: &[SchemaObject],
+    ) -> AppResult<Vec<DbCatalogEntry>> {
+        // MySQL reads a database's objects through `information_schema`, keyed
         // by that database's name — which the dial carries. `schema` is the
         // tree's third level, and MySQL has none, so it is empty here; the
         // dial's database is the only name that means anything.
@@ -71,15 +128,22 @@ impl DbDriver for MysqlDriver {
         } else {
             schema
         };
-        // The name came back from our own catalog read, but it is still a
-        // value: quote it rather than trusting the tree.
-        let sql = format!(
-            "select table_name as name, table_type as kind from information_schema.tables \
-             where table_schema = {} order by table_name",
-            session::quote_literal(database)
-        );
-        let page = read_page(dial, &sql, MAX_PAGE_ROWS, &QueryCancellation::never()).await?;
-        Ok(catalog_entries(&page))
+        let mut entries = Vec::new();
+        // One catalogue read per kind asked for, and none for the kinds that
+        // were not: a schema's thousand procedures stay off the path of
+        // opening the tree on its tables.
+        for sql in [
+            relations_sql(database, kinds),
+            routines_sql(database, kinds),
+            kinds.contains(&SchemaObject::Event).then(|| events_sql(database)),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let page = read_page(dial, &sql, MAX_PAGE_ROWS, &QueryCancellation::never()).await?;
+            entries.extend(catalog_entries(&page));
+        }
+        Ok(entries)
     }
 
     async fn query(

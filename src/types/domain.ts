@@ -1232,9 +1232,24 @@ export interface DbQueryRequest {
 }
 
 /** One entry of the workspace catalog tree (database or table). */
+/**
+ * What a schema can hold. A fixed set rather than each engine's own spelling
+ * — MySQL says `BASE TABLE` and Postgres says `FOREIGN`, and the tree should
+ * not have to know either.
+ */
+export type SchemaObjectKind =
+  | "table"
+  | "view"
+  | "foreign-table"
+  | "materialized-view"
+  | "procedure"
+  | "function"
+  | "event";
+
 export interface DbCatalogEntry {
   name: string;
-  kind?: string;
+  /** Absent for databases and schemas, which are levels rather than objects. */
+  kind?: SchemaObjectKind;
 }
 
 

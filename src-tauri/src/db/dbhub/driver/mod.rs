@@ -194,13 +194,73 @@ pub struct QueryPage {
     pub truncated: bool,
 }
 
-/// One entry in the query workspace's catalog tree: a database, or a table
-/// inside one.
+/// What a schema can hold.
+///
+/// A fixed set rather than the engine's own spelling: MySQL says `BASE TABLE`
+/// and Postgres says `FOREIGN`, and a tree that has to know that is a tree
+/// that has to know every engine. Each driver maps its own vocabulary onto
+/// these, in SQL, so what comes back is already the app's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SchemaObject {
+    Table,
+    View,
+    ForeignTable,
+    MaterializedView,
+    Procedure,
+    Function,
+    Event,
+}
+
+impl SchemaObject {
+    /// The word the WebView uses, and the one the SQL tags rows with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SchemaObject::Table => "table",
+            SchemaObject::View => "view",
+            SchemaObject::ForeignTable => "foreign-table",
+            SchemaObject::MaterializedView => "materialized-view",
+            SchemaObject::Procedure => "procedure",
+            SchemaObject::Function => "function",
+            SchemaObject::Event => "event",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            SchemaObject::Table,
+            SchemaObject::View,
+            SchemaObject::ForeignTable,
+            SchemaObject::MaterializedView,
+            SchemaObject::Procedure,
+            SchemaObject::Function,
+            SchemaObject::Event,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == value)
+    }
+
+    /// Whether a statement about this object is a plain read — a table you can
+    /// `select * from`, rather than a routine you call.
+    pub fn is_relation(self) -> bool {
+        matches!(
+            self,
+            SchemaObject::Table
+                | SchemaObject::View
+                | SchemaObject::ForeignTable
+                | SchemaObject::MaterializedView
+        )
+    }
+}
+
+/// One entry in the query workspace's catalog tree: a database, a schema, or
+/// something inside one.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbCatalogEntry {
     pub name: String,
-    pub kind: Option<String>,
+    /// Absent for databases and schemas, which are levels rather than objects.
+    pub kind: Option<SchemaObject>,
 }
 
 /// One database engine, behind the app's four questions.
@@ -232,14 +292,24 @@ pub trait DbDriver: Send + Sync {
     /// tree skips a level that would hold exactly one meaningless choice.
     async fn list_schemas(&self, dial: &DbDial<'_>) -> AppResult<Vec<DbCatalogEntry>>;
 
-    /// The tables and views of one schema, inside the database this dial reads
-    /// (see [`DbDial::reading`]).
+    /// The objects of one schema, of the requested kinds only, inside the
+    /// database this dial reads (see [`DbDial::reading`]).
+    ///
+    /// Asking for kinds rather than returning everything is deliberate: a
+    /// schema can hold thousands of routines, and the tree opens on its
+    /// tables. Each implementation runs one catalogue read per kind it
+    /// actually needs, and tags every row with the [`SchemaObject`] it is.
     ///
     /// `schema` is a name the tree handed back from `list_schemas`, but it is
     /// still a value — implementations must bind or quote it, never splice it
     /// into SQL raw. MySQL ignores it: its schema and its database are the
     /// same thing, and the dial already names that.
-    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>>;
+    async fn list_objects(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        kinds: &[SchemaObject],
+    ) -> AppResult<Vec<DbCatalogEntry>>;
 
     /// Run one **already-gated** read-only statement and return at most `cap`
     /// rows.
@@ -283,10 +353,17 @@ pub(crate) fn catalog_entries(page: &QueryPage) -> Vec<DbCatalogEntry> {
         .iter()
         .filter_map(|row| {
             let name = row.get("name").and_then(|value| value.as_str())?;
-            let kind = row.get("kind").and_then(|value| value.as_str());
+            // A row whose tag we do not recognise is skipped rather than
+            // guessed at: the tags are ours, so an unknown one means a query
+            // and this enum have drifted apart, and a wrong icon is worse
+            // than a missing row.
+            let kind = row
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .and_then(SchemaObject::parse);
             Some(DbCatalogEntry {
                 name: name.to_string(),
-                kind: kind.map(String::from),
+                kind,
             })
         })
         .collect()
@@ -375,20 +452,36 @@ mod tests {
     }
 
     #[test]
-    fn catalog_entries_skip_rows_without_a_name() {
+    fn catalog_entries_need_a_name_and_keep_an_unknown_kind_as_none() {
+        // Databases and schemas come back with no kind by design — they are
+        // levels, not objects — so a row without one is kept, and only a
+        // nameless row is dropped. The tags this crate writes are recognised;
+        // anything else arrives as *no* kind rather than as a wrong one.
         let page = QueryPage {
             columns: vec!["name".into(), "kind".into()],
             rows: vec![
-                serde_json::json!({ "name": "sales", "kind": "BASE TABLE" }),
-                serde_json::json!({ "name": "views", "kind": null }),
-                serde_json::json!({ "kind": "BASE TABLE" }),
+                serde_json::json!({ "name": "sales", "kind": "table" }),
+                serde_json::json!({ "name": "views", "kind": "view" }),
+                serde_json::json!({ "name": "mystery", "kind": "SEQUENCE" }),
+                serde_json::json!({ "kind": "table" }),
             ],
             truncated: false,
         };
         let entries = catalog_entries(&page);
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].name, "sales");
-        assert_eq!(entries[0].kind.as_deref(), Some("BASE TABLE"));
-        assert_eq!(entries[1].kind, None);
+        assert_eq!(entries[0].kind, Some(SchemaObject::Table));
+        assert_eq!(entries[1].kind, Some(SchemaObject::View));
+        assert_eq!(entries[2].kind, None);
+    }
+
+    #[test]
+    fn only_relations_can_be_read_with_a_select() {
+        // The tree uses this to decide whether clicking an entry can build a
+        // statement: `select * from my_procedure` is not SQL.
+        assert!(SchemaObject::Table.is_relation());
+        assert!(SchemaObject::MaterializedView.is_relation());
+        assert!(!SchemaObject::Procedure.is_relation());
+        assert!(!SchemaObject::Event.is_relation());
     }
 }

@@ -1,4 +1,4 @@
-import type { DbQueryResult } from "@/types/domain";
+import type { DbQueryResult, SchemaObjectKind } from "@/types/domain";
 
 /**
  * Local persistence of connection query workspaces (DBHub design section 7,
@@ -43,6 +43,8 @@ export interface DbWorkspaceState {
   selectedSchema?: string;
   /** Whether the catalog pane is out of the way. */
   catalogCollapsed?: boolean;
+  /** Which object kinds the tree shows. Absent means tables only. */
+  objectKinds?: SchemaObjectKind[];
 }
 
 function storageKey(accountId: string, connectionId: string) {

@@ -16,7 +16,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
+    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
+    MAX_PAGE_ROWS,
 };
 
 /// The engine behind a Postgres connection.
@@ -40,11 +41,50 @@ pub(crate) const SCHEMAS_SQL: &str = "select schema_name as name, null as kind \
      where schema_name not like 'pg\\_%' and schema_name <> 'information_schema' \
      order by schema_name";
 
-/// Tables and views of one schema.
-pub(crate) fn tables_sql(schema: &str) -> String {
+/// Relations of one schema, for whichever of them were asked for.
+///
+/// One catalogue read covers tables, views and foreign tables — Postgres
+/// already says which is which in `table_type`, so a tree showing only tables
+/// is filtering here rather than fetching the rest and dropping them.
+fn relations_sql(schema: &str, kinds: &[SchemaObject]) -> Option<String> {
+    let types: Vec<&str> = kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            SchemaObject::Table => Some("'BASE TABLE'"),
+            SchemaObject::View => Some("'VIEW'"),
+            SchemaObject::ForeignTable => Some("'FOREIGN'"),
+            _ => None,
+        })
+        .collect();
+    (!types.is_empty()).then(|| {
+        format!(
+            "select table_name as name,              case table_type when 'VIEW' then 'view' when 'FOREIGN' then 'foreign-table'              else 'table' end as kind              from information_schema.tables where table_schema = {} and table_type in ({})              order by table_name",
+            session::quote_literal(schema),
+            types.join(", ")
+        )
+    })
+}
+
+/// Materialized views of one schema.
+///
+/// They are **not** in `information_schema.tables` — Postgres keeps them only
+/// in the catalogue view `pg_matviews`, which is why they need a read of their
+/// own rather than another `table_type`.
+fn matviews_sql(schema: &str) -> String {
     format!(
-        "select table_name as name, table_type as kind from information_schema.tables \
-         where table_schema = {} order by table_name",
+        "select matviewname as name, 'materialized-view' as kind from pg_matviews \
+         where schemaname = {} order by matviewname",
+        session::quote_literal(schema)
+    )
+}
+
+/// Functions of one schema. `information_schema.routines` holds procedures
+/// too; Postgres has none through this path in practice, but the filter is
+/// what states the intent.
+fn functions_sql(schema: &str) -> String {
+    format!(
+        "select routine_name as name, 'function' as kind from information_schema.routines \
+         where routine_schema = {} and routine_type = 'FUNCTION' order by routine_name",
         session::quote_literal(schema)
     )
 }
@@ -81,15 +121,13 @@ impl DbDriver for PostgresDriver {
         Ok(catalog_entries(&page))
     }
 
-    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = read_page(
-            dial,
-            &tables_sql(schema),
-            MAX_PAGE_ROWS,
-            &QueryCancellation::never(),
-        )
-        .await?;
-        Ok(catalog_entries(&page))
+    async fn list_objects(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        kinds: &[SchemaObject],
+    ) -> AppResult<Vec<DbCatalogEntry>> {
+        list_objects(dial, schema, kinds).await
     }
 
     async fn query(
@@ -131,6 +169,52 @@ pub(crate) async fn connect(dial: &DbDial<'_>) -> AppResult<PgPool> {
         .connect(&postgres_url(dial))
         .await
         .map_err(|error| session::dial_error(dial, &error))
+}
+
+/// The objects of one schema, of the kinds asked for.
+///
+/// Shared with [`super::yellowbrick`], which is also why the tolerance for an
+/// absent `pg_matviews` lives here.
+pub(crate) async fn list_objects(
+    dial: &DbDial<'_>,
+    schema: &str,
+    kinds: &[SchemaObject],
+) -> AppResult<Vec<DbCatalogEntry>> {
+    let mut entries = Vec::new();
+    // One round trip per catalogue read, and only for the kinds asked for.
+    if let Some(sql) = relations_sql(schema, kinds) {
+        let page = read_page(dial, &sql, MAX_PAGE_ROWS, &QueryCancellation::never()).await?;
+        entries.extend(catalog_entries(&page));
+    }
+    if kinds.contains(&SchemaObject::MaterializedView) {
+        // Tolerated for Yellowbrick alone: it speaks this wire without
+        // promising Postgres's catalogue views, so an absent `pg_matviews`
+        // there is expected. Postgres itself always has it, and a failure
+        // there is a real one the user should hear about.
+        let outcome = read_page(
+            dial,
+            &matviews_sql(schema),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await;
+        match outcome {
+            Ok(page) => entries.extend(catalog_entries(&page)),
+            Err(_) if dial.connection.kind == DbConnectionKind::Yellowbrick => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if kinds.contains(&SchemaObject::Function) {
+        let page = read_page(
+            dial,
+            &functions_sql(schema),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
+        entries.extend(catalog_entries(&page));
+    }
+    Ok(entries)
 }
 
 /// One statement inside a read-only transaction, at most `cap` rows.
@@ -218,13 +302,23 @@ mod tests {
     }
 
     #[test]
-    fn tables_sql_filters_on_the_given_schema() {
-        let sql = tables_sql("public");
-        assert!(sql.contains("where table_schema = 'public'"), "{sql}");
+    fn relations_sql_asks_only_for_the_kinds_wanted() {
+        let sql = relations_sql("public", &[SchemaObject::Table]).expect("a query");
+        assert!(sql.contains("table_type in ('BASE TABLE')"), "{sql}");
 
+        let both = relations_sql("public", &[SchemaObject::Table, SchemaObject::View]).expect("a query");
+        assert!(both.contains("'BASE TABLE', 'VIEW'"), "{both}");
+
+        // Nothing to ask for means no round trip at all.
+        assert!(relations_sql("public", &[SchemaObject::Procedure]).is_none());
+    }
+
+    #[test]
+    fn relation_sql_quotes_the_schema_name() {
         // The schema name is a value, not a fragment: a quote in it must not
         // be able to end the literal.
-        assert!(tables_sql("o'brien").contains("'o''brien'"));
+        let sql = relations_sql("o'brien", &[SchemaObject::Table]).expect("a query");
+        assert!(sql.contains("'o''brien'"), "{sql}");
     }
 
     #[test]

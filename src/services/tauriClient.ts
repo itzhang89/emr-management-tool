@@ -84,7 +84,8 @@ import type {
   NetworkProfileTestInput,
   DbQueryResult,
   DbQueryRequest,
-  DbCatalogEntry
+  DbCatalogEntry,
+  SchemaObjectKind
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -302,8 +303,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbCatalogEntry[]>("list_db_databases", { connectionId }),
     listDbSchemas: (connectionId: string, database: string) =>
       call<DbCatalogEntry[]>("list_db_schemas", { connectionId, database }),
-    listDbTables: (connectionId: string, database: string, schema: string) =>
-      call<DbCatalogEntry[]>("list_db_tables", { connectionId, database, schema })
+    listDbObjects: (
+      connectionId: string,
+      database: string,
+      schema: string,
+      kinds: SchemaObjectKind[]
+    ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds })
   };
 }
 

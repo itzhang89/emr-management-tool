@@ -165,7 +165,7 @@ pub fn run() {
             commands::dbhub::cancel_db_query,
             commands::dbhub::list_db_databases,
             commands::dbhub::list_db_schemas,
-            commands::dbhub::list_db_tables,
+            commands::dbhub::list_db_objects,
         ]);
 
     #[cfg(desktop)]

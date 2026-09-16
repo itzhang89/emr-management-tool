@@ -23,7 +23,7 @@ use crate::error::AppResult;
 use tauri::AppHandle;
 
 use super::session::complete_operation;
-use driver::{DbCatalogEntry, DialTarget};
+use driver::{DbCatalogEntry, DialTarget, SchemaObject};
 use query::{shape_for, DbConnectionShape};
 
 /// The databases (MySQL schemata, Postgres databases) a connection can see.
@@ -48,16 +48,17 @@ pub(crate) async fn list_schemas(
         .await
 }
 
-/// The tables and views of one schema, in one database.
-pub(crate) async fn list_tables(
+/// The objects of one schema, of the kinds the tree asked for.
+pub(crate) async fn list_objects(
     shape: &DbConnectionShape,
     target: &DialTarget,
     database: &str,
     schema: &str,
+    kinds: &[SchemaObject],
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let dial = shape.dial(target);
     driver::driver_for(shape.connection.kind)
-        .list_tables(&dial.reading(database), schema)
+        .list_objects(&dial.reading(database), schema, kinds)
         .await
 }
 
@@ -88,17 +89,18 @@ pub async fn catalog_schemas_for_command(
     .await
 }
 
-pub async fn catalog_tables_for_command(
+pub async fn catalog_objects_for_command(
     app: &AppHandle,
     connection_id: &str,
     database: &str,
     schema: &str,
+    kinds: &[SchemaObject],
 ) -> AppResult<Vec<DbCatalogEntry>> {
     let shape = shape_for(app, connection_id, false).await?;
-    complete_operation("table catalog request", async {
+    complete_operation("object catalog request", async {
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        list_tables(&shape, &target, database, schema).await
+        list_objects(&shape, &target, database, schema, kinds).await
     })
     .await
 }
@@ -161,12 +163,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn table_listing_asks_the_driver_for_the_named_schema() {
+    async fn object_listing_asks_the_driver_for_the_named_schema() {
         let shape = shape_for_gate_test();
         let target = DialTarget::direct(&shape.connection);
-        let error = list_tables(&shape, &target, "sales", "public")
+        let error = list_objects(&shape, &target, "sales", "public", &[SchemaObject::Table])
             .await
             .expect_err("the dial must fail");
         assert!(!error.message.contains("read-only gate"));
+    }
+
+    #[tokio::test]
+    async fn asking_for_no_kinds_costs_no_dial() {
+        // Nothing requested is nothing to ask the database for — the tree
+        // reaching a state where every kind is unchecked must not become a
+        // query that fails.
+        let shape = shape_for_gate_test();
+        let target = DialTarget::direct(&shape.connection);
+        assert!(list_objects(&shape, &target, "sales", "public", &[])
+            .await
+            .expect("nothing to ask for")
+            .is_empty());
     }
 }

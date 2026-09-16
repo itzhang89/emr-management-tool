@@ -6,7 +6,8 @@ import type {
   DbConnectionUpdateInput,
   DbQueryRequest,
   NetworkProfileInput,
-  NetworkProfileTestInput
+  NetworkProfileTestInput,
+  SchemaObjectKind
 } from "@/types/domain";
 import { dbHubService } from "@/services/dbHubService";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -191,22 +192,33 @@ export function useRefreshDbCatalog() {
   return () => {
     void queryClient.invalidateQueries({ queryKey: ["dbhub-databases"] });
     void queryClient.invalidateQueries({ queryKey: ["dbhub-schemas"] });
-    void queryClient.invalidateQueries({ queryKey: ["dbhub-tables"] });
+    void queryClient.invalidateQueries({ queryKey: ["dbhub-objects"] });
   };
 }
 
-/** Catalog tree: tables of one schema, read from the database that names it. */
-export function useDbTables(
+/**
+ * Catalog tree: the objects of one schema, of the kinds asked for, read from
+ * the database that names it.
+ *
+ * The kinds are part of the query key so changing what is shown refetches
+ * rather than re-filtering a list that never held the newly-ticked kind.
+ */
+export function useDbObjects(
   connectionId?: string,
   database?: string,
   schema?: string,
+  kinds: SchemaObjectKind[] = ["table"],
   active = true
 ) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   return useQuery({
-    queryKey: ["dbhub-tables", accountId, connectionId, database, schema],
-    queryFn: () => dbHubService.listTables(connectionId!, database!, schema!),
-    enabled: Boolean(active && accountId && connectionId && database && schema !== undefined)
+    queryKey: ["dbhub-objects", accountId, connectionId, database, schema, [...kinds].sort()],
+    queryFn: () => dbHubService.listObjects(connectionId!, database!, schema!, kinds),
+    // Nothing ticked is nothing to ask for — the tree says so itself rather
+    // than sending a request whose answer could only be an empty list.
+    enabled: Boolean(
+      active && accountId && connectionId && database && schema !== undefined && kinds.length
+    )
   });
 }

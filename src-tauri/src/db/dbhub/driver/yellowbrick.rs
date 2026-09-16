@@ -16,7 +16,8 @@ use crate::models::DbConnectionKind;
 use super::super::session::QueryCancellation;
 use super::postgres;
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, ServerInfo, MAX_PAGE_ROWS,
+    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
+    MAX_PAGE_ROWS,
 };
 
 /// The engine behind a Yellowbrick connection.
@@ -54,15 +55,16 @@ impl DbDriver for YellowbrickDriver {
         Ok(catalog_entries(&page))
     }
 
-    async fn list_tables(&self, dial: &DbDial<'_>, schema: &str) -> AppResult<Vec<DbCatalogEntry>> {
-        let page = postgres::read_page(
-            dial,
-            &postgres::tables_sql(schema),
-            MAX_PAGE_ROWS,
-            &QueryCancellation::never(),
-        )
-        .await?;
-        Ok(catalog_entries(&page))
+    async fn list_objects(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        kinds: &[SchemaObject],
+    ) -> AppResult<Vec<DbCatalogEntry>> {
+        // Yellowbrick keeps its own `list_objects` from Postgres's, including
+        // the tolerance for an absent `pg_matviews` this engine is the reason
+        // for.
+        postgres::list_objects(dial, schema, kinds).await
     }
 
     async fn query(

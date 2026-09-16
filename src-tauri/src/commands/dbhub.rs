@@ -726,15 +726,29 @@ pub async fn list_db_schemas(
 }
 
 #[tauri::command]
-pub async fn list_db_tables(
+pub async fn list_db_objects(
     app: AppHandle,
     request: DbCatalogRequest,
 ) -> AppResult<Vec<dbhub::DbCatalogEntry>> {
-    dbhub::catalog::catalog_tables_for_command(
+    // An unrecognised kind is dropped rather than refused: the list is the
+    // WebView's, and a version skew should cost the user that one checkbox,
+    // not the whole tree.
+    let kinds: Vec<crate::db::dbhub::driver::SchemaObject> = request
+        .kinds
+        .iter()
+        .filter_map(|kind| crate::db::dbhub::driver::SchemaObject::parse(kind))
+        .collect();
+    let kinds = if kinds.is_empty() && request.kinds.is_empty() {
+        vec![crate::db::dbhub::driver::SchemaObject::Table]
+    } else {
+        kinds
+    };
+    dbhub::catalog::catalog_objects_for_command(
         &app,
         &request.connection_id,
         &request.database,
         &request.schema,
+        &kinds,
     )
     .await
 }

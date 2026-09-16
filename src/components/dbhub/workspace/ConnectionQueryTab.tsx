@@ -1,8 +1,12 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Braces,
+  CalendarClock,
   Database,
   Download,
+  Eye,
   Folder,
+  ListFilter,
   Loader2,
   PanelLeftOpen,
   Play,
@@ -18,7 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   useDbDatabases,
   useDbSchemas,
-  useDbTables,
+  useDbObjects,
   useCancelDbQuery,
   useRefreshDbCatalog,
   useRunDbQuery
@@ -36,6 +40,16 @@ import {
 } from "@/components/glue/SqlQueryMenus";
 import { dbSqlScope, dbSqlStore } from "@/services/dbSqlStorage";
 import { dbSqlTemplates } from "@/services/dbSqlTemplates";
+import {
+  DEFAULT_SCHEMA_OBJECT_KINDS,
+  isRelation,
+  quoteIdentifier,
+  schemaObjectOptions,
+  type SchemaObjectOption
+} from "@/services/schemaObjects";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { formatAppError } from "@/services/appErrorMessage";
@@ -48,9 +62,11 @@ import {
 } from "@/services/dbWorkspaceCache";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import type {
+  DbCatalogEntry,
   DbConnection,
   DbQueryResult,
   SqlFavoriteEntry,
+  SchemaObjectKind,
   SqlHistoryEntry
 } from "@/types/domain";
 
@@ -95,6 +111,9 @@ export function ConnectionQueryTab({
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   /** The history entry a name is being asked for, when favouriting one. */
   const [favoritePrompt, setFavoritePrompt] = useState<SqlHistoryEntry>();
+  const [objectKinds, setObjectKinds] = useState<SchemaObjectKind[]>(
+    DEFAULT_SCHEMA_OBJECT_KINDS
+  );
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
 
@@ -113,6 +132,7 @@ export function ConnectionQueryTab({
     setSelectedDatabase(state.selectedDatabase ?? connection.database);
     setSelectedSchema(state.selectedSchema);
     setCatalogCollapsed(state.catalogCollapsed ?? false);
+    setObjectKinds(state.objectKinds ?? DEFAULT_SCHEMA_OBJECT_KINDS);
     // History and favourites live outside the workspace cache: they outlive a
     // draft and belong to the connection, not to this browser tab's session.
     const scope = dbSqlScope(accountId, connection.id);
@@ -131,9 +151,10 @@ export function ConnectionQueryTab({
       resultTabs,
       selectedDatabase,
       selectedSchema,
-      catalogCollapsed
+      catalogCollapsed,
+      objectKinds
     });
-  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema, catalogCollapsed]);
+  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema, catalogCollapsed, objectKinds]);
 
   const databases = useDbDatabases(connection.id, active);
   const schemas = useDbSchemas(connection.id, selectedDatabase, active);
@@ -148,7 +169,7 @@ export function ConnectionQueryTab({
     ? (schemaList[0]?.name ?? "")
     : selectedSchema;
 
-  const tables = useDbTables(connection.id, selectedDatabase, activeSchema, active);
+  const objects = useDbObjects(connection.id, selectedDatabase, activeSchema, objectKinds, active);
 
   const activeResult = useMemo(
     () => resultTabs.find((tab) => tab.id === activeResultId) ?? resultTabs.at(-1),
@@ -330,13 +351,29 @@ export function ConnectionQueryTab({
     document.body.style.userSelect = "none";
   };
 
-  const handleSelectTable = (table: string) => {
+  const handleSelectObject = (entry: DbCatalogEntry) => {
+    // A routine is not something a `select * from` can name, and a `CALL`
+    // would be refused by the read-only gate — so a click puts the name in the
+    // editor and stops there, which is as far as it can honestly go.
+    if (!isRelation(entry.kind)) {
+      setSql(entry.name);
+      return;
+    }
     // Qualify by schema, not by database: Postgres rejects `database.table`
     // outright, and on MySQL the schema *is* the database, so the qualifier is
     // the same word either way. Empty means the engine has no such level.
     const qualifier = activeSchema || (skipsSchemaLevel ? selectedDatabase : undefined);
-    const tableRef = qualifier ? `${qualifier}.${table}` : table;
-    setSql(`SELECT * FROM ${tableRef} LIMIT 100;`);
+    const reference = [qualifier, entry.name]
+      .filter((part): part is string => Boolean(part))
+      .map((part) => quoteIdentifier(connection.kind, part))
+      .join(".");
+    setSql(`SELECT * FROM ${reference} LIMIT 100;`);
+  };
+
+  const toggleObjectKind = (kind: SchemaObjectKind, on: boolean) => {
+    setObjectKinds((kinds) =>
+      on ? [...kinds, kind] : kinds.filter((entry) => entry !== kind)
+    );
   };
 
   return (
@@ -368,18 +405,21 @@ export function ConnectionQueryTab({
             <CatalogPane
         databases={databases.data ?? []}
         schemas={schemaList}
-        tables={tables.data ?? []}
+        objects={objects.data ?? []}
         selectedDatabase={selectedDatabase}
         selectedSchema={activeSchema}
         skipsSchemaLevel={skipsSchemaLevel}
         loadingDatabases={databases.isLoading}
         loadingSchemas={schemas.isLoading}
-        loadingTables={tables.isLoading}
-        refreshing={databases.isFetching || schemas.isFetching || tables.isFetching}
-        error={databases.error ?? schemas.error ?? tables.error}
+        loadingObjects={objects.isLoading}
+        refreshing={databases.isFetching || schemas.isFetching || objects.isFetching}
+        error={databases.error ?? schemas.error ?? objects.error}
+        objectOptions={schemaObjectOptions(connection.kind)}
+        objectKinds={objectKinds}
+        onToggleObjectKind={toggleObjectKind}
         onSelectDatabase={setSelectedDatabase}
         onSelectSchema={setSelectedSchema}
-        onSelectTable={handleSelectTable}
+        onSelectObject={handleSelectObject}
         onBack={() => {
           // One level at a time: schema → database → every database.
           if (selectedSchema !== undefined) setSelectedSchema(undefined);
@@ -584,39 +624,46 @@ function blankTab(): CachedResultTab {
 function CatalogPane({
   databases,
   schemas,
-  tables,
+  objects,
   selectedDatabase,
   selectedSchema,
   skipsSchemaLevel,
   loadingDatabases,
   loadingSchemas,
-  loadingTables,
+  loadingObjects,
   refreshing,
   error,
+  objectOptions,
+  objectKinds,
+  onToggleObjectKind,
   onSelectDatabase,
   onSelectSchema,
-  onSelectTable,
+  onSelectObject,
   onBack,
   onRefresh,
   onCollapse,
   collapseShortcut
 }: {
-  databases: Array<{ name: string; kind?: string }>;
-  schemas: Array<{ name: string; kind?: string }>;
-  tables: Array<{ name: string; kind?: string }>;
+  databases: DbCatalogEntry[];
+  schemas: DbCatalogEntry[];
+  objects: DbCatalogEntry[];
   selectedDatabase?: string;
   selectedSchema?: string;
   /** One schema (or none) is a level with nothing to choose — skip it. */
   skipsSchemaLevel: boolean;
   loadingDatabases: boolean;
   loadingSchemas: boolean;
-  loadingTables: boolean;
+  loadingObjects: boolean;
   /** Any level currently refetching — drives the toolbar's spinner. */
   refreshing: boolean;
   error: unknown;
+  /** What this engine can hold, and which of it the tree is showing. */
+  objectOptions: SchemaObjectOption[];
+  objectKinds: SchemaObjectKind[];
+  onToggleObjectKind: (kind: SchemaObjectKind, on: boolean) => void;
   onSelectDatabase: (name: string) => void;
   onSelectSchema: (name: string) => void;
-  onSelectTable: (name: string) => void;
+  onSelectObject: (entry: DbCatalogEntry) => void;
   /** Step back one level: schema → database → all databases. */
   onBack: () => void;
   onRefresh: () => void;
@@ -629,11 +676,11 @@ function CatalogPane({
   // a choice to make), then that schema's tables.
   const inDatabase = Boolean(selectedDatabase);
   const inSchemaList = inDatabase && !skipsSchemaLevel && selectedSchema === undefined;
-  const listing = inSchemaList ? schemas : inDatabase && !inSchemaList ? tables : databases;
+  const listing = inSchemaList ? schemas : inDatabase && !inSchemaList ? objects : databases;
   const loading = inSchemaList
     ? loadingSchemas
     : inDatabase && !inSchemaList
-      ? loadingTables
+      ? loadingObjects
       : loadingDatabases;
   const filtered = listing.filter((entry) =>
     entry.name.toLowerCase().includes(filter.toLowerCase())
@@ -647,10 +694,10 @@ function CatalogPane({
         : "Failed to load metadata."
     : undefined;
 
-  const select = (name: string) => {
-    if (!inDatabase) onSelectDatabase(name);
-    else if (inSchemaList) onSelectSchema(name);
-    else onSelectTable(name);
+  const select = (entry: DbCatalogEntry) => {
+    if (!inDatabase) onSelectDatabase(entry.name);
+    else if (inSchemaList) onSelectSchema(entry.name);
+    else onSelectObject(entry);
     setFilter("");
   };
 
@@ -673,9 +720,18 @@ function CatalogPane({
             longer has room to say it, and a drill-down that cannot tell you
             where you are is the one thing worse than no drill-down. */}
         {inDatabase ? (
-          <div className="border-b bg-muted/30 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
+          <div className="flex items-center gap-1 border-b bg-muted/30 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
             <Database className="mr-1 inline size-3" aria-hidden />
-            {qualifier}
+            <span className="min-w-0 truncate">{qualifier}</span>
+            {/* Only where there are objects to choose between: while the tree
+                is still asking which schema, there is nothing to filter yet. */}
+            {!inSchemaList ? (
+              <ObjectKindMenu
+                options={objectOptions}
+                selected={objectKinds}
+                onToggle={onToggleObjectKind}
+              />
+            ) : null}
           </div>
         ) : null}
 
@@ -698,10 +754,10 @@ function CatalogPane({
                   ) : inSchemaList ? (
                     <Folder className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   ) : (
-                    <Table2 className="size-3.5 shrink-0" aria-hidden />
+                    <ObjectIcon kind={entry.kind} />
                   )
                 }
-                onSelect={() => select(entry.name)}
+                onSelect={() => select(entry)}
               />
             </li>
           ))}
@@ -713,6 +769,80 @@ function CatalogPane({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+/** The mark next to an object, so a view is not drawn as a table. */
+function ObjectIcon({ kind }: { kind?: SchemaObjectKind }) {
+  if (kind === "view" || kind === "materialized-view") {
+    return <Eye className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
+  }
+  if (kind === "procedure" || kind === "function") {
+    return <Braces className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
+  }
+  if (kind === "event") {
+    return <CalendarClock className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
+  }
+  return <Table2 className="size-3.5 shrink-0" aria-hidden />;
+}
+
+/**
+ * Which object kinds the tree lists. Multi-select on purpose — looking at the
+ * views and the tables together is a normal thing to want — and a popover
+ * rather than a select because the list belongs to the schema you are in, not
+ * to the page.
+ */
+function ObjectKindMenu({
+  options,
+  selected,
+  onToggle
+}: {
+  options: SchemaObjectOption[];
+  selected: SchemaObjectKind[];
+  onToggle: (kind: SchemaObjectKind, on: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto size-5 shrink-0"
+              aria-label="Choose what to show"
+            >
+              <ListFilter className="size-3" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>
+          Showing {selected.length} of {options.length} object kinds
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent align="end" className="w-56 p-1">
+        <ul>
+          {options.map((option) => (
+            <li
+              key={option.kind}
+              className="flex items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent"
+            >
+              <Checkbox
+                id={`object-kind-${option.kind}`}
+                checked={selected.includes(option.kind)}
+                onCheckedChange={(checked) => onToggle(option.kind, checked === true)}
+              />
+              <Label htmlFor={`object-kind-${option.kind}`} className="text-xs font-normal">
+                {option.label}
+              </Label>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }
 

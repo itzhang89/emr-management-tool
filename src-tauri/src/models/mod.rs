@@ -1947,8 +1947,13 @@ pub struct DbConnectionFlagsRequest {
 pub struct DbCatalogRequest {
     pub connection_id: String,
     pub database: String,
-    /// The schema to read tables from. Empty for engines with no schema level
+    /// The schema to read objects from. Empty for engines with no schema level
     /// (MySQL), and unused by the schema listing itself.
     #[serde(default)]
     pub schema: String,
+    /// Which object kinds to read. Empty means tables only — the tree's
+    /// default, and the cheap one: a schema's routines are not fetched to be
+    /// discarded.
+    #[serde(default)]
+    pub kinds: Vec<String>,
 }

@@ -8,7 +8,8 @@ import type {
   DbQueryRequest,
   NetworkProfile,
   NetworkProfileInput,
-  NetworkProfileTestInput
+  NetworkProfileTestInput,
+  SchemaObjectKind
 } from "@/types/domain";
 
 /**
@@ -34,8 +35,12 @@ export const dbHubService = {
   listDatabases: (connectionId: string) => tauriClient.listDbDatabases(connectionId),
   listSchemas: (connectionId: string, database: string) =>
     tauriClient.listDbSchemas(connectionId, database),
-  listTables: (connectionId: string, database: string, schema: string) =>
-    tauriClient.listDbTables(connectionId, database, schema)
+  listObjects: (
+    connectionId: string,
+    database: string,
+    schema: string,
+    kinds: SchemaObjectKind[]
+  ) => tauriClient.listDbObjects(connectionId, database, schema, kinds)
 };
 
 export type DbHubService = typeof dbHubService;
