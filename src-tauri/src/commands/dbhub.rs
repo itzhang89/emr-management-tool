@@ -725,6 +725,16 @@ pub async fn list_db_schemas(
         .await
 }
 
+/// Drop this connection's cached tree so the next read goes and asks.
+///
+/// What the refresh button calls. The read path serves a same-day cache, so
+/// clearing is all a refresh has to do — the WebView's refetch that follows
+/// finds nothing and goes to the database.
+#[tauri::command]
+pub async fn refresh_db_catalog(app: AppHandle, request: DbConnectionRef) -> AppResult<()> {
+    dbhub::catalog::refresh_catalog_for_command(&app, &request.connection_id).await
+}
+
 #[tauri::command]
 pub async fn list_db_objects(
     app: AppHandle,

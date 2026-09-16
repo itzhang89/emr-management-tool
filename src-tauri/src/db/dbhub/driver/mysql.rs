@@ -135,7 +135,9 @@ impl DbDriver for MysqlDriver {
         for sql in [
             relations_sql(database, kinds),
             routines_sql(database, kinds),
-            kinds.contains(&SchemaObject::Event).then(|| events_sql(database)),
+            kinds
+                .contains(&SchemaObject::Event)
+                .then(|| events_sql(database)),
         ]
         .into_iter()
         .flatten()

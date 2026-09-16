@@ -148,6 +148,21 @@ pub fn pageable_statement(sql: &str) -> Option<String> {
     }
 }
 
+/// Whether a statement may have changed what the catalogue lists.
+///
+/// Only the DDL verbs: `insert` and `update` move rows, not tables, and the
+/// tree shows tables. Checked across the whole batch, so a run that creates
+/// and then fills a table still counts.
+pub fn changes_schema(sql: &str) -> bool {
+    split_statements(sql).iter().any(|statement| {
+        let cleaned = strip_comments(statement);
+        matches!(
+            first_word(&cleaned).as_str(),
+            "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT"
+        )
+    })
+}
+
 fn classify_single(statement: &str) -> StatementClass {
     let cleaned = strip_comments(statement);
     let first_word = first_word(&cleaned);
@@ -317,6 +332,21 @@ mod tests {
         // The wrapper holds exactly one statement.
         assert!(pageable_statement("SELECT 1; SELECT 2").is_none());
         assert!(pageable_statement("-- nothing\n").is_none());
+    }
+
+    #[test]
+    fn only_ddl_counts_as_a_schema_change() {
+        assert!(changes_schema("CREATE TABLE t (id INT)"));
+        assert!(changes_schema("drop table orders"));
+        assert!(changes_schema("ALTER TABLE t ADD COLUMN x INT"));
+        assert!(changes_schema("TRUNCATE orders"));
+        // Rows are not structure.
+        assert!(!changes_schema("INSERT INTO orders VALUES (1)"));
+        assert!(!changes_schema("UPDATE orders SET total = 0"));
+        assert!(!changes_schema("DELETE FROM orders"));
+        assert!(!changes_schema("SELECT * FROM orders"));
+        // One DDL anywhere in the batch is enough.
+        assert!(changes_schema("SELECT 1; DROP TABLE orders"));
     }
 
     #[test]

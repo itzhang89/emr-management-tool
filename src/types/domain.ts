@@ -1218,6 +1218,8 @@ export interface DbQueryResult {
    * first page so "load more" appears only where it would work.
    */
   pageable: boolean;
+  /** Whether this run may have changed what the catalog tree lists. */
+  catalogChanged: boolean;
 }
 
 /** Body of the query-tab SQL run. */

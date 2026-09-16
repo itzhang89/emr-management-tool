@@ -166,6 +166,7 @@ pub fn run() {
             commands::dbhub::list_db_databases,
             commands::dbhub::list_db_schemas,
             commands::dbhub::list_db_objects,
+            commands::dbhub::refresh_db_catalog,
         ]);
 
     #[cfg(desktop)]

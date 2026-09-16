@@ -299,6 +299,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
     cancelDbQuery: (requestId: string) =>
       call<boolean>("cancel_db_query", { requestId }),
+    refreshDbCatalog: (connectionId: string) =>
+      call<void>("refresh_db_catalog", { connectionId }),
     listDbDatabases: (connectionId: string) =>
       call<DbCatalogEntry[]>("list_db_databases", { connectionId }),
     listDbSchemas: (connectionId: string, database: string) =>

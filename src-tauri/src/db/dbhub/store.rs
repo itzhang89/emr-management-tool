@@ -47,6 +47,16 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             created_at text not null,
             updated_at text not null
         )",
+        "create table if not exists db_catalog_cache (
+            connection_id text not null,
+            level text not null,
+            database_name text not null default '',
+            schema_name text not null default '',
+            kinds text not null default '',
+            payload text not null,
+            refreshed_at text not null,
+            primary key (connection_id, level, database_name, schema_name, kinds)
+        )",
         "create index if not exists idx_db_connections_account on db_connections(account_id, sort_order)",
         "create index if not exists idx_network_profiles_account on network_profiles(account_id)",
     ] {
@@ -197,6 +207,87 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     Ok(())
 }
 
+// --- Catalog cache ----------------------------------------------------------
+//
+// What the tree shows, kept so opening it is a SQLite read rather than a round
+// trip to the database. Keyed by connection and by level, because the levels
+// go stale independently: a new table does not invalidate the list of
+// databases.
+//
+// Nothing here decides *when* to trust an entry — that lives with the callers,
+// which are the only ones that know whether the user asked for a refresh.
+
+/// One cached level: the entries as JSON, and when they were read.
+pub async fn read_catalog_cache(
+    pool: &SqlitePool,
+    connection_id: &str,
+    level: &str,
+    database: &str,
+    schema: &str,
+    kinds: &str,
+) -> AppResult<Option<(String, String)>> {
+    let row = sqlx::query(
+        "select payload, refreshed_at from db_catalog_cache
+         where connection_id = ?1 and level = ?2 and database_name = ?3
+           and schema_name = ?4 and kinds = ?5",
+    )
+    .bind(connection_id)
+    .bind(level)
+    .bind(database)
+    .bind(schema)
+    .bind(kinds)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(row.map(|row| {
+        (
+            row.get::<String, _>("payload"),
+            row.get::<String, _>("refreshed_at"),
+        )
+    }))
+}
+
+pub async fn write_catalog_cache(
+    pool: &SqlitePool,
+    connection_id: &str,
+    level: &str,
+    database: &str,
+    schema: &str,
+    kinds: &str,
+    payload: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "insert into db_catalog_cache
+            (connection_id, level, database_name, schema_name, kinds, payload, refreshed_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         on conflict (connection_id, level, database_name, schema_name, kinds)
+         do update set payload = excluded.payload, refreshed_at = excluded.refreshed_at",
+    )
+    .bind(connection_id)
+    .bind(level)
+    .bind(database)
+    .bind(schema)
+    .bind(kinds)
+    .bind(payload)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
+/// Drop every level cached for one connection — the whole tree, because a
+/// statement that changed the schema can have changed any part of it.
+pub async fn clear_catalog_cache(pool: &SqlitePool, connection_id: &str) -> AppResult<()> {
+    sqlx::query("delete from db_catalog_cache where connection_id = ?1")
+        .bind(connection_id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
 /// Persisted field updates for `update_connection`. Each present field runs
 /// its own statement through the `update_column!` macro (compile-time `concat!`
 /// — sqlx 0.9 rejects dynamically built SQL strings), so absent fields are
@@ -302,6 +393,10 @@ pub async fn update_connection(
 }
 
 pub async fn delete_connection(pool: &SqlitePool, account_id: &str, id: &str) -> AppResult<bool> {
+    // Its cached catalogue goes with it: the id is the cache's key, and a
+    // connection re-created under the same id would otherwise open on a tree
+    // belonging to its predecessor.
+    clear_catalog_cache(pool, id).await?;
     let result = sqlx::query("delete from db_connections where id = ?1 and account_id = ?2")
         .bind(id)
         .bind(account_id)
@@ -771,6 +866,59 @@ mod tests {
         assert_eq!(loaded.kind, DbConnectionKind::Yellowbrick);
         assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
         assert!(!loaded.allow_writes);
+    }
+
+    #[tokio::test]
+    async fn the_catalog_cache_round_trips_and_clears() {
+        let pool = test_pool().await;
+        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
+            .await
+            .unwrap()
+            .is_none());
+
+        write_catalog_cache(&pool, "c1", "objects", "sales", "", "table", "[{\"name\":\"orders\"}]")
+            .await
+            .expect("write");
+        let (payload, refreshed_at) =
+            read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
+                .await
+                .unwrap()
+                .expect("cached");
+        assert_eq!(payload, "[{\"name\":\"orders\"}]");
+        assert!(!refreshed_at.is_empty());
+
+        // A different question is a different entry — asking for views must
+        // not be answered with the tables.
+        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table,view")
+            .await
+            .unwrap()
+            .is_none());
+
+        clear_catalog_cache(&pool, "c1").await.expect("clear");
+        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_connection_takes_its_cached_catalog_with_it() {
+        let pool = test_pool().await;
+        insert_connection(&pool, &connection("acct-a", "c1", "Gone"))
+            .await
+            .expect("insert");
+        write_catalog_cache(&pool, "c1", "databases", "", "", "", "[]")
+            .await
+            .expect("write");
+
+        delete_connection(&pool, "acct-a", "c1").await.expect("delete");
+
+        // A connection re-created under the same id must not open on its
+        // predecessor's tree.
+        assert!(read_catalog_cache(&pool, "c1", "databases", "", "", "")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]

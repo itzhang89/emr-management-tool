@@ -183,16 +183,29 @@ export function useDbSchemas(connectionId?: string, database?: string, active = 
 }
 
 /**
- * Refetch every catalog level for the active connection. Invalidate by the
- * query key's first element so all three levels — whichever is on screen —
- * come back together.
+ * Ask for the tree again, for real.
+ *
+ * The Rust side serves a same-day cache, so invalidating the WebView's copy
+ * alone would re-run the query and get the same cached answer back — the
+ * backend's copy has to go first. Then the refetch that follows finds nothing
+ * and goes to the database.
  */
-export function useRefreshDbCatalog() {
+export function useRefreshDbCatalog(connectionId?: string) {
   const queryClient = useQueryClient();
-  return () => {
-    void queryClient.invalidateQueries({ queryKey: ["dbhub-databases"] });
-    void queryClient.invalidateQueries({ queryKey: ["dbhub-schemas"] });
-    void queryClient.invalidateQueries({ queryKey: ["dbhub-objects"] });
+  return async () => {
+    if (connectionId) {
+      try {
+        await dbHubService.refreshCatalog(connectionId);
+      } catch {
+        // Nothing to invalidate it with; the refetch below is still worth
+        // doing, and it will re-read whatever the backend does hold.
+      }
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["dbhub-databases"] }),
+      queryClient.invalidateQueries({ queryKey: ["dbhub-schemas"] }),
+      queryClient.invalidateQueries({ queryKey: ["dbhub-objects"] })
+    ]);
   };
 }
 

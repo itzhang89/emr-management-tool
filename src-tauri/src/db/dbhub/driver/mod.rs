@@ -19,7 +19,7 @@
 //! implement this trait because nothing sqlx-shaped leaks through it.
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
 use crate::models::{DbConnection, DbConnectionKind};
@@ -200,7 +200,7 @@ pub struct QueryPage {
 /// and Postgres says `FOREIGN`, and a tree that has to know that is a tree
 /// that has to know every engine. Each driver maps its own vocabulary onto
 /// these, in SQL, so what comes back is already the app's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SchemaObject {
     Table,
@@ -255,7 +255,7 @@ impl SchemaObject {
 
 /// One entry in the query workspace's catalog tree: a database, a schema, or
 /// something inside one.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbCatalogEntry {
     pub name: String,

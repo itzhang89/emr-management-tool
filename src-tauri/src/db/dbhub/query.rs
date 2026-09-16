@@ -35,6 +35,9 @@ pub struct DbQueryResult {
     /// Whether this statement can be paged at all — said on the first page so
     /// the UI offers a "load more" only where one would work.
     pub pageable: bool,
+    /// Whether this run may have changed what the catalog tree lists, so the
+    /// WebView knows to ask for it again rather than showing a dropped table.
+    pub catalog_changed: bool,
 }
 
 fn pool_secret_key(id: &str) -> String {
@@ -136,6 +139,16 @@ pub(crate) async fn execute(
         page_sql(&pageable_sql, cap, offset)
     };
 
+    // A writable run that touched the schema leaves the tree wrong, and the
+    // cache is the tree's memory of it. Dropped outright rather than patched:
+    // a `DROP DATABASE` can invalidate every level at once, and re-reading is
+    // cheap next to being subtly out of date.
+    let catalog_changed = writable && gate::changes_schema(sql);
+    if catalog_changed {
+        let _ =
+            crate::db::dbhub::store::clear_catalog_cache(&shape.pool, &shape.connection.id).await;
+    }
+
     let started = std::time::Instant::now();
     let dial = shape.dial(target);
     let dial = if writable { dial.writable() } else { dial };
@@ -155,6 +168,7 @@ pub(crate) async fn execute(
         // row never arrived to say there was more.
         next_offset: (page.truncated && pageable).then_some(offset + row_count),
         pageable,
+        catalog_changed,
     })
 }
 
@@ -261,6 +275,27 @@ mod tests {
             },
             password: None,
         }
+    }
+
+    #[test]
+    fn a_cached_payload_round_trips_through_json() {
+        // The cache stores entries as JSON, so a change to the entry shape
+        // that serialises fine but does not parse back would only show up as
+        // a tree that silently re-queries forever.
+        let entries = vec![
+            DbCatalogEntry {
+                name: "orders".into(),
+                kind: Some(driver::SchemaObject::Table),
+            },
+            DbCatalogEntry {
+                name: "recent".into(),
+                kind: Some(driver::SchemaObject::View),
+            },
+        ];
+        let payload = serde_json::to_string(&entries).expect("serialize");
+        let restored: Vec<DbCatalogEntry> = serde_json::from_str(&payload).expect("parse");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[1].kind, Some(driver::SchemaObject::View));
     }
 
     #[test]

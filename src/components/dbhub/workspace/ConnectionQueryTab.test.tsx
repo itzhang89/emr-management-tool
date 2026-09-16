@@ -55,6 +55,7 @@ const listDbObjects = vi
   );
 const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
 const cancelDbQuery = vi.fn().mockResolvedValue(true);
+const refreshDbCatalog = vi.fn().mockResolvedValue(undefined);
 const saveTextFile = vi.fn().mockResolvedValue(undefined);
 
 /** One page of a ho-hum result; `next` decides whether there is another. */
@@ -67,7 +68,8 @@ function page(rows: number, offset: number, truncated: boolean) {
     durationMs: 3,
     offset,
     nextOffset: truncated ? offset + rows : null,
-    pageable: true
+    pageable: true,
+    catalogChanged: false
   };
 }
 
@@ -79,6 +81,7 @@ vi.mock("@/services/tauriClient", () => ({
     listDbObjects: (...args: unknown[]) => listDbObjects(...args),
     runDbQuery: (...args: unknown[]) => runDbQuery(...args),
     cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
+    refreshDbCatalog: (...args: unknown[]) => refreshDbCatalog(...args),
     saveTextFile: (...args: unknown[]) => saveTextFile(...args)
   }
 }));
@@ -465,6 +468,18 @@ describe("ConnectionQueryTab", () => {
       expect(listDbObjects).toHaveBeenLastCalledWith("c1", "sales", "", ["table", "view"])
     );
     expect(await screen.findByRole("button", { name: "recent_orders" })).toBeInTheDocument();
+  });
+
+  it("clears the backend's cached tree when the refresh button is used", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "Refresh catalog" }));
+
+    // The Rust side serves a same-day cache, so invalidating the WebView's
+    // copy alone would re-run the query and be handed the same answer back.
+    await waitFor(() => expect(refreshDbCatalog).toHaveBeenCalledWith("c1"));
   });
 
   it("says whether this connection may write", async () => {

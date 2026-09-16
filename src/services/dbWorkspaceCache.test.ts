@@ -16,7 +16,8 @@ function fakeResult(rows: number): DbQueryResult {
     truncated: false,
     durationMs: 12,
     offset: 0,
-    pageable: true
+    pageable: true,
+    catalogChanged: false
   };
 }
 

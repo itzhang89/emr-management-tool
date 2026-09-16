@@ -306,7 +306,8 @@ mod tests {
         let sql = relations_sql("public", &[SchemaObject::Table]).expect("a query");
         assert!(sql.contains("table_type in ('BASE TABLE')"), "{sql}");
 
-        let both = relations_sql("public", &[SchemaObject::Table, SchemaObject::View]).expect("a query");
+        let both =
+            relations_sql("public", &[SchemaObject::Table, SchemaObject::View]).expect("a query");
         assert!(both.contains("'BASE TABLE', 'VIEW'"), "{both}");
 
         // Nothing to ask for means no round trip at all.

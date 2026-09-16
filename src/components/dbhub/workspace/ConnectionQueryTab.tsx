@@ -94,7 +94,7 @@ export function ConnectionQueryTab({
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const runQuery = useRunDbQuery();
-  const refreshCatalog = useRefreshDbCatalog();
+  const refreshCatalog = useRefreshDbCatalog(connection.id);
   const cancelQuery = useCancelDbQuery();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
@@ -245,6 +245,9 @@ export function ConnectionQueryTab({
           });
         }
         setActiveResultId(id);
+        // The run may have dropped the very table the tree is showing. The
+        // backend has already forgotten its copy; this forgets the WebView's.
+        if (result.catalogChanged) void refreshCatalog();
       } catch (error) {
         const appError = error as { code?: string; message?: string };
         if (appError?.code === "Cancelled") {
@@ -666,7 +669,7 @@ function CatalogPane({
   onSelectObject: (entry: DbCatalogEntry) => void;
   /** Step back one level: schema → database → all databases. */
   onBack: () => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onCollapse: () => void;
   collapseShortcut: string;
 }) {
@@ -709,7 +712,7 @@ function CatalogPane({
         filter={filter}
         onFilterChange={setFilter}
         filterPlaceholder={inDatabase ? "Filter tables" : "Filter databases"}
-        onRefresh={onRefresh}
+        onRefresh={() => void onRefresh()}
         refreshing={refreshing}
         onCollapse={onCollapse}
         collapseShortcut={collapseShortcut}
