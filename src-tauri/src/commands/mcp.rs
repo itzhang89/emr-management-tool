@@ -137,6 +137,35 @@ pub async fn list_mcp_audit_entries(
     Ok(entries)
 }
 
+/// The tools currently advertised to Chat / external agents. DBHub entries are
+/// rebuilt from the active account's AI-enabled connections on every call.
+#[tauri::command]
+pub async fn list_mcp_tools(
+    app: AppHandle,
+    app_state: TauriState<'_, AppState>,
+) -> AppResult<Vec<crate::models::McpToolInfo>> {
+    let tools = app_state
+        .in_process_mcp
+        .list_tools(app)
+        .await
+        .map_err(AppError::internal)?;
+    Ok(tools
+        .into_iter()
+        .map(|tool| {
+            let name = tool.name.to_string();
+            let is_dbhub = crate::mcp::tools::dbhub_sql::is_dbhub_tool_name(&name);
+            crate::models::McpToolInfo {
+                name,
+                description: tool.description.map(|text| text.to_string()),
+                enabled: true,
+                // Placeholder: confirmation flow is not implemented yet.
+                auto_approve: "default_allow".to_string(),
+                is_dbhub,
+            }
+        })
+        .collect())
+}
+
 fn mcp_state_running(app_state: &TauriState<'_, AppState>) -> AppResult<bool> {
     let mcp = app_state
         .mcp_state

@@ -143,6 +143,14 @@ mod tests {
         assert!(names.contains(&"find_job"), "{names:?}");
         assert!(names.contains(&"list_job_log_objects"), "{names:?}");
         assert!(names.contains(&"get_job_log_text"), "{names:?}");
+        assert!(
+            !names.contains(&"list_databases"),
+            "list_databases was removed: {names:?}"
+        );
+        assert!(
+            !names.contains(&"sql_query_text"),
+            "sql_query_text is no longer a static tool: {names:?}"
+        );
 
         client.cancel().await.expect("client shuts down");
         server.await.expect("server task joins");

@@ -227,9 +227,11 @@ or AWS accounts; large result sets keep only their metadata with a rerun hint.
   or CTEs), and each statement additionally runs inside a read-only transaction.
 - **Passwords never enter the app database or the UI.** They live in the OS
   credential store; the frontend sees only a masked hint.
-- **The AI sees names, not addresses.** `list_databases` exposes connection ids,
-  names, kinds, and databases — never hosts, ports, or usernames. Calls against
-  disabled or foreign-account connections refuse identically.
+- **The AI sees names, not addresses.** Each AI-enabled connection is advertised
+  as `execute_sql_<slug>` (slug from the connection name) — never hosts, ports,
+  or usernames. Calls against disabled or foreign-account connections refuse
+  identically; renaming a connection changes the tool name and the old name
+  stops resolving immediately.
 - **Every AI-driven query is audited** in the same tool-audit table as the
   other MCP tools.
 

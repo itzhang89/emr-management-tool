@@ -98,12 +98,23 @@ pub async fn create_db_connection(
         }
     }
 
+    let name = request.name.trim().to_string();
+    if request.enabled_for_ai {
+        crate::mcp::tools::dbhub_sql::ensure_ai_tool_name_available(
+            &pool,
+            &account_id,
+            &name,
+            None,
+        )
+        .await?;
+    }
+
     let now = chrono::Utc::now();
     let connection = DbConnection {
         id: uuid::Uuid::new_v4().to_string(),
         account_id: account_id.clone(),
         kind: request.kind,
-        name: request.name.trim().to_string(),
+        name,
         host: request.host.trim().to_string(),
         port: request.port,
         database: request
@@ -158,6 +169,23 @@ pub async fn update_db_connection(
     }
 
     let password = request.password.take();
+    let next_name = request
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(existing.name.as_str());
+    let next_enabled_for_ai = request.enabled_for_ai.unwrap_or(existing.enabled_for_ai);
+    if next_enabled_for_ai {
+        crate::mcp::tools::dbhub_sql::ensure_ai_tool_name_available(
+            &pool,
+            &account_id,
+            next_name,
+            Some(&request.id),
+        )
+        .await?;
+    }
+
     dbhub::update_connection(
         &pool,
         &account_id,
@@ -226,6 +254,23 @@ pub async fn set_db_connection_flags(
     let connection_id = request.connection_id;
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
+
+    let existing = dbhub::get_connection(&pool, &account_id, &connection_id)
+        .await?
+        .ok_or_else(|| AppError::validation("Connection was not found."))?;
+    let next_enabled_for_ai = request
+        .flags
+        .enabled_for_ai
+        .unwrap_or(existing.enabled_for_ai);
+    if next_enabled_for_ai {
+        crate::mcp::tools::dbhub_sql::ensure_ai_tool_name_available(
+            &pool,
+            &account_id,
+            &existing.name,
+            Some(&connection_id),
+        )
+        .await?;
+    }
 
     dbhub::update_connection(
         &pool,

@@ -21,9 +21,14 @@
 use std::future::Future;
 
 use rmcp::{
+    handler::server::tool::ToolCallContext,
     handler::server::wrapper::Parameters,
-    model::{ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router, ServerHandler,
+    model::{
+        CallToolRequestParams, CallToolResult, ContentBlock, ListToolsResult, PaginatedRequestParams,
+        ServerCapabilities, ServerInfo, Tool,
+    },
+    service::RequestContext,
+    tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler,
 };
 use serde::Serialize;
 
@@ -233,48 +238,6 @@ impl McpTools {
         )
         .await
     }
-    /// List the database connections enabled for AI queries in the active AWS
-    /// account. Each entry carries the connection's id, display name, kind
-    /// (mysql/postgres/yellowbrick) and default database — never hosts, ports,
-    /// usernames or credentials. Use a returned connectionId with
-    /// sql_query_text. Read-only.
-    #[tool(name = "list_databases")]
-    async fn list_databases(&self) -> String {
-        self.run_tool(
-            "list_databases",
-            &serde_json::json!({}),
-            dbhub_sql::list_databases(),
-            |_| Vec::new(),
-        )
-        .await
-    }
-
-    /// Run ONE read-only SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN) against
-    /// an AI-enabled database connection from list_databases. Any statement
-    /// that could modify data is refused by the read-only gate and the query
-    /// runs inside a read-only transaction — this tool cannot alter a
-    /// database. Rows are capped (default 50, max 100) and oversized text is
-    /// marked [truncated]. Read-only.
-    #[tool(name = "sql_query_text")]
-    async fn sql_query_text(
-        &self,
-        Parameters(args): Parameters<dbhub_sql::SqlQueryTextArgs>,
-    ) -> String {
-        // The app handle resolves eagerly (cheap clone); the actual SQL run
-        // happens inside run_tool so its timing/audit wrap the real work.
-        // `args` is cloned into the future so the on_error closure can still
-        // project the failure into the tool's own result shape.
-        let app = self.app_handle();
-        let future_args = args.clone();
-        let result = async move {
-            let app = app?;
-            dbhub_sql::sql_query_text(&app, &future_args).await
-        };
-        self.run_tool("sql_query_text", &args, result, |message| {
-            dbhub_sql::SqlQueryTextResult::refused(&args.connection_id, &args.sql, message)
-        })
-        .await
-    }
 }
 
 impl McpTools {
@@ -284,12 +247,98 @@ impl McpTools {
     fn app_handle(&self) -> AppResult<tauri::AppHandle> {
         self.data_source.app().cloned()
     }
+
+    /// Static EMR tools plus one `execute_sql_<slug>` per AI-enabled connection
+    /// in the active account.
+    async fn advertised_tools(&self) -> Vec<Tool> {
+        let mut tools = Self::tool_router().list_all();
+        tools.extend(dbhub_sql::advertise_execute_sql_tools().await);
+        tools
+    }
+
+    async fn call_execute_sql(&self, tool_name: &str, slug: &str, args: dbhub_sql::ExecuteSqlArgs) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        let future_slug = slug.to_string();
+        let result = async move {
+            let app = app?;
+            dbhub_sql::execute_sql_by_slug(&app, &future_slug, &future_args).await
+        };
+        self.run_tool(tool_name, &args, result, |message| {
+            dbhub_sql::SqlQueryTextResult::refused("", &args.sql, message)
+        })
+        .await
+    }
 }
 
 #[tool_handler]
 impl ServerHandler for McpTools {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let supports_cache_hints = context
+            .protocol_version()
+            .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult {
+            result_type: Some(rmcp::model::ResultType::COMPLETE),
+            tools: self.advertised_tools().await,
+            meta: None,
+            next_cursor: None,
+            ttl_ms: supports_cache_hints.then_some(0),
+            cache_scope: supports_cache_hints.then_some(rmcp::model::CacheScope::Public),
+        })
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        if dbhub_sql::is_dbhub_tool_name(name) {
+            // Dynamic tools are resolved at list/call time from SQLite; a sync
+            // get_tool cannot await, so return a synthetic descriptor with the
+            // shared schema when the name looks like one of ours.
+            let schema = schemars::schema_for!(dbhub_sql::ExecuteSqlArgs);
+            let value = serde_json::to_value(schema).unwrap_or_default();
+            return Some(Tool::new(
+                name.to_string(),
+                "Run ONE read-only SQL statement against an AI-enabled DBHub connection. Read-only.",
+                std::sync::Arc::new(value.as_object().cloned().unwrap_or_default()),
+            ));
+        }
+        Self::tool_router().get(name).cloned()
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        if let Some(slug) = request.name.strip_prefix(dbhub_sql::EXECUTE_SQL_PREFIX) {
+            let tool_name = request.name.to_string();
+            let args: dbhub_sql::ExecuteSqlArgs = match request.arguments.as_ref() {
+                Some(object) => serde_json::from_value(serde_json::Value::Object(object.clone()))
+                    .map_err(|error| {
+                        ErrorData::invalid_params(
+                            format!("Invalid arguments for `{tool_name}`: {error}"),
+                            None,
+                        )
+                    })?,
+                None => {
+                    return Err(ErrorData::invalid_params(
+                        format!("`{tool_name}` requires a `sql` argument."),
+                        None,
+                    ));
+                }
+            };
+            let text = self.call_execute_sql(&tool_name, slug, args).await;
+            return Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into());
+        }
+
+        let tcc = ToolCallContext::new(self, request, context);
+        Self::tool_router().call(tcc).await
     }
 }
 

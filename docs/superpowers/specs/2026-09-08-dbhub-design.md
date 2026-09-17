@@ -325,25 +325,16 @@ SOCKS:
 AWS 工具。对应多数据源的 per-connection SQL 工具**不能**在编译期逐个展开 —— DBHub
 连接是运行时数据、可能增删启停，而且已入库。
 
-**设计裁决（三层）：**
+**设计裁决（已演进到 per-connection 动态工具）：**
 
-- **层1 — 静态注册「数据库可查询」能力面**:给 `McpTools` 增加静态工具（非 per-连接）
-  `list_databases`（只回**当前激活 AWS 账号**下 `enabled_for_ai=true` 的连接名/kind，
-  不含密码/主机信息 —— LLM-safe 投影，同 `list_accounts` 不暴露 ACL/账号 id），
-  以及一个**参数带 `connectionId`** 的静态
-  SQL tools：
-  `sql_query_text(connectionId, sql, limit)` → 只读执行。它在运行时从 DB 读出该连接 +
-  校验 `enabled_for_ai` 与**连接属于激活账号**（跨账号的 connectionId 直接结构化拒绝）+
-  套 `read_only_policy`（引擎层只允许 SELECT/只读序列、拒绝
-  一切 DDL/DML —— 引擎层阻塞 DDL/DML/GRANT）。这样**diff 面最小**
-  —— add 两个编译期静态方法，动态数据只有「参数」由工具名标识。**与现 `#[tool_router]`
-  架构完全兼容**，无需修改 rmcp 的动态 advertisement。
-- **层2 — per-connection 动态观测 `Vec<Tool>` 只给 LLM 列表**:Chat 的请求构建本就读
-  `in_process.list_tools()`; DBHub 把一个「启用AI 连接 → 自然语言 name+只读 SELECT
-  能力 + 库表概要」的 *描述性* tool 集 merge 进 `enabled_tools` 过滤后的 LLM 定义，
-  使模型能「针对 sales 库问 COUNT/AVG」→ 它看到的名称让人容易定位,但**执行仍汇聚到
-  静态 `sql_query_text` int 参数校验**。`enabled_tools` 已是 null-or-array 语义,DBHub
-  仅在其 set 里加「DBHub:mysql_sales_readonly」这种名称。
+- **层1（已实现）— 每连接一个 `execute_sql_<slug>` 工具**：覆盖 `ServerHandler::list_tools` /
+  `call_tool`，把激活账号下 `enabled_for_ai=true` 的连接动态挂成独立工具。slug 来自
+  连接名（小写字母/数字/下划线）；同账号下两个 AI-enabled 连接 slug 冲突时在
+  create/update/flags **保存时拒绝**。调用时重新按 slug 解析并校验 `enabled_for_ai` +
+  账号归属 —— 关掉开关或改名后，旧工具名**当场拒绝**。执行走只读门禁 + 只读会话，且
+  永远 `writable: false`；审计走同一 `run_tool`。
+- **层2 — 已合并进层1**：不再保留「静态 `sql_query_text` + 描述性假名」的中间态；也不再
+  提供 `list_databases`（连接发现即工具列表本身）。
 - **层3 — 默认全库只读**（需求6硬性）:
   Rust 查询引擎 `block` 掉所有不改写命令。只放行 `SELECT` + 显式 readonly 白名单
   （`show`/`describe`/`explain` 由 dialect trim / 前缀）。若某库要求「read-only-ops」
@@ -352,7 +343,7 @@ AWS 工具。对应多数据源的 per-connection SQL 工具**不能**在编译�
 
 > 每个来自 chat/inprocess/external 的调用都写入 `mcp_audit`，与现在 `run_tool` 调度
 > 一样由 chat loop 标注 provider/model 或 HTTP server audit —— 因此 DBHub 只读 SQL
-> 也必然是「审计一次」路径的一部分。**外部 MCP agent 与内置 Chat 共享同一组静态
+> 也必然是「审计一次」路径的一部分。**外部 MCP agent 与内置 Chat 共享同一组
 > 工具 → 同一组安全边界。**（reference 到 memory-configurable-redaction 不可逆出的
 > 潜池外：若未来 External agent 也能跑 DBHub readonly SQL，需要延续
 > redact_config 对返回结果的脱敏管线。）
@@ -368,8 +359,8 @@ src-tauri/src/dbhub/
   driver.rs         单一函数：给定 connection+profile+sql 返回 rows（curl 到 sqlx）
 commands/db.rs      list/create/update/delete/test_connection/set_connection_flags
 commands/network.rs list/save/delete/test_*
-mcp/tools/ read_only_tools.rs 增加 sql_query_text
-mcp/server.rs       增加两个静态 #[tool] 方法走 run_tool、复用只读门禁
+mcp/tools/dbhub_sql.rs  slug / 冲突校验 / execute_sql_<slug> 执行
+mcp/server.rs       覆盖 list_tools/call_tool，动态挂接 DBHub 工具
 mcp/source.rs       AppSqlSource（数据源带 app handle）
 secrets.rs          expose db/profile secrets key 命名
 models/mod.rs       DbConnection/NetworkProfile/… DTO
@@ -450,10 +441,10 @@ Bootstrap，统一走 `@/components/ui/*`。）
   切回来，两边的草稿各自还在；开关关闭后 tab 消失、连接仍在 Overview
 
 ### Batch 5 — 只读 SQL → AI 工具（§8）
-- `list_databases` + `sql_query_text(connectionId, sql, limit)` 两个静态 `#[tool]`、
-  LLM-safe 投影、行数 cap + `[truncated]` 标注
-- Chat 与外部 MCP agent 同组工具；`mcp_audit` 全程留痕；描述性 per-connection
-  工具名 merge 进 `enabled_tools` 过滤
+- 每 AI-enabled 连接一个 `execute_sql_<slug>` 动态工具（覆盖 `list_tools`/`call_tool`）、
+  slug 冲突在保存时拒绝、关掉 AI / 改名后旧工具名当场拒绝、行数 cap + `[truncated]`
+- 已删除静态 `list_databases` / `sql_query_text`；Chat 与外部 MCP agent 同组工具；
+  `mcp_audit` 全程留痕；MCP Server 面板展示工具名/描述/enable/自动批准占位
 - 验收：Chat 内「查一下 MySQL1 里 sales 库今天有多少订单」全链路跑通；对被禁用
   连接的调用返回结构化拒绝；audit 表可见 provider/model
 
@@ -469,9 +460,9 @@ Bootstrap，统一走 `@/components/ui/*`。）
 
 ## 11. 风险与未决项
 
-1. **动态工具 vs 静态 router**（§8）。本裁决以静态两个工具承载 per-connection 参数
-   化 SQL —— 不挑战 rmcp 静态 advertisement，但长期若想要「每个连接是独立 tool 名+
-   tool description 差异」需升级到 rmcp 动态 tools；标记一个 follow-up。
+1. **动态工具 vs 静态 router**（§8）— **已落地**：`ServerHandler::list_tools` /
+   `call_tool` 覆盖静态 router，按激活账号的 AI-enabled 连接动态挂接
+   `execute_sql_<slug>`；调用时重新解析，不依赖客户端缓存。
 2. **Yellowbrick** Postgres-wire 不保证 100% 兼容；首版只承诺 SELECT 与元数据探测
    在常规拓扑可用,专有语法/系统目录用独立适配,不阻塞主流程交付。
 3. **凭据/密钥生命周期**——创建连接默认一定 `Save password`才可 AI:工具执行需要
@@ -609,7 +600,7 @@ MSSQL/Oracle 留的门 —— sqlx 0.9 不支持这两者，`tiberius`/`oracle-r
 `DATABASE_OPERATION_TIMEOUT` 后报超时**，而不是返回行。现已显式 `drop(conn)`
 再 close。（sqlite 探针测试实证：close 在有 checked-out 连接时确实阻塞。）
 
-**已知缺口（本次未改，保持行为不变）：MCP 的 `sql_query_text` 不经网络 profile。**
+**已知缺口（本次未改，保持行为不变）：MCP 的 `execute_sql_<slug>` 不经网络 profile。**
 `dbhub_query::run_for_command` 会开本地转发，而 mcp 路径直接
 `DialTarget::direct(&shape.connection)` —— 配了 Network Profile 的连接在 AI 工具
 侧拨的是字面 host。修法是调用 `tunnel::dial_target_for`（该路径已持有 app handle

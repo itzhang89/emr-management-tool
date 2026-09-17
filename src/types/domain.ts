@@ -636,6 +636,16 @@ export interface McpStatus {
   endpointUrl?: string;
 }
 
+/** One advertised MCP tool for the MCP Server panel. */
+export interface McpToolInfo {
+  name: string;
+  description?: string | null;
+  enabled: boolean;
+  /** Placeholder until per-tool confirmation exists (`default_allow`). */
+  autoApprove: string;
+  isDbhub: boolean;
+}
+
 /** One MCP tool invocation from the audit database (mcp_audit table). */
 export interface McpAuditEntry {
   id: string;

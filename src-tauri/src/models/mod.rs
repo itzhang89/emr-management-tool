@@ -746,6 +746,21 @@ pub struct McpStatus {
     pub endpoint_url: Option<String>,
 }
 
+/// One advertised MCP tool, for the MCP Server panel. DBHub tools are the
+/// per-connection `execute_sql_<slug>` entries for the active account.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub name: String,
+    pub description: Option<String>,
+    /// Currently advertised tools are always callable; kept explicit for the UI.
+    pub enabled: bool,
+    /// Placeholder until per-tool confirmation exists. `"default_allow"` means
+    /// the call runs without a user prompt today.
+    pub auto_approve: String,
+    pub is_dbhub: bool,
+}
+
 /// One MCP tool invocation, persisted into the app's SQLite database
 /// (`mcp_audit` table) and shown in the Audit Log tab.
 #[derive(Debug, Clone, Serialize)]

@@ -112,6 +112,7 @@ pub fn run() {
             commands::mcp::mcp_stop,
             commands::mcp::mcp_status,
             commands::mcp::list_mcp_audit_entries,
+            commands::mcp::list_mcp_tools,
             commands::llm::list_llm_providers,
             commands::llm::create_llm_provider,
             commands::llm::update_llm_provider,

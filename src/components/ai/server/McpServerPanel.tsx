@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, CircleAlert, Copy, FileCode2, LoaderCircle, Play, Shield } from "lucide-react";
+import { Bot, CircleAlert, Copy, FileCode2, LoaderCircle, Play, Shield, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tauriClient } from "@/services/tauriClient";
-import type { McpStatus } from "@/types/domain";
+import type { McpStatus, McpToolInfo } from "@/types/domain";
 
 const DEFAULT_MCP_PORT = 5175;
 
@@ -107,6 +107,15 @@ export function McpServerPanel() {
       return false;
     }
   });
+
+  const { data: tools = [], isLoading: toolsLoading } = useQuery({
+    queryKey: ["mcp-tools"],
+    queryFn: () => tauriClient.listMcpTools(),
+    refetchInterval: 5_000
+  });
+
+  const builtinTools = useMemo(() => tools.filter((tool) => !tool.isDbhub), [tools]);
+  const dbhubTools = useMemo(() => tools.filter((tool) => tool.isDbhub), [tools]);
 
   const isRunning = status?.running ?? false;
   const mcpPort = status?.mcpPort ?? port;
@@ -326,6 +335,36 @@ export function McpServerPanel() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
+            <Wrench className="size-5" />
+            Available tools
+          </CardTitle>
+          <CardDescription>
+            Tools Chat and external agents can call. DBHub tools are rebuilt from the active
+            account&apos;s AI-enabled connections.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {toolsLoading && tools.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <LoaderCircle className="size-4 animate-spin" />
+              Loading tools…
+            </div>
+          ) : (
+            <>
+              <ToolGroup title="Built-in" tools={builtinTools} />
+              <ToolGroup
+                title="DBHub (active account)"
+                empty="No AI-enabled connections. Turn on Enabled for AI on a DBHub connection card."
+                tools={dbhubTools}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
             <Shield className="size-5" />
             Security
           </CardTitle>
@@ -370,6 +409,47 @@ export function McpServerPanel() {
           <LoaderCircle className="size-4 animate-spin" />
           {startMcp.isPending ? "Starting MCP server..." : "Stopping MCP server..."}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ToolGroup({
+  title,
+  tools,
+  empty
+}: {
+  title: string;
+  tools: McpToolInfo[];
+  empty?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>{title}</Label>
+        <Badge variant="secondary">{tools.length}</Badge>
+      </div>
+      {tools.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty ?? "None."}</p>
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {tools.map((tool) => (
+            <li key={tool.name} className="space-y-1 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-sm font-medium">{tool.name}</code>
+                <Badge variant={tool.enabled ? "default" : "outline"}>
+                  {tool.enabled ? "enabled" : "disabled"}
+                </Badge>
+                <Badge variant="outline">
+                  auto-approve: {tool.autoApprove === "default_allow" ? "default allow" : tool.autoApprove}
+                </Badge>
+              </div>
+              {tool.description ? (
+                <p className="text-xs text-muted-foreground">{tool.description}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

@@ -1,23 +1,32 @@
-//! The DBHub SQL tools for the MCP server (design section 8): a *static*
-//! two-tool capability face over per-connection read-only queries.
+//! DBHub SQL tools for the MCP server.
 //!
-//! `list_databases` projects the active account's AI-enabled connections —
-//! names and kinds only, never hosts, ports or usernames (the same LLM-safe
-//! rule `list_accounts` follows). `sql_query_text` re-resolves the connection
-//! at call time inside the active account, refuses disabled ones and foreign
-//! ids alike, then runs the statement through the read-only gate + read-only
-//! session in `dbhub::query`. Both routes write an audit row through the
-//! server's `run_tool`, so Chat-driven and agent-driven calls are audited
-//! exactly once like every other tool.
+//! Each AI-enabled connection in the active account is advertised as its own
+//! tool named `execute_sql_<slug>`, where the slug is derived from the
+//! connection's display name. Calls re-resolve the connection by slug inside
+//! the active account, refuse disabled / deleted / foreign-account ids, then
+//! run through the read-only gate + read-only session in `dbhub::query`. Audit
+//! rows go through the server's `run_tool`, so Chat-driven and agent-driven
+//! calls are audited exactly once like every other tool.
+//!
+//! The AI path always passes `writable: false` — the connection's `allow_writes`
+//! flag never affects tool calls.
 
+use std::sync::Arc;
+
+use rmcp::model::Tool;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
 use crate::db::dbhub::driver::DialTarget;
 use crate::db::dbhub::session::QueryCancellation;
 use crate::db::dbhub::{self, query};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
+use crate::models::DbConnection;
+
+/// Prefix for per-connection MCP tools. The rest of the name is the slug.
+pub const EXECUTE_SQL_PREFIX: &str = "execute_sql_";
 
 /// Hard cap on rows one tool call may return (design: protect the model's
 /// context; the UI path caps at 500).
@@ -27,42 +36,81 @@ const TOOL_MAX_ROWS: usize = 100;
 const CELL_CAP: usize = 2_000;
 const RESULT_TEXT_CAP: usize = 60_000;
 
-/// The LLM-safe projection of one connection. Deliberately narrower than
-/// `DbConnection`: the model learns *what* it can query, not *where*.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SafeDbConnection {
-    pub connection_id: String,
-    pub name: String,
-    pub kind: String,
-    pub database: Option<String>,
+/// Turn a connection display name into the slug half of `execute_sql_<slug>`.
+///
+/// Only ASCII letters, digits and underscores survive; everything else becomes
+/// a single underscore, runs of underscores collapse, and leading/trailing
+/// underscores are dropped. Empty after sanitising means the name cannot
+/// register an AI tool.
+pub fn connection_slug(name: &str) -> String {
+    let mut out = String::new();
+    let mut pending_underscore = false;
+    for ch in name.chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            if pending_underscore && !out.is_empty() {
+                out.push('_');
+            }
+            out.push(lower);
+            pending_underscore = false;
+        } else {
+            pending_underscore = true;
+        }
+    }
+    out
 }
 
-pub async fn list_databases() -> AppResult<Vec<SafeDbConnection>> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id(&pool).await?;
-    Ok(dbhub::list_connections(&pool, &account_id)
-        .await?
-        .into_iter()
-        .filter(|connection| connection.enabled_for_ai)
-        .map(|connection| SafeDbConnection {
-            connection_id: connection.id,
-            name: connection.name,
-            kind: connection.kind.as_str().to_string(),
-            database: connection.database,
-        })
-        .collect())
+/// `execute_sql_<slug>` for a connection name, or `None` when the name has no
+/// usable characters.
+pub fn tool_name_for(name: &str) -> Option<String> {
+    let slug = connection_slug(name);
+    if slug.is_empty() {
+        None
+    } else {
+        Some(format!("{EXECUTE_SQL_PREFIX}{slug}"))
+    }
+}
+
+/// True when `name` is an `execute_sql_*` tool advertisement.
+pub fn is_dbhub_tool_name(name: &str) -> bool {
+    name.starts_with(EXECUTE_SQL_PREFIX) && name.len() > EXECUTE_SQL_PREFIX.len()
+}
+
+/// Refuse saving / enabling AI when another AI-enabled connection in the same
+/// account already occupies this tool slug. `exclude_id` skips the connection
+/// being updated so a no-op rename does not collide with itself.
+pub async fn ensure_ai_tool_name_available(
+    pool: &SqlitePool,
+    account_id: &str,
+    name: &str,
+    exclude_id: Option<&str>,
+) -> AppResult<()> {
+    let Some(tool_name) = tool_name_for(name) else {
+        return Err(AppError::validation(
+            "Connection name must contain letters or digits to register an AI tool.",
+        ));
+    };
+    let slug = connection_slug(name);
+    for connection in dbhub::list_connections(pool, account_id).await? {
+        if exclude_id.is_some_and(|id| id == connection.id) {
+            continue;
+        }
+        if !connection.enabled_for_ai {
+            continue;
+        }
+        if connection_slug(&connection.name) == slug {
+            return Err(AppError::validation(format!(
+                "AI tool name `{tool_name}` is already used by connection \"{}\". Rename one of them.",
+                connection.name
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ListDatabasesArgs {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SqlQueryTextArgs {
-    /// The connectionId of one entry from list_databases.
-    pub connection_id: String,
+pub struct ExecuteSqlArgs {
     /// One read-only SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN). Anything
     /// else is refused by the read-only gate — the connection cannot be
     /// modified through this tool.
@@ -70,6 +118,17 @@ pub struct SqlQueryTextArgs {
     /// Maximum rows to return (1-100). Defaults to 50.
     #[serde(default)]
     #[schemars(description = "Maximum rows to return (1-100). Defaults to 50.")]
+    pub max_rows: Option<usize>,
+}
+
+/// Shared args shape kept for callers that still know a connection id
+/// (workspace / tests). Dynamic tools use [`ExecuteSqlArgs`] instead.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlQueryTextArgs {
+    pub connection_id: String,
+    pub sql: String,
+    #[serde(default)]
     pub max_rows: Option<usize>,
 }
 
@@ -112,6 +171,80 @@ impl SqlQueryTextResult {
     }
 }
 
+/// Build the MCP `Tool` advertisements for every AI-enabled connection in the
+/// active account. Failures (no account, DB down) yield an empty list so the
+/// static EMR tools still advertise.
+pub async fn advertise_execute_sql_tools() -> Vec<Tool> {
+    match list_ai_enabled_connections().await {
+        Ok(connections) => connections
+            .into_iter()
+            .filter_map(|connection| advertise_one(&connection))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn advertise_one(connection: &DbConnection) -> Option<Tool> {
+    let tool_name = tool_name_for(&connection.name)?;
+    let kind = connection.kind.as_str();
+    let database = connection
+        .database
+        .as_deref()
+        .map(|db| format!(" Default database: {db}."))
+        .unwrap_or_default();
+    let description = format!(
+        "Run ONE read-only SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN) against \
+         the {kind} connection \"{}\".{database} Any statement that could modify \
+         data is refused. Rows are capped (default 50, max 100) and oversized \
+         text is marked [truncated]. Read-only.",
+        connection.name
+    );
+    Some(
+        Tool::new(tool_name, description, execute_sql_input_schema()).annotate(
+            rmcp::model::ToolAnnotations::new()
+                .read_only(true)
+                .destructive(false)
+                .open_world(true),
+        ),
+    )
+}
+
+fn execute_sql_input_schema() -> Arc<serde_json::Map<String, serde_json::Value>> {
+    let schema = schemars::schema_for!(ExecuteSqlArgs);
+    let value = serde_json::to_value(schema).unwrap_or_else(|_| {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "sql": { "type": "string" },
+                "maxRows": { "type": "integer" }
+            },
+            "required": ["sql"]
+        })
+    });
+    Arc::new(value.as_object().cloned().unwrap_or_default())
+}
+
+/// Resolve `execute_sql_<slug>` against the active account and run one query.
+pub async fn execute_sql_by_slug(
+    app: &tauri::AppHandle,
+    slug: &str,
+    args: &ExecuteSqlArgs,
+) -> AppResult<SqlQueryTextResult> {
+    if slug.is_empty() {
+        return Err(AppError::validation("Unknown database tool."));
+    }
+    let connection = resolve_connection_by_slug(slug).await?;
+    sql_query_text(
+        app,
+        &SqlQueryTextArgs {
+            connection_id: connection.id,
+            sql: args.sql.clone(),
+            max_rows: args.max_rows,
+        },
+    )
+    .await
+}
+
 pub async fn sql_query_text(
     app: &tauri::AppHandle,
     args: &SqlQueryTextArgs,
@@ -120,16 +253,13 @@ pub async fn sql_query_text(
 
     // Resolution happens per call inside the active account: a connection that
     // was deleted, disabled for AI, or belongs to another account is refused
-    // here rather than at advertisement time (tools are static; data is not).
+    // here rather than at advertisement time (clients may cache tool lists).
     let shape = resolve_shape(app, &args.connection_id).await?;
 
     // Dialed directly: unlike the workspace commands, this path does not open
     // a network forward, so a connection behind a Network Profile is not
     // reachable from here.
     let target = DialTarget::direct(&shape.connection);
-    // One page: the tool's caller narrows the query rather than paging
-    // through it, which keeps the model's context bounded.
-    // The tool call runs to its own timeout; nothing stops it mid-flight.
     // `writable: false` is hardcoded here and not read from the connection:
     // however the user has configured it for their own typing, the model never
     // gets a session that can write.
@@ -144,9 +274,6 @@ pub async fn sql_query_text(
     )
     .await?;
 
-    // Text-size honesty: serialize the page once; if the model-facing text
-    // overshoots the cap it is cut at a char boundary and marked — the model
-    // is told, never left to assume the page was complete.
     let serialized = serde_json::to_string(&result.rows).unwrap_or_default();
     let result_text_truncated = serialized.len() > RESULT_TEXT_CAP;
 
@@ -195,13 +322,56 @@ fn cap_cells(mut row: serde_json::Value, cap: usize) -> serde_json::Value {
     row
 }
 
-async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
+async fn active_account_id(pool: &SqlitePool) -> AppResult<String> {
     repository::active_aws_account(pool)
         .await?
         .map(|account| account.id)
         .ok_or_else(|| {
             AppError::validation("No active AWS account. Configure one in Settings first.")
         })
+}
+
+async fn list_ai_enabled_connections() -> AppResult<Vec<DbConnection>> {
+    let pool = repository::pool().await?;
+    let account_id = active_account_id(&pool).await?;
+    Ok(dbhub::list_connections(&pool, &account_id)
+        .await?
+        .into_iter()
+        .filter(|connection| connection.enabled_for_ai)
+        .collect())
+}
+
+/// Find the AI-enabled connection whose name slug matches. Call-time check is
+/// the "turn off AI → old tool name refuses immediately" contract — clients may
+/// still advertise a cached list.
+pub async fn resolve_connection_by_slug(slug: &str) -> AppResult<DbConnection> {
+    let pool = repository::pool().await?;
+    let account_id = active_account_id(&pool).await?;
+    resolve_connection_by_slug_in(&pool, &account_id, slug).await
+}
+
+async fn resolve_connection_by_slug_in(
+    pool: &SqlitePool,
+    account_id: &str,
+    slug: &str,
+) -> AppResult<DbConnection> {
+    let matches: Vec<DbConnection> = dbhub::list_connections(pool, account_id)
+        .await?
+        .into_iter()
+        .filter(|connection| {
+            connection.enabled_for_ai && connection_slug(&connection.name) == slug
+        })
+        .collect();
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().expect("len checked")),
+        0 => Err(AppError::validation(format!(
+            "No AI-enabled connection matches tool `{EXECUTE_SQL_PREFIX}{slug}`. \
+             Enable the connection for AI on the DBHub Overview card, or use the new tool name after a rename."
+        ))),
+        _ => Err(AppError::validation(format!(
+            "Multiple AI-enabled connections share tool `{EXECUTE_SQL_PREFIX}{slug}`. Rename one of them."
+        ))),
+    }
 }
 
 async fn resolve_shape(
@@ -232,29 +402,127 @@ async fn resolve_shape(
     })
 }
 
-/// The rmcp `#[tool]` macro in `mcp/server.rs` turns these doc comments into
-/// the model-facing tool descriptions; the args structs below (with their
-/// `#[schemars(description = ...)]` notes) become the JSON schemas. Kept as
-/// plain types here so the server's router stays the single source of
-/// advertisement.
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{DbConnectionKind, DbReadOnlyPolicy};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect");
+        dbhub::migrate(&pool).await.expect("migrate");
+        pool
+    }
+
+    fn connection(account_id: &str, id: &str, name: &str, enabled_for_ai: bool) -> DbConnection {
+        DbConnection {
+            id: id.to_string(),
+            account_id: account_id.to_string(),
+            kind: DbConnectionKind::Mysql,
+            name: name.to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 3306,
+            database: Some("sales".to_string()),
+            username: "bi_reader".to_string(),
+            network_profile_id: None,
+            show_as_tab: true,
+            enabled_for_ai,
+            ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            allow_writes: false,
+            sort_order: 0,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
 
     #[test]
-    fn safe_projection_omits_host_port_username() {
-        let projection = SafeDbConnection {
-            connection_id: "c1".into(),
-            name: "Sales MySQL".into(),
-            kind: "mysql".into(),
-            database: Some("sales".into()),
-        };
-        let json = serde_json::to_string(&projection).expect("serialize");
-        assert!(json.contains("connectionId"));
-        assert!(!json.contains("host"));
-        assert!(!json.contains("port"));
-        assert!(!json.contains("username"));
+    fn slug_keeps_letters_digits_and_underscores() {
+        assert_eq!(connection_slug("MySQL1"), "mysql1");
+        assert_eq!(connection_slug("MySQL-Prod"), "mysql_prod");
+        assert_eq!(connection_slug("  Sales DB!! "), "sales_db");
+        assert_eq!(connection_slug("___"), "");
+        assert_eq!(tool_name_for("MySQL1").as_deref(), Some("execute_sql_mysql1"));
+        assert_eq!(tool_name_for("!!!"), None);
+    }
+
+    #[tokio::test]
+    async fn ai_tool_name_conflict_names_the_peer() {
+        let pool = test_pool().await;
+        dbhub::insert_connection(&pool, &connection("acct", "c1", "MySQL-1", true))
+            .await
+            .expect("insert");
+
+        let err = ensure_ai_tool_name_available(&pool, "acct", "mysql_1", None)
+            .await
+            .expect_err("same slug");
+        assert!(
+            err.message.contains("execute_sql_mysql_1"),
+            "mentions tool name: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("MySQL-1"),
+            "names the peer connection: {}",
+            err.message
+        );
+
+        // Self-update is fine.
+        ensure_ai_tool_name_available(&pool, "acct", "MySQL-1", Some("c1"))
+            .await
+            .expect("self");
+
+        // Disabled peers do not occupy the slug.
+        dbhub::insert_connection(&pool, &connection("acct", "c2", "Other", false))
+            .await
+            .expect("insert disabled");
+        ensure_ai_tool_name_available(&pool, "acct", "Other", None)
+            .await
+            .expect("disabled peer free");
+    }
+
+    #[tokio::test]
+    async fn disabled_connection_stops_matching_its_old_slug() {
+        let pool = test_pool().await;
+        dbhub::insert_connection(&pool, &connection("acct", "c1", "MySQL1", true))
+            .await
+            .expect("insert");
+        resolve_connection_by_slug_in(&pool, "acct", "mysql1")
+            .await
+            .expect("enabled resolves");
+
+        dbhub::update_connection(
+            &pool,
+            "acct",
+            "c1",
+            &dbhub::ConnectionPatch {
+                name: None,
+                host: None,
+                port: None,
+                database: None,
+                username: None,
+                network_profile_id: None,
+                show_as_tab: None,
+                enabled_for_ai: Some(false),
+                ai_read_only_policy: None,
+                allow_writes: None,
+                sort_order: None,
+            },
+        )
+        .await
+        .expect("disable");
+
+        let err = resolve_connection_by_slug_in(&pool, "acct", "mysql1")
+            .await
+            .expect_err("disabled refuses");
+        assert!(
+            err.message.contains("execute_sql_mysql1"),
+            "refusal names the tool: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -267,7 +535,6 @@ mod tests {
             .expect("string");
         assert!(note.len() < 5_000);
         assert!(note.ends_with("[truncated]"));
-        // Non-string values untouched.
         assert_eq!(capped.get("id"), Some(&serde_json::json!(7)));
     }
 
@@ -279,13 +546,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_schemas_are_read_only_contract() {
-        // The schema_for! round-trip validates the args shapes the rmcp macro
-        // will embed as the tools' inputSchema.
-        let schema = schemars::schema_for!(SqlQueryTextArgs);
+    fn execute_sql_schema_is_sql_only() {
+        let schema = schemars::schema_for!(ExecuteSqlArgs);
         let json = serde_json::to_string(&schema).expect("schema");
-        assert!(json.contains("connectionId"));
         assert!(json.contains("sql"));
-        let _ = schemars::schema_for!(ListDatabasesArgs);
+        assert!(!json.contains("connectionId"));
     }
 }
