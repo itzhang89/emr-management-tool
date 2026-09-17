@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DbKindIcon, dbKindLabel } from "@/components/dbhub/DbKindIcon";
 import { useSetDbConnectionFlags } from "@/hooks/useDbHub";
 import { formatAppError } from "@/services/appErrorMessage";
 import { toast } from "sonner";
@@ -49,13 +50,13 @@ export function ConnectionCard({
   };
 
   const profile = profiles.find((entry) => entry.id === connection.networkProfileId);
-  const kindLabel = connection.kind === "yellowbrick" ? "Yellowbrick" : connection.kind === "mysql" ? "MySQL" : "PostgreSQL";
+  const kindLabel = dbKindLabel(connection.kind);
 
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Database className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <DbKindIcon kind={connection.kind} className="size-4" />
           <div className="min-w-0">
             <p className="truncate font-medium">{connection.name}</p>
             <p className="truncate text-xs text-muted-foreground">

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -448,7 +449,7 @@ export function ConnectionQueryTab({
       <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex shrink-0 items-center gap-2">
           <span className="flex items-center gap-1.5 text-sm font-medium">
-            <Database className="size-3.5 text-muted-foreground" aria-hidden />
+            <DbKindIcon kind={connection.kind} className="size-3.5" />
             {connection.name}
           </span>
           <Badge

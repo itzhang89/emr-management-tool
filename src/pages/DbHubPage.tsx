@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Database } from "lucide-react";
 import { GlueCatalogTab } from "@/components/dbhub/workspace/GlueCatalogTab";
 import { ConnectionQueryTab } from "@/components/dbhub/workspace/ConnectionQueryTab";
 import { OverviewPanel } from "@/components/dbhub/overview/OverviewPanel";
+import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDbConnections } from "@/hooks/useDbHub";
 
@@ -75,7 +75,7 @@ export function DbHubPage({
           <TabsTrigger value={GLUE_TAB}>Glue Catalog</TabsTrigger>
           {dynamicTabs.map((connection) => (
             <TabsTrigger key={connection.id} value={connectionTabValue(connection.id)}>
-              <Database className="mr-1.5 size-3.5 shrink-0" aria-hidden />
+              <DbKindIcon kind={connection.kind} className="mr-1.5 size-3.5" />
               {connection.name}
             </TabsTrigger>
           ))}
