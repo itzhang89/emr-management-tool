@@ -71,6 +71,7 @@ import type {
   ChatSession,
   CreateChatAssistantRequest,
   CreateChatSessionRequest,
+  EnsureDbhubChatAssistantRequest,
   UpdateChatAssistantRequest,
   UpdateChatSessionRequest,
   RedactConfig,
@@ -241,6 +242,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     listChatAssistants: () => call<ChatAssistant[]>("list_chat_assistants"),
     createChatAssistant: (request: CreateChatAssistantRequest) =>
       call<string>("create_chat_assistant", request),
+    ensureDbhubChatAssistant: (request: EnsureDbhubChatAssistantRequest) =>
+      call<string>("ensure_dbhub_chat_assistant", request),
     updateChatAssistant: (request: UpdateChatAssistantRequest) =>
       call<void>("update_chat_assistant", request),
     deleteChatAssistant: (id: string) => call<void>("delete_chat_assistant", { id }),

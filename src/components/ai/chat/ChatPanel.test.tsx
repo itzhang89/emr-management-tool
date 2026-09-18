@@ -31,6 +31,7 @@ vi.mock("@/services/tauriClient", () => ({
     deleteChatSession: (id: string) => deleteChatSession(id),
     deleteChatAssistant: (id: string) => deleteChatAssistant(id),
     createChatAssistant: vi.fn(),
+    ensureDbhubChatAssistant: vi.fn(),
     updateChatAssistant: vi.fn(),
     deleteAllChatSessions: vi.fn(),
     chatSend: (sessionId: string, text: string) => chatSend(sessionId, text),

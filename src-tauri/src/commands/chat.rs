@@ -10,7 +10,7 @@ use crate::models::{
     ChatAssistant, ChatIdRequest, ChatMessage, ChatMessageIdRequest, ChatRegenerateRequest,
     ChatSendRequest, ChatSession, ChatSessionIdRequest, ChatSetMessageVersionRequest,
     ChatUpdateMessageRequest, CreateChatAssistantRequest, CreateChatSessionRequest,
-    UpdateChatAssistantRequest, UpdateChatSessionRequest,
+    EnsureDbhubChatAssistantRequest, UpdateChatAssistantRequest, UpdateChatSessionRequest,
 };
 use crate::state::AppState;
 use sqlx::SqlitePool;
@@ -32,6 +32,20 @@ pub async fn create_chat_assistant(request: CreateChatAssistantRequest) -> AppRe
         request.default_model_id.as_deref(),
         request.enabled_tools.as_deref(),
         request.accent.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ensure_dbhub_chat_assistant(
+    request: EnsureDbhubChatAssistantRequest,
+) -> AppResult<String> {
+    let pool = crate::db::repository::pool().await?;
+    crate::db::chat::ensure_dbhub_assistant(
+        &pool,
+        &request.connection_id,
+        &request.connection_name,
+        &request.tool_name,
     )
     .await
 }

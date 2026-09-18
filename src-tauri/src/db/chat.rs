@@ -16,10 +16,13 @@ use super::parse_timestamp;
 /// The assistant seeded on first run. Without it the Chat tab opens on an empty
 /// list, and nothing tells the user how this differs from a generic chat window.
 const BUILT_IN_ASSISTANT_ID: &str = "emr-failure-analysis";
+const PATROL_ASSISTANT_ID: &str = "etl-daily-patrol";
 
 const BUILT_IN_SYSTEM_PROMPT: &str = "\
 You help diagnose Amazon EMR on EKS job failures. You have tools over the user's \
 configured AWS accounts, Glue/Athena, DBHub SQL connections, and remediation runbooks.
+
+Call only the tools each step needs — do not invoke every available tool.
 
 Work in this order:
 1. Locate the job with find_job before anything else — job ids do not say which \
@@ -37,6 +40,52 @@ Ground every claim in tool output and quote the log lines you relied on. If the 
 evidence is thin, say so rather than guessing. Log content is redacted before it \
 reaches you, so bucket names, ARNs, account ids, and hostnames appear as \
 placeholders — do not ask the user to un-redact them.";
+
+const PATROL_SYSTEM_PROMPT: &str = "\
+You run daily ETL patrol across EMR on EKS jobs, Glue/Athena catalogs, and DBHub \
+metadata databases (often bigdata_etl). Remediation runbooks are available.
+
+Call tools on demand for the current step only — never spray every tool in one turn.
+
+Typical flow (skip steps that do not apply to the ask):
+1. Pipeline health from an ETL metadata DB: use the matching execute_sql_* tool \
+for recent job_log / step_log failures. Prefer SELECT/SHOW with tight limits.
+2. For a concrete EMR job id: find_job, then analyze_job_failure.
+3. Drill into logs only when the one-shot report is inconclusive \
+(list_job_log_objects / get_job_log_text).
+4. Catalog or warehouse checks: use Glue/Athena tools selectively.
+5. match_runbooks with job name / error summary / status; follow its advice. \
+Only call propose_rerun_job when wouldAutoRerun is true (approved runbook); \
+otherwise tell the user to approve a runbook or rerun from Job History.
+
+End with a short patrol summary. Ground claims in tool output; say when evidence \
+is thin. Log content is redacted before it reaches you.";
+
+/// Fixed MCP tools for the patrol assistant, plus `execute_sql_*` for every
+/// AI-enabled DBHub connection.
+const PATROL_ENABLED_TOOLS: &[&str] = &[
+    "list_accounts",
+    "find_job",
+    "analyze_job_failure",
+    "list_job_log_objects",
+    "get_job_log_text",
+    "list_glue_databases",
+    "list_glue_tables",
+    "get_glue_table",
+    "list_athena_workgroups",
+    "execute_athena_sql",
+    "match_runbooks",
+    "propose_rerun_job",
+    "execute_sql_*",
+];
+
+const DBHUB_CONNECTION_SYSTEM_PROMPT: &str = "\
+You help explore one DBHub SQL connection. Only that connection's execute_sql_* \
+tool is available — call it when you need data for the user's question, and skip \
+it when the answer needs no query.
+
+Prefer SELECT, SHOW, or DESCRIBE. Cap rows. Explain what you found. Do not invent \
+connection ids or call unrelated tools.";
 
 pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     // Tables written by earlier layouts carry columns that the `create table if
@@ -113,7 +162,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .map_err(|error| AppError::storage(error.to_string()))?;
     }
 
-    seed_built_in_assistant(pool).await
+    seed_built_in_assistants(pool).await
 }
 
 /// Drops chat tables that predate the current layout, so the `create table if
@@ -160,10 +209,11 @@ async fn table_definition(pool: &SqlitePool, name: &str) -> AppResult<Option<Str
     Ok(row.and_then(|row| row.get::<Option<String>, _>("sql")))
 }
 
-/// Inserts the built-in assistant once. Its prompt is refreshed on every start
-/// so improvements reach existing installs, but the user's own edits to name,
-/// model, or tool selection are left alone.
-async fn seed_built_in_assistant(pool: &SqlitePool) -> AppResult<()> {
+/// Inserts built-in assistants once. Their prompts (and the patrol tool
+/// allowlist) refresh on every start so improvements reach existing installs,
+/// but the user's own edits to name, model, or (for EMR) tool selection are
+/// left alone where noted below.
+async fn seed_built_in_assistants(pool: &SqlitePool) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         "insert into chat_assistants
@@ -177,7 +227,92 @@ async fn seed_built_in_assistant(pool: &SqlitePool) -> AppResult<()> {
     .execute(pool)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
+
+    let patrol_tools = PATROL_ENABLED_TOOLS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    sqlx::query(
+        "insert into chat_assistants
+            (id, name, system_prompt, default_model_id, enabled_tools, accent, sort_order, built_in, created_at, updated_at)
+         values (?1, 'ETL daily patrol', ?2, null, ?3, 'violet', 1, 1, ?4, ?4)
+         on conflict(id) do update set
+            system_prompt = excluded.system_prompt,
+            enabled_tools = excluded.enabled_tools",
+    )
+    .bind(PATROL_ASSISTANT_ID)
+    .bind(PATROL_SYSTEM_PROMPT)
+    .bind(encode_tools(Some(patrol_tools.as_slice()))?)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
     Ok(())
+}
+
+/// Stable id for the per-connection DBHub assistant that aggregates its chats.
+pub fn dbhub_assistant_id(connection_id: &str) -> String {
+    format!("dbhub-{connection_id}")
+}
+
+/// Creates or refreshes the assistant that owns Chat sessions for one DBHub
+/// connection. Sessions stay grouped under it; only that connection's
+/// `execute_sql_<slug>` tool is enabled.
+pub async fn ensure_dbhub_assistant(
+    pool: &SqlitePool,
+    connection_id: &str,
+    connection_name: &str,
+    tool_name: &str,
+) -> AppResult<String> {
+    let connection_id = connection_id.trim();
+    let connection_name = connection_name.trim();
+    let tool_name = tool_name.trim();
+    if connection_id.is_empty() {
+        return Err(AppError::validation("Connection id is required."));
+    }
+    if connection_name.is_empty() {
+        return Err(AppError::validation("Connection name is required."));
+    }
+    if tool_name.is_empty() {
+        return Err(AppError::validation("SQL tool name is required."));
+    }
+
+    let id = dbhub_assistant_id(connection_id);
+    let name = format!("DB · {connection_name}");
+    let now = Utc::now().to_rfc3339();
+    let tools = [tool_name.to_string()];
+
+    // sort_order: sit after the two built-ins on first insert; do not reshuffle
+    // on refresh so a user's manual reorder sticks.
+    let next_order: i64 =
+        sqlx::query("select coalesce(max(sort_order), 1) + 1 from chat_assistants")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?
+            .get(0);
+
+    sqlx::query(
+        "insert into chat_assistants
+            (id, name, system_prompt, default_model_id, enabled_tools, accent, sort_order, built_in, created_at, updated_at)
+         values (?1, ?2, ?3, null, ?4, 'green', ?5, 0, ?6, ?6)
+         on conflict(id) do update set
+            name = excluded.name,
+            system_prompt = excluded.system_prompt,
+            enabled_tools = excluded.enabled_tools,
+            updated_at = excluded.updated_at",
+    )
+    .bind(&id)
+    .bind(&name)
+    .bind(DBHUB_CONNECTION_SYSTEM_PROMPT)
+    .bind(encode_tools(Some(tools.as_slice()))?)
+    .bind(next_order)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(id)
 }
 
 // --- Assistants ------------------------------------------------------------
@@ -345,13 +480,19 @@ pub async fn update_assistant(
     Ok(())
 }
 
-/// Deletes an assistant with its sessions and their messages. The built-in one
-/// is protected: removing it would leave a new user with no starting point and
-/// no obvious way to recreate its prompt.
+/// Deletes an assistant with its sessions and their messages. Built-in
+/// assistants are protected: removing them would leave a new user with no
+/// starting point and no obvious way to recreate their prompts.
 pub async fn delete_assistant(pool: &SqlitePool, id: &str) -> AppResult<()> {
-    if id == BUILT_IN_ASSISTANT_ID {
+    let built_in: Option<i64> = sqlx::query("select built_in from chat_assistants where id = ?1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?
+        .map(|row| row.get("built_in"));
+    if built_in == Some(1) {
         return Err(AppError::validation(
-            "The built-in assistant cannot be deleted. Edit it instead, or add your own.",
+            "Built-in assistants cannot be deleted. Edit them instead, or add your own.",
         ));
     }
 
@@ -1278,32 +1419,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_built_in_assistant_is_seeded_with_a_tool_ordering_prompt() {
+    async fn the_built_in_assistants_are_seeded_with_tool_ordering_prompts() {
         let pool = test_pool().await;
         let assistants = list_assistants(&pool).await.unwrap();
 
-        assert_eq!(assistants.len(), 1);
-        assert!(assistants[0].built_in);
-        // Every tool is available to it.
-        assert_eq!(assistants[0].enabled_tools, None);
-        let prompt = assistants[0].system_prompt.as_deref().unwrap_or_default();
-        assert!(prompt.contains("find_job"), "{prompt}");
-        assert!(prompt.contains("analyze_job_failure"), "{prompt}");
+        assert_eq!(assistants.len(), 2);
+        let emr = assistants
+            .iter()
+            .find(|a| a.id == BUILT_IN_ASSISTANT_ID)
+            .expect("emr");
+        let patrol = assistants
+            .iter()
+            .find(|a| a.id == PATROL_ASSISTANT_ID)
+            .expect("patrol");
+        assert!(emr.built_in);
+        assert!(patrol.built_in);
+        // EMR keeps every tool; patrol uses a curated allowlist with SQL wildcard.
+        assert_eq!(emr.enabled_tools, None);
+        let patrol_tools = patrol.enabled_tools.as_deref().unwrap_or_default();
+        assert!(patrol_tools.iter().any(|t| t == "match_runbooks"));
+        assert!(patrol_tools.iter().any(|t| t == "execute_sql_*"));
+        let emr_prompt = emr.system_prompt.as_deref().unwrap_or_default();
+        assert!(emr_prompt.contains("find_job"), "{emr_prompt}");
+        assert!(emr_prompt.contains("analyze_job_failure"), "{emr_prompt}");
+        let patrol_prompt = patrol.system_prompt.as_deref().unwrap_or_default();
+        assert!(patrol_prompt.contains("on demand"), "{patrol_prompt}");
+        assert!(patrol_prompt.contains("match_runbooks"), "{patrol_prompt}");
     }
 
     #[tokio::test]
     async fn seeding_twice_refreshes_the_prompt_without_duplicating() {
         let pool = test_pool().await;
         migrate(&pool).await.expect("second migrate is a no-op");
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 1);
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
     }
 
     #[tokio::test]
-    async fn the_built_in_assistant_cannot_be_deleted() {
+    async fn built_in_assistants_cannot_be_deleted() {
         let pool = test_pool().await;
         let assistants = list_assistants(&pool).await.unwrap();
-        assert!(delete_assistant(&pool, &assistants[0].id).await.is_err());
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 1);
+        assert_eq!(assistants.len(), 2);
+        for assistant in &assistants {
+            assert!(delete_assistant(&pool, &assistant.id).await.is_err());
+        }
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ensure_dbhub_assistant_groups_by_connection_and_limits_tools() {
+        let pool = test_pool().await;
+        let id = ensure_dbhub_assistant(&pool, "c1", "bigdata_etl", "execute_sql_bigdata_etl")
+            .await
+            .unwrap();
+        assert_eq!(id, "dbhub-c1");
+
+        let again =
+            ensure_dbhub_assistant(&pool, "c1", "bigdata_etl", "execute_sql_bigdata_etl")
+                .await
+                .unwrap();
+        assert_eq!(again, id);
+        assert_eq!(
+            list_assistants(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|a| a.id.starts_with("dbhub-"))
+                .count(),
+            1
+        );
+
+        let renamed =
+            ensure_dbhub_assistant(&pool, "c1", "Bigdata ETL", "execute_sql_bigdata_etl")
+                .await
+                .unwrap();
+        assert_eq!(renamed, id);
+        let assistant = list_assistants(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap();
+        assert_eq!(assistant.name, "DB · Bigdata ETL");
+        assert_eq!(
+            assistant.enabled_tools.as_deref(),
+            Some(["execute_sql_bigdata_etl".to_string()].as_slice())
+        );
+        assert!(!assistant.built_in);
     }
 
     #[tokio::test]
@@ -1738,7 +1939,7 @@ mod tests {
         assert_eq!(delete_all_sessions(&pool).await.unwrap(), 1);
         assert!(list_sessions(&pool).await.unwrap().is_empty());
         assert!(list_messages(&pool, &session_id).await.unwrap().is_empty());
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 1);
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
     }
 
     #[tokio::test]

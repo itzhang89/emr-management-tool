@@ -134,6 +134,7 @@ pub fn run() {
             commands::llm::delete_llm_model,
             commands::chat::list_chat_assistants,
             commands::chat::create_chat_assistant,
+            commands::chat::ensure_dbhub_chat_assistant,
             commands::chat::update_chat_assistant,
             commands::chat::delete_chat_assistant,
             commands::chat::list_chat_sessions,

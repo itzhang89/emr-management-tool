@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   CreateChatAssistantRequest,
   CreateChatSessionRequest,
+  EnsureDbhubChatAssistantRequest,
   UpdateChatAssistantRequest,
   UpdateChatSessionRequest
 } from "@/types/domain";
@@ -57,6 +58,12 @@ function useAssistantMutation<TArgs, TResult>(mutationFn: (args: TArgs) => Promi
 export function useCreateChatAssistant() {
   return useAssistantMutation((request: CreateChatAssistantRequest) =>
     tauriClient.createChatAssistant(request)
+  );
+}
+
+export function useEnsureDbhubChatAssistant() {
+  return useAssistantMutation((request: EnsureDbhubChatAssistantRequest) =>
+    tauriClient.ensureDbhubChatAssistant(request)
   );
 }
 

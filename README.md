@@ -239,12 +239,19 @@ or AWS accounts; large result sets keep only their metadata with a rerun hint.
 
 The **AI Assistant** page collects the app's AI capabilities into four tabs.
 
-**Chat** answers questions about job failures and database analysis. Assistants are
-presets — a system prompt, a default model, and which tools they may use — and
-each holds its own conversations. A built-in "EMR failure analysis" assistant is
-seeded on first run. DBHub connection workspaces can open a new Chat session with
-connection/table context after you type an analysis instruction. Every tool call
-the model makes is shown as an expandable step with its arguments and result.
+**Chat** answers questions about job failures, database analysis, and daily ETL
+patrol. Assistants are presets — a system prompt, a default model, and which
+tools they may use — and each holds its own conversations. Two built-ins are
+seeded on first run:
+
+- **EMR failure analysis** — Job History → Analyze opens sessions here.
+- **ETL daily patrol** — multi-tool patrol (EMR, Glue/Athena, DBHub SQL,
+  runbooks); call tools on demand for the current step only.
+
+DBHub connection workspaces open Chat under a per-connection assistant
+(`DB · <connection>`), restricted to that connection's `execute_sql_<slug>`
+tool, so analyses for the same database stay grouped. Every tool call the model
+makes is shown as an expandable step with its arguments and result.
 
 **Runbooks** (AI Assistant tab) store match rules and remediation advice. An
 *approved* runbook that includes an EMR rerun action allows Chat's

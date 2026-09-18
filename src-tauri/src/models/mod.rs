@@ -1293,6 +1293,16 @@ pub struct CreateChatAssistantRequest {
     pub accent: Option<String>,
 }
 
+/// Upsert the Chat assistant that owns sessions for one DBHub connection.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureDbhubChatAssistantRequest {
+    pub connection_id: String,
+    pub connection_name: String,
+    /// MCP tool the assistant may use, e.g. `execute_sql_bigdata_etl`.
+    pub tool_name: String,
+}
+
 /// Absent fields are left unchanged. `enabled_tools` uses a nested Option so
 /// "not mentioned" stays distinguishable from "explicitly cleared to all tools".
 #[derive(Debug, Clone, Deserialize)]

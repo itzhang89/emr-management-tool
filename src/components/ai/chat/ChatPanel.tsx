@@ -35,6 +35,7 @@ import {
   useCreateChatSession,
   useDeleteChatAssistant,
   useDeleteChatSession,
+  useEnsureDbhubChatAssistant,
   useUpdateChatSession
 } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,7 @@ export function ChatPanel({
   const assistants = useChatAssistants();
   const sessions = useChatSessions();
   const createSession = useCreateChatSession();
+  const ensureDbhubAssistant = useEnsureDbhubChatAssistant();
   const updateSession = useUpdateChatSession();
   const deleteSession = useDeleteChatSession();
   const deleteAssistant = useDeleteChatAssistant();
@@ -212,6 +214,7 @@ export function ChatPanel({
     }
 
     const assistantId =
+      assistantList.find((assistant) => assistant.id === "emr-failure-analysis")?.id ??
       (assistantList.find((assistant) => assistant.builtIn) ?? assistantList[0]).id;
     // The new conversation runs on the last model used in any conversation, when
     // one still exists and is still selectable; otherwise it falls back to the
@@ -238,7 +241,8 @@ export function ChatPanel({
     modelOptions
   ]);
 
-  // DBHub → AI: always create a fresh session (no reuse), then auto-send.
+  // DBHub → AI: ensure a per-connection assistant, create a fresh session under
+  // it (so chats aggregate by connection), then auto-send.
   useEffect(() => {
     if (!pendingDbAnalyze) return;
     if (assistants.isLoading || sessions.isLoading || llmProviders.isLoading) return;
@@ -247,10 +251,6 @@ export function ChatPanel({
     if (!data) return;
     useSessionStore.getState().setPendingDbAnalyze(undefined);
 
-    if (assistantList.length === 0) {
-      toast.error("No assistant is available to analyze the database.");
-      return;
-    }
     if (noModels) {
       toast.error(
         "No model is configured yet. Configure one in Providers, then press Analyze again."
@@ -260,26 +260,38 @@ export function ChatPanel({
 
     const title = dbSessionTitle(data);
     const text = dbAnalysisPrompt(data);
-    const assistantId =
-      (assistantList.find((assistant) => assistant.builtIn) ?? assistantList[0]).id;
     const modelId =
       findModelOption(modelOptions, lastUsedModelId)?.id ??
       defaultModelOption(modelOptions)?.id ??
       null;
-    createSession
-      .mutateAsync({ assistantId, title, modelId: modelId ?? undefined })
-      .then((sessionId) => setPendingNewSession({ sessionId, text }))
-      .catch((error: Error) =>
-        toast.error(error?.message || "Failed to start the database analysis")
-      );
+
+    void (async () => {
+      try {
+        const assistantId = await ensureDbhubAssistant.mutateAsync({
+          connectionId: data.connectionId,
+          connectionName: data.connectionName,
+          toolName: data.toolName
+        });
+        const sessionId = await createSession.mutateAsync({
+          assistantId,
+          title,
+          modelId: modelId ?? undefined
+        });
+        setPendingNewSession({ sessionId, text });
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to start the database analysis"
+        );
+      }
+    })();
   }, [
     pendingDbAnalyze,
-    assistantList,
     assistants.isLoading,
     sessions.isLoading,
     llmProviders.isLoading,
     noModels,
     createSession,
+    ensureDbhubAssistant,
     lastUsedModelId,
     modelOptions
   ]);

@@ -301,6 +301,9 @@ pub fn truncate_tool_output(text: &str) -> String {
 }
 
 /// Filters advertised tools down to what an assistant may use.
+///
+/// Patterns ending in `*` match a prefix (e.g. `execute_sql_*` admits every
+/// per-connection DBHub SQL tool). Exact names match one tool.
 pub fn allowed_tools(
     tools: Vec<ToolDefinition>,
     enabled: Option<&[String]>,
@@ -309,9 +312,19 @@ pub fn allowed_tools(
         None => tools,
         Some(enabled) => tools
             .into_iter()
-            .filter(|tool| enabled.iter().any(|name| name == &tool.name))
+            .filter(|tool| tool_name_allowed(&tool.name, enabled))
             .collect(),
     }
+}
+
+fn tool_name_allowed(tool_name: &str, enabled: &[String]) -> bool {
+    enabled.iter().any(|pattern| {
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            tool_name.starts_with(prefix)
+        } else {
+            pattern == tool_name
+        }
+    })
 }
 
 /// A call the model asked for, before it runs.
@@ -1244,6 +1257,30 @@ mod tests {
     fn a_restriction_matching_nothing_advertises_no_tools() {
         let restricted = allowed_tools(vec![tool("find_job")], Some(&[]));
         assert!(restricted.is_empty());
+    }
+
+    #[test]
+    fn a_star_suffix_admits_every_tool_with_that_prefix() {
+        let advertised = vec![
+            tool("execute_sql_bigdata_etl"),
+            tool("execute_sql_sales"),
+            tool("find_job"),
+        ];
+        let restricted = allowed_tools(
+            advertised,
+            Some(&["execute_sql_*".to_string(), "find_job".to_string()]),
+        );
+        assert_eq!(
+            restricted
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "execute_sql_bigdata_etl",
+                "execute_sql_sales",
+                "find_job"
+            ]
+        );
     }
 
     #[test]

@@ -3,8 +3,9 @@
  * title from the connection / table, and the message to auto-send after the
  * user types an instruction.
  *
- * Mirrors {@link ./aiAnalyzeJob.ts} (Job History → AI), but always starts a
- * *new* session — table-level analyses do not reuse prior conversations.
+ * Sessions are created under a per-connection assistant (`DB · <name>`) so
+ * analyses for the same connection stay grouped. Table-level analyses still
+ * always start a *new* session under that assistant.
  */
 
 export interface DbAnalyzeIntent {

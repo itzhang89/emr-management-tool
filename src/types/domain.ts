@@ -976,6 +976,14 @@ export interface CreateChatAssistantRequest {
   accent?: string;
 }
 
+/** Upsert the assistant that owns Chat sessions for one DBHub connection. */
+export interface EnsureDbhubChatAssistantRequest {
+  connectionId: string;
+  connectionName: string;
+  /** MCP tool the assistant may use, e.g. execute_sql_bigdata_etl. */
+  toolName: string;
+}
+
 /** Omit a field to leave it unchanged; pass `enabledTools: null` to allow all. */
 export interface UpdateChatAssistantRequest {
   id: string;
