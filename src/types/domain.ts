@@ -644,6 +644,8 @@ export interface McpToolInfo {
   /** Placeholder until per-tool confirmation exists (`default_allow`). */
   autoApprove: string;
   isDbhub: boolean;
+  /** `emr` | `dbhub` | `glue` | `runbook` */
+  category: string;
 }
 
 /** One MCP tool invocation from the audit database (mcp_audit table). */

@@ -154,6 +154,19 @@ pub async fn list_mcp_tools(
         .map(|tool| {
             let name = tool.name.to_string();
             let is_dbhub = crate::mcp::tools::dbhub_sql::is_dbhub_tool_name(&name);
+            let category = if is_dbhub {
+                "dbhub"
+            } else if name.starts_with("list_glue")
+                || name.starts_with("get_glue")
+                || name.contains("athena")
+            {
+                "glue"
+            } else if name.contains("runbook") || name.contains("rerun_job") {
+                "runbook"
+            } else {
+                "emr"
+            }
+            .to_string();
             crate::models::McpToolInfo {
                 name,
                 description: tool.description.map(|text| text.to_string()),
@@ -161,6 +174,7 @@ pub async fn list_mcp_tools(
                 // Placeholder: confirmation flow is not implemented yet.
                 auto_approve: "default_allow".to_string(),
                 is_dbhub,
+                category,
             }
         })
         .collect())

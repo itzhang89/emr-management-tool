@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,17 +18,8 @@ import { ACCENT_NAMES, accentClasses } from "@/components/ai/chat/accents";
 import { ModelSelect, useModelOptions } from "@/components/ai/chat/ModelSelect";
 import { useCreateChatAssistant, useUpdateChatAssistant } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
+import { tauriClient } from "@/services/tauriClient";
 import type { ChatAssistant } from "@/types/domain";
-
-/** Tool names the MCP server exposes, all read-only. */
-const AVAILABLE_TOOLS = [
-  "analyze_job_failure",
-  "find_job",
-  "describe_job",
-  "list_accounts",
-  "list_job_log_objects",
-  "get_job_log_text"
-];
 
 export function AssistantFormDialog({
   assistant,
@@ -42,6 +34,16 @@ export function AssistantFormDialog({
   const createAssistant = useCreateChatAssistant();
   const updateAssistant = useUpdateChatAssistant();
   const modelOptions = useModelOptions();
+  const toolsQuery = useQuery({
+    queryKey: ["mcp-tools"],
+    queryFn: () => tauriClient.listMcpTools(),
+    enabled: open,
+    staleTime: 10_000
+  });
+  const availableTools = useMemo(
+    () => (toolsQuery.data ?? []).map((tool) => tool.name).sort(),
+    [toolsQuery.data]
+  );
 
   const [name, setName] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -58,8 +60,8 @@ export function AssistantFormDialog({
     setAccent(assistant?.accent ?? "blue");
     // null means "every tool", which is the default for a new assistant.
     setRestrictTools(Boolean(assistant?.enabledTools));
-    setEnabledTools(assistant?.enabledTools ?? [...AVAILABLE_TOOLS]);
-  }, [open, assistant]);
+    setEnabledTools(assistant?.enabledTools ?? availableTools);
+  }, [open, assistant, availableTools]);
 
   const toggleTool = (tool: string) => {
     setEnabledTools((current) =>
@@ -202,8 +204,11 @@ export function AssistantFormDialog({
               Restrict which tools this assistant may use
             </label>
             {restrictTools && (
-              <div className="space-y-1 rounded-md border p-2">
-                {AVAILABLE_TOOLS.map((tool) => (
+              <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
+                {toolsQuery.isLoading && availableTools.length === 0 ? (
+                  <p className="px-1 text-xs text-muted-foreground">Loading tools…</p>
+                ) : null}
+                {availableTools.map((tool) => (
                   <label
                     key={tool}
                     className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-muted/50"
@@ -215,6 +220,9 @@ export function AssistantFormDialog({
                     <span className="font-mono">{tool}</span>
                   </label>
                 ))}
+                {!toolsQuery.isLoading && availableTools.length === 0 ? (
+                  <p className="px-1 text-xs text-muted-foreground">No tools advertised yet.</p>
+                ) : null}
               </div>
             )}
             {!restrictTools && (

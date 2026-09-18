@@ -759,6 +759,8 @@ pub struct McpToolInfo {
     /// the call runs without a user prompt today.
     pub auto_approve: String,
     pub is_dbhub: bool,
+    /// `emr` | `dbhub` | `glue` | `runbook`
+    pub category: String,
 }
 
 /// One MCP tool invocation, persisted into the app's SQLite database
