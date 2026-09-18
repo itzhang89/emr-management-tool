@@ -600,11 +600,9 @@ MSSQL/Oracle 留的门 —— sqlx 0.9 不支持这两者，`tiberius`/`oracle-r
 `DATABASE_OPERATION_TIMEOUT` 后报超时**，而不是返回行。现已显式 `drop(conn)`
 再 close。（sqlite 探针测试实证：close 在有 checked-out 连接时确实阻塞。）
 
-**已知缺口（本次未改，保持行为不变）：MCP 的 `execute_sql_<slug>` 不经网络 profile。**
-`dbhub_query::run_for_command` 会开本地转发，而 mcp 路径直接
-`DialTarget::direct(&shape.connection)` —— 配了 Network Profile 的连接在 AI 工具
-侧拨的是字面 host。修法是调用 `tunnel::dial_target_for`（该路径已持有 app handle
-与 secrets 权限），但那是行为变更，留待确认。
+**已修：MCP 的 `execute_sql_<slug>` 与 workspace 共用 Network Profile 路由。**
+`sql_query_text` 调用 `tunnel::dial_target_for`（与 `run_for_command` 相同），
+配了 SSH/SOCKS5 profile 的连接在 AI 侧同样走本地转发；无 profile 时仍直连。
 
 **macOS 本地网络隐私（Local Network Privacy）拦截直连局域网数据库（2026-09-15）。**
 真机现象：连接 `192.168.xx.60:3306` 的 Test Connection 报

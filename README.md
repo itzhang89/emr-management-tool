@@ -231,7 +231,8 @@ or AWS accounts; large result sets keep only their metadata with a rerun hint.
   as `execute_sql_<slug>` (slug from the connection name) — never hosts, ports,
   or usernames. Calls against disabled or foreign-account connections refuse
   identically; renaming a connection changes the tool name and the old name
-  stops resolving immediately.
+  stops resolving immediately. Queries use the same Network Profile route
+  (SSH tunnel / SOCKS5) as the connection workspace.
 - **Every AI-driven query is audited** in the same tool-audit table as the
   other MCP tools.
 

@@ -4,9 +4,10 @@
 //! tool named `execute_sql_<slug>`, where the slug is derived from the
 //! connection's display name. Calls re-resolve the connection by slug inside
 //! the active account, refuse disabled / deleted / foreign-account ids, then
-//! run through the read-only gate + read-only session in `dbhub::query`. Audit
-//! rows go through the server's `run_tool`, so Chat-driven and agent-driven
-//! calls are audited exactly once like every other tool.
+//! dial through the same Network Profile route as the workspace query tab
+//! (`tunnel::dial_target_for`) and run through the read-only gate + session in
+//! `dbhub::query`. Audit rows go through the server's `run_tool`, so Chat-driven
+//! and agent-driven calls are audited exactly once like every other tool.
 //!
 //! The AI path always passes `writable: false` — the connection's `allow_writes`
 //! flag never affects tool calls.
@@ -18,9 +19,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::db::dbhub::driver::DialTarget;
 use crate::db::dbhub::session::QueryCancellation;
-use crate::db::dbhub::{self, query};
+use crate::db::dbhub::{self, query, tunnel};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnection;
@@ -256,10 +256,11 @@ pub async fn sql_query_text(
     // here rather than at advertisement time (clients may cache tool lists).
     let shape = resolve_shape(app, &args.connection_id).await?;
 
-    // Dialed directly: unlike the workspace commands, this path does not open
-    // a network forward, so a connection behind a Network Profile is not
-    // reachable from here.
-    let target = DialTarget::direct(&shape.connection);
+    // Same route as the workspace query tab: when the connection references a
+    // Network Profile, open the SSH/SOCKS5 forward and keep `_forward` alive
+    // for the duration of `execute` (dropping it closes the tunnel).
+    let (target, _forward) =
+        tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
     // `writable: false` is hardcoded here and not read from the connection:
     // however the user has configured it for their own typing, the model never
     // gets a session that can write.
