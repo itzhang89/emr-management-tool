@@ -1,4 +1,4 @@
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Braces,
   CalendarClock,
@@ -12,12 +12,14 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Sparkles,
   Square,
   Table2
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
+import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -61,7 +63,9 @@ import {
   writeDbWorkspace,
   type CachedResultTab
 } from "@/services/dbWorkspaceCache";
+import { executeSqlToolName } from "@/services/aiAnalyzeDb";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useSessionStore } from "@/stores/sessionStore";
 import type {
   DbCatalogEntry,
   DbConnection,
@@ -86,19 +90,24 @@ import type {
  */
 export function ConnectionQueryTab({
   connection,
-  active = true
+  active = true,
+  onOpenAiAssistant
 }: {
   connection: DbConnection;
   /** Catalog reads start when this dynamic tab becomes visible. */
   active?: boolean;
+  /** Jump to the AI Assistant Chat tab after queuing a DB analysis intent. */
+  onOpenAiAssistant?: () => void;
 }) {
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
+  const setPendingDbAnalyze = useSessionStore((state) => state.setPendingDbAnalyze);
   const runQuery = useRunDbQuery();
   const refreshCatalog = useRefreshDbCatalog(connection.id);
   const cancelQuery = useCancelDbQuery();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
+  const [selectedTable, setSelectedTable] = useState<string>();
   const [sql, setSql] = useState("SELECT 1;");
   const [resultTabs, setResultTabs] = useState<CachedResultTab[]>([]);
   const [activeResultId, setActiveResultId] = useState<string>();
@@ -112,6 +121,7 @@ export function ConnectionQueryTab({
   const [favorites, setFavorites] = useState<SqlFavoriteEntry[]>([]);
   /** The history entry a name is being asked for, when favouriting one. */
   const [favoritePrompt, setFavoritePrompt] = useState<SqlHistoryEntry>();
+  const [analyzeOpen, setAnalyzeOpen] = useState(false);
   const [objectKinds, setObjectKinds] = useState<SchemaObjectKind[]>(
     DEFAULT_SCHEMA_OBJECT_KINDS
   );
@@ -361,8 +371,10 @@ export function ConnectionQueryTab({
     // editor and stops there, which is as far as it can honestly go.
     if (!isRelation(entry.kind)) {
       setSql(entry.name);
+      setSelectedTable(undefined);
       return;
     }
+    setSelectedTable(entry.name);
     // Qualify by schema, not by database: Postgres rejects `database.table`
     // outright, and on MySQL the schema *is* the database, so the qualifier is
     // the same word either way. Empty means the engine has no such level.
@@ -374,11 +386,66 @@ export function ConnectionQueryTab({
     setSql(`SELECT * FROM ${reference} LIMIT 100;`);
   };
 
+  const analyzeFocusLabel =
+    selectedTable ?? selectedSchema ?? selectedDatabase ?? connection.name;
+
+  const openAnalyzeDialog = () => {
+    if (!onOpenAiAssistant) return;
+    if (!connection.enabledForAi) {
+      toast.error(
+        "Enable this connection for AI on the DBHub Overview card first — otherwise Chat has no SQL tool for it."
+      );
+      return;
+    }
+    const toolName = executeSqlToolName(connection.name);
+    if (!toolName) {
+      toast.error(
+        "Connection name must contain letters or digits so Chat can register execute_sql_<slug>."
+      );
+      return;
+    }
+    setAnalyzeOpen(true);
+  };
+
+  const confirmAnalyze = (instruction: string) => {
+    const toolName = executeSqlToolName(connection.name);
+    if (!toolName || !onOpenAiAssistant) return;
+    setPendingDbAnalyze({
+      connectionId: connection.id,
+      connectionName: connection.name,
+      toolName,
+      database: selectedDatabase,
+      schema: selectedSchema,
+      table: selectedTable,
+      instruction
+    });
+    setAnalyzeOpen(false);
+    onOpenAiAssistant();
+  };
+
   const toggleObjectKind = (kind: SchemaObjectKind, on: boolean) => {
     setObjectKinds((kinds) =>
       on ? [...kinds, kind] : kinds.filter((entry) => entry !== kind)
     );
   };
+
+  const analyzeButton = onOpenAiAssistant ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-7"
+          aria-label="Analyze with AI"
+          onClick={openAnalyzeDialog}
+        >
+          <Sparkles className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Analyze with AI · opens Chat with this connection&apos;s context</TooltipContent>
+    </Tooltip>
+  ) : null;
 
   return (
     <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
@@ -421,13 +488,24 @@ export function ConnectionQueryTab({
         objectOptions={schemaObjectOptions(connection.kind)}
         objectKinds={objectKinds}
         onToggleObjectKind={toggleObjectKind}
-        onSelectDatabase={setSelectedDatabase}
-        onSelectSchema={setSelectedSchema}
+        onSelectDatabase={(name) => {
+          setSelectedDatabase(name);
+          setSelectedTable(undefined);
+        }}
+        onSelectSchema={(name) => {
+          setSelectedSchema(name);
+          setSelectedTable(undefined);
+        }}
         onSelectObject={handleSelectObject}
         onBack={() => {
           // One level at a time: schema → database → every database.
-          if (selectedSchema !== undefined) setSelectedSchema(undefined);
-          else setSelectedDatabase(undefined);
+          if (selectedSchema !== undefined) {
+            setSelectedSchema(undefined);
+            setSelectedTable(undefined);
+          } else {
+            setSelectedDatabase(undefined);
+            setSelectedTable(undefined);
+          }
         }}
               onRefresh={refreshCatalog}
               onCollapse={() => setCatalogCollapsed(true)}
@@ -464,6 +542,7 @@ export function ConnectionQueryTab({
             {connection.enabledForAi ? "enabled for AI" : "manual"}
           </span>
           <div className="ml-auto flex items-center gap-1">
+            {analyzeButton}
             <SqlTemplatesButton
               templates={dbSqlTemplates(connection.kind)}
               onSelect={setSql}
@@ -568,6 +647,7 @@ export function ConnectionQueryTab({
                 onRerun={() => void execute(tab.sql, tab.id)}
                 onLoadMore={() => handleLoadMore(tab)}
                 onExport={() => void handleExport(tab)}
+                analyzeButton={analyzeButton}
               />
             )}
           </ResultTabsPanel>
@@ -592,6 +672,14 @@ export function ConnectionQueryTab({
           }
           setFavoritePrompt(undefined);
         }}
+      />
+
+      <DbAnalyzeDialog
+        open={analyzeOpen}
+        onOpenChange={setAnalyzeOpen}
+        connectionName={connection.name}
+        focusLabel={analyzeFocusLabel}
+        onConfirm={confirmAnalyze}
       />
     </div>
   );
@@ -872,7 +960,8 @@ function ResultPane({
   rerunning,
   onRerun,
   onLoadMore,
-  onExport
+  onExport,
+  analyzeButton
 }: {
   result?: DbQueryResult;
   meta?: CachedResultTab;
@@ -880,6 +969,7 @@ function ResultPane({
   onRerun: () => void;
   onLoadMore: () => void;
   onExport: () => void;
+  analyzeButton?: ReactNode;
 }) {
   if (!meta) {
     return (
@@ -909,25 +999,28 @@ function ResultPane({
             {result.offset > 0 ? ` · from row ${result.offset + 1}` : ""}
           </span>
         ) : null}
-        {result ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="ml-auto size-6"
-                aria-label="Export CSV"
-                onClick={onExport}
-              >
-                <Download className="size-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Export CSV · the rows loaded here, not the whole result
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
+        <div className="ml-auto flex items-center gap-1">
+          {analyzeButton}
+          {result ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  aria-label="Export CSV"
+                  onClick={onExport}
+                >
+                  <Download className="size-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Export CSV · the rows loaded here, not the whole result
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+        </div>
       </div>
 
       {result ? (

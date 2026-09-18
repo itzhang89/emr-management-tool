@@ -42,11 +42,14 @@ export function connectionTabValue(connectionId: string) {
 }
 
 export function DbHubPage({
-  initialTab
+  initialTab,
+  onOpenAiAssistant
 }: {
   /** Tab value to land on at mount (sidebar sub-navigation). One-shot: user
    * clicks inside the page take over afterwards. */
   initialTab?: string;
+  /** Jump to the AI Assistant Chat tab after queuing a DB analysis intent. */
+  onOpenAiAssistant?: () => void;
 }) {
   const connectionsQuery = useDbConnections();
   const connections = connectionsQuery.data ?? [];
@@ -111,7 +114,11 @@ export function DbHubPage({
                 visible={activeTab === value}
                 className="flex min-h-0 w-full flex-col"
               >
-                <ConnectionQueryTab connection={connection} active={activeTab === value} />
+                <ConnectionQueryTab
+                  connection={connection}
+                  active={activeTab === value}
+                  onOpenAiAssistant={onOpenAiAssistant}
+                />
               </PersistMount>
             </TabsContent>
           );

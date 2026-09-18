@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { DbAnalyzeIntent } from "@/services/aiAnalyzeDb";
 import type { JobAnalyzeIntent } from "@/services/aiAnalyzeJob";
 import type { StartJobPayloadJson } from "@/services/startJobPayload";
 import type { StartJobRunRequest } from "@/types/domain";
@@ -16,6 +17,8 @@ interface SessionState {
   clonedJobRequest?: StartJobRunRequest;
   pendingSourceSubmit?: { payload: StartJobPayloadJson; virtualClusterId: string };
   pendingAiAnalyze?: PendingAiAnalyze;
+  /** DBHub workspace → Chat: analyze with a user instruction. */
+  pendingDbAnalyze?: DbAnalyzeIntent;
   setRegion: (region: string) => void;
   setSelectedVirtualClusterId: (id?: string) => void;
   setSelectedJobId: (id?: string) => void;
@@ -24,6 +27,7 @@ interface SessionState {
   setClonedJobRequest: (request?: StartJobRunRequest) => void;
   setPendingSourceSubmit: (value?: { payload: StartJobPayloadJson; virtualClusterId: string }) => void;
   setPendingAiAnalyze: (value?: PendingAiAnalyze) => void;
+  setPendingDbAnalyze: (value?: DbAnalyzeIntent) => void;
   resetAccountScopedSession: () => void;
 }
 
@@ -46,10 +50,12 @@ export const useSessionStore = create<SessionState>((set) => ({
       selectedS3Bucket: undefined,
       selectedS3Prefix: undefined
     }),
-  setSelectedS3Location: (selectedS3Bucket, selectedS3Prefix) => set({ selectedS3Bucket, selectedS3Prefix }),
+  setSelectedS3Location: (selectedS3Bucket, selectedS3Prefix) =>
+    set({ selectedS3Bucket, selectedS3Prefix }),
   setClonedJobRequest: (clonedJobRequest) => set({ clonedJobRequest }),
   setPendingSourceSubmit: (pendingSourceSubmit) => set({ pendingSourceSubmit }),
   setPendingAiAnalyze: (pendingAiAnalyze) => set({ pendingAiAnalyze }),
+  setPendingDbAnalyze: (pendingDbAnalyze) => set({ pendingDbAnalyze }),
   resetAccountScopedSession: () =>
     set({
       selectedVirtualClusterId: undefined,
@@ -59,6 +65,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       selectedS3Prefix: undefined,
       clonedJobRequest: undefined,
       pendingSourceSubmit: undefined,
-      pendingAiAnalyze: undefined
+      pendingAiAnalyze: undefined,
+      pendingDbAnalyze: undefined
     })
 }));

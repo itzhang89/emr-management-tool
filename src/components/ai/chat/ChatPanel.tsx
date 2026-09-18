@@ -25,6 +25,7 @@ import {
 } from "@/components/ai/chat/ModelSelect";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
 import { isClearContextKey } from "@/lib/keyboardShortcut";
+import { dbAnalysisPrompt, dbSessionTitle } from "@/services/aiAnalyzeDb";
 import { jobAnalysisPrompt, jobSessionTitle, sameJobTitle } from "@/services/aiAnalyzeJob";
 import { useSessionStore } from "@/stores/sessionStore";
 import {
@@ -159,7 +160,8 @@ export function ChatPanel({
   // does not carry the previous run's history), or starts a new one named after
   // the job — then auto-sends the question.
   const pendingAiAnalyze = useSessionStore((state) => state.pendingAiAnalyze);
-  const setPendingAiAnalyze = useSessionStore((state) => state.setPendingAiAnalyze);
+  // DBHub workspace → AI: always a *new* session with the user's instruction.
+  const pendingDbAnalyze = useSessionStore((state) => state.pendingDbAnalyze);
   const [queuedAnalyze, setQueuedAnalyze] = useState<{
     sessionId: string;
     text: string;
@@ -227,6 +229,52 @@ export function ChatPanel({
     pendingAiAnalyze,
     assistantList,
     sessionList,
+    assistants.isLoading,
+    sessions.isLoading,
+    llmProviders.isLoading,
+    noModels,
+    createSession,
+    lastUsedModelId,
+    modelOptions
+  ]);
+
+  // DBHub → AI: always create a fresh session (no reuse), then auto-send.
+  useEffect(() => {
+    if (!pendingDbAnalyze) return;
+    if (assistants.isLoading || sessions.isLoading || llmProviders.isLoading) return;
+
+    const data = useSessionStore.getState().pendingDbAnalyze;
+    if (!data) return;
+    useSessionStore.getState().setPendingDbAnalyze(undefined);
+
+    if (assistantList.length === 0) {
+      toast.error("No assistant is available to analyze the database.");
+      return;
+    }
+    if (noModels) {
+      toast.error(
+        "No model is configured yet. Configure one in Providers, then press Analyze again."
+      );
+      return;
+    }
+
+    const title = dbSessionTitle(data);
+    const text = dbAnalysisPrompt(data);
+    const assistantId =
+      (assistantList.find((assistant) => assistant.builtIn) ?? assistantList[0]).id;
+    const modelId =
+      findModelOption(modelOptions, lastUsedModelId)?.id ??
+      defaultModelOption(modelOptions)?.id ??
+      null;
+    createSession
+      .mutateAsync({ assistantId, title, modelId: modelId ?? undefined })
+      .then((sessionId) => setPendingNewSession({ sessionId, text }))
+      .catch((error: Error) =>
+        toast.error(error?.message || "Failed to start the database analysis")
+      );
+  }, [
+    pendingDbAnalyze,
+    assistantList,
     assistants.isLoading,
     sessions.isLoading,
     llmProviders.isLoading,

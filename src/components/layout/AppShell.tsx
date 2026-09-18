@@ -253,7 +253,9 @@ export function AppShell() {
       case "s3":
         return <S3BrowserPage />;
       case "glue":
-        return <DbHubPage initialTab={dbHubTabIntent} />;
+        return (
+          <DbHubPage initialTab={dbHubTabIntent} onOpenAiAssistant={openAiAssistantPage} />
+        );
       case "ai":
         return <AiAssistantPage />;
       case "settings":
