@@ -5,6 +5,7 @@ import { LlmSettingsPanel } from "@/components/ai/settings/LlmSettingsPanel";
 import { McpServerPanel } from "@/components/ai/server/McpServerPanel";
 import { McpAuditPanel } from "@/components/ai/server/McpAuditPanel";
 import { RedactionPanel } from "@/components/ai/server/RedactionPanel";
+import { RunbooksPanel } from "@/components/ai/runbooks/RunbooksPanel";
 
 /**
  * All of the app's AI capabilities in one place. Chat is the daily entry point;
@@ -34,6 +35,7 @@ export function AiAssistantPage() {
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
         <TabsList className="w-fit">
           <TabsTrigger value="chat">Chat</TabsTrigger>
+          <TabsTrigger value="runbooks">Runbooks</TabsTrigger>
           <TabsTrigger value="settings">Providers</TabsTrigger>
           <TabsTrigger value="redact">Redaction</TabsTrigger>
           <TabsTrigger value="server">MCP Server</TabsTrigger>
@@ -47,6 +49,10 @@ export function AiAssistantPage() {
               setTab("settings");
             }}
           />
+        </TabsContent>
+
+        <TabsContent value="runbooks" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <RunbooksPanel />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

@@ -40,6 +40,7 @@ use super::tools::analyze_job_failure::{self, AnalyzeJobFailureArgs, AnalyzeJobF
 use super::tools::dbhub_sql;
 use super::tools::glue_athena;
 use super::tools::read_only as read_only_tools;
+use super::tools::runbooks as runbook_tools;
 
 /// The tool handler. Holds the app handle so every `#[tool]` can reach AWS via
 /// `AppJobDataSource` (the same paths the desktop UI uses — no bridge).
@@ -343,6 +344,44 @@ impl McpTools {
                 glue_athena::execute_athena_sql(&app, &future_args).await
             },
             |message| glue_athena::ExecuteAthenaSqlResult::refused(&args.sql, message),
+        )
+        .await
+    }
+
+    /// Match a diagnosis context against remediation runbooks. Returns advice
+    /// messages and whether an *approved* runbook would auto-rerun the EMR job.
+    #[tool(name = "match_runbooks")]
+    async fn match_runbooks(
+        &self,
+        Parameters(args): Parameters<runbook_tools::MatchRunbooksArgs>,
+    ) -> String {
+        self.run_tool(
+            "match_runbooks",
+            &args,
+            runbook_tools::match_runbooks(&args),
+            |_| Vec::<crate::db::runbooks::MatchedRunbook>::new(),
+        )
+        .await
+    }
+
+    /// Rerun an EMR job from local history when an *approved* runbook allows
+    /// auto-rerun. Refuses when no approved runbook matches or the job has no
+    /// stored StartJobRunRequest. This is a write action and is audited.
+    #[tool(name = "propose_rerun_job")]
+    async fn propose_rerun_job(
+        &self,
+        Parameters(args): Parameters<runbook_tools::ProposeRerunJobArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "propose_rerun_job",
+            &args,
+            async move {
+                let app = app?;
+                runbook_tools::propose_rerun_job(&app, &future_args).await
+            },
+            |message| runbook_tools::ProposeRerunJobResult::refused(message),
         )
         .await
     }

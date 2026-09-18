@@ -3,6 +3,7 @@ pub mod dbhub;
 pub mod llm;
 pub mod redact;
 pub mod repository;
+pub mod runbooks;
 
 use crate::error::{AppError, AppResult};
 use chrono::{DateTime, Utc};

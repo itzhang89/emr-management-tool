@@ -666,6 +666,39 @@ export interface McpAuditEntry {
   modelId?: string | null;
 }
 
+/** Match rules for a remediation runbook. */
+export interface RunbookMatch {
+  jobNameRegex?: string | null;
+  errorContains?: string | null;
+  currentStatusPrefix?: string | null;
+  projectName?: string | null;
+}
+
+export type RunbookAction =
+  | { type: "advise"; message: string }
+  | { type: "rerunEmrJob" };
+
+export interface RemediationRunbook {
+  id: string;
+  name: string;
+  enabled: boolean;
+  approved: boolean;
+  priority: number;
+  matchRules: RunbookMatch;
+  actions: RunbookAction[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RemediationRunbookInput {
+  name: string;
+  enabled?: boolean;
+  approved?: boolean;
+  priority?: number;
+  matchRules: RunbookMatch;
+  actions: RunbookAction[];
+}
+
 // --- LLM provider configuration -------------------------------------------
 // Two levels: provider → model. A provider is one place to send requests —
 // protocol, address, API keys, custom headers — and its models hang directly off

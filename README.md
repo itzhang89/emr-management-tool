@@ -239,11 +239,20 @@ or AWS accounts; large result sets keep only their metadata with a rerun hint.
 
 The **AI Assistant** page collects the app's AI capabilities into four tabs.
 
-**Chat** answers questions about job failures. Assistants are presets — a system
-prompt, a default model, and which tools they may use — and each holds its own
-conversations. A built-in "EMR failure analysis" assistant is seeded on first run.
-Every tool call the model makes is shown as an expandable step with its arguments
-and result.
+**Chat** answers questions about job failures and database analysis. Assistants are
+presets — a system prompt, a default model, and which tools they may use — and
+each holds its own conversations. A built-in "EMR failure analysis" assistant is
+seeded on first run. DBHub connection workspaces can open a new Chat session with
+connection/table context after you type an analysis instruction. Every tool call
+the model makes is shown as an expandable step with its arguments and result.
+
+**Runbooks** (AI Assistant tab) store match rules and remediation advice. An
+*approved* runbook that includes an EMR rerun action allows Chat's
+`propose_rerun_job` tool to auto-submit a new run from local job history.
+
+**MCP tools** include EMR log analysis, per-connection `execute_sql_<slug>`,
+read-only Glue/Athena (`list_glue_*`, `execute_athena_sql`), and runbook match/rerun.
+
 
 **LLM Setting** configures providers in three levels: a provider (a name plus the
 API shape, `openai` or `anthropic`), its endpoints (base URL and API key), and the

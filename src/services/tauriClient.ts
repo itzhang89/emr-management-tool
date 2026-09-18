@@ -52,6 +52,8 @@ import type {
   McpStatus,
   McpAuditEntry,
   McpToolInfo,
+  RemediationRunbook,
+  RemediationRunbookInput,
   AddLlmApiKeyRequest,
   AddLlmModelsRequest,
   CreateLlmProviderRequest,
@@ -210,6 +212,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     mcpStatus: () => call<McpStatus>("mcp_status"),
     listMcpAuditEntries: (limit?: number) => call<McpAuditEntry[]>("list_mcp_audit_entries", { limit }),
     listMcpTools: () => call<McpToolInfo[]>("list_mcp_tools"),
+    listRemediationRunbooks: () => call<RemediationRunbook[]>("list_remediation_runbooks"),
+    createRemediationRunbook: (request: RemediationRunbookInput) =>
+      call<RemediationRunbook>("create_remediation_runbook", { request }),
+    updateRemediationRunbook: (id: string, request: RemediationRunbookInput) =>
+      call<RemediationRunbook>("update_remediation_runbook", { id, request }),
+    deleteRemediationRunbook: (id: string) => call<void>("delete_remediation_runbook", { id }),
     listLlmProviders: () => call<LlmProvider[]>("list_llm_providers"),
     createLlmProvider: (request: CreateLlmProviderRequest) => call<string>("create_llm_provider", request),
     updateLlmProvider: (request: UpdateLlmProviderRequest) => call<void>("update_llm_provider", request),

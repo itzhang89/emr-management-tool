@@ -161,7 +161,7 @@ pub async fn list_mcp_tools(
                 || name.contains("athena")
             {
                 "glue"
-            } else if name.contains("runbook") || name.contains("rerun_job") {
+            } else if name.contains("runbook") || name == "propose_rerun_job" {
                 "runbook"
             } else {
                 "emr"

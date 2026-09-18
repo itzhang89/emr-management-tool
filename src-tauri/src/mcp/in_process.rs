@@ -148,6 +148,8 @@ mod tests {
             "Glue catalog tools advertised: {names:?}"
         );
         assert!(names.contains(&"execute_athena_sql"), "{names:?}");
+        assert!(names.contains(&"match_runbooks"), "{names:?}");
+        assert!(names.contains(&"propose_rerun_job"), "{names:?}");
         assert!(
             !names.contains(&"list_databases"),
             "list_databases was removed: {names:?}"

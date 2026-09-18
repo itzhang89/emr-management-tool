@@ -563,6 +563,7 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     crate::db::chat::migrate(pool).await?;
     crate::db::redact::migrate(pool).await?;
     crate::db::dbhub::migrate(pool).await?;
+    crate::db::runbooks::migrate(pool).await?;
 
     Ok(())
 }
