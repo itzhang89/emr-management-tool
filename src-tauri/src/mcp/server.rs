@@ -38,6 +38,7 @@ use super::audit;
 use super::source::AppJobDataSource;
 use super::tools::analyze_job_failure::{self, AnalyzeJobFailureArgs, AnalyzeJobFailureReport};
 use super::tools::dbhub_sql;
+use super::tools::glue_athena;
 use super::tools::read_only as read_only_tools;
 
 /// The tool handler. Holds the app handle so every `#[tool]` can reach AWS via
@@ -235,6 +236,113 @@ impl McpTools {
                 truncated: false,
                 error: Some(message.to_string()),
             },
+        )
+        .await
+    }
+
+    /// List Glue Data Catalog databases in the active AWS account. Read-only.
+    #[tool(name = "list_glue_databases")]
+    async fn list_glue_databases(
+        &self,
+        Parameters(args): Parameters<glue_athena::ListGlueDatabasesArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "list_glue_databases",
+            &args,
+            async move {
+                let app = app?;
+                glue_athena::list_glue_databases(&app, &future_args).await
+            },
+            |_| serde_json::json!({ "databases": [], "nextToken": null }),
+        )
+        .await
+    }
+
+    /// List tables in one Glue database. Requires databaseName. Read-only.
+    #[tool(name = "list_glue_tables")]
+    async fn list_glue_tables(
+        &self,
+        Parameters(args): Parameters<glue_athena::ListGlueTablesArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "list_glue_tables",
+            &args,
+            async move {
+                let app = app?;
+                glue_athena::list_glue_tables(&app, &future_args).await
+            },
+            |_| serde_json::json!({ "tables": [], "nextToken": null }),
+        )
+        .await
+    }
+
+    /// Get one Glue table's schema, partition keys and storage location. Read-only.
+    #[tool(name = "get_glue_table")]
+    async fn get_glue_table(
+        &self,
+        Parameters(args): Parameters<glue_athena::GetGlueTableArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "get_glue_table",
+            &args,
+            async move {
+                let app = app?;
+                let detail = glue_athena::get_glue_table(&app, &future_args).await?;
+                Ok(serde_json::to_value(detail).unwrap_or_default())
+            },
+            |message| {
+                serde_json::json!({
+                    "error": message,
+                    "databaseName": args.database_name,
+                    "tableName": args.table_name
+                })
+            },
+        )
+        .await
+    }
+
+    /// List Athena workgroups in the active AWS account so execute_athena_sql
+    /// can pick a SQL workgroup. Read-only.
+    #[tool(name = "list_athena_workgroups")]
+    async fn list_athena_workgroups(&self) -> String {
+        let app = self.app_handle();
+        self.run_tool(
+            "list_athena_workgroups",
+            &serde_json::json!({}),
+            async move {
+                let app = app?;
+                let groups = glue_athena::list_athena_workgroups(&app).await?;
+                Ok(serde_json::to_value(groups).unwrap_or_default())
+            },
+            |_| serde_json::json!([]),
+        )
+        .await
+    }
+
+    /// Run ONE read-only Athena SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN)
+    /// against the active account. Requires workgroup. DDL/DML is refused.
+    /// Returns the first result page (default 50 rows, max 100). Read-only.
+    #[tool(name = "execute_athena_sql")]
+    async fn execute_athena_sql(
+        &self,
+        Parameters(args): Parameters<glue_athena::ExecuteAthenaSqlArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "execute_athena_sql",
+            &args,
+            async move {
+                let app = app?;
+                glue_athena::execute_athena_sql(&app, &future_args).await
+            },
+            |message| glue_athena::ExecuteAthenaSqlResult::refused(&args.sql, message),
         )
         .await
     }

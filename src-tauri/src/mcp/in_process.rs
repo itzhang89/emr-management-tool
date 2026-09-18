@@ -144,6 +144,11 @@ mod tests {
         assert!(names.contains(&"list_job_log_objects"), "{names:?}");
         assert!(names.contains(&"get_job_log_text"), "{names:?}");
         assert!(
+            names.contains(&"list_glue_databases"),
+            "Glue catalog tools advertised: {names:?}"
+        );
+        assert!(names.contains(&"execute_athena_sql"), "{names:?}");
+        assert!(
             !names.contains(&"list_databases"),
             "list_databases was removed: {names:?}"
         );
