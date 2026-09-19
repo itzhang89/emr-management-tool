@@ -17,10 +17,11 @@ use super::parse_timestamp;
 /// list, and nothing tells the user how this differs from a generic chat window.
 const BUILT_IN_ASSISTANT_ID: &str = "emr-failure-analysis";
 const PATROL_ASSISTANT_ID: &str = "etl-daily-patrol";
+const RECONCILE_ASSISTANT_ID: &str = "source-yb-reconcile";
 
 const BUILT_IN_SYSTEM_PROMPT: &str = "\
 You help diagnose Amazon EMR on EKS job failures. You have tools over the user's \
-configured AWS accounts, Glue/Athena, DBHub SQL connections, and remediation runbooks.
+configured AWS accounts and remediation runbooks.
 
 Call only the tools each step needs — do not invoke every available tool.
 
@@ -42,27 +43,61 @@ reaches you, so bucket names, ARNs, account ids, and hostnames appear as \
 placeholders — do not ask the user to un-redact them.";
 
 const PATROL_SYSTEM_PROMPT: &str = "\
-You run daily ETL patrol across EMR on EKS jobs, Glue/Athena catalogs, and DBHub \
-metadata databases (often bigdata_etl). Remediation runbooks are available.
+You run daily ETL patrol across EMR on EKS jobs, Glue/Athena catalogs, DBHub \
+metadata databases (often bigdata_etl), and optional source↔warehouse freshness \
+checks via compare_table_freshness. Remediation runbooks are available.
 
 Call tools on demand for the current step only — never spray every tool in one turn.
 
 Typical flow (skip steps that do not apply to the ask):
 1. Pipeline health from an ETL metadata DB: use the matching execute_sql_* tool \
 for recent job_log / step_log failures. Prefer SELECT/SHOW with tight limits.
-2. For a concrete EMR job id: find_job, then analyze_job_failure.
-3. Drill into logs only when the one-shot report is inconclusive \
+2. When the user names source and warehouse tables (or tool slugs), call \
+compare_table_freshness for a metadata spot-check (row counts / MAX(watermark)).
+3. For a concrete EMR job id: find_job, then analyze_job_failure.
+4. Drill into logs only when the one-shot report is inconclusive \
 (list_job_log_objects / get_job_log_text).
-4. Catalog or warehouse checks: use Glue/Athena tools selectively.
-5. match_runbooks with job name / error summary / status; follow its advice. \
+5. Catalog or warehouse schema hints: use Glue/Athena tools selectively.
+6. match_runbooks with job name / error summary / status; follow its advice. \
 Only call propose_rerun_job when wouldAutoRerun is true (approved runbook); \
 otherwise tell the user to approve a runbook or rerun from Job History.
 
 End with a short patrol summary. Ground claims in tool output; say when evidence \
-is thin. Log content is redacted before it reaches you.";
+is thin. Never invent connection ids. Never repair warehouse data automatically. \
+Log content is redacted before it reaches you.";
 
-/// Fixed MCP tools for the patrol assistant, plus `execute_sql_*` for every
-/// AI-enabled DBHub connection.
+const RECONCILE_SYSTEM_PROMPT: &str = "\
+You reconcile data freshness between a source system and Yellowbrick (or another \
+warehouse) using DBHub connections. You attribute mismatches with Glue metadata \
+and EMR logs — you do not repair data or submit EMR jobs.
+
+Call tools on demand for the current step only.
+
+Work in this order:
+1. Confirm source and target: connection id or execute_sql_* tool slug, table \
+names, optional schema, and watermark column. Ask the user if anything is missing; \
+do not invent connection ids or table names.
+2. Call compare_table_freshness (metadata only: COUNT and optional MAX(watermark)).
+3. On mismatch or probe failure: use Glue (list/get table) and/or find_job + \
+analyze_job_failure / log tools when a related EMR job is known.
+4. Call match_runbooks with a short status/error summary (e.g. freshness lag). \
+Follow advise text. Do not call propose_rerun_job from this assistant.
+
+End with a short attribution summary: match or mismatch, lag, and next human steps. \
+Ground claims in tool output.";
+
+/// EMR failure analysis: diagnosis + runbooks + optional approved rerun.
+const EMR_ENABLED_TOOLS: &[&str] = &[
+    "list_accounts",
+    "find_job",
+    "analyze_job_failure",
+    "list_job_log_objects",
+    "get_job_log_text",
+    "match_runbooks",
+    "propose_rerun_job",
+];
+
+/// Patrol: discovery across SQL, freshness, Glue, EMR, runbooks.
 const PATROL_ENABLED_TOOLS: &[&str] = &[
     "list_accounts",
     "find_job",
@@ -76,6 +111,24 @@ const PATROL_ENABLED_TOOLS: &[&str] = &[
     "execute_athena_sql",
     "match_runbooks",
     "propose_rerun_job",
+    "compare_table_freshness",
+    "execute_sql_*",
+];
+
+/// Source↔YB reconcile: compare + attribution; no auto-rerun.
+const RECONCILE_ENABLED_TOOLS: &[&str] = &[
+    "list_accounts",
+    "find_job",
+    "analyze_job_failure",
+    "list_job_log_objects",
+    "get_job_log_text",
+    "list_glue_databases",
+    "list_glue_tables",
+    "get_glue_table",
+    "list_athena_workgroups",
+    "execute_athena_sql",
+    "match_runbooks",
+    "compare_table_freshness",
     "execute_sql_*",
 ];
 
@@ -209,20 +262,27 @@ async fn table_definition(pool: &SqlitePool, name: &str) -> AppResult<Option<Str
     Ok(row.and_then(|row| row.get::<Option<String>, _>("sql")))
 }
 
-/// Inserts built-in assistants once. Their prompts (and the patrol tool
-/// allowlist) refresh on every start so improvements reach existing installs,
-/// but the user's own edits to name, model, or (for EMR) tool selection are
-/// left alone where noted below.
+/// Inserts built-in assistants once. Prompts and curated tool allowlists refresh
+/// on every start so improvements reach existing installs; the user's own edits
+/// to name, model, or accent are left alone.
 async fn seed_built_in_assistants(pool: &SqlitePool) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
+
+    let emr_tools = EMR_ENABLED_TOOLS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
     sqlx::query(
         "insert into chat_assistants
             (id, name, system_prompt, default_model_id, enabled_tools, accent, sort_order, built_in, created_at, updated_at)
-         values (?1, 'EMR failure analysis', ?2, null, null, 'blue', 0, 1, ?3, ?3)
-         on conflict(id) do update set system_prompt = excluded.system_prompt",
+         values (?1, 'EMR failure analysis', ?2, null, ?3, 'blue', 0, 1, ?4, ?4)
+         on conflict(id) do update set
+            system_prompt = excluded.system_prompt,
+            enabled_tools = excluded.enabled_tools",
     )
     .bind(BUILT_IN_ASSISTANT_ID)
     .bind(BUILT_IN_SYSTEM_PROMPT)
+    .bind(encode_tools(Some(emr_tools.as_slice()))?)
     .bind(&now)
     .execute(pool)
     .await
@@ -243,6 +303,26 @@ async fn seed_built_in_assistants(pool: &SqlitePool) -> AppResult<()> {
     .bind(PATROL_ASSISTANT_ID)
     .bind(PATROL_SYSTEM_PROMPT)
     .bind(encode_tools(Some(patrol_tools.as_slice()))?)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    let reconcile_tools = RECONCILE_ENABLED_TOOLS
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    sqlx::query(
+        "insert into chat_assistants
+            (id, name, system_prompt, default_model_id, enabled_tools, accent, sort_order, built_in, created_at, updated_at)
+         values (?1, 'Source ↔ Yellowbrick reconcile', ?2, null, ?3, 'amber', 2, 1, ?4, ?4)
+         on conflict(id) do update set
+            system_prompt = excluded.system_prompt,
+            enabled_tools = excluded.enabled_tools",
+    )
+    .bind(RECONCILE_ASSISTANT_ID)
+    .bind(RECONCILE_SYSTEM_PROMPT)
+    .bind(encode_tools(Some(reconcile_tools.as_slice()))?)
     .bind(&now)
     .execute(pool)
     .await
@@ -1423,7 +1503,7 @@ mod tests {
         let pool = test_pool().await;
         let assistants = list_assistants(&pool).await.unwrap();
 
-        assert_eq!(assistants.len(), 2);
+        assert_eq!(assistants.len(), 3);
         let emr = assistants
             .iter()
             .find(|a| a.id == BUILT_IN_ASSISTANT_ID)
@@ -1432,37 +1512,53 @@ mod tests {
             .iter()
             .find(|a| a.id == PATROL_ASSISTANT_ID)
             .expect("patrol");
-        assert!(emr.built_in);
-        assert!(patrol.built_in);
-        // EMR keeps every tool; patrol uses a curated allowlist with SQL wildcard.
-        assert_eq!(emr.enabled_tools, None);
+        let reconcile = assistants
+            .iter()
+            .find(|a| a.id == RECONCILE_ASSISTANT_ID)
+            .expect("reconcile");
+        assert!(emr.built_in && patrol.built_in && reconcile.built_in);
+
+        let emr_tools = emr.enabled_tools.as_deref().unwrap_or_default();
+        assert!(emr_tools.iter().any(|t| t == "analyze_job_failure"));
+        assert!(emr_tools.iter().any(|t| t == "propose_rerun_job"));
+        assert!(!emr_tools.iter().any(|t| t == "compare_table_freshness"));
+        assert!(!emr_tools.iter().any(|t| t == "execute_sql_*"));
+
         let patrol_tools = patrol.enabled_tools.as_deref().unwrap_or_default();
         assert!(patrol_tools.iter().any(|t| t == "match_runbooks"));
+        assert!(patrol_tools.iter().any(|t| t == "compare_table_freshness"));
         assert!(patrol_tools.iter().any(|t| t == "execute_sql_*"));
+
+        let reconcile_tools = reconcile.enabled_tools.as_deref().unwrap_or_default();
+        assert!(reconcile_tools.iter().any(|t| t == "compare_table_freshness"));
+        assert!(!reconcile_tools.iter().any(|t| t == "propose_rerun_job"));
+
         let emr_prompt = emr.system_prompt.as_deref().unwrap_or_default();
         assert!(emr_prompt.contains("find_job"), "{emr_prompt}");
         assert!(emr_prompt.contains("analyze_job_failure"), "{emr_prompt}");
         let patrol_prompt = patrol.system_prompt.as_deref().unwrap_or_default();
-        assert!(patrol_prompt.contains("on demand"), "{patrol_prompt}");
-        assert!(patrol_prompt.contains("match_runbooks"), "{patrol_prompt}");
+        assert!(patrol_prompt.contains("compare_table_freshness"), "{patrol_prompt}");
+        let reconcile_prompt = reconcile.system_prompt.as_deref().unwrap_or_default();
+        assert!(reconcile_prompt.contains("compare_table_freshness"), "{reconcile_prompt}");
+        assert!(reconcile_prompt.contains("Do not call propose_rerun_job"), "{reconcile_prompt}");
     }
 
     #[tokio::test]
     async fn seeding_twice_refreshes_the_prompt_without_duplicating() {
         let pool = test_pool().await;
         migrate(&pool).await.expect("second migrate is a no-op");
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 3);
     }
 
     #[tokio::test]
     async fn built_in_assistants_cannot_be_deleted() {
         let pool = test_pool().await;
         let assistants = list_assistants(&pool).await.unwrap();
-        assert_eq!(assistants.len(), 2);
+        assert_eq!(assistants.len(), 3);
         for assistant in &assistants {
             assert!(delete_assistant(&pool, &assistant.id).await.is_err());
         }
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 3);
     }
 
     #[tokio::test]
@@ -1939,7 +2035,7 @@ mod tests {
         assert_eq!(delete_all_sessions(&pool).await.unwrap(), 1);
         assert!(list_sessions(&pool).await.unwrap().is_empty());
         assert!(list_messages(&pool, &session_id).await.unwrap().is_empty());
-        assert_eq!(list_assistants(&pool).await.unwrap().len(), 2);
+        assert_eq!(list_assistants(&pool).await.unwrap().len(), 3);
     }
 
     #[tokio::test]
