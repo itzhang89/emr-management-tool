@@ -37,6 +37,7 @@ use crate::error::AppResult;
 use super::audit;
 use super::source::AppJobDataSource;
 use super::tools::analyze_job_failure::{self, AnalyzeJobFailureArgs, AnalyzeJobFailureReport};
+use super::tools::compare_freshness;
 use super::tools::dbhub_sql;
 use super::tools::glue_athena;
 use super::tools::read_only as read_only_tools;
@@ -344,6 +345,29 @@ impl McpTools {
                 glue_athena::execute_athena_sql(&app, &future_args).await
             },
             |message| glue_athena::ExecuteAthenaSqlResult::refused(&args.sql, message),
+        )
+        .await
+    }
+
+    /// Compare row counts and optional MAX(watermark) between two AI-enabled
+    /// DBHub connections (typically a source system and Yellowbrick). Read-only;
+    /// table/column names must be simple identifiers. On mismatch, follow up
+    /// with Glue/EMR tools and match_runbooks — do not repair data.
+    #[tool(name = "compare_table_freshness")]
+    async fn compare_table_freshness(
+        &self,
+        Parameters(args): Parameters<compare_freshness::CompareTableFreshnessArgs>,
+    ) -> String {
+        let app = self.app_handle();
+        let future_args = args.clone();
+        self.run_tool(
+            "compare_table_freshness",
+            &args,
+            async move {
+                let app = app?;
+                compare_freshness::compare_table_freshness(&app, &future_args).await
+            },
+            |message| compare_freshness::CompareTableFreshnessResult::refused(message),
         )
         .await
     }

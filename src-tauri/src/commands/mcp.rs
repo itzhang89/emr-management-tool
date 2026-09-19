@@ -154,7 +154,7 @@ pub async fn list_mcp_tools(
         .map(|tool| {
             let name = tool.name.to_string();
             let is_dbhub = crate::mcp::tools::dbhub_sql::is_dbhub_tool_name(&name);
-            let category = if is_dbhub {
+            let category = if is_dbhub || name == "compare_table_freshness" {
                 "dbhub"
             } else if name.starts_with("list_glue")
                 || name.starts_with("get_glue")

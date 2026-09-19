@@ -151,6 +151,10 @@ mod tests {
         assert!(names.contains(&"match_runbooks"), "{names:?}");
         assert!(names.contains(&"propose_rerun_job"), "{names:?}");
         assert!(
+            names.contains(&"compare_table_freshness"),
+            "freshness compare advertised: {names:?}"
+        );
+        assert!(
             !names.contains(&"list_databases"),
             "list_databases was removed: {names:?}"
         );
