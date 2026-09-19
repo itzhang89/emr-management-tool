@@ -256,7 +256,10 @@ makes is shown as an expandable step with its arguments and result.
 
 **Runbooks** (AI Assistant tab) store match rules and remediation advice. An
 *approved* runbook that includes an EMR rerun action allows Chat's
-`propose_rerun_job` tool to auto-submit a new run from local job history.
+`propose_rerun_job` tool to auto-submit a new run from local job history
+(`source_request`) or, when missing, from `describe_job_run` for sparkSubmit
+jobs. A `compare_source_yellowbrick` action type is reserved for a future
+source↔warehouse freshness check and is not executed yet.
 
 **MCP tools** include EMR log analysis, per-connection `execute_sql_<slug>`,
 read-only Glue/Athena (`list_glue_*`, `execute_athena_sql`), and runbook match/rerun.
@@ -286,8 +289,10 @@ configure. No provider is configured by default.
   not read.
 - **Log content is redacted before it leaves a tool** — ARNs, bucket names,
   account ids, IPs, and hostnames become placeholders.
-- **Every MCP tool is read-only.** Nothing reachable through Chat or an external
-  agent can change AWS state.
+- **Most MCP tools are read-only.** EMR diagnosis, Glue/Athena, and DBHub SQL
+  cannot change AWS or database state. The exception is
+  `propose_rerun_job`, which may submit a new EMR job run only when an
+  *approved* runbook with a rerun action matches — and every call is audited.
 - **The HTTP endpoint binds loopback only** and validates the `Host` header.
 - **Conversations persist to the local SQLite database**, so tool output including
   log excerpts is stored on disk. Deleting a conversation or an assistant removes
