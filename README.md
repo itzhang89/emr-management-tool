@@ -240,14 +240,21 @@ or AWS accounts; large result sets keep only their metadata with a rerun hint.
 
 The **AI Assistant** page collects the app's AI capabilities into four tabs.
 
-**Chat** answers questions about job failures, database analysis, and daily ETL
-patrol. Assistants are presets — a system prompt, a default model, and which
-tools they may use — and each holds its own conversations. Two built-ins are
-seeded on first run:
+**Chat** answers questions about job failures, database analysis, daily ETL
+patrol, and source↔warehouse freshness. Assistants are presets — a system prompt,
+a default model, and which tools they may use — and each holds its own
+conversations. Three built-ins are seeded on first run:
 
-- **EMR failure analysis** — Job History → Analyze opens sessions here.
+- **EMR failure analysis** — Job History → Analyze opens sessions here (EMR logs +
+  runbooks; no DBHub SQL / freshness compare).
 - **ETL daily patrol** — multi-tool patrol (EMR, Glue/Athena, DBHub SQL,
-  runbooks); call tools on demand for the current step only.
+  `compare_table_freshness`, runbooks); call tools on demand per step.
+- **Source ↔ Yellowbrick reconcile** — metadata freshness compare then attribution
+  via Glue/EMR/`match_runbooks`; does **not** call `propose_rerun_job`.
+
+Table mappings for compare are supplied in Chat (connection tool slug, tables,
+watermark column) — there is no persistent mapping store yet. On mismatch the
+model attributes root cause; it does not repair warehouse data.
 
 DBHub connection workspaces open Chat under a per-connection assistant
 (`DB · <connection>`), restricted to that connection's `execute_sql_<slug>`
@@ -258,11 +265,12 @@ makes is shown as an expandable step with its arguments and result.
 *approved* runbook that includes an EMR rerun action allows Chat's
 `propose_rerun_job` tool to auto-submit a new run from local job history
 (`source_request`) or, when missing, from `describe_job_run` for sparkSubmit
-jobs. A `compare_source_yellowbrick` action type is reserved for a future
-source↔warehouse freshness check and is not executed yet.
+jobs. A `compare_source_yellowbrick` action type remains reserved (not executed);
+use the `compare_table_freshness` MCP tool from Chat instead.
 
 **MCP tools** include EMR log analysis, per-connection `execute_sql_<slug>`,
-read-only Glue/Athena (`list_glue_*`, `execute_athena_sql`), and runbook match/rerun.
+`compare_table_freshness` (row count / MAX(watermark) lag), read-only
+Glue/Athena (`list_glue_*`, `execute_athena_sql`), and runbook match/rerun.
 
 
 **LLM Setting** configures providers in three levels: a provider (a name plus the

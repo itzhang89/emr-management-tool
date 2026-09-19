@@ -113,15 +113,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
 }
 
 async fn seed_examples(pool: &SqlitePool) -> AppResult<()> {
-    let count: i64 = sqlx::query_scalar("select count(*) from remediation_runbooks")
-        .fetch_one(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
-    if count > 0 {
-        return Ok(());
-    }
-
     let now = Utc::now();
+    // Idempotent by id so new example runbooks appear on existing installs.
     let examples = [
         RemediationRunbook {
             id: "rb-consecutive-failures".into(),
@@ -162,9 +155,30 @@ async fn seed_examples(pool: &SqlitePool) -> AppResult<()> {
             created_at: now,
             updated_at: now,
         },
+        RemediationRunbook {
+            id: "rb-freshness-lag".into(),
+            name: "Source warehouse freshness lag".into(),
+            enabled: true,
+            approved: false,
+            priority: 30,
+            match_rules: RunbookMatch {
+                job_name_regex: None,
+                error_contains: Some("lag".into()),
+                current_status_prefix: None,
+                project_name: None,
+            },
+            actions: vec![RunbookAction::Advise {
+                message: "Call compare_table_freshness with the source and Yellowbrick (or warehouse) connection tool slugs, tables, and watermark column. On mismatch, check Glue table metadata and related EMR job logs, then summarize attribution — do not repair warehouse data automatically.".into(),
+            }],
+            created_at: now,
+            updated_at: now,
+        },
     ];
 
     for runbook in examples {
+        if get_runbook(pool, &runbook.id).await?.is_some() {
+            continue;
+        }
         insert_runbook(pool, &runbook).await?;
     }
     Ok(())
