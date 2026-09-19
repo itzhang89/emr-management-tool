@@ -674,9 +674,11 @@ export interface RunbookMatch {
   projectName?: string | null;
 }
 
+/** Runbook actions. `compareSourceYellowbrick` is reserved and not executed yet. */
 export type RunbookAction =
   | { type: "advise"; message: string }
-  | { type: "rerunEmrJob" };
+  | { type: "rerunEmrJob" }
+  | { type: "compareSourceYellowbrick" };
 
 export interface RemediationRunbook {
   id: string;

@@ -215,7 +215,7 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     listMcpTools: () => call<McpToolInfo[]>("list_mcp_tools"),
     listRemediationRunbooks: () => call<RemediationRunbook[]>("list_remediation_runbooks"),
     createRemediationRunbook: (request: RemediationRunbookInput) =>
-      call<RemediationRunbook>("create_remediation_runbook", { request }),
+      call<RemediationRunbook>("create_remediation_runbook", request),
     updateRemediationRunbook: (id: string, request: RemediationRunbookInput) =>
       call<RemediationRunbook>("update_remediation_runbook", { id, request }),
     deleteRemediationRunbook: (id: string) => call<void>("delete_remediation_runbook", { id }),

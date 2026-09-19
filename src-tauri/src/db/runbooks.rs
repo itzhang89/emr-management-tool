@@ -28,6 +28,9 @@ pub enum RunbookAction {
     /// When the parent runbook is `approved`, Chat may auto-call start_job_run.
     /// When not approved, match_runbooks only surfaces advise actions.
     RerunEmrJob,
+    /// Reserved for a future source↔Yellowbrick row-count / freshness compare.
+    /// Matching ignores this action; nothing executes it yet.
+    CompareSourceYellowbrick,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,7 +273,7 @@ pub async fn match_runbooks(
             .iter()
             .filter_map(|action| match action {
                 RunbookAction::Advise { message } => Some(message.clone()),
-                RunbookAction::RerunEmrJob => None,
+                RunbookAction::RerunEmrJob | RunbookAction::CompareSourceYellowbrick => None,
             })
             .collect();
         let would_auto_rerun = runbook.approved
