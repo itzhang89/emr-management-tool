@@ -4,9 +4,8 @@ import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components
 import { LogsEmptyState } from "@/components/logs/LogsEmptyState";
 import { LogWorkspace } from "@/components/logs/LogWorkspace";
 import { RecentSearchInput, type RecentSearchInputHandle } from "@/components/search/RecentSearchInput";
-import { Badge } from "@/components/ui/badge";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
-import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
+import { useDescribeJobRun } from "@/hooks/useEmr";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
 import { localeTag, useLocale, useT } from "@/i18n";
 import { isFocusSearchKey } from "@/lib/keyboardShortcut";
@@ -44,9 +43,10 @@ export interface LogsTabSnapshot extends LogsTabRestoredState {
  *
  * This is the old standalone Logs page with its surroundings moved out: the job
  * comes in as a prop instead of from the session store (a tab is a fixed
- * `(job, cluster)` pair — nothing about it changes while it is open), the page
- * chrome is a one-line job header instead of a page title, and the tab reports
- * its selection and the text it fetched so the workspace can cache them.
+ * `(job, cluster)` pair — nothing about it changes while it is open), and the
+ * tab reports its selection and the text it fetched so the workspace can cache
+ * them. It carries no header of its own: the strip already names the job, and
+ * the viewer's own command bar carries the destination path.
  *
  * A tab with no `jobId` is a draft: the job id box and the empty state, which
  * is how a job the list does not show is still reachable. Submitting an id
@@ -76,7 +76,6 @@ export function LogsTab({
   const t = useT();
   const locale = useLocale();
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
-  const clusters = useVirtualClusters();
   const clusterId = virtualClusterId ?? effectiveVirtualClusterId;
   const [jobIdInput, setJobIdInput] = useState(jobId ?? "");
   const [recentJobIdSearches, setRecentJobIdSearches] = useState<string[]>([]);
@@ -189,7 +188,6 @@ export function LogsTab({
     s3: Boolean(s3Destination),
     cloudwatch: Boolean(cloudWatchDestination)
   };
-  const clusterName = clusters.data?.clusters.find((cluster) => cluster.id === clusterId)?.name;
   // A job we cannot describe is still a job whose logs we may have on disk.
   // Showing the cached copy beats showing an error, which is the whole reason
   // the text is cached at all.
@@ -198,17 +196,6 @@ export function LogsTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <span className="min-w-0 truncate font-medium">{describedJob.data?.name ?? jobId}</span>
-        <span className="font-mono text-xs text-muted-foreground">{jobId}</span>
-        {describedJob.data?.state ? (
-          <Badge variant="secondary" className="text-xs">
-            {describedJob.data.state}
-          </Badge>
-        ) : null}
-        {clusterName ? <span className="truncate text-xs text-muted-foreground">{clusterName}</span> : null}
-      </div>
-
       {describedJob.isLoading ? (
         <p className="shrink-0 text-sm text-muted-foreground">{t("Loading job log configuration...")}</p>
       ) : null}

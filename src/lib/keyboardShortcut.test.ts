@@ -5,6 +5,7 @@ import {
   isClearContextKey,
   isCloseTabKey,
   isFocusSearchKey,
+  isNewTabKey,
   isPageCycleNextKey,
   isPageCyclePreviousKey,
   isTabCycleNextKey,
@@ -171,6 +172,11 @@ describe("tab cycle and close keys", () => {
     expect(
       isPageCycleNextKey({ ...base, key: "]", code: "BracketRight", shiftKey: false })
     ).toBe(true);
+  });
+
+  it("matches modifier plus N for a new tab", () => {
+    expect(isNewTabKey({ ...base, key: "n", shiftKey: false })).toBe(true);
+    expect(isNewTabKey({ ...base, key: "N", shiftKey: true })).toBe(false);
   });
 
   it("matches modifier plus W for closing a tab", () => {

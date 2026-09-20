@@ -17,6 +17,7 @@ export const SHORTCUT_IDS = {
   LOGS_FOCUS_JOB_ID: "logs-focus-job-id",
   CHAT_CLEAR_CONTEXT: "chat-clear-context",
   HISTORY_FOCUS_SEARCH: "history-focus-search",
+  TAB_NEW: "tab-new",
   TAB_PREVIOUS: "tab-previous",
   TAB_NEXT: "tab-next",
   TAB_CLOSE: "tab-close",
@@ -133,6 +134,13 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Focus job search",
     description: "Focus the Job History search box",
     keys: [formatModShortcut("F")]
+  },
+  {
+    id: SHORTCUT_IDS.TAB_NEW,
+    category: "history",
+    label: "New log tab",
+    description: "Open an empty log tab and type a job id into it",
+    keys: [formatModShortcut("N")]
   },
   {
     id: SHORTCUT_IDS.TAB_PREVIOUS,

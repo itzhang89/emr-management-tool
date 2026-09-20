@@ -9,7 +9,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { HISTORY_TAB_ID, useJobLogTabs, type TabSnapshot } from "@/hooks/useJobLogTabs";
 import { useT } from "@/i18n";
 import { stripJobNameTimestamp } from "@/services/jobRunDisplay";
-import { isCloseTabKey, isTabCycleNextKey, isTabCyclePreviousKey } from "@/lib/keyboardShortcut";
+import { isCloseTabKey, isNewTabKey, isTabCycleNextKey, isTabCyclePreviousKey } from "@/lib/keyboardShortcut";
 import type { JobRunSummary } from "@/types/domain";
 
 /**
@@ -93,6 +93,14 @@ export function JobHistoryPage({
     [activeTabId, selectTab, tabs]
   );
 
+  const openDraft = useCallback(() => {
+    if (openDraftTab() === "at-capacity") {
+      refuseAtCapacity();
+    }
+  }, [openDraftTab, refuseAtCapacity]);
+
+  // The workspace's own shortcuts. They live here rather than in the shell:
+  // the strip only exists while this page is up.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isTabCyclePreviousKey(event)) {
@@ -105,6 +113,11 @@ export function JobHistoryPage({
         cycleTab(1);
         return;
       }
+      if (isNewTabKey(event)) {
+        event.preventDefault();
+        openDraft();
+        return;
+      }
       if (isCloseTabKey(event)) {
         // The fixed Job History tab ignores the close, but the key is still
         // ours: letting it through would close the window instead.
@@ -114,13 +127,7 @@ export function JobHistoryPage({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTabId, closeTab, cycleTab]);
-
-  const openDraft = useCallback(() => {
-    if (openDraftTab() === "at-capacity") {
-      refuseAtCapacity();
-    }
-  }, [openDraftTab, refuseAtCapacity]);
+  }, [activeTabId, closeTab, cycleTab, openDraft]);
 
   // A tab's snapshot handler has to keep its identity between renders: the tab
   // reports from an effect, and a fresh function each render would re-run it.

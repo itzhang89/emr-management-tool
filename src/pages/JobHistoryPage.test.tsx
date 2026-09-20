@@ -544,6 +544,15 @@ describe("JobHistoryPage", () => {
     expect(screen.getByRole("tab", { name: "running-etl" })).toHaveFocus();
   });
 
+  it("opens a new draft tab with Mod+N", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.keyboard("{Meta>}n{/Meta}");
+
+    expect(screen.getByRole("tab", { name: "New log tab" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("restores the tabs and their cached log text from the last session", () => {
     window.localStorage.setItem(
       "emr-eks:job-history-tabs:acct-test",

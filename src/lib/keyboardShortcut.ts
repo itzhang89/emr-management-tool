@@ -112,6 +112,15 @@ export function isTabCycleNextKey(
   return event.key === "]" || event.code === "BracketRight";
 }
 
+/** ⌘N — open a new (empty) log tab. */
+export function isNewTabKey(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">
+) {
+  if (!hasPrimaryModShortcutModifiers(event)) return false;
+
+  return event.key === "n" || event.key === "N";
+}
+
 /** ⌘W — close the tab in front. */
 export function isCloseTabKey(
   event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">

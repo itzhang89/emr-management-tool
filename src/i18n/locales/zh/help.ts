@@ -70,6 +70,8 @@ const help: TranslationDictionary = {
 
   // Shortcuts — Job Logs
   "Toggle log files panel": "折叠 / 展开日志文件面板",
+  "New log tab": "新建日志标签页",
+  "Open an empty log tab and type a job id into it": "打开一个空白日志标签页并输入作业 id",
   "Previous tab": "上一个标签页",
   "Move to the tab on the left in the Job History workspace": "切到作业历史工作区左侧的标签页",
   "Next tab": "下一个标签页",
