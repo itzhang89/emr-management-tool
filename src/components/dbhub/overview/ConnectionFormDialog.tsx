@@ -22,7 +22,7 @@ import {
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { DbAuthMode, DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
-import { useSecrets } from "@/hooks/useSecrets";
+import { useCreateSecret, useSecrets } from "@/hooks/useSecrets";
 
 /**
  * The "Connect to a database" form (design section 5): Server and
@@ -44,6 +44,15 @@ const DEFAULT_PORTS: Record<DbConnectionKind, number> = {
   yellowbrick: 5432
 };
 
+function sanitizeSecretConnectName(value: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return sanitized || "connection";
+}
+
 export function ConnectionFormDialog({
   open,
   onOpenChange,
@@ -64,6 +73,7 @@ export function ConnectionFormDialog({
   const profiles = profilesQuery.data ?? [];
   const secretsQuery = useSecrets();
   const secrets = secretsQuery.data ?? [];
+  const createSecret = useCreateSecret();
 
   const [kind, setKind] = useState<DbConnectionKind>(connection?.kind ?? "mysql");
   const [name, setName] = useState(connection?.name ?? "");
@@ -206,10 +216,45 @@ export function ConnectionFormDialog({
     }
   };
 
+  const handleCreateAndBindSecret = async () => {
+    if (!name.trim()) {
+      toast.error(t("Connection name is required."));
+      return;
+    }
+    if (!password.trim()) {
+      toast.error(t("Password is required to create a secret."));
+      return;
+    }
+    const secretName = `${kind}.${sanitizeSecretConnectName(name)}`;
+    const payload = {
+      username: username.trim() || undefined,
+      password: password.trim(),
+      host: host.trim() || undefined,
+      port: Number(port) || undefined,
+      database: database.trim() || undefined
+    };
+    try {
+      const created = await createSecret.mutateAsync({
+        name: secretName,
+        description: `DBHub connection ${name.trim()}`,
+        secretString: JSON.stringify(payload, null, 2),
+        tags: [{ key: "purpose", value: "dbhub" }]
+      });
+      setAuthMode("aws_secret");
+      setSecretArn(created.arn);
+      setPassword("");
+      toast.success(t("Secret created and bound."));
+      await secretsQuery.refetch();
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to create secret."));
+    }
+  };
+
   const busy =
     createConnection.isPending ||
     updateConnection.isPending ||
-    testDraftConnection.isPending;
+    testDraftConnection.isPending ||
+    createSecret.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -345,22 +390,48 @@ export function ConnectionFormDialog({
                   <Label htmlFor="conn-secret" className="text-right text-sm">
                     {t("Secret")}
                   </Label>
-                  <select
-                    id="conn-secret"
-                    value={secretArn}
-                    onChange={(event) => setSecretArn(event.target.value)}
-                    className="h-9 max-w-sm rounded-md border bg-background px-3 text-sm"
-                  >
-                    <option value="">{t("Select a secret…")}</option>
-                    {preferredSecrets.map((secret) => (
-                      <option key={secret.arn} value={secret.arn}>
-                        {secret.name.startsWith(`${kind}.`) ? "★ " : ""}
-                        {secret.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex max-w-sm flex-col gap-2">
+                    <select
+                      id="conn-secret"
+                      value={secretArn}
+                      onChange={(event) => setSecretArn(event.target.value)}
+                      className="h-9 rounded-md border bg-background px-3 text-sm"
+                    >
+                      <option value="">{t("Select a secret…")}</option>
+                      {preferredSecrets.map((secret) => (
+                        <option key={secret.arn} value={secret.arn}>
+                          {secret.name.startsWith(`${kind}.`) ? "★ " : ""}
+                          {secret.name}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="self-start"
+                      disabled={busy}
+                      onClick={() => void handleCreateAndBindSecret()}
+                    >
+                      {t("Create and bind AWS Secret")}
+                    </Button>
+                  </div>
                 </>
-              ) : null}
+              ) : (
+                <>
+                  <div />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="max-w-sm self-start"
+                    disabled={busy}
+                    onClick={() => void handleCreateAndBindSecret()}
+                  >
+                    {t("Save as AWS Secret")}
+                  </Button>
+                </>
+              )}
 
               <Label htmlFor="conn-username" className="text-right text-sm">{t("Username")}</Label>
               <Input
@@ -372,26 +443,29 @@ export function ConnectionFormDialog({
                   authMode === "aws_secret" ? t("Optional fallback — secret may override") : undefined
                 }
               />
-              {authMode === "manual" ? (
-                <>
-                  <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
-                  <div className="flex max-w-xs items-center gap-2">
-                    <Input
-                      id="conn-password"
-                      type="password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      placeholder={connection ? t("•••••••• (saved — leave blank to keep)") : ""}
-                    />
-                  </div>
-                </>
-              ) : (
-                <p className="col-span-2 text-xs text-muted-foreground">
-                  {t(
-                    "Password and optional host/user/database come from the bound secret JSON at connect time."
-                  )}
-                </p>
-              )}
+              <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
+              <div className="flex max-w-xs flex-col gap-1">
+                <Input
+                  id="conn-password"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder={
+                    authMode === "manual" && connection
+                      ? t("•••••••• (saved — leave blank to keep)")
+                      : authMode === "aws_secret"
+                        ? t("Needed only to create a new secret")
+                        : ""
+                  }
+                />
+                {authMode === "aws_secret" ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t(
+                      "Password and optional host/user/database come from the bound secret JSON at connect time."
+                    )}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </fieldset>
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { tauriClient } from "@/services/tauriClient";
-import type { CreateSecretInput } from "@/types/domain";
+import type { CreateSecretInput, DeleteSecretInput, UpdateSecretInput } from "@/types/domain";
 
 export function useSecrets() {
   const account = useActiveAwsAccount();
@@ -17,6 +17,26 @@ export function useCreateSecret() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (request: CreateSecretInput) => tauriClient.createSecret(request),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["secrets"] });
+    }
+  });
+}
+
+export function useUpdateSecret() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: UpdateSecretInput) => tauriClient.updateSecret(request),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["secrets"] });
+    }
+  });
+}
+
+export function useDeleteSecret() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (request: DeleteSecretInput) => tauriClient.deleteSecret(request),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["secrets"] });
     }

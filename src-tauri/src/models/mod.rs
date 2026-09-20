@@ -103,6 +103,33 @@ pub struct CreateSecretInput {
     pub tags: Vec<SecretTag>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSecretInput {
+    pub secret_id: String,
+    pub secret_string: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSecretInput {
+    pub secret_id: String,
+    /// Recovery window in days (7–30). Defaults to 7 when absent.
+    #[serde(default)]
+    pub recovery_window_in_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSecretResult {
+    pub name: String,
+    pub arn: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_date: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecretValueResponse {

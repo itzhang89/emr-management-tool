@@ -307,7 +307,7 @@ fn access_denied_message(service: &str) -> String {
         "emr-containers" => "Access denied for EMR on EKS. Check IAM permissions for emr-containers actions on this account.".to_string(),
         "cloudwatchlogs" => "Access denied for CloudWatch Logs. Check IAM permissions for logs:FilterLogEvents and related actions.".to_string(),
         "sts" => "Access denied when validating AWS credentials. Ensure sts:GetCallerIdentity is allowed for this account.".to_string(),
-        "secretsmanager" => "Access denied for Secrets Manager. Grant secretsmanager:ListSecrets, DescribeSecret, GetSecretValue, and CreateSecret (plus TagResource) to this account in IAM.".to_string(),
+        "secretsmanager" => "Access denied for Secrets Manager. Grant secretsmanager:ListSecrets, DescribeSecret, GetSecretValue, CreateSecret, PutSecretValue, UpdateSecret, DeleteSecret (plus TagResource) to this account in IAM.".to_string(),
         _ => format!("Access denied for AWS {service}. Check IAM permissions for this account in Settings."),
     }
 }

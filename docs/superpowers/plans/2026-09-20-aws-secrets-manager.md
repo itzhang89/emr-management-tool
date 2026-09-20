@@ -87,12 +87,12 @@ Locked constraints:
 
 ---
 
-## Phase 5 — P2 write ops (later)
+## Phase 5 — P2 write ops
 
-- [ ] `update_secret_value` / `put_secret_value` gated by `submitUser` ownership.
-- [ ] `delete_secret` gated the same way; recovery window; confirm dialog.
-- [ ] Disable Edit/Delete in UI when not owner; explain why.
-- [ ] Optional: Create-from-connection shortcut (prefill `{kind}.{sanitizedName}` + JSON from form).
+- [x] `update_secret` / `put_secret_value` gated by `submitUser` ownership.
+- [x] `delete_secret` gated the same way; 7-day recovery window; confirm dialog.
+- [x] Disable Edit/Delete in UI when not owner; explain why.
+- [x] Create-from-connection shortcut (prefill `{kind}.{sanitizedName}` + JSON from form).
 
 **Done when:** P2 acceptance in the design doc is met.
 

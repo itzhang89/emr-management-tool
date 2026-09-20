@@ -92,6 +92,9 @@ import type {
   SchemaObjectKind,
   SecretSummary,
   CreateSecretInput,
+  UpdateSecretInput,
+  DeleteSecretInput,
+  DeleteSecretResult,
   SecretValueResponse
 } from "@/types/domain";
 
@@ -331,6 +334,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     listSecrets: () => call<SecretSummary[]>("list_secrets"),
     describeSecret: (secretId: string) => call<SecretSummary>("describe_secret", { secretId }),
     createSecret: (request: CreateSecretInput) => call<SecretSummary>("create_secret", request),
+    updateSecret: (request: UpdateSecretInput) => call<SecretSummary>("update_secret", request),
+    deleteSecret: (request: DeleteSecretInput) => call<DeleteSecretResult>("delete_secret", request),
     getSecretValue: (secretId: string) => call<SecretValueResponse>("get_secret_value", { secretId }),
     /** Rebuilds the native menu. The frontend owns the language preference. */
     setAppLanguage: (request: { language: string }) => call<void>("set_app_language", request)

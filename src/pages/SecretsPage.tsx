@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type MouseEvent } from "react";
-import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search } from "lucide-react";
+import { Copy, Eye, EyeOff, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,13 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
-import { useCreateSecret, useGetSecretValue, useSecrets } from "@/hooks/useSecrets";
+import {
+  useCreateSecret,
+  useDeleteSecret,
+  useGetSecretValue,
+  useSecrets,
+  useUpdateSecret
+} from "@/hooks/useSecrets";
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { SecretSummary } from "@/types/domain";
@@ -34,9 +40,15 @@ const JSON_TEMPLATE = `{
 }`;
 
 const MASK = "••••••••";
+const DEFAULT_RECOVERY_DAYS = 7;
 
 function tagValue(secret: SecretSummary, key: string): string | undefined {
   return secret.tags.find((tag) => tag.key === key)?.value;
+}
+
+function isOwnedBy(secret: SecretSummary, submitUser: string | undefined): boolean {
+  if (!submitUser) return false;
+  return tagValue(secret, "submitUser") === submitUser;
 }
 
 /** First-level JSON object entries only; non-objects become a single synthetic field. */
@@ -67,17 +79,18 @@ export function SecretsPage() {
   const submitUser = useSubmitUser();
   const secretsQuery = useSecrets();
   const createSecret = useCreateSecret();
+  const updateSecret = useUpdateSecret();
+  const deleteSecret = useDeleteSecret();
   const getSecretValue = useGetSecretValue();
 
   const [search, setSearch] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  /** ARN of the expanded row. */
+  const [editing, setEditing] = useState<SecretSummary | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SecretSummary | null>(null);
   const [expandedArn, setExpandedArn] = useState<string | null>(null);
-  /** Fetched SecretString for the expanded row. */
   const [expandedRaw, setExpandedRaw] = useState<string | null>(null);
   const [expandLoading, setExpandLoading] = useState(false);
-  /** Keys whose values are currently revealed (within the expanded row). */
   const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
   const [name, setName] = useState("");
@@ -133,6 +146,70 @@ export function SecretsPage() {
       resetCreate();
     } catch (error) {
       toast.error(formatAppError(error, "Failed to create secret."));
+    }
+  };
+
+  const openEdit = async (secret: SecretSummary, event: MouseEvent) => {
+    event.stopPropagation();
+    if (!isOwnedBy(secret, submitUser.data)) {
+      toast.error(t("Only the owner can edit this secret."));
+      return;
+    }
+    try {
+      const { value } = await getSecretValue.mutateAsync(secret.arn);
+      setEditing(secret);
+      setDescription(secret.description ?? "");
+      setSecretString(value);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to load secret value."));
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editing) return;
+    try {
+      JSON.parse(secretString);
+    } catch {
+      toast.error(t("Secret value must be valid JSON."));
+      return;
+    }
+    try {
+      await updateSecret.mutateAsync({
+        secretId: editing.arn,
+        secretString,
+        description: description.trim()
+      });
+      toast.success(t('Secret "{name}" updated.', { name: editing.name }));
+      if (expandedArn === editing.arn) {
+        setExpandedRaw(secretString);
+        setRevealedKeys(new Set());
+      }
+      setEditing(null);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to update secret."));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    try {
+      const result = await deleteSecret.mutateAsync({
+        secretId: pendingDelete.arn,
+        recoveryWindowInDays: DEFAULT_RECOVERY_DAYS
+      });
+      toast.success(
+        t('Secret "{name}" scheduled for deletion (recovery window {days} days).', {
+          name: result.name,
+          days: DEFAULT_RECOVERY_DAYS
+        })
+      );
+      if (expandedArn === pendingDelete.arn) {
+        setExpandedArn(null);
+        setExpandedRaw(null);
+      }
+      setPendingDelete(null);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to delete secret."));
     }
   };
 
@@ -260,7 +337,7 @@ export function SecretsPage() {
               <th className="px-3 py-2 font-medium">{t("Description")}</th>
               <th className="px-3 py-2 font-medium">{t("Tags")}</th>
               <th className="px-3 py-2 font-medium">{t("Last changed")}</th>
-              <th className="w-12 px-3 py-2 font-medium">{t("Actions")}</th>
+              <th className="w-28 px-3 py-2 font-medium">{t("Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -279,6 +356,7 @@ export function SecretsPage() {
             ) : (
               filtered.map((secret) => {
                 const owner = tagValue(secret, "submitUser");
+                const owned = isOwnedBy(secret, submitUser.data);
                 const isExpanded = expandedArn === secret.arn;
                 return (
                   <Fragment key={secret.arn}>
@@ -322,22 +400,71 @@ export function SecretsPage() {
                           : "—"}
                       </td>
                       <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-8"
-                              aria-label={t("Copy entire secret")}
-                              disabled={getSecretValue.isPending}
-                              onClick={(event) => void copyWholeSecret(secret, event)}
-                            >
-                              <Copy className="size-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>{t("Copy entire secret")}</TooltipContent>
-                        </Tooltip>
+                        <div className="flex items-center gap-0.5">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                aria-label={t("Copy entire secret")}
+                                disabled={getSecretValue.isPending}
+                                onClick={(event) => void copyWholeSecret(secret, event)}
+                              >
+                                <Copy className="size-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Copy entire secret")}</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8"
+                                  aria-label={t("Edit secret")}
+                                  disabled={!owned || getSecretValue.isPending}
+                                  onClick={(event) => void openEdit(secret, event)}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {owned
+                                ? t("Edit secret")
+                                : t("Only the owner (matching submitUser) can edit or delete.")}
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-8 text-destructive hover:text-destructive"
+                                  aria-label={t("Delete secret")}
+                                  disabled={!owned || deleteSecret.isPending}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setPendingDelete(secret);
+                                  }}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {owned
+                                ? t("Delete secret")
+                                : t("Only the owner (matching submitUser) can edit or delete.")}
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
                       </td>
                     </tr>
                     {isExpanded ? (
@@ -449,6 +576,85 @@ export function SecretsPage() {
             </Button>
             <Button type="button" onClick={handleCreate} disabled={createSecret.isPending}>
               {t("Create")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editing)}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("Edit Secret")}</DialogTitle>
+            <DialogDescription className="break-all font-mono text-xs">
+              {editing?.arn}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>{t("Name")}</Label>
+              <Input value={editing?.name ?? ""} disabled className="font-mono text-sm" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-secret-description">{t("Description")}</Label>
+              <Input
+                id="edit-secret-description"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-secret-value">{t("Value (JSON)")}</Label>
+              <Textarea
+                id="edit-secret-value"
+                value={secretString}
+                onChange={(event) => setSecretString(event.target.value)}
+                className="min-h-[10rem] font-mono text-xs"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditing(null)}>
+              {t("Cancel")}
+            </Button>
+            <Button type="button" onClick={handleUpdate} disabled={updateSecret.isPending}>
+              {t("Save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("Delete secret?")}</DialogTitle>
+            <DialogDescription>
+              {t(
+                '"{name}" will be scheduled for deletion with a {days}-day recovery window. Only secrets tagged with your submitUser can be deleted from this app.',
+                { name: pendingDelete?.name ?? "", days: DEFAULT_RECOVERY_DAYS }
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingDelete(null)}>
+              {t("Cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteSecret.isPending}
+            >
+              {t("Delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

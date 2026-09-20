@@ -43,7 +43,25 @@ const secrets: TranslationDictionary = {
     "连接时从绑定的密钥 JSON 读取密码及可选的 host/user/database。",
   "Local password": "本地密码",
   "SM: {name}": "SM: {name}",
-  Tags: "标签"
+  Tags: "标签",
+  "Edit Secret": "编辑密钥",
+  "Edit secret": "编辑密钥",
+  "Delete secret": "删除密钥",
+  "Delete secret?": "删除密钥？",
+  "Only the owner can edit this secret.": "仅所有者可编辑此密钥。",
+  "Only the owner (matching submitUser) can edit or delete.":
+    "仅所有者（submitUser 匹配）可编辑或删除。",
+  'Secret "{name}" updated.': "密钥「{name}」已更新。",
+  'Secret "{name}" scheduled for deletion (recovery window {days} days).':
+    "密钥「{name}」已安排删除（恢复窗口 {days} 天）。",
+  '"{name}" will be scheduled for deletion with a {days}-day recovery window. Only secrets tagged with your submitUser can be deleted from this app.':
+    "「{name}」将安排删除，恢复窗口为 {days} 天。仅带有你的 submitUser 标签的密钥可在本应用中删除。",
+  Delete: "删除",
+  "Save as AWS Secret": "保存为 AWS 密钥",
+  "Create and bind AWS Secret": "创建并绑定 AWS 密钥",
+  "Secret created and bound.": "密钥已创建并绑定。",
+  "Password is required to create a secret.": "创建密钥需要填写密码。",
+  "Needed only to create a new secret": "仅在创建新密钥时需要"
 };
 
 export default secrets;

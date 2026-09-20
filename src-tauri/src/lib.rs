@@ -92,6 +92,8 @@ pub fn run() {
             commands::secrets_manager::list_secrets,
             commands::secrets_manager::describe_secret,
             commands::secrets_manager::create_secret,
+            commands::secrets_manager::update_secret,
+            commands::secrets_manager::delete_secret,
             commands::secrets_manager::get_secret_value,
             commands::glue::list_glue_databases,
             commands::glue::list_glue_tables,

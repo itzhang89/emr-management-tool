@@ -1222,6 +1222,24 @@ export interface CreateSecretInput {
   tags?: SecretTag[];
 }
 
+export interface UpdateSecretInput {
+  secretId: string;
+  secretString: string;
+  description?: string;
+}
+
+export interface DeleteSecretInput {
+  secretId: string;
+  /** Recovery window in days (7–30). Defaults to 7. */
+  recoveryWindowInDays?: number;
+}
+
+export interface DeleteSecretResult {
+  name: string;
+  arn: string;
+  deletionDate?: string;
+}
+
 export interface SecretValueResponse {
   value: string;
 }

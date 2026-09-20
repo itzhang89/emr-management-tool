@@ -122,6 +122,21 @@ pub fn merge_create_tags(
     Ok(tags)
 }
 
+/// Update/Delete are allowed only when `submitUser` exactly matches the local user.
+pub fn owned_by_submit_user(tags: &[SecretTag], submit_user: &str) -> bool {
+    tags.iter().any(|tag| tag.key == TAG_SUBMIT_USER && tag.value == submit_user)
+}
+
+pub fn require_owned_by_submit_user(tags: &[SecretTag], submit_user: &str) -> AppResult<()> {
+    if owned_by_submit_user(tags, submit_user) {
+        Ok(())
+    } else {
+        Err(AppError::validation(format!(
+            "Only the owner (submitUser={submit_user}) can update or delete this secret from the app. Secrets without your submitUser tag are read-only here."
+        )))
+    }
+}
+
 pub fn map_secret_list_entry(
     entry: &aws_sdk_secretsmanager::types::SecretListEntry,
 ) -> Option<SecretSummary> {
@@ -285,5 +300,23 @@ mod tests {
     #[test]
     fn reject_non_object_json() {
         assert!(parse_db_secret_json(r#""just-a-string""#).is_err());
+    }
+
+    #[test]
+    fn ownership_requires_exact_submit_user_tag() {
+        let tags = vec![
+            SecretTag {
+                key: "submitUser".into(),
+                value: "alice".into(),
+            },
+            SecretTag {
+                key: "managedBy".into(),
+                value: MANAGED_BY_VALUE.into(),
+            },
+        ];
+        assert!(owned_by_submit_user(&tags, "alice"));
+        assert!(!owned_by_submit_user(&tags, "bob"));
+        assert!(require_owned_by_submit_user(&tags, "bob").is_err());
+        assert!(require_owned_by_submit_user(&[], "alice").is_err());
     }
 }
