@@ -92,8 +92,10 @@ export function JobHistoryTab({
       {/* No PageHeader here: the workspace's first tab is already labelled
           "Job History", and the sidebar entry right above it carries the
           description a page header would repeat verbatim. What is left is a
-          toolbar, so it is written as one. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
+          toolbar, so it is written as one. `justify-end` keeps the controls
+          where the header's `justify-between` had them — against the right
+          edge, over the table they act on. */}
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
         <RecentSearchInput
           ref={searchInputRef}
           value={searchInput}

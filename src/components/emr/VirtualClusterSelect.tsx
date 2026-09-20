@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyHint";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useVirtualClusters } from "@/hooks/useEmr";
 import { useT } from "@/i18n";
@@ -53,9 +54,20 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
 
   return (
     <Select value={effectiveVirtualClusterId} onValueChange={setSelectedVirtualClusterId}>
-      <SelectTrigger className={cn("w-[220px]", className)}>
-        <SelectValue placeholder={t("Select virtual cluster")} />
-      </SelectTrigger>
+      {/* The tooltip sits on the trigger rather than around the Select: a Radix
+          Select root renders no element of its own, so there is nothing for
+          `TooltipTrigger asChild` to attach to. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {/* Narrower than it looks like it needs: cluster names are short, and
+              the width it used to take came out of the search box beside it.
+              Callers that want more ask for it through `className`. */}
+          <SelectTrigger className={cn("w-[160px]", className)}>
+            <SelectValue placeholder={t("Select virtual cluster")} />
+          </SelectTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{t("Only job runs from this virtual cluster are listed")}</TooltipContent>
+      </Tooltip>
       <SelectContent>
         {availableClusters.map((cluster) => (
           <SelectItem key={cluster.id} value={cluster.id}>

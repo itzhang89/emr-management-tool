@@ -71,7 +71,7 @@ export const RecentSearchInput = forwardRef<
   };
 
   return (
-    <div ref={containerRef} className={cn("relative w-[16rem] min-w-[16rem]", className)}>
+    <div ref={containerRef} className={cn("relative w-[20rem] min-w-[20rem]", className)}>
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       <Input
         ref={inputRef}

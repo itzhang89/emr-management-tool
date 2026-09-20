@@ -78,6 +78,11 @@ const jobHistory: TranslationDictionary = {
   "Auto refresh job history": "自动刷新作业历史",
   "Auto refresh": "自动刷新",
 
+  // Toolbar controls: the words they dropped live here now.
+  "Reloads the job list every {seconds} seconds while it is on":
+    "开启后每 {seconds} 秒重新加载作业列表",
+  "Only job runs from this virtual cluster are listed": "只列出该虚拟集群下的作业运行",
+
   // The workspace's tab strip: Job History is the fixed first tab, every job
   // whose logs are open gets one of its own, and `+` starts an empty one.
   "New log tab": "新建日志标签页",

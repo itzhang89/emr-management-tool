@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JobHistoryPage, type LogTabIntent } from "./JobHistoryPage";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useSessionStore } from "@/stores/sessionStore";
 import { MAX_LOG_TABS } from "@/services/logsTabStorage";
 import type { JobRunSummary } from "@/types/domain";
@@ -67,7 +68,11 @@ let jobs: JobRunSummary[];
 function renderJobHistoryPage(props?: { logTabIntent?: LogTabIntent; onOpenSubmit?: () => void; onOpenAiAssistant?: () => void }) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <JobHistoryPage {...props} />
+      {/* The toolbar's hints are Radix tooltips, which the app provides at the
+          root — a harness that renders the page has to provide one too. */}
+      <TooltipProvider>
+        <JobHistoryPage {...props} />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }
@@ -590,14 +595,18 @@ describe("JobHistoryPage", () => {
     // handled must not reopen a tab the user just closed.
     rerender(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <JobHistoryPage logTabIntent={intent(1)} />
+        <TooltipProvider>
+          <JobHistoryPage logTabIntent={intent(1)} />
+        </TooltipProvider>
       </QueryClientProvider>
     );
     expect(screen.queryByRole("tab", { name: "job-1" })).toBeInTheDocument();
 
     rerender(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <JobHistoryPage logTabIntent={intent(2)} />
+        <TooltipProvider>
+          <JobHistoryPage logTabIntent={intent(2)} />
+        </TooltipProvider>
       </QueryClientProvider>
     );
     expect(screen.getByRole("tab", { name: "job-1" })).toBeInTheDocument();
