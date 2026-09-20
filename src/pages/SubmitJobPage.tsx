@@ -505,9 +505,15 @@ export function SubmitJobPage({
             {mode === "template" ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button type="button" variant="outline" disabled={!previewPayload} onClick={openPreview}>
-                    <Eye data-icon="inline-start" />
-                    {t("Preview JSON")}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label={t("Preview JSON")}
+                    disabled={!previewPayload}
+                    onClick={openPreview}
+                  >
+                    <Eye className="size-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
