@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueTableDetail } from "@/hooks/useGlue";
+import { useT } from "@/i18n";
 import { columnTypeOptions } from "@/services/glueColumnTypes";
 import { buildCreateTableDdl } from "@/services/glueTableDdl";
 import { isSystemTableParameterKey, partitionTableParameters } from "@/services/glueTableParameters";
@@ -31,6 +32,7 @@ export function TableMetadataPanel({
   onSave: (table: GlueTableDetail) => void;
   saving: boolean;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState<GlueTableDetail | undefined>();
   const [descriptionEditing, setDescriptionEditing] = useState(false);
 
@@ -44,7 +46,7 @@ export function TableMetadataPanel({
   }, [editMode]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading table metadata...</p>;
+    return <p className="text-sm text-muted-foreground">{t("Loading table metadata...")}</p>;
   }
 
   if (error) {
@@ -52,7 +54,7 @@ export function TableMetadataPanel({
   }
 
   if (!table || !draft) {
-    return <p className="text-sm text-muted-foreground">Select a table to view metadata.</p>;
+    return <p className="text-sm text-muted-foreground">{t("Select a table to view metadata.")}</p>;
   }
 
   const exitEditMode = () => {
@@ -68,7 +70,9 @@ export function TableMetadataPanel({
           <h3 className="font-medium">
             {table.databaseName}.{table.name}
           </h3>
-          <p className="text-xs text-muted-foreground">Read-only by default. Enable edit mode to update Glue metadata.</p>
+          <p className="text-xs text-muted-foreground">
+            {t("Read-only by default. Enable edit mode to update Glue metadata.")}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -79,20 +83,20 @@ export function TableMetadataPanel({
             onClick={async () => {
               try {
                 await navigator.clipboard?.writeText(buildCreateTableDdl(table));
-                toast.success("CREATE TABLE DDL copied.");
+                toast.success(t("CREATE TABLE DDL copied."));
               } catch (error) {
                 toast.error(formatAppError(error, "Failed to copy DDL."));
               }
             }}
           >
             <Copy data-icon="inline-start" />
-            Copy DDL
+            {t("Copy DDL")}
           </Button>
           {editMode ? (
             <>
               <Button type="button" variant="outline" size="sm" onClick={exitEditMode}>
                 <X data-icon="inline-start" />
-                Cancel
+                {t("Cancel")}
               </Button>
               <Button
                 type="button"
@@ -104,22 +108,22 @@ export function TableMetadataPanel({
                 }}
               >
                 <Save data-icon="inline-start" />
-                Save
+                {t("Save")}
               </Button>
             </>
           ) : (
             <Button type="button" variant="outline" size="sm" onClick={() => onEditModeChange(true)}>
               <Pencil data-icon="inline-start" />
-              Edit metadata
+              {t("Edit metadata")}
             </Button>
           )}
         </div>
       </div>
 
       <MetadataField
-        label="Description"
+        label={t("Description")}
         readOnly={!editMode || !descriptionEditing}
-        hint={editMode && !descriptionEditing ? "Double-click to edit" : undefined}
+        hint={editMode && !descriptionEditing ? t("Double-click to edit") : undefined}
       >
         {editMode && descriptionEditing ? (
           <Textarea
@@ -131,7 +135,7 @@ export function TableMetadataPanel({
         ) : (
           <p
             className={cn("text-sm", editMode && "cursor-text rounded-md px-1 py-0.5 hover:bg-muted/60")}
-            title={editMode ? "Double-click to edit description" : undefined}
+            title={editMode ? t("Double-click to edit description") : undefined}
             onDoubleClick={() => {
               if (editMode) setDescriptionEditing(true);
             }}
@@ -142,19 +146,19 @@ export function TableMetadataPanel({
       </MetadataField>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <MetadataField label="Owner" readOnly={!editMode}>
+        <MetadataField label={t("Owner")} readOnly={!editMode}>
           {editMode ? (
             <Input value={draft.owner ?? ""} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} />
           ) : (
             <p className="text-sm">{table.owner || "—"}</p>
           )}
         </MetadataField>
-        <MetadataField label="Table type" readOnly>
+        <MetadataField label={t("Table type")} readOnly>
           <p className="text-sm">{table.tableType || "—"}</p>
         </MetadataField>
       </div>
 
-      <MetadataField label="Location" readOnly={!editMode}>
+      <MetadataField label={t("Location")} readOnly={!editMode}>
         {editMode ? (
           <Input
             value={draft.location ?? ""}
@@ -166,29 +170,31 @@ export function TableMetadataPanel({
       </MetadataField>
 
       <ColumnSection
-        title="Columns"
+        title={t("Columns")}
+        removeKind={t("column")}
         columns={editMode ? draft.columns : table.columns}
         editMode={editMode}
-        addLabel="Add column"
+        addLabel={t("Add column")}
         onChange={(columns) => setDraft({ ...draft, columns })}
       />
 
       <ColumnSection
-        title="Partition keys"
+        title={t("Partition keys")}
+        removeKind={t("partition key")}
         columns={editMode ? draft.partitionKeys : table.partitionKeys}
         editMode={editMode}
-        addLabel="Add partition key"
+        addLabel={t("Add partition key")}
         onChange={(partitionKeys) => setDraft({ ...draft, partitionKeys })}
       />
 
-      <MetadataField label="Storage formats" readOnly>
+      <MetadataField label={t("Storage formats")} readOnly>
         <p className="font-mono text-xs text-muted-foreground">
           input: {table.inputFormat || "—"} · output: {table.outputFormat || "—"} · serde: {table.serdeLibrary || "—"}
         </p>
       </MetadataField>
 
       <KeyValueSection
-        title="Parameters"
+        title={t("Parameters")}
         values={editMode ? draft.parameters : table.parameters}
         editMode={editMode}
         onChange={(parameters) => setDraft({ ...draft, parameters })}
@@ -208,11 +214,12 @@ function MetadataField({
   hint?: string;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">
         {label}
-        {readOnly ? " (read-only)" : ""}
+        {readOnly ? t(" (read-only)") : ""}
         {hint ? <span className="ml-1 font-normal text-muted-foreground/80">· {hint}</span> : null}
       </Label>
       {children}
@@ -231,11 +238,12 @@ function ColumnTypeSelect({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useT();
   const options = columnTypeOptions(value);
   return (
     <Select value={value || "string"} onValueChange={onChange}>
       <SelectTrigger className="h-9 min-w-[9rem]">
-        <SelectValue placeholder="Type" />
+        <SelectValue placeholder={t("Type")} />
       </SelectTrigger>
       <SelectContent>
         {options.map((type) => (
@@ -250,17 +258,21 @@ function ColumnTypeSelect({
 
 function ColumnSection({
   title,
+  removeKind,
   columns,
   editMode,
   addLabel,
   onChange
 }: {
   title: string;
+  /** The noun used in a row's remove button label, e.g. "column". */
+  removeKind: string;
   columns: GlueTableDetail["columns"];
   editMode: boolean;
   addLabel: string;
   onChange: (columns: GlueTableDetail["columns"]) => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-2">
       <Label className="text-xs text-muted-foreground">{title}</Label>
@@ -268,9 +280,9 @@ function ColumnSection({
         <table className="min-w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Comment</th>
+              <th className="px-3 py-2">{t("Name")}</th>
+              <th className="px-3 py-2">{t("Type")}</th>
+              <th className="px-3 py-2">{t("Comment")}</th>
               {editMode ? <th className="w-12 px-3 py-2" /> : null}
             </tr>
           </thead>
@@ -278,7 +290,7 @@ function ColumnSection({
             {columns.length === 0 ? (
               <tr>
                 <td colSpan={editMode ? 4 : 3} className="px-3 py-2 text-muted-foreground">
-                  No columns.
+                  {t("No columns.")}
                 </td>
               </tr>
             ) : (
@@ -333,7 +345,10 @@ function ColumnSection({
                         variant="ghost"
                         size="icon"
                         className="size-7"
-                        aria-label={`Remove ${title.toLowerCase()} ${column.name || index + 1}`}
+                        aria-label={t("Remove {kind} {name}", {
+                          kind: removeKind,
+                          name: column.name || index + 1
+                        })}
                         onClick={() => onChange(columns.filter((_, entryIndex) => entryIndex !== index))}
                       >
                         <Trash2 className="size-3.5" />
@@ -367,6 +382,7 @@ function KeyValueSection({
   editMode: boolean;
   onChange: (values: Record<string, string>) => void;
 }) {
+  const t = useT();
   const { user: systemAwareUser, system } = partitionTableParameters(values);
   const [entries, setEntries] = useState<Array<{ key: string; value: string; locked?: boolean }>>(() => [
     ...systemAwareUser.map(([key, value]) => ({ key, value, locked: false })),
@@ -413,8 +429,8 @@ function KeyValueSection({
         <table className="min-w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">Key</th>
-              <th className="px-3 py-2">Value</th>
+              <th className="px-3 py-2">{t("Key")}</th>
+              <th className="px-3 py-2">{t("Value")}</th>
               {editMode ? <th className="w-12 px-3 py-2" /> : null}
             </tr>
           </thead>
@@ -422,7 +438,7 @@ function KeyValueSection({
             {entries.length === 0 ? (
               <tr>
                 <td colSpan={editMode ? 3 : 2} className="px-3 py-2 text-muted-foreground">
-                  No parameters.
+                  {t("No parameters.")}
                 </td>
               </tr>
             ) : (
@@ -444,7 +460,9 @@ function KeyValueSection({
                       ) : (
                         <span className="font-mono text-xs">
                           {entry.key}
-                          {locked ? <span className="ml-1 text-muted-foreground">(system)</span> : null}
+                          {locked ? (
+                            <span className="ml-1 text-muted-foreground">{t("(system)")}</span>
+                          ) : null}
                         </span>
                       )}
                     </td>
@@ -470,7 +488,9 @@ function KeyValueSection({
                             variant="ghost"
                             size="icon"
                             className="size-7"
-                            aria-label={`Remove parameter ${entry.key || index + 1}`}
+                            aria-label={t("Remove parameter {key}", {
+                              key: entry.key || index + 1
+                            })}
                             onClick={() => commitEntries(entries.filter((_, entryIndex) => entryIndex !== index))}
                           >
                             <Trash2 className="size-3.5" />
@@ -493,7 +513,7 @@ function KeyValueSection({
           onClick={() => setEntries([...entries, { key: "", value: "", locked: false }])}
         >
           <Plus data-icon="inline-start" />
-          Add parameter
+          {t("Add parameter")}
         </Button>
       ) : null}
     </div>

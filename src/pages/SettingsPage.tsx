@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
 import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
 import { ImportCliProfileDialog } from "@/components/settings/ImportCliProfileDialog";
+import { LanguageCard } from "@/components/settings/LanguageCard";
 import {
   useAwsAccounts,
   useDeleteAwsAccount,
@@ -346,6 +347,8 @@ export function SettingsPage() {
           ))}
         </CardContent>
       </Card>
+
+      <LanguageCard />
 
       <Card>
         <CardHeader className="p-4 2xl:p-5">

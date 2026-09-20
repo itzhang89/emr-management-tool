@@ -8,6 +8,7 @@ import { RecentSearchInput, type RecentSearchInputHandle } from "@/components/se
 import { useDescribeJobRun, useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobLogs, useJobLogStreams, useS3JobLogObject, useS3JobLogObjects } from "@/hooks/useLogs";
+import { useT } from "@/i18n";
 import { isFocusSearchKey } from "@/lib/keyboardShortcut";
 import { cloudWatchLogsService } from "@/services/cloudWatchLogsService";
 import { buildEmrLogTree, pickDefaultLogItem } from "@/services/emrLogTree";
@@ -29,6 +30,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import type { AppError, JobLogObject, JobLogStream } from "@/types/domain";
 
 export function LogsPage() {
+  const t = useT();
   const selectedJobId = useSessionStore((state) => state.selectedJobId);
   const selectedJobVirtualClusterId = useSessionStore((state) => state.selectedJobVirtualClusterId);
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
@@ -131,10 +133,10 @@ export function LogsPage() {
               onChange={setJobIdInput}
               onSubmit={submitJobId}
               recentSearches={recentJobIdSearches}
-              placeholder="Enter job id"
+              placeholder={t("Enter job id")}
               title={jobIdInput}
               inputClassName="font-mono text-sm"
-              listLabel="Recent job ids"
+              listLabel={t("Recent job ids")}
             />
             <VirtualClusterSelect />
           </div>
@@ -146,7 +148,7 @@ export function LogsPage() {
       ) : null}
 
       {selectedJobId && describedJob.isLoading ? (
-        <p className="shrink-0 text-sm text-muted-foreground">Loading job log configuration...</p>
+        <p className="shrink-0 text-sm text-muted-foreground">{t("Loading job log configuration...")}</p>
       ) : null}
 
       {describedJob.error ? (
@@ -157,7 +159,7 @@ export function LogsPage() {
 
       {selectedJobId && !describedJob.isLoading && !describedJob.error && !hasDestinations ? (
         <p className="shrink-0 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-          No CloudWatch or S3 monitoring configuration was found for this job.
+          {t("No CloudWatch or S3 monitoring configuration was found for this job.")}
         </p>
       ) : null}
 
@@ -217,6 +219,7 @@ function S3LogsSource({
   onSourceChange: (source: "s3" | "cloudwatch") => void;
   sourceAvailability: { s3: boolean; cloudwatch: boolean };
 }) {
+  const t = useT();
   const s3LogObjects = useS3JobLogObjects(
     isActive
       ? {
@@ -247,7 +250,7 @@ function S3LogsSource({
       const chunk = await getDownloadChunk(selectedS3Item, selectedJobId, accountId, undefined, destination);
       const savedPath = await saveTextFile(`${selectedJobId}-${selectedS3Item.label}.log`, chunk);
       if (savedPath) {
-        toast.success(`Saved to ${savedPath}`);
+        toast.success(t("Saved to {path}", { path: savedPath }));
       }
     } catch (error) {
       toast.error(errorMessage(error));
@@ -267,7 +270,7 @@ function S3LogsSource({
       selectedItem={selectedS3Item}
       logText={s3LogObject.data?.content ?? ""}
       isLoading={s3LogObjects.isLoading || s3LogObject.isLoading}
-      loadingMessage="Loading S3 archive logs..."
+      loadingMessage={t("Loading S3 archive logs...")}
       errorMessage={
         s3LogObjects.error || s3LogObject.error ? errorMessage(s3LogObjects.error ?? s3LogObject.error) : undefined
       }
@@ -300,6 +303,7 @@ function CloudWatchLogsSource({
   onSourceChange: (source: "s3" | "cloudwatch") => void;
   sourceAvailability: { s3: boolean; cloudwatch: boolean };
 }) {
+  const t = useT();
   const logStreams = useJobLogStreams(
     isActive
       ? {
@@ -341,7 +345,7 @@ function CloudWatchLogsSource({
       const chunk = await getDownloadChunk(selectedCloudWatchItem, selectedJobId, accountId, destination);
       const savedPath = await saveTextFile(`${selectedJobId}-${selectedCloudWatchItem.label}.log`, chunk);
       if (savedPath) {
-        toast.success(`Saved to ${savedPath}`);
+        toast.success(t("Saved to {path}", { path: savedPath }));
       }
     } catch (error) {
       toast.error(errorMessage(error));
@@ -361,7 +365,7 @@ function CloudWatchLogsSource({
       selectedItem={selectedCloudWatchItem}
       logText={cloudWatchLogText}
       isLoading={logStreams.isLoading || logs.isLoading}
-      loadingMessage="Loading CloudWatch logs..."
+      loadingMessage={t("Loading CloudWatch logs...")}
       errorMessage={logStreams.error || logs.error ? errorMessage(logStreams.error ?? logs.error) : undefined}
       onSelect={(item) => onSelectedStreamChange((item as JobLogStream).cloudWatchStreamName)}
       onDownload={() => void downloadSelectedLog()}

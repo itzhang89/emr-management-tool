@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { useT } from "@/i18n";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
 
@@ -20,6 +21,7 @@ export function AboutDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const releaseInfo = getReleaseInfo();
   const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(
     null
@@ -33,12 +35,13 @@ export function AboutDialog({
     try {
       const result = await appUpdater.checkForUpdate();
       if (result.status === "unavailable") {
+        // `result.reason` is service-produced error/diagnostic text, kept in English.
         toast.info(result.reason);
       } else if (result.status === "no-update") {
-        toast.success("You are already using the latest version.");
+        toast.success(t("You are already using the latest version."));
       } else {
         setAvailableUpdate(result);
-        toast.success(`Version ${result.version} is available.`);
+        toast.success(t("Version {version} is available.", { version: result.version }));
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to check for updates.");
@@ -52,7 +55,7 @@ export function AboutDialog({
     setInstallingUpdate(true);
     try {
       await availableUpdate.install();
-      toast.success("Update installed. Restart the app to use the new version.");
+      toast.success(t("Update installed. Restart the app to use the new version."));
       setAvailableUpdate(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to install update.");
@@ -66,23 +69,27 @@ export function AboutDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2">
+            {/* Product name, kept untranslated to match the window title. */}
             <DialogTitle>EMR on EKS Management Tool</DialogTitle>
-            {releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
+            {releaseInfo.isDevelopment ? <Badge variant="secondary">{t("Development")}</Badge> : null}
           </div>
-          <DialogDescription>Desktop GUI for submitting and managing EMR on EKS jobs.</DialogDescription>
+          <DialogDescription>{t("Desktop GUI for submitting and managing EMR on EKS jobs.")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-1 text-sm">
             <p>
-              Version: <span className="font-medium">{releaseInfo.version}</span>
+              {t("Version:")} <span className="font-medium">{releaseInfo.version}</span>
             </p>
-            <p className="text-muted-foreground">Channel: {releaseInfo.channelLabel}</p>
+            <p className="text-muted-foreground">
+              {t("Channel:")} {t(releaseInfo.channelLabel)}
+            </p>
           </div>
 
           {availableUpdate ? (
             <p className="text-sm text-muted-foreground">
-              Upgrade available: <span className="font-medium text-foreground">{availableUpdate.version}</span>
+              {t("Upgrade available:")}{" "}
+              <span className="font-medium text-foreground">{availableUpdate.version}</span>
             </p>
           ) : null}
 
@@ -95,12 +102,14 @@ export function AboutDialog({
             {availableUpdate ? (
               <>
                 <Download data-icon="inline-start" />
-                {installingUpdate ? "Installing..." : `Install ${availableUpdate.version}`}
+                {installingUpdate
+                  ? t("Installing...")
+                  : t("Install {version}", { version: availableUpdate.version })}
               </>
             ) : (
               <>
                 <RefreshCw data-icon="inline-start" />
-                {checkingUpdate ? "Checking..." : "Check for updates"}
+                {checkingUpdate ? t("Checking...") : t("Check for updates")}
               </>
             )}
           </Button>

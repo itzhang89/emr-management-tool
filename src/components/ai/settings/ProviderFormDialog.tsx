@@ -19,6 +19,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { useCreateLlmProvider, useDuplicateLlmProvider } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import { LLM_PROTOCOLS } from "@/services/llmProtocols";
 import type { LlmProtocol, LlmProvider } from "@/types/domain";
 
@@ -41,6 +42,7 @@ export function ProviderFormDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: (providerId: string) => void;
 }) {
+  const t = useT();
   const createProvider = useCreateLlmProvider();
   const duplicateProvider = useDuplicateLlmProvider();
   const [name, setName] = useState("");
@@ -64,7 +66,7 @@ export function ProviderFormDialog({
 
     const handlers = {
       onSuccess: (providerId: string) => {
-        toast.success(`${trimmed} added`);
+        toast.success(t("{name} added", { name: trimmed }));
         onOpenChange(false);
         onCreated(providerId);
       },
@@ -84,11 +86,11 @@ export function ProviderFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{duplicating ? "Duplicate provider" : "Add provider"}</DialogTitle>
+          <DialogTitle>{duplicating ? t("Duplicate provider") : t("Add provider")}</DialogTitle>
           <DialogDescription>
             {duplicating
-              ? "The copy keeps the protocol, address, custom header names, and models. It gets no API key — add its own."
-              : "Name it whatever you call it, then fill in its address and key."}
+              ? t("The copy keeps the protocol, address, custom header names, and models. It gets no API key — add its own.")
+              : t("Name it whatever you call it, then fill in its address and key.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -100,7 +102,7 @@ export function ProviderFormDialog({
           }}
         >
           <div className="space-y-2">
-            <Label htmlFor="provider-name">Name</Label>
+            <Label htmlFor="provider-name">{t("Name")}</Label>
             <Input
               id="provider-name"
               value={name}
@@ -112,7 +114,7 @@ export function ProviderFormDialog({
 
           {!duplicating && (
             <div className="space-y-2">
-              <Label htmlFor="provider-protocol">Protocol</Label>
+              <Label htmlFor="provider-protocol">{t("Protocol")}</Label>
               <Select value={protocol} onValueChange={(value) => setProtocol(value as LlmProtocol)}>
                 <SelectTrigger id="provider-protocol">
                   <SelectValue />
@@ -126,17 +128,17 @@ export function ProviderFormDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                {LLM_PROTOCOLS.find((option) => option.value === protocol)?.hint}
+                {t(LLM_PROTOCOLS.find((option) => option.value === protocol)?.hint ?? "")}
               </p>
             </div>
           )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="submit" disabled={pending}>
-              {pending ? "Adding..." : duplicating ? "Duplicate" : "Add provider"}
+              {pending ? t("Adding...") : duplicating ? t("Duplicate") : t("Add provider")}
             </Button>
           </DialogFooter>
         </form>

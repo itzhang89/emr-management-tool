@@ -3,11 +3,13 @@ import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyH
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useVirtualClusters } from "@/hooks/useEmr";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { formatVirtualClustersError } from "@/services/appErrorMessage";
 import { useSessionStore } from "@/stores/sessionStore";
 
 export function VirtualClusterSelect({ className }: { className?: string }) {
+  const t = useT();
   const selectedVirtualClusterId = useSessionStore((state) => state.selectedVirtualClusterId);
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const activeAccount = useActiveAwsAccount();
@@ -26,7 +28,7 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
   }, [availableClusters, selectedVirtualClusterId, setSelectedVirtualClusterId]);
 
   if (clusters.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading virtual clusters...</p>;
+    return <p className="text-sm text-muted-foreground">{t("Loading virtual clusters...")}</p>;
   }
 
   if (clusters.error) {
@@ -52,7 +54,7 @@ export function VirtualClusterSelect({ className }: { className?: string }) {
   return (
     <Select value={effectiveVirtualClusterId} onValueChange={setSelectedVirtualClusterId}>
       <SelectTrigger className={cn("w-[220px]", className)}>
-        <SelectValue placeholder="Select virtual cluster" />
+        <SelectValue placeholder={t("Select virtual cluster")} />
       </SelectTrigger>
       <SelectContent>
         {availableClusters.map((cluster) => (

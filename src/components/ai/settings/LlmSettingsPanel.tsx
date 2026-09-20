@@ -16,6 +16,7 @@ import { ProviderCard } from "@/components/ai/settings/ProviderCard";
 import { ProviderFormDialog } from "@/components/ai/settings/ProviderFormDialog";
 import { ProviderList } from "@/components/ai/settings/ProviderList";
 import { SyncModelsDialog } from "@/components/ai/settings/SyncModelsDialog";
+import { useT } from "@/i18n";
 import { useDeleteAllChatSessions } from "@/hooks/useChat";
 import {
   useDeleteLlmProvider,
@@ -47,6 +48,7 @@ export function LlmSettingsPanel({
   /** Called once the preselection is applied, so the parent can clear it. */
   onPreselectHandled?: () => void;
 }) {
+  const t = useT();
   const providers = useLlmProviders();
   const updateProvider = useUpdateLlmProvider();
   const deleteProvider = useDeleteLlmProvider();
@@ -108,7 +110,7 @@ export function LlmSettingsPanel({
     const target = deleteTarget;
     deleteProvider.mutate(target.id, {
       onSuccess: () => {
-        toast.success(`${target.name} deleted`);
+        toast.success(t("{name} deleted", { name: target.name }));
         // Delete can be reached from any row in the list, not just the selected
         // provider — leave the selection alone unless it was the one removed.
         if (selected?.id === target.id) setSelectedProviderId(null);
@@ -122,7 +124,7 @@ export function LlmSettingsPanel({
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />
-        Loading providers...
+        {t("Loading providers...")}
       </p>
     );
   }
@@ -142,7 +144,7 @@ export function LlmSettingsPanel({
         <div className="min-h-0 min-w-0 space-y-4 overflow-y-auto">
           {!selected ? (
             <p className="text-sm text-muted-foreground">
-              Add a provider to configure its API address and models.
+              {t("Add a provider to configure its API address and models.")}
             </p>
           ) : (
             <>
@@ -190,16 +192,19 @@ export function LlmSettingsPanel({
       <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete provider?</DialogTitle>
+            <DialogTitle>{t("Delete provider?")}</DialogTitle>
             <DialogDescription>
-              This removes <span className="font-medium text-foreground">{deleteTarget?.name}</span>, its
-              models, and its stored API keys from this app. This cannot be undone.
-              {deleteTarget?.builtIn && " A deleted preset is not restored on the next start."}
+              {t("This removes")}{" "}
+              <span className="font-medium text-foreground">{deleteTarget?.name}</span>
+              {t(", its models, and its stored API keys from this app. This cannot be undone.")}
+              {deleteTarget?.builtIn
+                ? ` ${t("A deleted preset is not restored on the next start.")}`
+                : ""}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
@@ -207,7 +212,7 @@ export function LlmSettingsPanel({
               disabled={deleteProvider.isPending}
               onClick={confirmDelete}
             >
-              Delete
+              {t("Delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -225,33 +230,32 @@ export function LlmSettingsPanel({
  * this feature stores and sends will look.
  */
 function StoredConversations() {
+  const t = useT();
   const deleteAll = useDeleteAllChatSessions();
   const [confirming, setConfirming] = useState(false);
 
   return (
     <div className="shrink-0 space-y-2 border-t pt-4">
-      <p className="text-sm font-medium">Stored conversations</p>
+      <p className="text-sm font-medium">{t("Stored conversations")}</p>
       <p className="text-xs text-muted-foreground">
-        Chat history is saved locally, including any log excerpts tools returned. Assistants are presets
-        and are kept.
+        {t("Chat history is saved locally, including any log excerpts tools returned. Assistants are presets and are kept.")}
       </p>
       <Button type="button" variant="outline" size="sm" onClick={() => setConfirming(true)}>
         <Trash2 className="mr-1.5 size-3.5" />
-        Clear all conversations
+        {t("Clear all conversations")}
       </Button>
 
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Clear all conversations?</DialogTitle>
+            <DialogTitle>{t("Clear all conversations?")}</DialogTitle>
             <DialogDescription>
-              This permanently removes every chat session and message from this app, including stored log
-              excerpts. Your assistants and provider settings are kept. This cannot be undone.
+              {t("This permanently removes every chat session and message from this app, including stored log excerpts. Your assistants and provider settings are kept. This cannot be undone.")}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setConfirming(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
@@ -261,7 +265,9 @@ function StoredConversations() {
                 deleteAll.mutate(undefined, {
                   onSuccess: (removed) => {
                     toast.success(
-                      removed === 1 ? "1 conversation cleared" : `${removed} conversations cleared`
+                      removed === 1
+                        ? t("1 conversation cleared")
+                        : t("{count} conversations cleared", { count: removed })
                     );
                     setConfirming(false);
                   },
@@ -270,7 +276,7 @@ function StoredConversations() {
                 })
               }
             >
-              Clear all
+              {t("Clear all")}
             </Button>
           </DialogFooter>
         </DialogContent>

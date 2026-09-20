@@ -5,6 +5,7 @@ import { OverviewPanel } from "@/components/dbhub/overview/OverviewPanel";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDbConnections } from "@/hooks/useDbHub";
+import { useT } from "@/i18n";
 
 /**
  * DBHub — the hub for every queryable data source (Glue/Athena today, JDBC
@@ -51,6 +52,7 @@ export function DbHubPage({
   /** Jump to the AI Assistant Chat tab after queuing a DB analysis intent. */
   onOpenAiAssistant?: () => void;
 }) {
+  const t = useT();
   const connectionsQuery = useDbConnections();
   const connections = connectionsQuery.data ?? [];
   const [activeTab, setActiveTab] = useState(initialTab ?? OVERVIEW_TAB);
@@ -74,8 +76,8 @@ export function DbHubPage({
         className="flex min-h-0 min-w-0 flex-1 flex-col gap-4"
       >
         <TabsList className="w-fit max-w-full overflow-x-auto">
-          <TabsTrigger value={OVERVIEW_TAB}>Overview</TabsTrigger>
-          <TabsTrigger value={GLUE_TAB}>Glue Catalog</TabsTrigger>
+          <TabsTrigger value={OVERVIEW_TAB}>{t("Overview")}</TabsTrigger>
+          <TabsTrigger value={GLUE_TAB}>{t("Glue Catalog")}</TabsTrigger>
           {dynamicTabs.map((connection) => (
             <TabsTrigger key={connection.id} value={connectionTabValue(connection.id)}>
               <DbKindIcon kind={connection.kind} className="mr-1.5 size-3.5" />

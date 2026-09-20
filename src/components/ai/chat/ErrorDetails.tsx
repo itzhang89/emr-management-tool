@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { useT } from "@/i18n";
 import { formatJson } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ChatErrorDetails } from "@/types/domain";
@@ -14,10 +15,11 @@ function cap(text: string): string {
 
 /** One key/value row in the diagnostics panel. */
 function Field({ label, value }: { label: string; value: string }) {
+  const t = useT();
   return (
     <div className="space-y-0.5">
       <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
+        {t(label)}
       </p>
       <p className="break-all font-mono text-xs leading-relaxed">{value}</p>
     </div>
@@ -26,13 +28,14 @@ function Field({ label, value }: { label: string; value: string }) {
 
 /** A body block with a copy affordance. */
 function Block({ label, value, json }: { label: string; value: string; json?: boolean }) {
+  const t = useT();
   return (
     <div className="space-y-1">
       <div className="flex h-6 items-center justify-between gap-2">
         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
+          {t(label)}
         </p>
-        <CopyJsonButton value={value} label={label} />
+        <CopyJsonButton value={value} label={t(label)} />
       </div>
       <pre
         className={cn(
@@ -53,6 +56,7 @@ function Block({ label, value, json }: { label: string; value: string; json?: bo
  * nothing extra.
  */
 export function ErrorDetails({ details }: { details?: ChatErrorDetails | null }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   const hasDetails = Boolean(
@@ -85,7 +89,7 @@ export function ErrorDetails({ details }: { details?: ChatErrorDetails | null })
             open && "rotate-90"
           )}
         />
-        Details
+        {t("Details")}
       </button>
 
       {open && (

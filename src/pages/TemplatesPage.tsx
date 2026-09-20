@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useT } from "@/i18n";
 import { useCreateTemplate, useDeleteTemplate, useDuplicateTemplate, useTemplates, useUpdateTemplate } from "@/hooks/useTemplates";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 import type { ResourceTemplate, SparkResourceConfig } from "@/types/domain";
@@ -22,14 +23,16 @@ import type { ResourceTemplate, SparkResourceConfig } from "@/types/domain";
 type Editing = { template?: ResourceTemplate } | undefined;
 
 export function TemplatesPage() {
+  const t = useT();
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader pageId="templates" />
 
       <Tabs defaultValue="appConfig" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="appConfig">Application Config</TabsTrigger>
-          <TabsTrigger value="resources">Resource Templates</TabsTrigger>
+          <TabsTrigger value="appConfig">{t("Application Config")}</TabsTrigger>
+          <TabsTrigger value="resources">{t("Resource Templates")}</TabsTrigger>
         </TabsList>
         <TabsContent value="appConfig">
           <ApplicationConfigTemplatesPage embedded />
@@ -43,6 +46,7 @@ export function TemplatesPage() {
 }
 
 function ResourceTemplatesPanel() {
+  const t = useT();
   const templates = useTemplates();
   const createTemplate = useCreateTemplate();
   const updateTemplate = useUpdateTemplate();
@@ -55,12 +59,12 @@ function ResourceTemplatesPanel() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Resource Templates</h2>
-          <p className="text-sm text-muted-foreground">Manage reusable Spark driver and executor sizing presets.</p>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("Resource Templates")}</h2>
+          <p className="text-sm text-muted-foreground">{t("Manage reusable Spark driver and executor sizing presets.")}</p>
         </div>
         <Button onClick={() => setEditing({})}>
           <Plus data-icon="inline-start" />
-          Resource Template
+          {t("Resource Template")}
         </Button>
       </div>
 
@@ -70,26 +74,37 @@ function ResourceTemplatesPanel() {
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CardTitle>{template.name}</CardTitle>
-                {template.builtIn ? <Badge variant="secondary">Built-in</Badge> : null}
+                {template.builtIn ? <Badge variant="secondary">{t("Built-in")}</Badge> : null}
               </div>
               <CardDescription>{template.id}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="text-sm text-muted-foreground">
-                Driver: {template.resources.driverCores} cores / {template.resources.driverMemory}
+                {t("Driver: {cores} cores / {memory}", {
+                  cores: template.resources.driverCores,
+                  memory: template.resources.driverMemory
+                })}
               </div>
               <div className="text-sm text-muted-foreground">
-                Executors: {template.resources.executorInstances} x {template.resources.executorCores} cores /{" "}
-                {template.resources.executorMemory}
+                {t("Executors: {instances} x {cores} cores / {memory}", {
+                  instances: template.resources.executorInstances,
+                  cores: template.resources.executorCores,
+                  memory: template.resources.executorMemory
+                })}
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" size="icon" aria-label={`Edit ${template.name}`} onClick={() => setEditing({ template })}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("Edit {name}", { name: template.name })}
+                  onClick={() => setEditing({ template })}
+                >
                   <Edit2 />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Duplicate ${template.name}`}
+                  aria-label={t("Duplicate {name}", { name: template.name })}
                   onClick={() => duplicate.mutate({ id: template.id, type: "resource" })}
                 >
                   <Copy />
@@ -97,11 +112,11 @@ function ResourceTemplatesPanel() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Delete ${template.name}`}
+                  aria-label={t("Delete {name}", { name: template.name })}
                   onClick={async () => {
                     try {
                       await deleteTemplate.mutateAsync({ id: template.id, type: "resource" });
-                      toast.success("Resource template deleted.");
+                      toast.success(t("Resource template deleted."));
                     } catch (error) {
                       toast.error(error instanceof Error ? error.message : "Failed to delete resource template.");
                     }
@@ -116,8 +131,8 @@ function ResourceTemplatesPanel() {
         {resources.length === 0 ? (
           <Card className="col-span-2">
             <CardHeader>
-              <CardTitle>No resource templates</CardTitle>
-              <CardDescription>Create a custom resource preset for Submit Job.</CardDescription>
+              <CardTitle>{t("No resource templates")}</CardTitle>
+              <CardDescription>{t("Create a custom resource preset for Submit Job.")}</CardDescription>
             </CardHeader>
           </Card>
         ) : null}
@@ -133,7 +148,7 @@ function ResourceTemplatesPanel() {
             } else {
               await createTemplate.mutateAsync(template);
             }
-            toast.success("Resource template saved.");
+            toast.success(t("Resource template saved."));
             setEditing(undefined);
           } catch (error) {
             toast.error(error instanceof Error ? error.message : "Failed to save template.");
@@ -153,6 +168,7 @@ function ResourceTemplateDialog({
   onOpenChange: (open: boolean) => void;
   onSave: (template: ResourceTemplate) => Promise<void>;
 }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [resources, setResources] = useState<SparkResourceConfig>(defaultResources());
   const template = editing?.template;
@@ -169,40 +185,40 @@ function ResourceTemplateDialog({
     <Dialog open={Boolean(editing)} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{template ? "Edit" : "Create"} resource template</DialogTitle>
+          <DialogTitle>{template ? t("Edit resource template") : t("Create resource template")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <Field label="Name">
+          <Field label={t("Name")}>
             <Input value={name} onChange={(event) => setName(event.target.value)} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Driver Cores">
+            <Field label={t("Driver Cores")}>
               <Input
                 type="number"
                 value={resources.driverCores}
                 onChange={(event) => setResources((current) => ({ ...current, driverCores: Number(event.target.value) }))}
               />
             </Field>
-            <Field label="Driver Memory">
+            <Field label={t("Driver Memory")}>
               <Input
                 value={resources.driverMemory}
                 onChange={(event) => setResources((current) => ({ ...current, driverMemory: event.target.value }))}
               />
             </Field>
-            <Field label="Executor Cores">
+            <Field label={t("Executor Cores")}>
               <Input
                 type="number"
                 value={resources.executorCores}
                 onChange={(event) => setResources((current) => ({ ...current, executorCores: Number(event.target.value) }))}
               />
             </Field>
-            <Field label="Executor Memory">
+            <Field label={t("Executor Memory")}>
               <Input
                 value={resources.executorMemory}
                 onChange={(event) => setResources((current) => ({ ...current, executorMemory: event.target.value }))}
               />
             </Field>
-            <Field label="Executor Instances">
+            <Field label={t("Executor Instances")}>
               <Input
                 type="number"
                 value={resources.executorInstances}
@@ -215,7 +231,7 @@ function ResourceTemplateDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             onClick={() =>
@@ -229,7 +245,7 @@ function ResourceTemplateDialog({
               })
             }
           >
-            Save
+            {t("Save")}
           </Button>
         </DialogFooter>
       </DialogContent>

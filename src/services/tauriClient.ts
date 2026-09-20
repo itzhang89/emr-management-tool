@@ -323,7 +323,9 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       database: string,
       schema: string,
       kinds: SchemaObjectKind[]
-    ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds })
+    ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds }),
+    /** Rebuilds the native menu. The frontend owns the language preference. */
+    setAppLanguage: (request: { language: string }) => call<void>("set_app_language", request)
   };
 }
 

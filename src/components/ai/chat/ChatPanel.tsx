@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { AssistantFormDialog } from "@/components/ai/chat/AssistantFormDialog";
 import { AssistantSidebar } from "@/components/ai/chat/AssistantSidebar";
 import { Composer } from "@/components/ai/chat/Composer";
@@ -72,6 +73,7 @@ export function ChatPanel({
   /** Jump to the Providers tab, optionally with a specific provider preselected. */
   onConfigureModels: (providerId?: string) => void;
 }) {
+  const t = useT();
   const assistants = useChatAssistants();
   const sessions = useChatSessions();
   const createSession = useCreateChatSession();
@@ -367,7 +369,7 @@ export function ChatPanel({
     const mutation = deleteTarget.kind === "session" ? deleteSession : deleteAssistant;
     mutation.mutate(deleteTarget.id, {
       onSuccess: () => {
-        toast.success(`${deleteTarget.name} deleted`);
+        toast.success(t("{name} deleted", { name: deleteTarget.name }));
         setActiveSessionId(null);
         setDeleteTarget(null);
       },
@@ -378,7 +380,9 @@ export function ChatPanel({
   const handleClearContext = async () => {
     const cleared = await conversation.clearContext();
     toast[cleared ? "success" : "info"](
-      cleared ? "Context cleared. Earlier messages stay visible." : "Nothing to clear yet."
+      cleared
+        ? t("Context cleared. Earlier messages stay visible.")
+        : t("Nothing to clear yet.")
     );
   };
 
@@ -427,7 +431,7 @@ export function ChatPanel({
     const text = message.content;
     if (!text) return;
     navigator.clipboard.writeText(text).then(
-      () => toast.success("Copied to clipboard"),
+      () => toast.success(t("Copied to clipboard")),
       () => toast.error("Failed to copy to clipboard")
     );
   };
@@ -463,7 +467,7 @@ export function ChatPanel({
         // An unchanged text is still a regenerate; the fresh stream already shows
         // that, so only an actual wording change earns a success toast.
         if (target !== original) {
-          toast.success("Question updated and answered again");
+          toast.success(t("Question updated and answered again"));
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to update the message");
@@ -511,7 +515,7 @@ export function ChatPanel({
     if (!messageDeleteTarget) return;
     try {
       await conversation.deleteMessage(messageDeleteTarget.id);
-      toast.success("Message deleted");
+      toast.success(t("Message deleted"));
       setMessageDeleteTarget(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete the message");
@@ -522,7 +526,7 @@ export function ChatPanel({
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />
-        Loading conversations...
+        {t("Loading conversations...")}
       </p>
     );
   }
@@ -565,7 +569,7 @@ export function ChatPanel({
                 variant="ghost"
                 size="icon"
                 className="size-8 shrink-0"
-                aria-label={sidebarVisible ? "Hide the sidebar" : "Show the sidebar"}
+                aria-label={sidebarVisible ? t("Hide the sidebar") : t("Show the sidebar")}
                 onClick={() => setSidebarVisible((visible) => !visible)}
               >
                 {sidebarVisible ? (
@@ -575,7 +579,7 @@ export function ChatPanel({
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{sidebarVisible ? "Hide sidebar" : "Show sidebar"}</TooltipContent>
+            <TooltipContent>{sidebarVisible ? t("Hide sidebar") : t("Show sidebar")}</TooltipContent>
           </Tooltip>
 
           {activeSession ? (
@@ -586,7 +590,7 @@ export function ChatPanel({
                   setRenaming({ id: activeSession.id, title: activeSession.title })
                 }
                 className="min-w-0 flex-1 truncate rounded px-1 text-left text-sm font-medium hover:bg-muted/60"
-                title="Double-click to rename"
+                title={t("Double-click to rename")}
               >
                 {activeSession.title}
               </button>
@@ -606,7 +610,9 @@ export function ChatPanel({
               />
             </>
           ) : (
-            <span className="flex-1 text-sm text-muted-foreground">No conversation selected</span>
+            <span className="flex-1 text-sm text-muted-foreground">
+              {t("No conversation selected")}
+            </span>
           )}
         </div>
 
@@ -632,21 +638,18 @@ export function ChatPanel({
                 <div className="flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs dark:bg-amber-950/30">
                   <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
                   <p>
-                    No model is configured yet. Chat sends your messages and tool results —
-                    including log excerpts — to the provider you configure. Until now this app
-                    sent nothing anywhere except AWS.
+                    {t("No model is configured yet. Chat sends your messages and tool results — including log excerpts — to the provider you configure. Until now this app sent nothing anywhere except AWS.")}
                   </p>
                 </div>
                 <Button type="button" size="sm" onClick={() => onConfigureModels()}>
-                  Configure a provider
+                  {t("Configure a provider")}
                 </Button>
               </div>
             ) : (
               <div className="space-y-1 text-sm text-muted-foreground">
-                <p>Paste a job id and ask why it failed.</p>
+                <p>{t("Paste a job id and ask why it failed.")}</p>
                 <p className="text-xs">
-                  The assistant locates the job across your accounts, then reads its controller
-                  and Spark logs. Every tool call is shown, and all of them are read-only.
+                  {t("The assistant locates the job across your accounts, then reads its controller and Spark logs. Every tool call is shown, and all of them are read-only.")}
                 </p>
               </div>
             )
@@ -675,7 +678,7 @@ export function ChatPanel({
       <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Rename conversation</DialogTitle>
+            <DialogTitle>{t("Rename conversation")}</DialogTitle>
           </DialogHeader>
           <Input
             value={renaming?.title ?? ""}
@@ -688,15 +691,15 @@ export function ChatPanel({
                 handleRename();
               }
             }}
-            aria-label="Conversation title"
+            aria-label={t("Conversation title")}
             autoFocus
           />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setRenaming(null)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" onClick={handleRename} disabled={updateSession.isPending}>
-              Save
+              {t("Save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -706,20 +709,20 @@ export function ChatPanel({
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Delete {deleteTarget?.kind === "session" ? "conversation" : "assistant"}?
+              {deleteTarget?.kind === "session" ? t("Delete conversation?") : t("Delete assistant?")}
             </DialogTitle>
             <DialogDescription>
-              This permanently removes{" "}
+              {t("This permanently removes")}{" "}
               <span className="font-medium text-foreground">{deleteTarget?.name}</span>
               {deleteTarget?.kind === "assistant"
-                ? " and every conversation belonging to it, including any log excerpts stored with them."
-                : " and its messages, including any log excerpts stored with them."}{" "}
-              This cannot be undone.
+                ? t("and every conversation belonging to it, including any log excerpts stored with them.")
+                : t("and its messages, including any log excerpts stored with them.")}{" "}
+              {t("This cannot be undone.")}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
@@ -727,7 +730,7 @@ export function ChatPanel({
               disabled={deleteSession.isPending || deleteAssistant.isPending}
               onClick={confirmDelete}
             >
-              Delete
+              {t("Delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -739,19 +742,17 @@ export function ChatPanel({
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete this message?</DialogTitle>
+            <DialogTitle>{t("Delete this message?")}</DialogTitle>
             <DialogDescription>
-              The message and any answer it produced are removed. Tool results that read job logs
-              are stored locally, so this also clears whatever they brought back. This cannot be
-              undone.
+              {t("The message and any answer it produced are removed. Tool results that read job logs are stored locally, so this also clears whatever they brought back. This cannot be undone.")}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setMessageDeleteTarget(null)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" variant="destructive" onClick={() => void handleMessageDelete()}>
-              Delete
+              {t("Delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

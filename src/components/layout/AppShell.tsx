@@ -13,6 +13,8 @@ import {
 import { AboutDialog } from "@/components/help/AboutDialog";
 import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useT, type Translator } from "@/i18n";
+import { t as translateNow } from "@/i18n/translate";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
@@ -43,6 +45,7 @@ const AiAssistantPage = lazy(() =>
 );
 
 export function AppShell() {
+  const t = useT();
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
@@ -114,14 +117,14 @@ export function AppShell() {
 
       setActiveAccount.mutate(accountId, {
         onSuccess: () => {
-          toast.success(`${account.name} is now active.`);
+          toast.success(t("{name} is now active.", { name: account.name }));
           setAccountDialogOpen(false);
           setSelectedAccountId(null);
         },
         onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to set active account.")
       });
     },
-    [accounts.data, setActiveAccount]
+    [accounts.data, setActiveAccount, t]
   );
   const cycleAccountSelection = useCallback(() => {
     if (accountList.length === 0) return;
@@ -153,7 +156,9 @@ export function AppShell() {
   useEffect(() => {
     void appUpdater.checkAndInstallSilently({
       onInstalled: () => {
-        toast.success("Update installed. Restart the app to use the new version.");
+        // Fires long after mount, so it reads the locale at fire time instead of
+        // closing over the mount-time translator.
+        toast.success(translateNow("Update installed. Restart the app to use the new version."));
       }
     });
   }, []);
@@ -296,11 +301,11 @@ export function AppShell() {
             variant="ghost"
             size="icon"
             className={sidebarCollapsed ? "size-8 shrink-0" : undefined}
-            aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
+            aria-label={sidebarCollapsed ? t("Expand navigation") : t("Collapse navigation")}
             title={
               sidebarCollapsed
-                ? `Expand navigation (${sidebarToggleShortcut})`
-                : `Collapse navigation (${sidebarToggleShortcut})`
+                ? `${t("Expand navigation")} (${sidebarToggleShortcut})`
+                : `${t("Collapse navigation")} (${sidebarToggleShortcut})`
             }
             onClick={toggleSidebar}
           >
@@ -315,25 +320,35 @@ export function AppShell() {
               "w-full rounded-lg bg-secondary/60 p-3 text-left shadow-none transition-colors hover:bg-secondary",
               sidebarCollapsed ? "flex justify-center" : undefined
             )}
-            aria-label="Switch AWS account"
-            title={`Switch AWS account (${accountSwitchShortcut})`}
+            aria-label={t("Switch AWS account")}
+            title={`${t("Switch AWS account")} (${accountSwitchShortcut})`}
             onClick={openAccountDialog}
           >
             {sidebarCollapsed ? (
               <Cloud className="size-5 text-muted-foreground" />
             ) : (
               <>
-                <div className="text-xs font-medium text-muted-foreground">Current Account</div>
-                <div className="mt-1 truncate text-sm font-semibold">{activeAccount?.name ?? "No active account"}</div>
-                <div className="truncate text-xs text-muted-foreground">{activeAccount?.region ?? "Configure Settings first"}</div>
+                <div className="text-xs font-medium text-muted-foreground">{t("Current Account")}</div>
+                <div className="mt-1 truncate text-sm font-semibold">
+                  {activeAccount?.name ?? t("No active account")}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {activeAccount?.region ?? t("Configure Settings first")}
+                </div>
               </>
             )}
           </button>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label="Primary">
+        <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label={t("Primary")}>
           {navigationItems.map((item) => (
             <div key={item.id}>
-              {renderNavButton({ item, activePage, setActivePage: navigateToPage, sidebarCollapsed })}
+              {renderNavButton({
+                item,
+                activePage,
+                setActivePage: navigateToPage,
+                sidebarCollapsed,
+                t
+              })}
               {/* Second level: the DBHub data sources, directly under the
                   sidebar entry (Glue Catalog + pinned connections). */}
               {item.id === "glue" && activePage === "glue" ? (
@@ -360,15 +375,20 @@ export function AppShell() {
             account's long name/ARN sets a large intrinsic (min-content) width, which pushed each option past the frame */}
         <DialogContent className="grid-cols-1">
           <DialogHeader>
-            <DialogTitle>Switch AWS Account</DialogTitle>
-            <DialogDescription>Choose the active AWS account used by EMR, CloudWatch, and S3.</DialogDescription>
+            <DialogTitle>{t("Switch AWS Account")}</DialogTitle>
+            <DialogDescription>
+              {t("Choose the active AWS account used by EMR, CloudWatch, and S3.")}
+            </DialogDescription>
           </DialogHeader>
-          <div className="min-w-0 space-y-3" role="listbox" aria-label="AWS accounts">
-            {accounts.isLoading ? <p className="text-sm text-muted-foreground">Loading accounts...</p> : null}
+          <div className="min-w-0 space-y-3" role="listbox" aria-label={t("AWS accounts")}>
+            {accounts.isLoading ? (
+              <p className="text-sm text-muted-foreground">{t("Loading accounts...")}</p>
+            ) : null}
+            {/* Kept in English: error and failure text is out of the localization scope. */}
             {accounts.error ? <p className="text-sm text-destructive">Failed to load AWS accounts.</p> : null}
             {accounts.data?.length === 0 ? (
               <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                No AWS accounts are configured yet. Open Settings to add one.
+                {t("No AWS accounts are configured yet. Open Settings to add one.")}
               </p>
             ) : null}
             {accounts.data?.map((account) => {
@@ -390,7 +410,7 @@ export function AppShell() {
                   <div className="min-w-0 space-y-1">
                     <div className="flex min-w-0 items-center gap-2">
                       <p className="truncate font-medium">{account.name}</p>
-                      {account.isActive ? <Badge>Active</Badge> : null}
+                      {account.isActive ? <Badge>{t("Active")}</Badge> : null}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">
                       {account.region} · {account.accessKeyIdMasked}
@@ -408,7 +428,7 @@ export function AppShell() {
                     }}
                   >
                     <CheckCircle2 data-icon="inline-start" />
-                    {account.isActive ? "Active" : "Use"}
+                    {account.isActive ? t("Active") : t("Use")}
                   </Button>
                 </div>
               );
@@ -429,12 +449,15 @@ function renderNavButton({
   activePage,
   setActivePage,
   sidebarCollapsed,
+  t,
   compact = false
 }: {
   item: NavItem;
   activePage: PageId;
   setActivePage: (page: PageId) => void;
   sidebarCollapsed: boolean;
+  /** Threaded in because this helper is not a component and cannot call hooks. */
+  t: Translator;
   compact?: boolean;
 }) {
   const Icon = item.icon;
@@ -453,15 +476,15 @@ function renderNavButton({
         sidebarCollapsed ? "justify-center" : undefined,
         active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       )}
-      aria-label={item.label}
-      title={navigationShortcut ? `${item.label} (${navigationShortcut})` : item.label}
+      aria-label={t(item.label)}
+      title={navigationShortcut ? `${t(item.label)} (${navigationShortcut})` : t(item.label)}
     >
       <Icon className="size-4 shrink-0" />
       {!sidebarCollapsed ? (
         <span className="flex flex-col">
-          <span className="font-medium">{item.label}</span>
+          <span className="font-medium">{t(item.label)}</span>
           <span className={cn("text-xs", active ? "text-primary-foreground/80" : "text-muted-foreground")}>
-            {item.description}
+            {t(item.description)}
           </span>
         </span>
       ) : null}

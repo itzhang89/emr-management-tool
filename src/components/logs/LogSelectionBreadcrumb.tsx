@@ -1,4 +1,5 @@
 import { ChevronRight } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export function LogSelectionBreadcrumb({
@@ -10,14 +11,16 @@ export function LogSelectionBreadcrumb({
   fullPath?: string;
   compact?: boolean;
 }) {
+  const t = useT();
+
   if (!sections?.length) {
-    return <span className="truncate text-sm text-muted-foreground">Select a log file</span>;
+    return <span className="truncate text-sm text-muted-foreground">{t("Select a log file")}</span>;
   }
 
   const displaySections = compact ? [sections.at(-1)!] : sections;
 
   return (
-    <nav aria-label="Current log file" className="min-w-0 max-w-xs lg:max-w-md">
+    <nav aria-label={t("Current log file")} className="min-w-0 max-w-xs lg:max-w-md">
       <span
         className={cn("flex min-w-0 items-center gap-0.5 truncate text-sm font-medium", compact && "text-xs")}
         title={fullPath}

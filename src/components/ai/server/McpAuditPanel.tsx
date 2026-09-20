@@ -11,6 +11,7 @@ import {
   TableRow
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
 import { formatDuration, formatJson } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
@@ -48,6 +49,7 @@ function AuditLogRow({
   entry: McpAuditEntry;
   providersById: Map<string, LlmProvider>;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const isError = entry.status === "error" || Boolean(entry.error);
   return (
@@ -66,14 +68,14 @@ function AuditLogRow({
         <TableCell>
           {isError ? (
             <Badge variant="destructive" className="text-xs">
-              Error
+              {t("Error")}
             </Badge>
           ) : (
             <Badge
               variant="secondary"
               className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
             >
-              Success
+              {t("Success")}
             </Badge>
           )}
         </TableCell>
@@ -103,8 +105,10 @@ function AuditLogRow({
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,4fr)]">
                 <div className="min-w-0 space-y-1">
                   <div className="flex h-7 items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Request arguments</p>
-                    <CopyJsonButton value={entry.args} label="Request arguments" />
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t("Request arguments")}
+                    </p>
+                    <CopyJsonButton value={entry.args} label={t("Request arguments")} />
                   </div>
                   <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
                     {formatJson(entry.args)}
@@ -112,8 +116,10 @@ function AuditLogRow({
                 </div>
                 <div className="min-w-0 space-y-1">
                   <div className="flex h-7 items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Response content</p>
-                    <CopyJsonButton value={entry.result} label="Response content" />
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t("Response content")}
+                    </p>
+                    <CopyJsonButton value={entry.result} label={t("Response content")} />
                   </div>
                   <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">
                     {formatJson(entry.result)}
@@ -122,7 +128,7 @@ function AuditLogRow({
               </div>
               {entry.error && (
                 <div className="space-y-1">
-                  <p className="text-xs font-medium text-destructive">Error</p>
+                  <p className="text-xs font-medium text-destructive">{t("Error")}</p>
                   <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-destructive/10 p-2 text-xs text-destructive">
                     {entry.error}
                   </pre>
@@ -139,6 +145,7 @@ function AuditLogRow({
 // The "Audit" tab trigger is the only label for this view — the panel itself
 // renders just the structured table, with no repeated heading or description.
 export function McpAuditPanel() {
+  const t = useT();
   const { data: entries, isLoading } = useQuery({
     queryKey: ["mcp-audit-entries"],
     queryFn: () => tauriClient.listMcpAuditEntries(500),
@@ -156,7 +163,7 @@ export function McpAuditPanel() {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />
-        Loading entries...
+        {t("Loading entries...")}
       </p>
     );
   }
@@ -164,8 +171,7 @@ export function McpAuditPanel() {
   if ((entries ?? []).length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No tool invocations recorded yet. Entries appear here after an AI assistant calls a tool through the MCP
-        server.
+        {t("No tool invocations recorded yet. Entries appear here after an AI assistant calls a tool through the MCP server.")}
       </p>
     );
   }
@@ -178,14 +184,14 @@ export function McpAuditPanel() {
         <TableHeader>
           <TableRow>
             <TableHead className="w-8" />
-            <TableHead className="w-40">Time</TableHead>
-            <TableHead className="w-24">Status</TableHead>
-            <TableHead className="w-44">Tool</TableHead>
-            <TableHead className="w-48">Provider / Model</TableHead>
-            <TableHead className="w-40">Client</TableHead>
-            <TableHead className="w-[22%]">Arguments</TableHead>
-            <TableHead>Response</TableHead>
-            <TableHead className="w-24">Duration</TableHead>
+            <TableHead className="w-40">{t("Time")}</TableHead>
+            <TableHead className="w-24">{t("Status")}</TableHead>
+            <TableHead className="w-44">{t("Tool")}</TableHead>
+            <TableHead className="w-48">{t("Provider / Model")}</TableHead>
+            <TableHead className="w-40">{t("Client")}</TableHead>
+            <TableHead className="w-[22%]">{t("Arguments")}</TableHead>
+            <TableHead>{t("Response")}</TableHead>
+            <TableHead className="w-24">{t("Duration")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

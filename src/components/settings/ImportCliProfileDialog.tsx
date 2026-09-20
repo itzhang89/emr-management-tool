@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAwsCliProfiles } from "@/hooks/useAwsSettings";
+import { useT } from "@/i18n";
 import { findAccountForProfileKey } from "@/services/cliProfileImport";
 import type { AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
 
@@ -32,24 +33,26 @@ export function ImportCliProfileDialog({
   onImport,
   renderError
 }: ImportCliProfileDialogProps) {
+  const t = useT();
   const cliProfiles = useAwsCliProfiles();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Import AWS CLI Profiles</DialogTitle>
+          <DialogTitle>{t("Import AWS CLI Profiles")}</DialogTitle>
           <DialogDescription>
-            Import local AWS CLI static credential profiles. If the profile is missing a region or the name is already
-            used, you will complete the details in the add-account form.
+            {t("Import local AWS CLI static credential profiles. If the profile is missing a region or the name is already used, you will complete the details in the add-account form.")}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[min(60vh,26rem)] space-y-2 overflow-y-auto 2xl:space-y-2.5">
-          {cliProfiles.isLoading ? <p className="text-sm text-muted-foreground">Scanning AWS CLI profiles...</p> : null}
+          {cliProfiles.isLoading ? (
+            <p className="text-sm text-muted-foreground">{t("Scanning AWS CLI profiles...")}</p>
+          ) : null}
           {cliProfiles.error ? renderError(cliProfiles.error) : null}
           {cliProfiles.data?.length === 0 ? (
             <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground 2xl:p-4 2xl:text-sm">
-              No AWS CLI profiles were found in the local credentials or config files.
+              {t("No AWS CLI profiles were found in the local credentials or config files.")}
             </p>
           ) : null}
           {cliProfiles.data?.map((profile) => {
@@ -69,30 +72,31 @@ export function ImportCliProfileDialog({
                         className="gap-1 border-primary/40 px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide text-primary 2xl:text-[11px]"
                       >
                         <Check className="size-3" aria-hidden />
-                        Imported
+                        {t("Imported")}
                       </Badge>
                     ) : profile.canImport ? (
                       <Badge
                         variant="secondary"
                         className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
                       >
-                        Importable
+                        {t("Importable")}
                       </Badge>
                     ) : (
                       <Badge
                         variant="outline"
                         className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]"
                       >
-                        Unsupported
+                        {t("Unsupported")}
                       </Badge>
                     )}
                   </div>
                   <p className="truncate text-xs text-muted-foreground 2xl:text-sm">
-                    {profile.region ?? "No region"} · {profile.accessKeyIdMasked ?? "No static access key"}
+                    {profile.region ?? t("No region")} ·{" "}
+                    {profile.accessKeyIdMasked ?? t("No static access key")}
                   </p>
                   {alreadyImported ? (
                     <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">
-                      Already imported as “{importedAs?.name}”.
+                      {t("Already imported as “{name}”.", { name: importedAs?.name ?? "" })}
                     </p>
                   ) : profile.importError ? (
                     <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">{profile.importError}</p>
@@ -104,12 +108,14 @@ export function ImportCliProfileDialog({
                       <span tabIndex={0} className="shrink-0">
                         <Button type="button" variant="outline" size="sm" className="2xl:h-10 2xl:px-4" disabled>
                           <Download data-icon="inline-start" className="size-4" />
-                          Import
+                          {t("Import")}
                         </Button>
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      This access key is already configured as “{importedAs?.name}”.
+                      {t("This access key is already configured as “{name}”.", {
+                        name: importedAs?.name ?? ""
+                      })}
                     </TooltipContent>
                   </Tooltip>
                 ) : (
@@ -122,7 +128,7 @@ export function ImportCliProfileDialog({
                     onClick={() => onImport(profile)}
                   >
                     <Download data-icon="inline-start" className="size-4" />
-                    Import
+                    {t("Import")}
                   </Button>
                 )}
               </div>
@@ -131,7 +137,7 @@ export function ImportCliProfileDialog({
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Close
+            {t("Close")}
           </Button>
         </DialogFooter>
       </DialogContent>

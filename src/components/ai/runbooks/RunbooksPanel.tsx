@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useT } from "@/i18n";
 import { tauriClient } from "@/services/tauriClient";
 import type { RemediationRunbook, RemediationRunbookInput } from "@/types/domain";
 import { useMemo, useState } from "react";
@@ -37,6 +38,7 @@ function toInput(runbook: RemediationRunbook): RemediationRunbookInput {
  * rerun action may auto-submit EMR jobs via propose_rerun_job.
  */
 export function RunbooksPanel() {
+  const t = useT();
   const queryClient = useQueryClient();
   const list = useQuery({
     queryKey: ["remediation-runbooks"],
@@ -54,7 +56,7 @@ export function RunbooksPanel() {
       tauriClient.updateRemediationRunbook(runbook.id, toInput(runbook)),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["remediation-runbooks"] });
-      toast.success("Runbook saved");
+      toast.success(t("Runbook saved"));
     },
     onError: (error: Error) => toast.error(error.message || "Failed to save runbook")
   });
@@ -72,7 +74,7 @@ export function RunbooksPanel() {
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: ["remediation-runbooks"] });
       setSelectedId(created.id);
-      toast.success("Runbook created");
+      toast.success(t("Runbook created"));
     },
     onError: (error: Error) => toast.error(error.message || "Failed to create runbook")
   });
@@ -82,13 +84,13 @@ export function RunbooksPanel() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["remediation-runbooks"] });
       setSelectedId(null);
-      toast.success("Runbook deleted");
+      toast.success(t("Runbook deleted"));
     },
     onError: (error: Error) => toast.error(error.message || "Failed to delete runbook")
   });
 
   if (list.isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading runbooks…</p>;
+    return <p className="text-sm text-muted-foreground">{t("Loading runbooks…")}</p>;
   }
 
   return (
@@ -96,7 +98,7 @@ export function RunbooksPanel() {
       <Card className="min-h-0 overflow-hidden">
         <CardHeader className="space-y-2 py-3">
           <div className="flex items-center justify-between gap-2">
-            <CardTitle className="text-base">Runbooks</CardTitle>
+            <CardTitle className="text-base">{t("Runbooks")}</CardTitle>
             <Button
               type="button"
               size="sm"
@@ -105,10 +107,10 @@ export function RunbooksPanel() {
               onClick={() => create.mutate()}
             >
               <Plus className="size-3.5" />
-              Add
+              {t("Add")}
             </Button>
           </div>
-          <CardDescription>Match advice and optional EMR auto-rerun.</CardDescription>
+          <CardDescription>{t("Match advice and optional EMR auto-rerun.")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-1 overflow-y-auto p-2">
           {runbooks.map((runbook) => (
@@ -122,8 +124,12 @@ export function RunbooksPanel() {
             >
               <span className="font-medium">{runbook.name}</span>
               <span className="flex gap-1 pt-1">
-                {runbook.approved ? <Badge>approved</Badge> : <Badge variant="outline">draft</Badge>}
-                {!runbook.enabled ? <Badge variant="secondary">off</Badge> : null}
+                {runbook.approved ? (
+                  <Badge>{t("approved")}</Badge>
+                ) : (
+                  <Badge variant="outline">{t("draft")}</Badge>
+                )}
+                {!runbook.enabled ? <Badge variant="secondary">{t("off")}</Badge> : null}
               </span>
             </button>
           ))}
@@ -138,13 +144,15 @@ export function RunbooksPanel() {
           deleting={remove.isPending}
           onSave={(next) => save.mutate(next)}
           onDelete={() => {
-            if (window.confirm(`Delete runbook “${selected.name}”?`)) {
+            if (window.confirm(t("Delete runbook “{name}”?", { name: selected.name }))) {
               remove.mutate(selected.id);
             }
           }}
         />
       ) : (
-        <p className="text-sm text-muted-foreground">No runbooks yet. Add one to get started.</p>
+        <p className="text-sm text-muted-foreground">
+          {t("No runbooks yet. Add one to get started.")}
+        </p>
       )}
     </div>
   );
@@ -163,6 +171,7 @@ function RunbookEditor({
   onSave: (runbook: RemediationRunbook) => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(runbook);
   const advice =
     draft.actions.find((action) => action.type === "advise")?.message ??
@@ -174,13 +183,12 @@ function RunbookEditor({
       <CardHeader>
         <CardTitle className="text-base">{draft.name}</CardTitle>
         <CardDescription>
-          Approved + rerun action → Chat may call propose_rerun_job automatically.
-          compare_source_yellowbrick is reserved and not executed yet.
+          {t("Approved + rerun action → Chat may call propose_rerun_job automatically. compare_source_yellowbrick is reserved and not executed yet.")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Name</Label>
+          <Label>{t("Name")}</Label>
           <Input
             value={draft.name}
             onChange={(event) => setDraft({ ...draft, name: event.target.value })}
@@ -192,14 +200,14 @@ function RunbookEditor({
               checked={draft.enabled}
               onCheckedChange={(checked) => setDraft({ ...draft, enabled: checked === true })}
             />
-            Enabled
+            {t("Enabled")}
           </label>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={draft.approved}
               onCheckedChange={(checked) => setDraft({ ...draft, approved: checked === true })}
             />
-            Approved (allows auto-rerun)
+            {t("Approved (allows auto-rerun)")}
           </label>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
@@ -215,11 +223,11 @@ function RunbookEditor({
                 });
               }}
             />
-            Include EMR rerun action
+            {t("Include EMR rerun action")}
           </label>
         </div>
         <div className="space-y-2">
-          <Label>Match: current status starts with</Label>
+          <Label>{t("Match: current status starts with")}</Label>
           <Input
             value={draft.matchRules.currentStatusPrefix ?? ""}
             onChange={(event) =>
@@ -235,7 +243,7 @@ function RunbookEditor({
           />
         </div>
         <div className="space-y-2">
-          <Label>Match: error contains</Label>
+          <Label>{t("Match: error contains")}</Label>
           <Input
             value={draft.matchRules.errorContains ?? ""}
             onChange={(event) =>
@@ -251,7 +259,7 @@ function RunbookEditor({
           />
         </div>
         <div className="space-y-2">
-          <Label>Match: job name regex</Label>
+          <Label>{t("Match: job name regex")}</Label>
           <Input
             value={draft.matchRules.jobNameRegex ?? ""}
             onChange={(event) =>
@@ -264,7 +272,7 @@ function RunbookEditor({
           />
         </div>
         <div className="space-y-2">
-          <Label>Match: project name (exact)</Label>
+          <Label>{t("Match: project name (exact)")}</Label>
           <Input
             value={draft.matchRules.projectName ?? ""}
             onChange={(event) =>
@@ -277,7 +285,7 @@ function RunbookEditor({
           />
         </div>
         <div className="space-y-2">
-          <Label>Advice</Label>
+          <Label>{t("Advice")}</Label>
           <Textarea
             className="min-h-28"
             value={advice}
@@ -294,7 +302,7 @@ function RunbookEditor({
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={saving} onClick={() => onSave(draft)}>
-            Save
+            {t("Save")}
           </Button>
           <Button
             type="button"
@@ -303,7 +311,7 @@ function RunbookEditor({
             onClick={onDelete}
           >
             <Trash2 className="size-3.5" />
-            Delete
+            {t("Delete")}
           </Button>
         </div>
       </CardContent>

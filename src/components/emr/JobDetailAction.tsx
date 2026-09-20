@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useDescribeJobRun } from "@/hooks/useEmr";
+import { localeTag, useLocale, useT, type EffectiveLocale } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { formatAppError } from "@/services/appErrorMessage";
 import { saveTextFile } from "@/services/fileDownload";
@@ -24,6 +25,8 @@ export function JobDetailAction({
   onOpenChange: (open: boolean) => void;
   buttonSize?: "sm" | "icon";
 }) {
+  const t = useT();
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
@@ -31,11 +34,11 @@ export function JobDetailAction({
           variant="ghost"
           size={buttonSize === "icon" ? "icon" : "sm"}
           className={buttonSize === "icon" ? "size-7" : undefined}
-          aria-label="Job details"
+          aria-label={t("Job details")}
           onClick={() => onOpenChange(true)}
         >
           <ZoomIn className={buttonSize === "icon" ? "size-3.5" : undefined} data-icon={buttonSize === "sm" ? "inline-start" : undefined} />
-          {buttonSize === "sm" ? "Detail" : null}
+          {buttonSize === "sm" ? t("Detail") : null}
         </Button>
       </PopoverTrigger>
       {open ? <JobDetailPopoverContent job={job} onClose={() => onOpenChange(false)} /> : null}
@@ -44,6 +47,8 @@ export function JobDetailAction({
 }
 
 function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose: () => void }) {
+  const t = useT();
+  const locale = useLocale();
   const [width, setWidth] = useState(jobDetailPopoverDefaultWidth);
   const describedJob = useDescribeJobRun(job.id, job.virtualClusterId);
   const detail = describedJob.data ?? job;
@@ -51,7 +56,7 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
 
   const copyJobId = async () => {
     await navigator.clipboard?.writeText(job.id);
-    toast.success("Job ID copied.");
+    toast.success(t("Job ID copied."));
     onClose();
   };
 
@@ -59,7 +64,7 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
     try {
       const savedPath = await saveTextFile(`${detail.id}-description.json`, JSON.stringify(detail, null, 2));
       if (savedPath) {
-        toast.success(`Saved to ${savedPath}`);
+        toast.success(t("Saved to {path}", { path: savedPath }));
       }
     } catch (error) {
       toast.error(errorMessage(error));
@@ -98,14 +103,14 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
       align="center"
       sideOffset={8}
       collisionPadding={16}
-      aria-label="Job run details"
+      aria-label={t("Job run details")}
       style={{ width }}
       className="relative flex max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-0"
     >
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize job details panel"
+        aria-label={t("Resize job details panel")}
         className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none hover:bg-border/80"
         onMouseDown={beginResize}
       />
@@ -115,44 +120,45 @@ function JobDetailPopoverContent({ job, onClose }: { job: JobRunSummary; onClose
           variant="ghost"
           size="icon"
           className="size-8"
-          aria-label="Download JSON"
+          aria-label={t("Download JSON")}
           onClick={() => void downloadDescription()}
         >
           <Download className="size-4" />
         </Button>
-        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label="Copy Job ID" onClick={() => void copyJobId()}>
+        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={t("Copy Job ID")} onClick={() => void copyJobId()}>
           <Copy className="size-4" />
         </Button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {describedJob.isLoading ? <p className="text-sm text-muted-foreground">Loading job details...</p> : null}
+        {describedJob.isLoading ? <p className="text-sm text-muted-foreground">{t("Loading job details...")}</p> : null}
         {describedJob.error ? (
           <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">
             {errorMessage(describedJob.error)}
           </p>
         ) : null}
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <Detail label="Started" value={formatTimestamp(detail.startedAt)} />
-          <Detail label="Finished" value={formatTimestamp(detail.finishedAt)} />
-          <Detail label="Release Label" value={describeDetails?.releaseLabel} />
+          <Detail label={t("Started")} value={formatTimestamp(detail.startedAt, locale)} />
+          <Detail label={t("Finished")} value={formatTimestamp(detail.finishedAt, locale)} />
+          <Detail label={t("Release Label")} value={describeDetails?.releaseLabel} />
           <Detail
-            label="Retry Attempts"
+            label={t("Retry Attempts")}
             value={
               describeDetails?.retryMaxAttempts !== undefined || describeDetails?.retryCurrentAttemptCount !== undefined
                 ? `${describeDetails?.retryCurrentAttemptCount ?? "-"} / ${describeDetails?.retryMaxAttempts ?? "-"}`
                 : undefined
             }
           />
-          <Detail label="State Details" value={describeDetails?.stateDetails} span="full" />
-          <Detail label="Failure Reason" value={describeDetails?.failureReason} span="full" />
+          <Detail label={t("State Details")} value={describeDetails?.stateDetails} span="full" />
+          <Detail label={t("Failure Reason")} value={describeDetails?.failureReason} span="full" />
+          {/* "ARN" is a protocol name and stays as-is in both locales. */}
           <Detail label="ARN" value={describeDetails?.arn} span="full" />
-          <Detail label="Execution Role" value={describeDetails?.executionRoleArn} span="full" />
-          <Detail label="Created By" value={describeDetails?.createdBy} />
-          <Detail label="Client Token" value={describeDetails?.clientToken} />
-          <Detail label="Job Driver" value={formatJobDriver(describeDetails)} span="full" multiline />
-          <Detail label="Tags" value={formatJson(describeDetails?.tags)} span="full" multiline />
+          <Detail label={t("Execution Role")} value={describeDetails?.executionRoleArn} span="full" />
+          <Detail label={t("Created By")} value={describeDetails?.createdBy} />
+          <Detail label={t("Client Token")} value={describeDetails?.clientToken} />
+          <Detail label={t("Job Driver")} value={formatJobDriver(describeDetails)} span="full" multiline />
+          <Detail label={t("Tags")} value={formatJson(describeDetails?.tags)} span="full" multiline />
           <Detail
-            label="Configuration Overrides"
+            label={t("Configuration Overrides")}
             value={formatJson(describeDetails?.configurationOverrides)}
             span="full"
             multiline
@@ -184,10 +190,10 @@ function Detail({
   );
 }
 
-function formatTimestamp(value?: string) {
+function formatTimestamp(value: string | undefined, locale: EffectiveLocale) {
   if (!value) return undefined;
   const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value;
+  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString(localeTag(locale)) : value;
 }
 
 function formatJobDriver(details?: JobRunDescribeDetails) {

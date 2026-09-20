@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useS3PathPicker } from "@/hooks/useS3PathPicker";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import { cn } from "@/lib/utils";
 import { resolveAthenaOutputLocation } from "@/services/athenaOutputPath";
@@ -23,7 +24,7 @@ export function S3PathPicker({
   label,
   value,
   onChange,
-  placeholder = "s3://bucket/prefix/",
+  placeholder,
   compact = false
 }: {
   id?: string;
@@ -33,7 +34,11 @@ export function S3PathPicker({
   placeholder?: string;
   compact?: boolean;
 }) {
+  const t = useT();
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Resolved in the body rather than as a default parameter: the default needs
+  // the translator, which is only available after the hook call.
+  const resolvedPlaceholder = placeholder ?? t("s3://bucket/prefix/");
 
   const dialog = (
     <S3PathPickerDialog
@@ -54,11 +59,11 @@ export function S3PathPicker({
           id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
+          placeholder={resolvedPlaceholder}
           className="min-w-[180px] flex-1 font-mono text-sm"
           title={value}
         />
-        <Button type="button" variant="outline" size="icon" onClick={() => setDialogOpen(true)} aria-label="Browse S3">
+        <Button type="button" variant="outline" size="icon" onClick={() => setDialogOpen(true)} aria-label={t("Browse S3")}>
           <FolderOpen className="size-4" />
         </Button>
         {dialog}
@@ -74,12 +79,12 @@ export function S3PathPicker({
           id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
+          placeholder={resolvedPlaceholder}
           className="font-mono text-sm"
         />
         <Button type="button" variant="outline" onClick={() => setDialogOpen(true)}>
           <FolderOpen data-icon="inline-start" />
-          Browse
+          {t("Browse")}
         </Button>
       </div>
       {dialog}
@@ -104,6 +109,7 @@ export function S3PathPickerDialog({
   onAppendSubmitUserChange?: (value: boolean) => void;
   submitUser?: string;
 }) {
+  const t = useT();
   const picker = useS3PathPicker({ open, initialPath, appendSubmitUser });
   const effectivePath = resolveAthenaOutputLocation(picker.currentPath, submitUser ?? "user", picker.appendUser);
 
@@ -122,8 +128,8 @@ export function S3PathPickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Select S3 path</DialogTitle>
-          <DialogDescription>Browse buckets and folders, or type a path directly.</DialogDescription>
+          <DialogTitle>{t("Select S3 path")}</DialogTitle>
+          <DialogDescription>{t("Browse buckets and folders, or type a path directly.")}</DialogDescription>
         </DialogHeader>
 
         <div className="min-w-0 space-y-3 overflow-hidden">
@@ -136,7 +142,7 @@ export function S3PathPickerDialog({
                 window.setTimeout(() => picker.setSuggestionsOpen(false), 150);
               }}
               onKeyDown={picker.handlePathKeyDown}
-              placeholder="bucket/folder/"
+              placeholder={t("bucket/folder/")}
               className="min-w-0 flex-1 font-mono text-sm"
               autoComplete="off"
             />
@@ -146,7 +152,7 @@ export function S3PathPickerDialog({
               className="shrink-0"
               onClick={() => picker.navigateTo(picker.pathInput, "commit")}
             >
-              Go
+              {t("Go")}
             </Button>
             {picker.suggestionsOpen && picker.suggestions.length > 0 ? (
               <ul
@@ -183,12 +189,12 @@ export function S3PathPickerDialog({
               </p>
               <Button type="button" variant="ghost" size="sm" disabled={!picker.canGoUp} onClick={picker.goUp}>
                 <ArrowUp data-icon="inline-start" />
-                Up
+                {t("Up")}
               </Button>
             </div>
             <div className="max-h-64 overflow-auto p-2">
               {picker.isLoading ? (
-                <p className="px-2 py-1 text-sm text-muted-foreground">Loading...</p>
+                <p className="px-2 py-1 text-sm text-muted-foreground">{t("Loading...")}</p>
               ) : null}
               {picker.error ? (
                 <p className="px-2 py-1 text-sm text-destructive">
@@ -208,7 +214,9 @@ export function S3PathPickerDialog({
               ))}
               {picker.options.length === 0 && !picker.isLoading ? (
                 <p className="px-2 py-1 text-sm text-muted-foreground">
-                  {picker.context.mode === "bucket" ? "No matching buckets." : "No matching folders under this prefix."}
+                  {picker.context.mode === "bucket"
+                    ? t("No matching buckets.")
+                    : t("No matching folders under this prefix.")}
                 </p>
               ) : null}
             </div>
@@ -221,7 +229,7 @@ export function S3PathPickerDialog({
                 onCheckedChange={(checked) => picker.setAppendUser(checked === true)}
               />
               <span>
-                Append submitUser subdirectory
+                {t("Append submitUser subdirectory")}
                 <span className="font-mono text-muted-foreground"> ({submitUser ?? "user"})</span>
               </span>
             </label>
@@ -229,7 +237,7 @@ export function S3PathPickerDialog({
 
           {onAppendSubmitUserChange ? (
             <p className="overflow-hidden text-xs text-muted-foreground">
-              Athena results path:{" "}
+              {t("Athena results path:")}{" "}
               <span className="block truncate font-mono text-foreground" title={effectivePath || undefined}>
                 {effectivePath || "—"}
               </span>
@@ -239,10 +247,10 @@ export function S3PathPickerDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="button" onClick={confirmSelection}>
-            Use path
+            {t("Use path")}
           </Button>
         </DialogFooter>
       </DialogContent>

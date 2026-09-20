@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useT } from "@/i18n";
 
 /**
  * Asks what to analyze before jumping to Chat. The instruction becomes the
@@ -30,6 +31,7 @@ export function DbAnalyzeDialog({
   focusLabel: string;
   onConfirm: (instruction: string) => void;
 }) {
+  const t = useT();
   const [instruction, setInstruction] = useState("");
 
   useEffect(() => {
@@ -42,23 +44,23 @@ export function DbAnalyzeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Analyze with AI</DialogTitle>
+          <DialogTitle>{t("Analyze with AI")}</DialogTitle>
           <DialogDescription>
-            Opens a new Chat session for{" "}
+            {t("Opens a new Chat session for")}{" "}
             <span className="font-medium text-foreground">
               {connectionName}
               {focusLabel && focusLabel !== connectionName ? ` / ${focusLabel}` : ""}
             </span>
-            . Describe what you want the assistant to do.
+            {t(". Describe what you want the assistant to do.")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
-          <Label htmlFor="db-analyze-instruction">Instruction</Label>
+          <Label htmlFor="db-analyze-instruction">{t("Instruction")}</Label>
           <Textarea
             id="db-analyze-instruction"
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
-            placeholder="e.g. Count rows by status in the last 7 days and flag anomalies"
+            placeholder={t("e.g. Count rows by status in the last 7 days and flag anomalies")}
             className="min-h-24"
             autoFocus
             onKeyDown={(event) => {
@@ -68,18 +70,18 @@ export function DbAnalyzeDialog({
               }
             }}
           />
-          <p className="text-xs text-muted-foreground">⌘/Ctrl+Enter to send</p>
+          <p className="text-xs text-muted-foreground">{t("⌘/Ctrl+Enter to send")}</p>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             type="button"
             disabled={!trimmed}
             onClick={() => onConfirm(trimmed)}
           >
-            Open Chat
+            {t("Open Chat")}
           </Button>
         </DialogFooter>
       </DialogContent>

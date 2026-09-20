@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export function LogFindBar({
@@ -36,6 +37,7 @@ export function LogFindBar({
   /** Bumps when Cmd+F is pressed again while open so the input re-focuses. */
   focusRequestId?: number;
 }) {
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export function LogFindBar({
   return (
     <div
       role="search"
-      aria-label="Find in log"
+      aria-label={t("Find in log")}
       data-testid="log-find-bar"
       className="absolute left-3 top-2 z-20 flex max-w-[calc(100%-6rem)] items-center gap-1.5 rounded-md border border-slate-600 bg-slate-900/95 px-2 py-1 shadow-lg backdrop-blur"
     >
@@ -59,8 +61,8 @@ export function LogFindBar({
       <Input
         ref={inputRef}
         className="h-7 min-w-[10rem] flex-1 border-0 bg-transparent px-1 text-xs text-slate-100 shadow-none focus-visible:ring-0"
-        placeholder="Find"
-        aria-label="Find in current log"
+        placeholder={t("Find")}
+        aria-label={t("Find in current log")}
         value={searchInput}
         disabled={disabled}
         onChange={(event) => onSearchInputChange(event.target.value)}
@@ -84,12 +86,12 @@ export function LogFindBar({
         <input
           type="checkbox"
           className="size-3.5"
-          aria-label="Regex"
+          aria-label={t("Regex")}
           checked={regexSearch}
           disabled={disabled}
           onChange={(event) => onRegexSearchChange(event.target.checked)}
         />
-        Regex
+        {t("Regex")}
       </label>
       <span
         className={cn(
@@ -104,7 +106,7 @@ export function LogFindBar({
         variant="ghost"
         size="icon"
         className="size-6 text-slate-300 hover:bg-slate-800 hover:text-slate-50"
-        aria-label="Previous match"
+        aria-label={t("Previous match")}
         disabled={matchesCount === 0}
         onClick={onPreviousMatch}
       >
@@ -115,7 +117,7 @@ export function LogFindBar({
         variant="ghost"
         size="icon"
         className="size-6 text-slate-300 hover:bg-slate-800 hover:text-slate-50"
-        aria-label="Next match"
+        aria-label={t("Next match")}
         disabled={matchesCount === 0}
         onClick={onNextMatch}
       >

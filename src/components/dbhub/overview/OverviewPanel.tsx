@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { useDbConnections, useDeleteDbConnection, useNetworkProfiles } from "@/hooks/useDbHub";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useT } from "@/i18n";
 import { clearDbWorkspace } from "@/services/dbWorkspaceCache";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { DbConnection } from "@/types/domain";
@@ -27,6 +28,7 @@ import { NetworkProfilesSection } from "./NetworkProfilesSection";
  * page. Add Connection / the card edit pencil open the DBeaver-style wizard.
  */
 export function OverviewPanel() {
+  const t = useT();
   const connectionsQuery = useDbConnections();
   const profilesQuery = useNetworkProfiles();
   const deleteConnection = useDeleteDbConnection();
@@ -56,7 +58,7 @@ export function OverviewPanel() {
     if (!pendingDelete) return;
     deleteConnection.mutate(pendingDelete.id, {
       onSuccess: () => {
-        toast.success(`Connection "${pendingDelete.name}" deleted.`);
+        toast.success(t('Connection "{name}" deleted.', { name: pendingDelete.name }));
         // Its dynamic tab is gone; drop the cached workspace so a stale draft
         // never reappears if the user later recreates the connection.
         if (accountId) clearDbWorkspace(accountId, pendingDelete.id);
@@ -68,14 +70,17 @@ export function OverviewPanel() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
-      <section aria-label="Database connections" className="space-y-3">
+      <section aria-label={t("Database connections")} className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <h2 className="text-lg font-semibold">Database connections</h2>
+            <h2 className="text-lg font-semibold">{t("Database connections")}</h2>
             <p className="text-sm text-muted-foreground">
               {connections.length === 0
-                ? "No connections for this AWS account yet."
-                : `${connections.length} connection(s), pinned to tabs: ${connections.filter((connection) => connection.showAsTab).length}`}
+                ? t("No connections for this AWS account yet.")
+                : t("{count} connection(s), pinned to tabs: {pinned}", {
+                    count: connections.length,
+                    pinned: connections.filter((connection) => connection.showAsTab).length
+                  })}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -85,23 +90,25 @@ export function OverviewPanel() {
                   type="button"
                   variant="outline"
                   size="icon"
-                  aria-label="Manage Network Profiles"
+                  aria-label={t("Manage Network Profiles")}
                   onClick={() => setProfilesOpen(true)}
                 >
                   <Network className="size-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Network Profiles ({profiles.length}) — SSH tunnels &amp; SOCKS5 proxies
+                {t("Network Profiles ({count}) — SSH tunnels & SOCKS5 proxies", {
+                  count: profiles.length
+                })}
               </TooltipContent>
             </Tooltip>
             <Button type="button" size="sm" onClick={openCreate}>
-              Add Connection
+              {t("Add Connection")}
             </Button>
           </div>
         </div>
         {connectionsQuery.isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading connections…</p>
+          <p className="text-sm text-muted-foreground">{t("Loading connections…")}</p>
         ) : null}
         {connectionsQuery.error ? (
           <p className="text-sm text-destructive">Failed to load connections.</p>
@@ -124,9 +131,9 @@ export function OverviewPanel() {
       <Dialog open={profilesOpen} onOpenChange={setProfilesOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Network Profiles</DialogTitle>
+            <DialogTitle>{t("Network Profiles")}</DialogTitle>
             <DialogDescription>
-              SSH tunnels and SOCKS5 proxies this account's connections can dial through.
+              {t("SSH tunnels and SOCKS5 proxies this account's connections can dial through.")}
             </DialogDescription>
           </DialogHeader>
           <NetworkProfilesSection />
@@ -142,11 +149,12 @@ export function OverviewPanel() {
       <Dialog open={Boolean(pendingDelete)} onOpenChange={(open) => !open && setPendingDelete(undefined)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete connection?</DialogTitle>
+            <DialogTitle>{t("Delete connection?")}</DialogTitle>
             <DialogDescription>
-              Delete "{pendingDelete?.name}"? This removes the saved connection and its
-              passwords, hides its query tab, and drops its cached workspace. Read-only
-              AI queries to it are disabled too. This cannot be undone.
+              {t('Delete "{name}"?', { name: pendingDelete?.name ?? "" })}{" "}
+              {t(
+                "This removes the saved connection and its passwords, hides its query tab, and drops its cached workspace. Read-only AI queries to it are disabled too. This cannot be undone."
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -155,7 +163,7 @@ export function OverviewPanel() {
               variant="outline"
               onClick={() => setPendingDelete(undefined)}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
@@ -163,7 +171,7 @@ export function OverviewPanel() {
               disabled={deleteConnection.isPending}
               onClick={confirmDelete}
             >
-              Delete connection
+              {t("Delete connection")}
             </Button>
           </DialogFooter>
         </DialogContent>

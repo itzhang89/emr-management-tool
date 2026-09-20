@@ -1,5 +1,6 @@
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { EditorView, GutterMarker, gutter } from "@codemirror/view";
+import { t } from "@/i18n/translate";
 import {
   computeLineChangeMarkers,
   type LineChangeKind,
@@ -52,15 +53,16 @@ class ChangeGutterMarker extends GutterMarker {
     return other.kind === this.kind;
   }
 
+  // Runs on every gutter redraw, so the title picks up a language change live.
   toDOM() {
     const el = document.createElement("div");
     el.className = `cm-s3-change-mark cm-s3-change-${this.kind}`;
     el.title =
       this.kind === "added"
-        ? "Added lines"
+        ? t("Added lines")
         : this.kind === "modified"
-          ? "Modified lines"
-          : "Deleted lines";
+          ? t("Modified lines")
+          : t("Deleted lines");
     return el;
   }
 }

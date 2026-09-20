@@ -28,6 +28,7 @@ import {
   useUpdateJobConfigTemplate
 } from "@/hooks/useJobConfigTemplates";
 import { useTemplates } from "@/hooks/useTemplates";
+import { useT } from "@/i18n";
 import { defaultExamplePayload } from "@/services/jobConfigExamples";
 import { buildKnownTemplateVariables } from "@/services/jsonTemplateVariables";
 import {
@@ -65,6 +66,7 @@ type TemplateEditorSnapshot = Pick<
 >;
 
 export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?: boolean }) {
+  const t = useT();
   const templates = useJobConfigTemplates();
   const [editing, setEditing] = useState<Editing>();
   const createTemplate = useCreateJobConfigTemplate();
@@ -77,7 +79,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
     try {
       const payload = parseImportedJobConfigTemplate(raw);
       await createTemplate.mutateAsync(buildImportedJobConfigTemplate(payload));
-      toast.success("Application config template imported.");
+      toast.success(t("Application config template imported."));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to import template.");
     }
@@ -88,12 +90,12 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
       <div className="flex items-start justify-between">
         <div>
           {embedded ? (
-            <h2 className="text-2xl font-semibold tracking-tight">Application Config</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">{t("Application Config")}</h2>
           ) : (
-            <h1 className="text-2xl font-semibold tracking-tight">Application Config</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("Application Config")}</h1>
           )}
           <p className="text-sm text-muted-foreground">
-            Manage full EMR submit JSON templates with variable substitution.
+            {t("Manage full EMR submit JSON templates with variable substitution.")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -106,11 +108,11 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
             }}
           >
             <Upload data-icon="inline-start" />
-            Import
+            {t("Import")}
           </Button>
           <Button onClick={() => setEditing({})}>
             <Plus data-icon="inline-start" />
-            Template
+            {t("Template")}
           </Button>
         </div>
       </div>
@@ -121,26 +123,32 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CardTitle>{template.name}</CardTitle>
-                {template.builtIn ? <Badge variant="secondary">Built-in</Badge> : null}
+                {template.builtIn ? <Badge variant="secondary">{t("Built-in")}</Badge> : null}
               </div>
-              <CardDescription>{template.description ?? "No description"}</CardDescription>
+              <CardDescription>{template.description ?? t("No description")}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="text-sm text-muted-foreground">
-                {(template.customVariables ?? []).length} variable
-                {(template.customVariables ?? []).length === 1 ? "" : "s"}
+                {(template.customVariables ?? []).length === 1
+                  ? t("{count} variable", { count: (template.customVariables ?? []).length })
+                  : t("{count} variables", { count: (template.customVariables ?? []).length })}
                 {template.defaultResourceTemplateId
-                  ? ` · default resource ${template.defaultResourceTemplateId}`
+                  ? ` · ${t("default resource {id}", { id: template.defaultResourceTemplateId })}`
                   : ""}
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" size="icon" aria-label={`Edit ${template.name}`} onClick={() => setEditing({ template })}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("Edit {name}", { name: template.name })}
+                  onClick={() => setEditing({ template })}
+                >
                   <Edit2 />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Export ${template.name}`}
+                  aria-label={t("Export {name}", { name: template.name })}
                   onClick={async () => {
                     const saved = await saveTextFile(
                       `${template.name.replace(/\s+/g, "-").toLowerCase()}.json`,
@@ -152,7 +160,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
                         defaultResourceTemplateId: template.defaultResourceTemplateId
                       })
                     );
-                    if (saved) toast.success("Template exported.");
+                    if (saved) toast.success(t("Template exported."));
                   }}
                 >
                   <Download />
@@ -160,7 +168,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Duplicate ${template.name}`}
+                  aria-label={t("Duplicate {name}", { name: template.name })}
                   onClick={() => duplicateTemplate.mutate(template.id)}
                 >
                   <Copy />
@@ -168,7 +176,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label={`Delete ${template.name}`}
+                  aria-label={t("Delete {name}", { name: template.name })}
                   onClick={async () => {
                     if (template.builtIn) {
                       toast.error("Built-in example templates are for reference and cannot be deleted.");
@@ -176,7 +184,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
                     }
                     try {
                       await deleteTemplate.mutateAsync(template.id);
-                      toast.success("Application config template deleted.");
+                      toast.success(t("Application config template deleted."));
                     } catch (error) {
                       toast.error(error instanceof Error ? error.message : "Failed to delete template.");
                     }
@@ -200,7 +208,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
             } else {
               await createTemplate.mutateAsync(template);
             }
-            toast.success("Application config template saved.");
+            toast.success(t("Application config template saved."));
             setEditing(undefined);
           } catch (error) {
             toast.error(error instanceof Error ? error.message : "Failed to save template.");
@@ -220,6 +228,7 @@ function JobConfigTemplateDialog({
   onOpenChange: (open: boolean) => void;
   onSave: (template: JobConfigTemplate) => Promise<void>;
 }) {
+  const t = useT();
   const resourceTemplates = useTemplates();
   const template = editing?.template;
   const now = new Date().toISOString();
@@ -260,18 +269,22 @@ function JobConfigTemplateDialog({
     <Dialog open={Boolean(editing)} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
         <DialogHeader className="shrink-0">
-          <DialogTitle>{template ? "Edit" : "Create"} application config template</DialogTitle>
-          <DialogDescription>Reset restores the editor to the state from when it was opened or first imported.</DialogDescription>
+          <DialogTitle>
+            {template ? t("Edit application config template") : t("Create application config template")}
+          </DialogTitle>
+          <DialogDescription>
+            {t("Reset restores the editor to the state from when it was opened or first imported.")}
+          </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Name">
+            <Field label={t("Name")}>
               <Input value={name} onChange={(event) => setName(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
             </Field>
-            <Field label="Default Resource Template">
+            <Field label={t("Default Resource Template")}>
               <Select value={defaultResourceTemplateId ?? ""} onValueChange={setDefaultResourceTemplateId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Optional default resource" />
+                  <SelectValue placeholder={t("Optional default resource")} />
                 </SelectTrigger>
                 <SelectContent>
                   {(resourceTemplates.data?.resourceTemplates ?? []).map((item) => (
@@ -283,11 +296,11 @@ function JobConfigTemplateDialog({
               </Select>
             </Field>
           </div>
-          <Field label="Description">
+          <Field label={t("Description")}>
             <Input value={description} onChange={(event) => setDescription(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
           </Field>
           <div className="flex items-center justify-between">
-            <Label>Payload JSON</Label>
+            <Label>{t("Payload JSON")}</Label>
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -295,7 +308,7 @@ function JobConfigTemplateDialog({
                 size="sm"
                 onClick={() => {
                   const confirmed = window.confirm(
-                    "Reset will overwrite all current settings with the initial template state. Continue?"
+                    t("Reset will overwrite all current settings with the initial template state. Continue?")
                   );
                   if (!confirmed) return;
                   applyEditorSnapshot(resetSnapshot);
@@ -303,7 +316,7 @@ function JobConfigTemplateDialog({
                 }}
               >
                 <RotateCcw data-icon="inline-start" />
-                Reset
+                {t("Reset")}
               </Button>
               <Button
                 type="button"
@@ -318,14 +331,14 @@ function JobConfigTemplateDialog({
                     applyEditorSnapshot(snapshot);
                     setResetSnapshot(snapshot);
                     setVariableEditorKey((key) => key + 1);
-                    toast.success("Template JSON imported into editor.");
+                    toast.success(t("Template JSON imported into editor."));
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Failed to import JSON.");
                   }
                 }}
               >
                 <Upload data-icon="inline-start" />
-                Import JSON
+                {t("Import JSON")}
               </Button>
             </div>
           </div>
@@ -343,7 +356,7 @@ function JobConfigTemplateDialog({
         </div>
         <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             onClick={() => {
@@ -370,7 +383,7 @@ function JobConfigTemplateDialog({
               });
             }}
           >
-            Save
+            {t("Save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -385,6 +398,7 @@ function VariableEditor({
   variables: TemplateVariableDefinition[];
   onChange: (variables: TemplateVariableDefinition[]) => void;
 }) {
+  const t = useT();
   const [rows, setRows] = useState<EditableVariable[]>(() => toEditableRows(variables));
 
   const commitRows = (nextRows: EditableVariable[]) => {
@@ -395,7 +409,7 @@ function VariableEditor({
   return (
     <div className="min-w-0 max-w-full space-y-3">
       <div className="flex items-center justify-between">
-        <Label>Custom Variables</Label>
+        <Label>{t("Custom Variables")}</Label>
         <Button
           type="button"
           variant="outline"
@@ -413,7 +427,7 @@ function VariableEditor({
           }
         >
           <Plus data-icon="inline-start" />
-          Add Variable
+          {t("Add Variable")}
         </Button>
       </div>
       {rows.map((variable, index) => (
@@ -461,6 +475,7 @@ function VariableRow({
   onMoveDown: () => void;
   onRemove: () => void;
 }) {
+  const t = useT();
   const [optionsDraft, setOptionsDraft] = useState((variable.options ?? []).join(", "));
 
   useEffect(() => {
@@ -475,7 +490,7 @@ function VariableRow({
         </div>
         <Input
           className="min-w-0"
-          placeholder="Variable name"
+          placeholder={t("Variable name")}
           value={variable.name}
           onChange={(event) => onChange({ name: event.target.value })}
           {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -522,7 +537,7 @@ function VariableRow({
               checked={Boolean(variable.required)}
               onCheckedChange={(checked) => onChange({ required: Boolean(checked) })}
             />
-            Required
+            {t("Required")}
           </label>
           <VariableDescriptionControl
             variableName={variable.name}
@@ -534,7 +549,7 @@ function VariableRow({
             variant="ghost"
             size="icon"
             className="size-8"
-            aria-label={`Move ${variable.name} up`}
+            aria-label={t("Move {name} up", { name: variable.name })}
             disabled={index === 0}
             onClick={onMoveUp}
           >
@@ -545,7 +560,7 @@ function VariableRow({
             variant="ghost"
             size="icon"
             className="size-8"
-            aria-label={`Move ${variable.name} down`}
+            aria-label={t("Move {name} down", { name: variable.name })}
             disabled={index === total - 1}
             onClick={onMoveDown}
           >
@@ -556,7 +571,7 @@ function VariableRow({
             variant="ghost"
             size="icon"
             className="size-8"
-            aria-label={`Remove ${variable.name}`}
+            aria-label={t("Remove {name}", { name: variable.name })}
             onClick={onRemove}
           >
             <Trash2 className="size-4" />
@@ -571,7 +586,7 @@ function VariableRow({
             onValueChange={(value) => onChange({ format: value })}
           >
             <SelectTrigger className="w-[8.5rem] shrink-0">
-              <SelectValue placeholder="Format" />
+              <SelectValue placeholder={t("Format")} />
             </SelectTrigger>
             <SelectContent>
               {ENUM_DISPLAY_OPTIONS.map((option) => (
@@ -583,7 +598,7 @@ function VariableRow({
           </Select>
           <Input
             className="min-w-0 flex-1"
-            placeholder="Options, comma-separated"
+            placeholder={t("Options, comma-separated")}
             value={optionsDraft}
             onChange={(event) => setOptionsDraft(event.target.value)}
             {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -602,7 +617,7 @@ function VariableRow({
       {variable.type === "multiEnum" && (
         <Input
           className="min-w-0"
-          placeholder="Options, comma-separated"
+          placeholder={t("Options, comma-separated")}
           value={optionsDraft}
           onChange={(event) => setOptionsDraft(event.target.value)}
           {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -620,7 +635,7 @@ function VariableRow({
       {(variable.type === "date" || variable.type === "dateTime") && (
         <Input
           className="min-w-0 max-w-sm"
-          placeholder="Format, e.g. YYYY-MM-DD"
+          placeholder={t("Format, e.g. YYYY-MM-DD")}
           value={variable.format ?? defaultFormatForVariableType(variable.type)}
           onChange={(event) => onChange({ format: event.target.value })}
           {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -639,7 +654,7 @@ function VariableRow({
             }
           >
             <SelectTrigger className="w-[11rem] shrink-0">
-              <SelectValue placeholder="Output format" />
+              <SelectValue placeholder={t("Output format")} />
             </SelectTrigger>
             <SelectContent className="w-[var(--radix-select-trigger-width)]">
               {BOOLEAN_OUTPUT_OPTIONS.map((option) => (
@@ -667,9 +682,10 @@ function VariableDescriptionControl({
   description?: string;
   onChange: (description: string | undefined) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(description ?? "");
-  const tooltip = description?.trim() || "Add variable description";
+  const tooltip = description?.trim() || t("Add variable description");
 
   const updateOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -687,7 +703,7 @@ function VariableDescriptionControl({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label={`Edit ${variableName} description`}
+              aria-label={t("Edit {name} description", { name: variableName })}
               className={cn("size-8", description ? "text-primary" : undefined)}
             >
               <CircleHelp className="size-4" />
@@ -696,10 +712,10 @@ function VariableDescriptionControl({
         </TooltipTrigger>
         <PopoverContent align="end" className="w-80 space-y-3">
           <div className="space-y-1">
-            <Label>Description for {variableName}</Label>
+            <Label>{t("Description for {name}", { name: variableName })}</Label>
             <Textarea
               className="min-h-24"
-              placeholder="Optional description shown on hover in Submit Job."
+              placeholder={t("Optional description shown on hover in Submit Job.")}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
@@ -707,7 +723,7 @@ function VariableDescriptionControl({
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => updateOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
@@ -717,7 +733,7 @@ function VariableDescriptionControl({
                 setOpen(false);
               }}
             >
-              Confirm
+              {t("Confirm")}
             </Button>
           </div>
         </PopoverContent>
@@ -734,6 +750,8 @@ function DefaultValueField({
   variable: EditableVariable;
   onChange: (patch: Partial<EditableVariable>) => void;
 }) {
+  const t = useT();
+
   if (variable.type === "boolean") {
     const format = parseBooleanOutputStyle(variable.format);
     const defaultValue = resolveBooleanDefaultValue(variable.defaultValue as boolean | undefined);
@@ -750,7 +768,7 @@ function DefaultValueField({
             })
           }
         />
-        <span className="shrink-0 text-muted-foreground">Default</span>
+        <span className="shrink-0 text-muted-foreground">{t("Default")}</span>
         <span className="min-w-0 truncate font-mono text-foreground">{defaultOutput}</span>
       </label>
     );
@@ -761,7 +779,7 @@ function DefaultValueField({
       <Input
         className="min-w-0"
         type="number"
-        placeholder="Default"
+        placeholder={t("Default")}
         value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
         onChange={(event) =>
           onChange({ defaultValue: event.target.value === "" ? undefined : Number(event.target.value) })
@@ -778,7 +796,7 @@ function DefaultValueField({
         onValueChange={(value) => onChange({ defaultValue: value })}
       >
         <SelectTrigger className="min-w-0 [&>span]:truncate">
-          <SelectValue placeholder="Default" />
+          <SelectValue placeholder={t("Default")} />
         </SelectTrigger>
         <SelectContent>
           {options.map((option) => (
@@ -795,7 +813,7 @@ function DefaultValueField({
     return (
       <Input
         className="min-w-0"
-        placeholder="Default values"
+        placeholder={t("Default values")}
         value={Array.isArray(variable.defaultValue) ? variable.defaultValue.join(", ") : ""}
         {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}
         onChange={(event) =>
@@ -813,7 +831,7 @@ function DefaultValueField({
   return (
     <Input
       className="min-w-0"
-      placeholder="Default"
+      placeholder={t("Default")}
       value={variable.defaultValue === undefined ? "" : String(variable.defaultValue)}
       onChange={(event) => onChange({ defaultValue: event.target.value || undefined })}
       {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS}

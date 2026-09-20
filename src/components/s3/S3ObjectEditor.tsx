@@ -22,6 +22,9 @@ import { properties } from "@codemirror/legacy-modes/mode/properties";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { highlightSelectionMatches, search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { useT } from "@/i18n";
+// `t` is already bound to the Lezer highlight tags in this module.
+import { t as translateNow } from "@/i18n/translate";
 import { createS3SearchPanel } from "@/components/s3/s3SearchPanel";
 import { s3ChangeGutter, setS3EditorBaseline } from "@/components/s3/s3ChangeGutter";
 import { s3ReplaceModeField, setS3ReplaceMode } from "@/services/s3EditorSearch";
@@ -289,6 +292,7 @@ export const S3ObjectEditor = forwardRef<
   { value, baseline = "", fileKey, readOnly = false, className, onChange, onSave, onFocusList, onReadOnlyInput },
   ref
 ) {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -402,7 +406,9 @@ export const S3ObjectEditor = forwardRef<
       readOnlyHandler,
       compartments.readOnly.of(EditorState.readOnly.of(readOnly)),
       updateListener,
-      EditorView.contentAttributes.of({ "aria-label": "S3 object content" })
+      // Read through the singleton rather than a captured `t`: rebuilding this
+      // view on a language change would discard the editor's undo history.
+      EditorView.contentAttributes.of({ "aria-label": translateNow("S3 object content") })
     ];
 
     const view = new EditorView({
@@ -421,6 +427,8 @@ export const S3ObjectEditor = forwardRef<
       view.destroy();
       viewRef.current = null;
     };
+    // Deliberately not keyed on the language: the editor's only localized string
+    // is its aria-label, which is not worth discarding undo history for.
   }, [compartments]);
 
   useEffect(() => {

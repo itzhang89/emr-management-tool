@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useT } from "@/i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatPanel } from "@/components/ai/chat/ChatPanel";
 import { LlmSettingsPanel } from "@/components/ai/settings/LlmSettingsPanel";
@@ -15,6 +16,7 @@ import { RunbooksPanel } from "@/components/ai/runbooks/RunbooksPanel";
  * external agents connect to.
  */
 export function AiAssistantPage() {
+  const t = useT();
   // Controlled so Chat's empty state can send an unconfigured user straight to
   // the Providers tab instead of telling them to find the tab themselves. A
   // providerId carries over which provider an errored reply belongs to, so the
@@ -34,12 +36,12 @@ export function AiAssistantPage() {
 
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
         <TabsList className="w-fit">
-          <TabsTrigger value="chat">Chat</TabsTrigger>
-          <TabsTrigger value="runbooks">Runbooks</TabsTrigger>
-          <TabsTrigger value="settings">Providers</TabsTrigger>
-          <TabsTrigger value="redact">Redaction</TabsTrigger>
-          <TabsTrigger value="server">MCP Server</TabsTrigger>
-          <TabsTrigger value="audit">Audit</TabsTrigger>
+          <TabsTrigger value="chat">{t("Chat")}</TabsTrigger>
+          <TabsTrigger value="runbooks">{t("Runbooks")}</TabsTrigger>
+          <TabsTrigger value="settings">{t("Providers")}</TabsTrigger>
+          <TabsTrigger value="redact">{t("Redaction")}</TabsTrigger>
+          <TabsTrigger value="server">{t("MCP Server")}</TabsTrigger>
+          <TabsTrigger value="audit">{t("Audit")}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="chat" className="mt-0 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

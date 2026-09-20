@@ -5,6 +5,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogDestinationPopover } from "@/components/logs/LogDestinationPopover";
 import { LogSelectionBreadcrumb } from "@/components/logs/LogSelectionBreadcrumb";
+import { useT } from "@/i18n";
 
 export function LogCommandBar({
   activeSource,
@@ -33,11 +34,13 @@ export function LogCommandBar({
   onFocusNoiseFilterChange: (checked: boolean) => void;
   focusDisabled?: boolean;
 }) {
+  const t = useT();
+
   const copyPath = async () => {
     if (!breadcrumbFullPath) return;
     try {
       await navigator.clipboard?.writeText(breadcrumbFullPath);
-      toast.success("Log path copied.");
+      toast.success(t("Log path copied."));
     } catch {
       onCopyPath();
     }
@@ -46,7 +49,7 @@ export function LogCommandBar({
   return (
     <div
       role="toolbar"
-      aria-label="Log viewer controls"
+      aria-label={t("Log viewer controls")}
       className="sticky top-0 z-10 shrink-0 rounded-md border bg-card p-2"
     >
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -80,7 +83,7 @@ export function LogCommandBar({
               variant="ghost"
               size="icon"
               className="size-8"
-              aria-label="Download selected log"
+              aria-label={t("Download selected log")}
               disabled={!hasSelection}
               onClick={() => void onDownload()}
             >
@@ -91,7 +94,7 @@ export function LogCommandBar({
               variant="ghost"
               size="icon"
               className="size-8"
-              aria-label="Copy log path"
+              aria-label={t("Copy log path")}
               disabled={!breadcrumbFullPath}
               onClick={() => void copyPath()}
             >
@@ -105,12 +108,12 @@ export function LogCommandBar({
           <input
             type="checkbox"
             className="size-4"
-            aria-label="Hide noisy Spark log lines"
+            aria-label={t("Hide noisy Spark log lines")}
             checked={focusNoiseFilter}
             disabled={focusDisabled}
             onChange={(event) => onFocusNoiseFilterChange(event.target.checked)}
           />
-          Focus
+          {t("Focus")}
         </label>
       </div>
     </div>

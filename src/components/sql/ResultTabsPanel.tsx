@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,7 +28,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
   onSelectTab,
   onCloseTab,
   children,
-  emptyLabel = "No result tabs."
+  emptyLabel
 }: {
   tabs: T[];
   activeTabId: string;
@@ -37,6 +38,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
   children: (activeTab: T) => React.ReactNode;
   emptyLabel?: string;
 }) {
+  const t = useT();
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 
   return (
@@ -76,7 +78,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
                   variant="ghost"
                   size="icon"
                   className="size-5 shrink-0"
-                  aria-label={`Close ${tab.title}`}
+                  aria-label={t("Close {title}", { title: tab.title })}
                   onClick={() => onCloseTab(tab.id)}
                 >
                   <X className="size-2.5" />
@@ -91,7 +93,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
         {activeTab ? (
           children(activeTab)
         ) : (
-          <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+          <p className="text-xs text-muted-foreground">{emptyLabel ?? t("No result tabs.")}</p>
         )}
       </div>
     </div>

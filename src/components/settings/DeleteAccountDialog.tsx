@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { useT } from "@/i18n";
 
 type DeleteAccountDialogProps = {
   open: boolean;
@@ -23,28 +24,30 @@ export function DeleteAccountDialog({
   onOpenChange,
   onConfirm
 }: DeleteAccountDialogProps) {
+  const t = useT();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete AWS account?</DialogTitle>
+          <DialogTitle>{t("Delete AWS account?")}</DialogTitle>
           <DialogDescription>
             {accountName ? (
               <>
-                This permanently removes <span className="font-medium text-foreground">{accountName}</span> and its stored
-                credentials from this app. This cannot be undone.
+                {t("This permanently removes")}{" "}
+                <span className="font-medium text-foreground">{accountName}</span>{" "}
+                {t("and its stored credentials from this app. This cannot be undone.")}
               </>
             ) : (
-              "This permanently removes the account and its stored credentials from this app. This cannot be undone."
+              t("This permanently removes the account and its stored credentials from this app. This cannot be undone.")
             )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="button" variant="destructive" disabled={pending} onClick={onConfirm}>
-            {pending ? "Deleting..." : "Delete"}
+            {pending ? t("Deleting...") : t("Delete")}
           </Button>
         </DialogFooter>
       </DialogContent>

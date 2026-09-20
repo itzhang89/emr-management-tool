@@ -9,10 +9,12 @@ import { VirtualClustersEmptyHint } from "@/components/emr/VirtualClustersEmptyH
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useVirtualClusters } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useT } from "@/i18n";
 import { formatVirtualClustersError } from "@/services/appErrorMessage";
 import type { VirtualCluster } from "@/types/domain";
 
 export function VirtualClustersPage() {
+  const t = useT();
   const activeAccount = useActiveAwsAccount();
   const clusters = useVirtualClusters();
   const [selectedCluster, setSelectedCluster] = useState<VirtualCluster>();
@@ -25,17 +27,19 @@ export function VirtualClustersPage() {
         actions={
           <Button variant="outline" onClick={() => clusters.refetch()}>
             <RefreshCw data-icon="inline-start" />
-            Refresh
+            {t("Refresh")}
           </Button>
         }
       />
       <Card>
         <CardHeader>
-          <CardTitle>Clusters</CardTitle>
-          <CardDescription>Cluster operations are read-only by design.</CardDescription>
+          <CardTitle>{t("Clusters")}</CardTitle>
+          <CardDescription>{t("Cluster operations are read-only by design.")}</CardDescription>
         </CardHeader>
         <CardContent>
-          {clusters.isLoading ? <p className="text-sm text-muted-foreground">Loading virtual clusters...</p> : null}
+          {clusters.isLoading ? (
+            <p className="text-sm text-muted-foreground">{t("Loading virtual clusters...")}</p>
+          ) : null}
           {clusters.error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               {formatVirtualClustersError(clusters.error, activeRegion)}
@@ -51,12 +55,12 @@ export function VirtualClustersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Namespace</TableHead>
-                <TableHead>EKS Cluster</TableHead>
-                <TableHead>Created Time</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("Name")}</TableHead>
+                <TableHead>{t("State")}</TableHead>
+                <TableHead>{t("Namespace")}</TableHead>
+                <TableHead>{t("EKS Cluster")}</TableHead>
+                <TableHead>{t("Created Time")}</TableHead>
+                <TableHead className="text-right">{t("Actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -72,7 +76,7 @@ export function VirtualClustersPage() {
                   <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => setSelectedCluster(cluster)}>
                       <ZoomIn data-icon="inline-start" />
-                      View Details
+                      {t("View Details")}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -96,21 +100,23 @@ function VirtualClusterDetailsDialog({
   cluster?: VirtualCluster;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
+
   return (
     <Dialog open={Boolean(cluster)} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Virtual Cluster Details</DialogTitle>
-          <DialogDescription>Read-only metadata for the selected EMR Virtual Cluster.</DialogDescription>
+          <DialogTitle>{t("Virtual Cluster Details")}</DialogTitle>
+          <DialogDescription>{t("Read-only metadata for the selected EMR Virtual Cluster.")}</DialogDescription>
         </DialogHeader>
         {cluster ? (
           <div className="grid grid-cols-[140px_1fr] gap-3 text-sm">
             <Detail label="ID" value={cluster.id} />
-            <Detail label="Name" value={cluster.name} />
-            <Detail label="State" value={cluster.state} />
-            <Detail label="Namespace" value={cluster.namespace} />
-            <Detail label="EKS Cluster" value={cluster.eksClusterName} />
-            <Detail label="Created Time" value={new Date(cluster.createdAt).toLocaleString()} />
+            <Detail label={t("Name")} value={cluster.name} />
+            <Detail label={t("State")} value={cluster.state} />
+            <Detail label={t("Namespace")} value={cluster.namespace} />
+            <Detail label={t("EKS Cluster")} value={cluster.eksClusterName} />
+            <Detail label={t("Created Time")} value={new Date(cluster.createdAt).toLocaleString()} />
           </div>
         ) : null}
       </DialogContent>

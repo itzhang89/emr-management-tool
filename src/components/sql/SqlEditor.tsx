@@ -13,6 +13,7 @@ import { tags as t } from "@lezer/highlight";
 import { sql, type SQLDialect } from "@codemirror/lang-sql";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { useEffect, useMemo, useRef } from "react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -97,12 +98,12 @@ export function SqlEditor({
   onRun,
   onRunNewTab,
   dialect,
-  placeholder = "Write SQL here…",
+  placeholder,
   diagnostics,
   completion,
   className,
   readOnly = false,
-  ariaLabel = "SQL editor"
+  ariaLabel
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -123,6 +124,9 @@ export function SqlEditor({
    */
   ariaLabel?: string;
 }) {
+  const t = useT();
+  const placeholderText = placeholder ?? t("Write SQL here…");
+  const ariaLabelText = ariaLabel ?? t("SQL editor");
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -190,8 +194,8 @@ export function SqlEditor({
       compartments.completion.of([]),
       compartments.readOnly.of(EditorState.readOnly.of(readOnly)),
       updateListener,
-      EditorView.contentAttributes.of({ "aria-label": ariaLabel }),
-      placeholderExt(placeholder)
+      EditorView.contentAttributes.of({ "aria-label": ariaLabelText }),
+      placeholderExt(placeholderText)
     ];
 
     const view = new EditorView({

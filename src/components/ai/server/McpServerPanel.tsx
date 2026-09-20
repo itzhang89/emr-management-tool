@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tauriClient } from "@/services/tauriClient";
 import type { McpStatus, McpToolInfo } from "@/types/domain";
@@ -93,6 +94,7 @@ const AGENTS: AgentTool[] = [
  * about letting other tools in.
  */
 export function McpServerPanel() {
+  const t = useT();
   const queryClient = useQueryClient();
   const [port, setPort] = useState(DEFAULT_MCP_PORT);
   const [activeAgent, setActiveAgent] = useState(AGENTS[0].id);
@@ -126,7 +128,7 @@ export function McpServerPanel() {
     mutationFn: () => tauriClient.mcpStart({ port }),
     onSuccess: (result: McpStatus) => {
       queryClient.setQueryData(["mcp-status"], result);
-      toast.success(`MCP server started on port ${result.mcpPort}`);
+      toast.success(t("MCP server started on port {port}", { port: result.mcpPort ?? port }));
     },
     onError: (err: Error) => {
       toast.error(err.message || "Failed to start MCP server");
@@ -137,7 +139,7 @@ export function McpServerPanel() {
     mutationFn: () => tauriClient.mcpStop(),
     onSuccess: () => {
       queryClient.setQueryData(["mcp-status"], { running: false } as McpStatus);
-      toast.success("MCP server stopped");
+      toast.success(t("MCP server stopped"));
     },
     onError: (err: Error) => {
       toast.error(err.message || "Failed to stop MCP server");
@@ -168,17 +170,17 @@ export function McpServerPanel() {
 
   const copyConfig = useCallback(() => {
     navigator.clipboard.writeText(agentConfig).then(
-      () => toast.success(`${agent.label} config copied`),
+      () => toast.success(t("{name} config copied", { name: agent.label })),
       () => toast.error("Failed to copy to clipboard")
     );
-  }, [agentConfig, agent.label]);
+  }, [agentConfig, agent.label, t]);
 
   const copyEndpoint = useCallback(() => {
     navigator.clipboard.writeText(endpointUrl).then(
-      () => toast.success("Copied to clipboard"),
+      () => toast.success(t("Copied to clipboard")),
       () => toast.error("Failed to copy")
     );
-  }, [endpointUrl]);
+  }, [endpointUrl, t]);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -187,16 +189,15 @@ export function McpServerPanel() {
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2">
               <Bot className="size-5" />
-              MCP Server
+              {t("MCP Server")}
             </CardTitle>
             <CardDescription>
-              Start the built-in MCP server to allow AI assistants to query EMR jobs and logs through your app.
-              It serves a single Streamable HTTP endpoint on <code>127.0.0.1</code>.
+              {t("Start the built-in MCP server to allow AI assistants to query EMR jobs and logs through your app. It serves a single Streamable HTTP endpoint on {address}.", { address: "127.0.0.1" })}
             </CardDescription>
           </div>
           <div className="flex items-center gap-3 pt-1">
             <Label htmlFor="mcp-toggle" className="text-sm">
-              {isRunning ? "Running" : "Stopped"}
+              {isRunning ? t("Running") : t("Stopped")}
             </Label>
             <Switch
               id="mcp-toggle"
@@ -208,7 +209,7 @@ export function McpServerPanel() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="mcp-port">MCP Port</Label>
+            <Label htmlFor="mcp-port">{t("MCP Port")}</Label>
             <div className="flex max-w-xs gap-2">
               <Input
                 id="mcp-port"
@@ -236,13 +237,13 @@ export function McpServerPanel() {
                     <Play className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Restart with new port</TooltipContent>
+                <TooltipContent>{t("Restart with new port")}</TooltipContent>
               </Tooltip>
             </div>
             <p className="text-xs text-muted-foreground">
               {isRunning
-                ? `Currently running on port ${mcpPort}`
-                : "Port for the MCP endpoint. Changes require a restart."}
+                ? t("Currently running on port {port}", { port: mcpPort })
+                : t("Port for the MCP endpoint. Changes require a restart.")}
             </p>
           </div>
 
@@ -253,9 +254,9 @@ export function McpServerPanel() {
                   variant="secondary"
                   className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
                 >
-                  Active
+                  {t("Active")}
                 </Badge>
-                <span className="text-sm font-medium">MCP server is running</span>
+                <span className="text-sm font-medium">{t("MCP server is running")}</span>
               </div>
             </div>
           ) : (
@@ -263,15 +264,14 @@ export function McpServerPanel() {
               <div className="flex items-center gap-2">
                 <CircleAlert className="size-4 text-amber-600" />
                 <span className="text-sm">
-                  MCP server is stopped. External AI assistants cannot connect until you start it — the Chat tab
-                  is unaffected, since it reaches the same tools in-process.
+                  {t("MCP server is stopped. External AI assistants cannot connect until you start it — the Chat tab is unaffected, since it reaches the same tools in-process.")}
                 </span>
               </div>
             </div>
           )}
 
           <div className="space-y-2">
-            <Label>Endpoint</Label>
+            <Label>{t("Endpoint")}</Label>
             <div className="flex gap-2">
               <Textarea
                 readOnly
@@ -284,7 +284,7 @@ export function McpServerPanel() {
                     <Copy className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Copy</TooltipContent>
+                <TooltipContent>{t("Copy")}</TooltipContent>
               </Tooltip>
             </div>
           </div>
@@ -295,10 +295,10 @@ export function McpServerPanel() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileCode2 className="size-5" />
-            Configure Your AI Assistant
+            {t("Configure Your AI Assistant")}
           </CardTitle>
           <CardDescription>
-            Pick your tool for the exact config and where it goes. Start the server above first.
+            {t("Pick your tool for the exact config and where it goes. Start the server above first.")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -318,16 +318,16 @@ export function McpServerPanel() {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <Label className="block">{agent.lang === "bash" ? "Command" : "Configuration"}</Label>
+                <Label className="block">{agent.lang === "bash" ? t("Command") : t("Configuration")}</Label>
                 <p className="truncate font-mono text-xs text-muted-foreground">{agent.file}</p>
               </div>
               <Button variant="ghost" size="sm" onClick={copyConfig} className="shrink-0">
                 <Copy className="mr-2 size-3" />
-                Copy
+                {t("Copy")}
               </Button>
             </div>
             <Textarea readOnly value={agentConfig} className="h-32 resize-none font-mono text-sm" />
-            <p className="text-xs text-muted-foreground">{agent.note}</p>
+            <p className="text-xs text-muted-foreground">{t(agent.note)}</p>
           </div>
         </CardContent>
       </Card>
@@ -336,25 +336,24 @@ export function McpServerPanel() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Wrench className="size-5" />
-            Available tools
+            {t("Available tools")}
           </CardTitle>
           <CardDescription>
-            Tools Chat and external agents can call. DBHub tools are rebuilt from the active
-            account&apos;s AI-enabled connections.
+            {t("Tools Chat and external agents can call. DBHub tools are rebuilt from the active account's AI-enabled connections.")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {toolsLoading && tools.length === 0 ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" />
-              Loading tools…
+              {t("Loading tools…")}
             </div>
           ) : (
             <>
-              <ToolGroup title="Built-in" tools={builtinTools} />
+              <ToolGroup title={t("Built-in")} tools={builtinTools} />
               <ToolGroup
-                title="DBHub (active account)"
-                empty="No AI-enabled connections. Turn on Enabled for AI on a DBHub connection card."
+                title={t("DBHub (active account)")}
+                empty={t("No AI-enabled connections. Turn on Enabled for AI on a DBHub connection card.")}
                 tools={dbhubTools}
               />
             </>
@@ -366,38 +365,38 @@ export function McpServerPanel() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="size-5" />
-            Security
+            {t("Security")}
           </CardTitle>
-          <CardDescription>How your data and credentials are protected when using MCP.</CardDescription>
+          <CardDescription>{t("How your data and credentials are protected when using MCP.")}</CardDescription>
         </CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm">
             <li className="flex items-start gap-2">
               <span className="mt-0.5 shrink-0 text-green-600">&#10003;</span>
               <span>
-                <strong>Credentials never leave your machine.</strong> AWS credentials are stored in the app's
-                secure credential store and are never sent to any AI model or external service.
+                <strong>{t("Credentials never leave your machine.")}</strong>{" "}
+                {t("AWS credentials are stored in the app's secure credential store and are never sent to any AI model or external service.")}
               </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="mt-0.5 shrink-0 text-green-600">&#10003;</span>
               <span>
-                <strong>Local-only communication.</strong> The MCP server listens on <code>127.0.0.1</code> only —
-                it is not accessible from any other device on your network.
+                <strong>{t("Local-only communication.")}</strong>{" "}
+                {t("The MCP server listens on {address} only — it is not accessible from any other device on your network.", { address: "127.0.0.1" })}
               </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="mt-0.5 shrink-0 text-green-600">&#10003;</span>
               <span>
-                <strong>Log sanitization.</strong> Before any logs are sent to an AI model for analysis, common
-                sensitive patterns (tokens, keys, credentials) are automatically redacted.
+                <strong>{t("Log sanitization.")}</strong>{" "}
+                {t("Before any logs are sent to an AI model for analysis, common sensitive patterns (tokens, keys, credentials) are automatically redacted.")}
               </span>
             </li>
             <li className="flex items-start gap-2">
               <span className="mt-0.5 shrink-0 text-green-600">&#10003;</span>
               <span>
-                <strong>Account names only.</strong> The AI model sees only account display names — never account
-                IDs, access keys, or other identifying information.
+                <strong>{t("Account names only.")}</strong>{" "}
+                {t("The AI model sees only account display names — never account IDs, access keys, or other identifying information.")}
               </span>
             </li>
           </ul>
@@ -407,7 +406,7 @@ export function McpServerPanel() {
       {busy && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircle className="size-4 animate-spin" />
-          {startMcp.isPending ? "Starting MCP server..." : "Stopping MCP server..."}
+          {startMcp.isPending ? t("Starting MCP server...") : t("Stopping MCP server...")}
         </div>
       )}
     </div>
@@ -423,14 +422,15 @@ function ToolGroup({
   tools: McpToolInfo[];
   empty?: string;
 }) {
+  const t = useT();
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <Label>{title}</Label>
+        <Label>{t(title)}</Label>
         <Badge variant="secondary">{tools.length}</Badge>
       </div>
       {tools.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{empty ?? "None."}</p>
+        <p className="text-sm text-muted-foreground">{t(empty ?? "None.")}</p>
       ) : (
         <ul className="divide-y rounded-md border">
           {tools.map((tool) => (
@@ -438,10 +438,13 @@ function ToolGroup({
               <div className="flex flex-wrap items-center gap-2">
                 <code className="text-sm font-medium">{tool.name}</code>
                 <Badge variant={tool.enabled ? "default" : "outline"}>
-                  {tool.enabled ? "enabled" : "disabled"}
+                  {tool.enabled ? t("enabled") : t("disabled")}
                 </Badge>
                 <Badge variant="outline">
-                  auto-approve: {tool.autoApprove === "default_allow" ? "default allow" : tool.autoApprove}
+                  {t("auto-approve: {state}", {
+                    state:
+                      tool.autoApprove === "default_allow" ? t("default allow") : tool.autoApprove
+                  })}
                 </Badge>
               </div>
               {tool.description ? (

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -8,12 +9,8 @@ import {
   ChartTooltipContent,
   type ChartConfig
 } from "@/components/ui/chart";
+import { useT } from "@/i18n";
 import type { DailyJobCount } from "@/services/jobRunStats";
-
-const chartConfig = {
-  success: { label: "Success", color: "hsl(142 71% 35%)" },
-  failed: { label: "Failed", color: "hsl(0 84% 60%)" }
-} satisfies ChartConfig;
 
 export function JobRunsDailyChart({
   data,
@@ -28,14 +25,25 @@ export function JobRunsDailyChart({
   onSelectDate: (date: string) => void;
   syncing?: boolean;
 }) {
+  const t = useT();
+  // Rebuilt from `t` so the legend follows the active locale.
+  const chartConfig = useMemo(
+    () =>
+      ({
+        success: { label: t("Success"), color: "hsl(142 71% 35%)" },
+        failed: { label: t("Failed"), color: "hsl(0 84% 60%)" }
+      }) satisfies ChartConfig,
+    [t]
+  );
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
-          <CardTitle>Job Runs ({rangeDays} days)</CardTitle>
-          <CardDescription>Daily completed vs failed job counts for the selected cluster.</CardDescription>
+          <CardTitle>{t("Job Runs ({days} days)", { days: rangeDays })}</CardTitle>
+          <CardDescription>{t("Daily completed vs failed job counts for the selected cluster.")}</CardDescription>
         </div>
-        {syncing ? <span className="text-xs text-muted-foreground">Syncing…</span> : null}
+        {syncing ? <span className="text-xs text-muted-foreground">{t("Syncing…")}</span> : null}
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className="aspect-[21/9] w-full">

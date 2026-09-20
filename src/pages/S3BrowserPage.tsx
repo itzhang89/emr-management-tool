@@ -30,6 +30,7 @@ import {
   useS3TextObject,
   useSaveS3TextObject
 } from "@/hooks/useS3";
+import { useT } from "@/i18n";
 import { downloadS3ObjectToDisk, prepareS3UploadFromDisk, s3ObjectExists, uploadS3ObjectFromPath } from "@/services/fileDownload";
 import { formatAppError, formatS3BrowserError } from "@/services/appErrorMessage";
 import { s3Service } from "@/services/s3Service";
@@ -65,6 +66,7 @@ const BROWSER_PANE_MAX_WIDTH = 720;
 const BROWSER_PANE_DEFAULT_WIDTH = 280;
 
 export function S3BrowserPage() {
+  const t = useT();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const selectedS3Bucket = useSessionStore((state) => state.selectedS3Bucket);
@@ -191,7 +193,7 @@ export function S3BrowserPage() {
     try {
       const saved = await saveObject.mutateAsync({ ...textObject.data, content });
       setBaselineContent(content);
-      toast.success(`Saved ${saved.key}`);
+      toast.success(t("Saved {key}", { key: saved.key }));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to save object."));
     }
@@ -205,7 +207,7 @@ export function S3BrowserPage() {
   const copyS3Path = async (path: string) => {
     try {
       await navigator.clipboard?.writeText(path);
-      toast.success("S3 path copied.");
+      toast.success(t("S3 path copied."));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to copy S3 path."));
     }
@@ -233,7 +235,7 @@ export function S3BrowserPage() {
       });
       await objects.refetch();
       setSelectedKey(uploaded.key);
-      toast.success(`Uploaded ${uploaded.key}`);
+      toast.success(t("Uploaded {key}", { key: uploaded.key }));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to upload object."));
     } finally {
@@ -250,7 +252,7 @@ export function S3BrowserPage() {
     setTransferPending(false);
     setUploadProgress(null);
     if (options?.canceled) {
-      toast.info("Upload canceled.");
+      toast.info(t("Upload canceled."));
     }
   };
 
@@ -268,7 +270,7 @@ export function S3BrowserPage() {
     try {
       const prepared = await prepareS3UploadFromDisk(selectedBucket, prefix);
       if (!prepared) {
-        toast.info("Upload canceled.");
+        toast.info(t("Upload canceled."));
         setTransferPending(false);
         setUploadProgress(null);
         return;
@@ -324,7 +326,7 @@ export function S3BrowserPage() {
     try {
       const savedPath = await downloadS3ObjectToDisk(selectedBucket, selectedKey);
       if (!savedPath) return;
-      toast.success(`Saved to ${savedPath}`);
+      toast.success(t("Saved to {path}", { path: savedPath }));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to download object."));
     } finally {
@@ -411,7 +413,9 @@ export function S3BrowserPage() {
 
         await objects.refetch();
         toast.success(
-          target.kind === "folder" ? `Deleted folder ${target.key}` : `Deleted ${target.key}`
+          target.kind === "folder"
+            ? t("Deleted folder {key}", { key: target.key })
+            : t("Deleted {key}", { key: target.key })
         );
       } catch (error) {
         toast.error(formatAppError(error, "Failed to delete object."));
@@ -443,7 +447,7 @@ export function S3BrowserPage() {
         folderName: newFolderName.trim()
       });
       await objects.refetch();
-      toast.success(`Created ${newFolderName.trim()}/`);
+      toast.success(t("Created {name}/", { name: newFolderName.trim() }));
       setCreateFolderOpen(false);
       setNewFolderName("");
     } catch (error) {
@@ -491,7 +495,7 @@ export function S3BrowserPage() {
       if (selectedKey === sourceKey) {
         setSelectedKey(renamed.key);
       }
-      toast.success(`Renamed to ${trimmed}`);
+      toast.success(t("Renamed to {name}", { name: trimmed }));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to rename object."));
     } finally {
@@ -613,10 +617,10 @@ export function S3BrowserPage() {
               <p className="shrink-0 tabular-nums text-muted-foreground">
                 {uploadProgress.totalBytes > 0
                   ? `${formatUploadBytes(uploadProgress.bytesUploaded)} / ${formatUploadBytes(uploadProgress.totalBytes)} · ${uploadProgress.percent}%`
-                  : "Waiting for file…"}
+                  : t("Waiting for file…")}
               </p>
             </div>
-            <Progress value={uploadProgress.percent} aria-label="Upload progress" />
+            <Progress value={uploadProgress.percent} aria-label={t("Upload progress")} />
           </CardContent>
         </Card>
       ) : null}
@@ -631,19 +635,21 @@ export function S3BrowserPage() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                aria-label="Browse S3 path"
+                aria-label={t("Browse S3 path")}
                 onClick={() => setPathPickerOpen(true)}
               >
                 <FolderOpen data-icon="inline-start" />
               </Button>
             </CardTitle>
             <CardDescription className="text-xs">
-              {selectedS3Prefix ? "Opened from job monitoring configuration." : "Supported text files can be edited in place."}
+              {selectedS3Prefix
+                ? t("Opened from job monitoring configuration.")
+                : t("Supported text files can be edited in place.")}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden p-4 pt-0">
             <div className="flex shrink-0 gap-2">
-              <Button type="button" variant="outline" size="sm" className="h-7 px-2" aria-label="Up" disabled={!prefix} onClick={goUp}>
+              <Button type="button" variant="outline" size="sm" className="h-7 px-2" aria-label={t("Up")} disabled={!prefix} onClick={goUp}>
                 <ArrowUp data-icon="inline-start" />
               </Button>
               <Button
@@ -651,7 +657,7 @@ export function S3BrowserPage() {
                 variant="outline"
                 size="sm"
                 className="h-7 px-2"
-                aria-label="Create folder"
+                aria-label={t("Create folder")}
                 disabled={!selectedBucket || createFolder.isPending}
                 onClick={() => {
                   setNewFolderName("");
@@ -667,21 +673,29 @@ export function S3BrowserPage() {
                     variant="outline"
                     size="sm"
                     className="h-7 px-2"
-                    aria-label={uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}
+                    aria-label={
+                      uploadProgress
+                        ? t("Uploading {percent}%", { percent: uploadProgress.percent })
+                        : t("Upload")
+                    }
                     disabled={!selectedBucket || transferPending}
                     onClick={upload}
                   >
                     <Upload data-icon="inline-start" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{uploadProgress ? `Uploading ${uploadProgress.percent}%` : "Upload"}</TooltipContent>
+                <TooltipContent>
+                  {uploadProgress
+                    ? t("Uploading {percent}%", { percent: uploadProgress.percent })
+                    : t("Upload")}
+                </TooltipContent>
               </Tooltip>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 className="h-7 px-2"
-                aria-label="Refresh"
+                aria-label={t("Refresh")}
                 disabled={!selectedBucket || objects.isLoading}
                 onClick={() => void objects.refetch()}
               >
@@ -689,7 +703,7 @@ export function S3BrowserPage() {
               </Button>
             </div>
             {buckets.isLoading || objects.isLoading ? (
-              <p className="shrink-0 text-xs text-muted-foreground">Loading S3 objects...</p>
+              <p className="shrink-0 text-xs text-muted-foreground">{t("Loading S3 objects...")}</p>
             ) : null}
             {buckets.error || objects.error ? (
               <p className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
@@ -699,7 +713,7 @@ export function S3BrowserPage() {
               </p>
             ) : null}
             <nav
-              aria-label="S3 objects"
+              aria-label={t("S3 objects")}
               className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               tabIndex={0}
               ref={objectListRef}
@@ -763,13 +777,15 @@ export function S3BrowserPage() {
                 );
               })}
             </nav>
-            {objects.data?.length === 0 ? <p className="shrink-0 text-xs text-muted-foreground">No objects under this prefix.</p> : null}
+            {objects.data?.length === 0 ? (
+              <p className="shrink-0 text-xs text-muted-foreground">{t("No objects under this prefix.")}</p>
+            ) : null}
           </CardContent>
         </Card>
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize browser pane"
+          aria-label={t("Resize browser pane")}
           aria-valuemin={BROWSER_PANE_MIN_WIDTH}
           aria-valuemax={BROWSER_PANE_MAX_WIDTH}
           aria-valuenow={browserPaneWidth}
@@ -789,7 +805,11 @@ export function S3BrowserPage() {
         >
           <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/50 group-focus-visible:bg-primary" />
         </div>
-        <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" role="region" aria-label="Selected S3 object">
+        <Card
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          role="region"
+          aria-label={t("Selected S3 object")}
+        >
           <CardHeader className="shrink-0 flex-row items-center gap-2 py-3">
             <CardTitle className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-base">
               <span
@@ -799,13 +819,13 @@ export function S3BrowserPage() {
                 )}
                 title={selectedKey}
               >
-                {selectedKey ?? "Select an object"}
+                {selectedKey ?? t("Select an object")}
               </span>
               {selectedObject?.kind === "file" && !editability?.editable ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
-                      aria-label="Object is read-only"
+                      aria-label={t("Object is read-only")}
                       className="inline-flex shrink-0 text-muted-foreground"
                     >
                       <Lock className="size-3.5" />
@@ -825,13 +845,13 @@ export function S3BrowserPage() {
                       variant="ghost"
                       size="sm"
                       className="h-6 shrink-0 px-1.5"
-                      aria-label="Copy S3 path"
+                      aria-label={t("Copy S3 path")}
                       onClick={() => void copyS3Path(selectedObjectPath)}
                     >
                       <Copy className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Copy S3 path</TooltipContent>
+                  <TooltipContent>{t("Copy S3 path")}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -840,14 +860,14 @@ export function S3BrowserPage() {
                       variant="ghost"
                       size="sm"
                       className="h-6 shrink-0 px-1.5"
-                      aria-label="Download"
+                      aria-label={t("Download")}
                       disabled={!selectedBucket || !selectedKey || transferPending}
                       onClick={() => void download()}
                     >
                       <Download className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Download</TooltipContent>
+                  <TooltipContent>{t("Download")}</TooltipContent>
                 </Tooltip>
               </div>
             ) : null}
@@ -859,7 +879,7 @@ export function S3BrowserPage() {
               </p>
             ) : null}
             {textObject.isLoading && selectedObject?.kind === "file" ? (
-              <p className="shrink-0 text-xs text-muted-foreground">Loading object content...</p>
+              <p className="shrink-0 text-xs text-muted-foreground">{t("Loading object content...")}</p>
             ) : null}
             <div className="relative min-h-0 flex-1">
               <S3ObjectEditor
@@ -882,11 +902,11 @@ export function S3BrowserPage() {
                 onClick={requestDeleteSelected}
               >
                 <Trash2 data-icon="inline-start" />
-                Delete
+                {t("Delete")}
               </Button>
               <Button disabled={!isContentDirty || saveObject.isPending} onClick={save}>
                 <Save data-icon="inline-start" />
-                {saveObject.isPending ? "Saving..." : "Save"}
+                {saveObject.isPending ? t("Saving...") : t("Save")}
               </Button>
             </div>
           </CardContent>
@@ -904,28 +924,30 @@ export function S3BrowserPage() {
         <DialogContent>
           <form onSubmit={(event) => void submitCreateFolder(event)}>
             <DialogHeader>
-              <DialogTitle>Create folder</DialogTitle>
+              <DialogTitle>{t("Create folder")}</DialogTitle>
               <DialogDescription>
                 {selectedBucket
-                  ? `Create a new folder under s3://${selectedBucket}/${prefix}`
-                  : "Select a bucket first."}
+                  ? t("Create a new folder under {path}", {
+                      path: `s3://${selectedBucket}/${prefix}`
+                    })
+                  : t("Select a bucket first.")}
               </DialogDescription>
             </DialogHeader>
             <div className="py-4">
               <Input
                 autoFocus
                 value={newFolderName}
-                placeholder="folder-name"
+                placeholder={t("folder-name")}
                 className="font-mono text-sm"
                 onChange={(event) => setNewFolderName(event.target.value)}
               />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateFolderOpen(false)}>
-                Cancel
+                {t("Cancel")}
               </Button>
               <Button type="submit" disabled={createFolder.isPending || !selectedBucket}>
-                {createFolder.isPending ? "Creating..." : "Create"}
+                {createFolder.isPending ? t("Creating...") : t("Create")}
               </Button>
             </DialogFooter>
           </form>
@@ -941,22 +963,22 @@ export function S3BrowserPage() {
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Object already exists</DialogTitle>
+            <DialogTitle>{t("Object already exists")}</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p>An object already exists at this location:</p>
+                <p>{t("An object already exists at this location:")}</p>
                 {uploadConflict ? (
                   <p className="break-all font-mono text-foreground">
                     s3://{uploadConflict.bucket}/{uploadConflict.key}
                   </p>
                 ) : null}
-                <p>Overwrite it, upload under a new name, or cancel.</p>
+                <p>{t("Overwrite it, upload under a new name, or cancel.")}</p>
               </div>
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2 py-2">
             <label htmlFor="upload-conflict-rename" className="text-sm font-medium">
-              Upload as
+              {t("Upload as")}
             </label>
             <Input
               id="upload-conflict-rename"
@@ -980,7 +1002,7 @@ export function S3BrowserPage() {
               disabled={conflictBusy || transferPending}
               onClick={() => closeUploadConflict({ canceled: true })}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -989,7 +1011,7 @@ export function S3BrowserPage() {
                 disabled={conflictBusy || transferPending || !uploadConflict}
                 onClick={overwriteConflictUpload}
               >
-                Overwrite
+                {t("Overwrite")}
               </Button>
               <Button
                 type="button"
@@ -1001,7 +1023,7 @@ export function S3BrowserPage() {
                 }
                 onClick={() => void renameConflictUpload()}
               >
-                {conflictBusy ? "Checking…" : "Rename & upload"}
+                {conflictBusy ? t("Checking…") : t("Rename & upload")}
               </Button>
             </div>
           </DialogFooter>
@@ -1011,56 +1033,56 @@ export function S3BrowserPage() {
         <DialogContent className="max-w-lg overflow-hidden">
           <DialogHeader>
             <DialogTitle>
-              {deleteTarget?.kind === "folder" ? "Delete S3 folder?" : "Delete S3 object?"}
+              {deleteTarget?.kind === "folder" ? t("Delete S3 folder?") : t("Delete S3 object?")}
             </DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
                 {deleteTarget ? (
                   <p>
-                    This will permanently delete{" "}
+                    {t("This will permanently delete")}{" "}
                     <span className="block break-all font-mono text-foreground">
                       s3://{deleteTarget.bucket}/{deleteTarget.key}
                     </span>
                   </p>
                 ) : null}
                 {deleteTarget?.kind === "folder" && deleteSummaryLoading ? (
-                  <p>Inspecting folder contents...</p>
+                  <p>{t("Inspecting folder contents...")}</p>
                 ) : null}
                 {deleteTarget?.kind === "folder" && deleteSummary && folderDeleteIsNonEmpty ? (
                   <div className="rounded-md border bg-muted/30 p-3 text-foreground">
-                    <p className="font-medium">Expected deletion summary</p>
+                    <p className="font-medium">{t("Expected deletion summary")}</p>
                     <ul className="mt-2 space-y-1 font-mono text-xs">
-                      <li>Files: {deleteSummary.fileCount}</li>
-                      <li>Subfolders: {deleteSummary.folderCount}</li>
-                      <li>Total objects: {deleteSummary.totalObjectCount}</li>
-                      <li>Total size: {formatBytes(deleteSummary.totalBytes)}</li>
+                      <li>{t("Files: {count}", { count: deleteSummary.fileCount })}</li>
+                      <li>{t("Subfolders: {count}", { count: deleteSummary.folderCount })}</li>
+                      <li>{t("Total objects: {count}", { count: deleteSummary.totalObjectCount })}</li>
+                      <li>{t("Total size: {size}", { size: formatBytes(deleteSummary.totalBytes) })}</li>
                     </ul>
                     {deleteSummary.truncated ? (
                       <p className="mt-2 text-xs text-amber-600">
-                        Preview is truncated. The folder may contain more objects than shown.
+                        {t("Preview is truncated. The folder may contain more objects than shown.")}
                       </p>
                     ) : null}
                     <p className="mt-2 text-xs">
-                      All files and subfolders under this prefix will be deleted.
+                      {t("All files and subfolders under this prefix will be deleted.")}
                     </p>
                   </div>
                 ) : null}
                 {deleteTarget?.kind === "folder" && deleteSummary && !folderDeleteIsNonEmpty ? (
-                  <p>This folder appears empty and will be removed.</p>
+                  <p>{t("This folder appears empty and will be removed.")}</p>
                 ) : null}
               </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={closeDeleteDialog}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               variant="destructive"
               disabled={deleteSummaryLoading}
               onClick={confirmDelete}
             >
-              Delete
+              {t("Delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1077,11 +1099,14 @@ function formatObjectListMeta(object: S3ObjectEntry) {
 }
 
 function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
+  const t = useT();
+
   if (!object || object.kind !== "file") return null;
 
+  // "ETag" is a protocol term and stays untranslated.
   const properties = [
-    ["Size", formatBytes(object.size)],
-    ["Last modified", formatS3Timestamp(object.lastModified)],
+    [t("Size"), formatBytes(object.size)],
+    [t("Last modified"), formatS3Timestamp(object.lastModified)],
     ["ETag", trimEtag(object.etag)]
   ].filter(([, value]) => Boolean(value));
 
@@ -1095,7 +1120,7 @@ function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
           variant="ghost"
           size="sm"
           className="h-6 shrink-0 px-1.5"
-          aria-label="Object details"
+          aria-label={t("Object details")}
         >
           <CircleAlert className="size-3.5" />
         </Button>

@@ -1,6 +1,7 @@
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import type { AthenaQueryExecution, AthenaQueryResults } from "@/types/domain";
 
 function formatBytes(value?: number) {
@@ -30,8 +31,10 @@ export function QueryResultsPanel({
   onExport: () => void;
   exporting: boolean;
 }) {
+  const t = useT();
+
   if (!execution) {
-    return <p className="text-[10px] text-muted-foreground">Run a query to see results.</p>;
+    return <p className="text-[10px] text-muted-foreground">{t("Run a query to see results.")}</p>;
   }
 
   const dataRows = skipHeaderRow(results);
@@ -40,13 +43,13 @@ export function QueryResultsPanel({
     <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5">
         <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-          <span>Status: {execution.state}</span>
-          <span>Scanned: {formatBytes(execution.dataScannedBytes)}</span>
+          <span>{t("Status:")} {execution.state}</span>
+          <span>{t("Scanned:")} {formatBytes(execution.dataScannedBytes)}</span>
           <span>
-            Engine time:{" "}
+            {t("Engine time:")}{" "}
             {execution.engineExecutionTimeMs !== undefined ? `${execution.engineExecutionTimeMs} ms` : "—"}
           </span>
-          <span>Rows: {dataRows.length}</span>
+          <span>{t("Rows:")} {dataRows.length}</span>
         </div>
         {execution.state === "SUCCEEDED" ? (
           <Tooltip>
@@ -57,13 +60,13 @@ export function QueryResultsPanel({
                 size="icon"
                 className="size-7"
                 disabled={exporting}
-                aria-label="Export CSV"
+                aria-label={t("Export CSV")}
                 onClick={onExport}
               >
                 <Download className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Export CSV</TooltipContent>
+            <TooltipContent>{t("Export CSV")}</TooltipContent>
           </Tooltip>
         ) : null}
       </div>
@@ -72,7 +75,7 @@ export function QueryResultsPanel({
         <p className="shrink-0 text-[10px] text-destructive">{execution.stateChangeReason ?? "Query failed."}</p>
       ) : null}
 
-      {loading ? <p className="shrink-0 text-[10px] text-muted-foreground">Loading results...</p> : null}
+      {loading ? <p className="shrink-0 text-[10px] text-muted-foreground">{t("Loading results...")}</p> : null}
       {error ? <p className="shrink-0 text-[10px] text-destructive">Failed to load query results.</p> : null}
 
       {execution.state === "SUCCEEDED" && results ? (
@@ -91,7 +94,7 @@ export function QueryResultsPanel({
               {dataRows.length === 0 ? (
                 <tr>
                   <td colSpan={Math.max(results.columnNames.length, 1)} className="px-2 py-3 text-muted-foreground">
-                    Query returned no rows.
+                    {t("Query returned no rows.")}
                   </td>
                 </tr>
               ) : (
@@ -112,7 +115,7 @@ export function QueryResultsPanel({
 
       {hasMore ? (
         <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 self-start text-[10px]" onClick={onLoadMore}>
-          Load more rows
+          {t("Load more rows")}
         </Button>
       ) : null}
     </div>

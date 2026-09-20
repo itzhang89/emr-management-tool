@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { accentClasses } from "@/components/ai/chat/accents";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatAssistant, ChatSession } from "@/types/domain";
 
@@ -35,6 +36,7 @@ export function AssistantSidebar({
   onNewSession: (assistantId: string) => void;
   onDeleteSession: (session: ChatSession) => void;
 }) {
+  const t = useT();
   const [filterVisible, setFilterVisible] = useState(false);
   const [filter, setFilter] = useState("");
 
@@ -62,7 +64,7 @@ export function AssistantSidebar({
       <div className="flex items-center justify-between gap-1">
         <Button type="button" variant="ghost" size="sm" onClick={onAddAssistant}>
           <Plus className="mr-1 size-3.5" />
-          Assistant
+          {t("Assistant")}
         </Button>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -71,7 +73,7 @@ export function AssistantSidebar({
               variant="ghost"
               size="icon"
               className="size-8"
-              aria-label="Filter conversations"
+              aria-label={t("Filter conversations")}
               aria-pressed={filterVisible}
               onClick={() => {
                 setFilterVisible((visible) => !visible);
@@ -81,7 +83,7 @@ export function AssistantSidebar({
               <Filter className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Filter assistants and conversations</TooltipContent>
+          <TooltipContent>{t("Filter assistants and conversations")}</TooltipContent>
         </Tooltip>
       </div>
 
@@ -89,7 +91,7 @@ export function AssistantSidebar({
         <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter..."
+          placeholder={t("Filter...")}
           className="h-8 text-xs"
           autoFocus
         />
@@ -98,7 +100,7 @@ export function AssistantSidebar({
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
         {groups.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            {filter ? "Nothing matches that filter." : "No assistants yet."}
+            {filter ? t("Nothing matches that filter.") : t("No assistants yet.")}
           </p>
         ) : (
           groups.map(({ assistant, sessions: own }) => (
@@ -121,13 +123,13 @@ export function AssistantSidebar({
                       variant="ghost"
                       size="icon"
                       className="size-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`New conversation with ${assistant.name}`}
+                      aria-label={t("New conversation with {name}", { name: assistant.name })}
                       onClick={() => onNewSession(assistant.id)}
                     >
                       <MessageSquarePlus className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>New conversation</TooltipContent>
+                  <TooltipContent>{t("New conversation")}</TooltipContent>
                 </Tooltip>
 
                 <Tooltip>
@@ -137,13 +139,13 @@ export function AssistantSidebar({
                       variant="ghost"
                       size="icon"
                       className="size-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Configure ${assistant.name}`}
+                      aria-label={t("Configure {name}", { name: assistant.name })}
                       onClick={() => onEditAssistant(assistant)}
                     >
                       <Settings2 className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Configure</TooltipContent>
+                  <TooltipContent>{t("Configure")}</TooltipContent>
                 </Tooltip>
 
                 {/* The built-in assistant has no delete action — the backend
@@ -156,19 +158,19 @@ export function AssistantSidebar({
                         variant="ghost"
                         size="icon"
                         className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
-                        aria-label={`Delete ${assistant.name}`}
+                        aria-label={t("Delete {name}", { name: assistant.name })}
                         onClick={() => onDeleteAssistant(assistant)}
                       >
                         <Trash2 className="size-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Delete assistant</TooltipContent>
+                    <TooltipContent>{t("Delete assistant")}</TooltipContent>
                   </Tooltip>
                 )}
               </div>
 
               {own.length === 0 ? (
-                <p className="pl-6 text-xs text-muted-foreground">No conversations yet.</p>
+                <p className="pl-6 text-xs text-muted-foreground">{t("No conversations yet.")}</p>
               ) : (
                 <div className="space-y-0.5 pl-3">
                   {own.map((session) => (
@@ -193,13 +195,13 @@ export function AssistantSidebar({
                             variant="ghost"
                             size="icon"
                             className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/session:opacity-100 focus-visible:opacity-100"
-                            aria-label={`Delete conversation ${session.title}`}
+                            aria-label={t("Delete conversation {title}", { title: session.title })}
                             onClick={() => onDeleteSession(session)}
                           >
                             <Trash2 className="size-3" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>Delete conversation</TooltipContent>
+                        <TooltipContent>{t("Delete conversation")}</TooltipContent>
                       </Tooltip>
                     </div>
                   ))}

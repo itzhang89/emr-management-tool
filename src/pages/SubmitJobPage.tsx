@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
 import { useSubmitJobSubmissionHistory } from "@/hooks/useSubmitJobAutoRefresh";
@@ -70,6 +71,7 @@ export function SubmitJobPage({
       action as Job History, opening the AI assistant for failure analysis. */
   onOpenAiAssistant?: () => void;
 }) {
+  const t = useT();
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
@@ -156,7 +158,7 @@ export function SubmitJobPage({
     });
     setSelectedVirtualClusterId(clonedJobRequest.virtualClusterId);
     setClonedJobRequest(undefined);
-    toast.success("Cloned job configuration loaded.");
+    toast.success(t("Cloned job configuration loaded."));
   }, [clonedJobRequest, setClonedJobRequest, setSelectedVirtualClusterId]);
 
   useEffect(() => {
@@ -170,7 +172,7 @@ export function SubmitJobPage({
       resourceTemplateId
     };
     setPendingSourceSubmit(undefined);
-    toast.success("Loaded job configuration into Source submit.");
+    toast.success(t("Loaded job configuration into Source submit."));
   }, [pendingSourceSubmit, resourceTemplateId, setPendingSourceSubmit, setSelectedVirtualClusterId]);
 
   useEffect(() => {
@@ -252,7 +254,7 @@ export function SubmitJobPage({
         return;
       }
       const job = await startJobRun.mutateAsync(request);
-      toast.success(`Submitted ${job.name}`);
+      toast.success(t("Submitted {name}", { name: job.name }));
       setCloneRequest(undefined);
       enableAfterSubmit();
     } catch (error) {
@@ -394,8 +396,10 @@ export function SubmitJobPage({
       setSourceSwitchConfirmOpen(false);
       toast.success(
         parameterized.customVariables.length > 0
-          ? `Template created with ${parameterized.customVariables.length} variables from entryPointArguments.`
-          : "Template created from source JSON."
+          ? t("Template created with {count} variables from entryPointArguments.", {
+              count: parameterized.customVariables.length
+            })
+          : t("Template created from source JSON.")
       );
     } catch (error) {
       toast.error(errorMessage(error, "Failed to create template."));
@@ -503,20 +507,24 @@ export function SubmitJobPage({
                 <TooltipTrigger asChild>
                   <Button type="button" variant="outline" disabled={!previewPayload} onClick={openPreview}>
                     <Eye data-icon="inline-start" />
-                    Preview JSON
+                    {t("Preview JSON")}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Preview JSON · {PREVIEW_JSON_SHORTCUT}</TooltipContent>
+                <TooltipContent>
+                  {t("Preview JSON")} · {PREVIEW_JSON_SHORTCUT}
+                </TooltipContent>
               </Tooltip>
             ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
                   <Send data-icon="inline-start" />
-                  {startJobRun.isPending ? "Submitting..." : "Submit"}
+                  {startJobRun.isPending ? t("Submitting...") : t("Submit")}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Submit job · {SUBMIT_SHORTCUT}</TooltipContent>
+              <TooltipContent>
+                {t("Submit job")} · {SUBMIT_SHORTCUT}
+              </TooltipContent>
             </Tooltip>
           </>
         }
@@ -526,14 +534,14 @@ export function SubmitJobPage({
         {cloneRequest ? (
           <Card className="shrink-0">
             <CardHeader>
-              <CardTitle>Cloned Job Configuration</CardTitle>
+              <CardTitle>{t("Cloned Job Configuration")}</CardTitle>
               <CardDescription>
-                Submitting a cloned request from Job History. Clear it by choosing a template again.
+                {t("Submitting a cloned request from Job History. Clear it by choosing a template again.")}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button variant="outline" onClick={() => setCloneRequest(undefined)}>
-                Use Template Instead
+                {t("Use Template Instead")}
               </Button>
             </CardContent>
           </Card>
@@ -551,14 +559,14 @@ export function SubmitJobPage({
           <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
               <Tabs value={mode} onValueChange={handleModeChange} className="shrink-0">
-                <TabsList title={`Toggle mode · ${TOGGLE_MODE_SHORTCUT}`}>
-                  <TabsTrigger value="template">Template</TabsTrigger>
-                  <TabsTrigger value="source">Source</TabsTrigger>
+                <TabsList title={`${t("Toggle mode")} · ${TOGGLE_MODE_SHORTCUT}`}>
+                  <TabsTrigger value="template">{t("Template")}</TabsTrigger>
+                  <TabsTrigger value="source">{t("Source")}</TabsTrigger>
                 </TabsList>
               </Tabs>
               {mode === "template" ? (
                 <div className="min-h-0 flex-1 space-y-4 overflow-auto">
-                  <Field label="Template">
+                  <Field label={t("Template")}>
                     <Select
                       value={selectedTemplateId}
                       onValueChange={(value) => {
@@ -568,7 +576,7 @@ export function SubmitJobPage({
                       disabled={Boolean(cloneRequest)}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Select template" />
+                        <SelectValue placeholder={t("Select template")} />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
@@ -605,17 +613,19 @@ export function SubmitJobPage({
 
           <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardHeader className="shrink-0">
-              <CardTitle>Runtime Selection</CardTitle>
-              <CardDescription>Choose where the job runs and which resource preset to apply.</CardDescription>
+              <CardTitle>{t("Runtime Selection")}</CardTitle>
+              <CardDescription>
+                {t("Choose where the job runs and which resource preset to apply.")}
+              </CardDescription>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
-              <Field label="Virtual Cluster">
+              <Field label={t("Virtual Cluster")}>
                 <VirtualClusterSelect className="w-full" />
               </Field>
-              <Field label="Resource Template">
+              <Field label={t("Resource Template")}>
                 <Select value={resourceTemplateId} onValueChange={setResourceTemplateId} disabled={Boolean(cloneRequest)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select resources" />
+                    <SelectValue placeholder={t("Select resources")} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
@@ -641,7 +651,7 @@ export function SubmitJobPage({
         <div
           role="separator"
           aria-orientation="horizontal"
-          aria-label="Resize editor and recent submissions"
+          aria-label={t("Resize editor and recent submissions")}
           aria-valuenow={formPaneHeight ?? undefined}
           className="group relative h-2 shrink-0 cursor-row-resize touch-none"
           onMouseDown={beginFormPaneResize}
@@ -655,7 +665,7 @@ export function SubmitJobPage({
         >
           <JobRunsPanel
             virtualClusterId={virtualClusterId}
-            title="Recent Submissions"
+            title={t("Recent Submissions")}
             showAutoRefreshControl
             submittedOnly
             autoRefresh={submissionAutoRefresh}
@@ -674,21 +684,22 @@ export function SubmitJobPage({
       <Dialog open={sourceSwitchConfirmOpen} onOpenChange={setSourceSwitchConfirmOpen}>
         <DialogContent className="max-w-md sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Switch to Template submit?</DialogTitle>
+            <DialogTitle>{t("Switch to Template submit?")}</DialogTitle>
             <DialogDescription>
-              Current source JSON was not loaded from a template. Switching discards the editor contents unless you
-              save it as a template.
+              {t(
+                "Current source JSON was not loaded from a template. Switching discards the editor contents unless you save it as a template."
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setSourceSwitchConfirmOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={openCreateTemplateDialog}>
-              Create template and switch
+              {t("Create template and switch")}
             </Button>
             <Button type="button" className="w-full sm:w-auto" onClick={discardSourceAndSwitchToTemplate}>
-              Discard and switch
+              {t("Discard and switch")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -696,38 +707,38 @@ export function SubmitJobPage({
       <Dialog open={createTemplateDialogOpen} onOpenChange={setCreateTemplateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create template from source</DialogTitle>
+            <DialogTitle>{t("Create template from source")}</DialogTitle>
             <DialogDescription>
-              Save the current source JSON as a job config template, then switch to Template submit.
+              {t("Save the current source JSON as a job config template, then switch to Template submit.")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <Field label="Name">
+            <Field label={t("Name")}>
               <Input
                 value={createTemplateName}
                 onChange={(event) => setCreateTemplateName(event.target.value)}
-                placeholder="Template name"
+                placeholder={t("Template name")}
               />
             </Field>
-            <Field label="Description">
+            <Field label={t("Description")}>
               <Textarea
                 value={createTemplateDescription}
                 onChange={(event) => setCreateTemplateDescription(event.target.value)}
-                placeholder="Optional description"
+                placeholder={t("Optional description")}
                 rows={3}
               />
             </Field>
           </div>
           <DialogFooter className="gap-2 sm:justify-end">
             <Button type="button" variant="outline" onClick={() => setCreateTemplateDialogOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="button"
               disabled={!createTemplateName.trim() || createTemplate.isPending}
               onClick={() => void saveTemplateFromSource()}
             >
-              {createTemplate.isPending ? "Saving..." : "Save"}
+              {createTemplate.isPending ? t("Saving...") : t("Save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -745,11 +756,13 @@ function PreviewDialog({
   onOpenChange: (open: boolean) => void;
   payload?: ResolvedJobPayload | StartJobRunRequest;
 }) {
+  const t = useT();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Resolved Submit Payload</DialogTitle>
+          <DialogTitle>{t("Resolved Submit Payload")}</DialogTitle>
         </DialogHeader>
         <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs">{JSON.stringify(payload ?? {}, null, 2)}</pre>
       </DialogContent>

@@ -1,14 +1,17 @@
 import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useT } from "@/i18n";
 
 export function LogDestinationPopover({ items }: { items: Array<[string, string]> }) {
+  const t = useT();
+
   if (items.length === 0) return null;
 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Log destination details">
+        <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label={t("Log destination details")}>
           <Info className="size-4" />
         </Button>
       </PopoverTrigger>

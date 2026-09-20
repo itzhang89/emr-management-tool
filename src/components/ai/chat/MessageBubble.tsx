@@ -20,6 +20,7 @@ import { formatDuration } from "@/lib/format";
 import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { ChatErrorDetails, ChatMessageVersionSummary } from "@/types/domain";
 
@@ -51,6 +52,7 @@ export function UserMessage({
   onEdit: (text: string) => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const [hovered, setHovered] = useState(false);
   return (
     <div
@@ -63,7 +65,7 @@ export function UserMessage({
       </div>
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-center gap-2 text-xs">
-          <p className="font-medium text-muted-foreground">You</p>
+          <p className="font-medium text-muted-foreground">{t("You")}</p>
           {/* The send time appears next to the name while the mouse is over this
               message, and disappears when it leaves. */}
           {hovered && createdAt && (
@@ -152,6 +154,7 @@ export function AssistantMessage({
   onSwitchVersion: (versionId: string) => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const hasBody = Boolean(text) || toolSteps.length > 0 || Boolean(error);
   const [hovered, setHovered] = useState(false);
   // The "@" action: which configured model to re-answer on.
@@ -161,10 +164,10 @@ export function AssistantMessage({
   const elapsedMs =
     streaming && startedAt != null && clock != null ? clock - startedAt : null;
   const activity = toolSteps.some((step) => step.running)
-    ? "Running tools…"
+    ? t("Running tools…")
     : text
-      ? "Generating…"
-      : "Waiting for model…";
+      ? t("Generating…")
+      : t("Waiting for model…");
 
   // Regenerate always re-answers on the version currently shown. Picking a model
   // in the "@" menu regenerates immediately on that model — either way a fresh
@@ -238,13 +241,13 @@ export function AssistantMessage({
                 className="mt-1.5 inline-flex items-center gap-1.5 rounded border border-destructive/30 px-2 py-1 text-[11px] font-medium hover:bg-destructive/10"
               >
                 <Settings2 className="size-3.5" />
-                Open provider settings
+                {t("Open provider settings")}
               </button>
             )}
           </div>
         )}
 
-        {!hasBody && !streaming && <p className="text-xs text-muted-foreground">No response.</p>}
+        {!hasBody && !streaming && <p className="text-xs text-muted-foreground">{t("No response.")}</p>}
 
         {/* The action row is kept mounted while a version capsule is hovered, so
             moving between the icons and the capsules does not hide the actions. */}
@@ -300,12 +303,13 @@ function ModelMenu({
   onOpenChange: (open: boolean) => void;
   onPick: (modelId: string) => void;
 }) {
+  const t = useT();
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label="Answer with another model"
+          aria-label={t("Answer with another model")}
           className={cn(
             "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
             open && "bg-muted text-foreground",
@@ -317,11 +321,11 @@ function ModelMenu({
       </PopoverTrigger>
       <PopoverContent align="start" className="max-h-72 w-64 overflow-y-auto p-1">
         <p className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-          Answer with…
+          {t("Answer with…")}
         </p>
         {options.length === 0 ? (
           <p className="px-2 py-1 text-xs text-muted-foreground">
-            No other model is configured.
+            {t("No other model is configured.")}
           </p>
         ) : (
           options.map((option) => (
@@ -358,10 +362,11 @@ function VersionCapsuleBar({
   versions: ChatMessageVersionSummary[];
   onSwitch: (versionId: string) => void;
 }) {
+  const t = useT();
   return (
     <div
       role="group"
-      aria-label="Answer versions"
+      aria-label={t("Answer versions")}
       className="flex items-center gap-0.5 rounded-full border border-border bg-background/60 p-0.5"
     >
       {versions.map((version, index) => (
@@ -390,11 +395,14 @@ function VersionCapsule({
   active: boolean;
   onSwitch: () => void;
 }) {
+  const t = useT();
   return (
     <button
       type="button"
       onClick={onSwitch}
-      aria-label={active ? `Showing version ${number}` : `Show version ${number}`}
+      aria-label={
+        active ? t("Showing version {number}", { number }) : t("Show version {number}", { number })
+      }
       aria-pressed={active}
       className={cn(
         "flex h-5 min-w-6 items-center justify-center rounded-full px-1.5 text-[10px] transition-colors",
@@ -437,13 +445,14 @@ function ActionIcon({
   onClick: () => void;
   children: React.ReactNode;
 }) {
+  const t = useT();
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
           onClick={onClick}
-          aria-label={label}
+          aria-label={t(label)}
           className={cn(
             "flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground",
             destructive ? "hover:text-destructive" : ""
@@ -452,7 +461,7 @@ function ActionIcon({
           {children}
         </button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{t(label)}</TooltipContent>
     </Tooltip>
   );
 }
@@ -463,11 +472,12 @@ function ActionIcon({
  * rather than a deletion.
  */
 export function ContextResetDivider() {
+  const t = useT();
   return (
     <div className="flex items-center gap-3 py-1">
       <div className="h-px flex-1 bg-border" />
       <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        Context cleared
+        {t("Context cleared")}
       </span>
       <div className="h-px flex-1 bg-border" />
     </div>

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ACCENT_NAMES, accentClasses } from "@/components/ai/chat/accents";
+import { useT } from "@/i18n";
 import { ModelSelect, useModelOptions } from "@/components/ai/chat/ModelSelect";
 import { useCreateChatAssistant, useUpdateChatAssistant } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ export function AssistantFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const createAssistant = useCreateChatAssistant();
   const updateAssistant = useUpdateChatAssistant();
   const modelOptions = useModelOptions();
@@ -95,7 +97,7 @@ export function AssistantFormDialog({
         },
         {
           onSuccess: () => {
-            toast.success(`${trimmedName} saved`);
+            toast.success(t("{name} saved", { name: trimmedName }));
             onOpenChange(false);
           },
           onError: (error: Error) => toast.error(error.message || "Failed to save the assistant")
@@ -114,7 +116,7 @@ export function AssistantFormDialog({
       },
       {
         onSuccess: () => {
-          toast.success(`${trimmedName} added`);
+          toast.success(t("{name} added", { name: trimmedName }));
           onOpenChange(false);
         },
         onError: (error: Error) => toast.error(error.message || "Failed to add the assistant")
@@ -128,9 +130,11 @@ export function AssistantFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] max-w-lg flex-col">
         <DialogHeader>
-          <DialogTitle>{assistant ? `Configure ${assistant.name}` : "Add assistant"}</DialogTitle>
+          <DialogTitle>
+            {assistant ? t("Configure {name}", { name: assistant.name }) : t("Add assistant")}
+          </DialogTitle>
           <DialogDescription>
-            An assistant is a preset: its instructions, default model, and which tools it may use.
+            {t("An assistant is a preset: its instructions, default model, and which tools it may use.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -142,23 +146,23 @@ export function AssistantFormDialog({
           }}
         >
           <div className="space-y-2">
-            <Label htmlFor="assistant-name">Name</Label>
+            <Label htmlFor="assistant-name">{t("Name")}</Label>
             <Input
               id="assistant-name"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Spark tuning"
+              placeholder={t("Spark tuning")}
             />
           </div>
 
           <div className="space-y-2">
-            <Label>Avatar colour</Label>
+            <Label>{t("Avatar colour")}</Label>
             <div className="flex gap-2">
               {ACCENT_NAMES.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  aria-label={`Use the ${option} avatar colour`}
+                  aria-label={t("Use the {colour} avatar colour", { colour: option })}
                   aria-pressed={accent === option}
                   onClick={() => setAccent(option)}
                   className={cn(
@@ -172,26 +176,26 @@ export function AssistantFormDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="assistant-prompt">Instructions</Label>
+            <Label htmlFor="assistant-prompt">{t("Instructions")}</Label>
             <Textarea
               id="assistant-prompt"
               value={systemPrompt}
               onChange={(event) => setSystemPrompt(event.target.value)}
-              placeholder="How this assistant should work, and in what order to use its tools."
+              placeholder={t("How this assistant should work, and in what order to use its tools.")}
               className="min-h-32 text-sm"
             />
           </div>
 
           <div className="space-y-2">
-            <Label>Default model</Label>
+            <Label>{t("Default model")}</Label>
             <ModelSelect
               options={modelOptions}
               value={defaultModelId}
               onChange={setDefaultModelId}
-              placeholder="Use the globally-default model"
+              placeholder={t("Use the globally-default model")}
             />
             <p className="text-xs text-muted-foreground">
-              A conversation can still override this from its header.
+              {t("A conversation can still override this from its header.")}
             </p>
           </div>
 
@@ -201,12 +205,12 @@ export function AssistantFormDialog({
                 checked={restrictTools}
                 onCheckedChange={(checked) => setRestrictTools(checked === true)}
               />
-              Restrict which tools this assistant may use
+              {t("Restrict which tools this assistant may use")}
             </label>
             {restrictTools && (
               <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
                 {toolsQuery.isLoading && availableTools.length === 0 ? (
-                  <p className="px-1 text-xs text-muted-foreground">Loading tools…</p>
+                  <p className="px-1 text-xs text-muted-foreground">{t("Loading tools…")}</p>
                 ) : null}
                 {availableTools.map((tool) => (
                   <label
@@ -221,13 +225,15 @@ export function AssistantFormDialog({
                   </label>
                 ))}
                 {!toolsQuery.isLoading && availableTools.length === 0 ? (
-                  <p className="px-1 text-xs text-muted-foreground">No tools advertised yet.</p>
+                  <p className="px-1 text-xs text-muted-foreground">
+                    {t("No tools advertised yet.")}
+                  </p>
                 ) : null}
               </div>
             )}
             {!restrictTools && (
               <p className="text-xs text-muted-foreground">
-                All read-only MCP tools are available. None of them can change AWS state.
+                {t("All read-only MCP tools are available. None of them can change AWS state.")}
               </p>
             )}
           </div>
@@ -235,10 +241,10 @@ export function AssistantFormDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="button" onClick={submit} disabled={pending}>
-            {pending ? "Saving..." : assistant ? "Save" : "Add assistant"}
+            {pending ? t("Saving...") : assistant ? t("Save") : t("Add assistant")}
           </Button>
         </DialogFooter>
       </DialogContent>

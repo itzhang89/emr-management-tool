@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useT } from "@/i18n";
 
 /**
  * Renders a model's markdown answer.
@@ -107,6 +108,7 @@ function MarkdownCodeBlock({
   raw: string;
   className?: string;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const label = language || "code";
 
@@ -130,10 +132,10 @@ function MarkdownCodeBlock({
           type="button"
           onClick={copy}
           className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label={`Copy ${label} code`}
+          aria-label={t("Copy {label} code", { label })}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("Copied") : t("Copy")}
         </button>
       </div>
       <pre className="overflow-x-auto whitespace-pre-wrap break-words p-2 font-mono text-xs leading-relaxed text-foreground">

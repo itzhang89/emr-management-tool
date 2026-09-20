@@ -18,6 +18,7 @@ import {
   useNetworkProfiles,
   useSaveNetworkProfile
 } from "@/hooks/useDbHub";
+import { useT, type Translator } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile, NetworkProfileInput } from "@/types/domain";
 import { ProfileDetail } from "./ProfileDetail";
@@ -35,6 +36,7 @@ import { defaultSshTransport, transportLabel } from "./transports";
  * unbind those first (a silent delete would leave them suddenly direct).
  */
 export function NetworkProfilesSection() {
+  const t = useT();
   const profilesQuery = useNetworkProfiles();
   const connectionsQuery = useDbConnections();
   const profiles = profilesQuery.data ?? [];
@@ -54,10 +56,9 @@ export function NetworkProfilesSection() {
   return (
     <div className="rounded-lg border bg-card">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h3 className="text-sm font-semibold">Network Profiles</h3>
+        <h3 className="text-sm font-semibold">{t("Network Profiles")}</h3>
         <p className="text-xs text-muted-foreground">
-          SSH tunnels and SOCKS5 proxies for the active AWS account. Double-click a
-          name to rename it.
+          {t("SSH tunnels and SOCKS5 proxies for the active AWS account. Double-click a name to rename it.")}
         </p>
       </div>
       <div className="grid min-h-[24rem] grid-cols-1 divide-y md:grid-cols-[16rem_1fr] md:divide-x md:divide-y-0">
@@ -73,8 +74,7 @@ export function NetworkProfilesSection() {
             <ProfileDetail key={selected.id} profile={selected} />
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-              Create a profile to route database connections through SSH tunnels
-              or SOCKS5 proxies.
+              {t("Create a profile to route database connections through SSH tunnels or SOCKS5 proxies.")}
             </div>
           )}
         </div>
@@ -84,12 +84,16 @@ export function NetworkProfilesSection() {
       <Dialog open={deleteRefusesOpen} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Profile is in use</DialogTitle>
+            <DialogTitle>{t("Profile is in use")}</DialogTitle>
             <DialogDescription>
-              "{deleteTarget?.name}" is still bound to {referencing.length} connection
-              {referencing.length === 1 ? "" : "s"}. Remove the Network Profile from those
-              connections before deleting it, or they will keep pointing at a tunnel that no
-              longer exists.
+              {t('"{name}" is still bound to {count} {connections}.', {
+                name: deleteTarget?.name ?? "",
+                count: referencing.length,
+                connections: referencing.length === 1 ? t("connection") : t("connections")
+              })}{" "}
+              {t(
+                "Remove the Network Profile from those connections before deleting it, or they will keep pointing at a tunnel that no longer exists."
+              )}
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
@@ -103,7 +107,7 @@ export function NetworkProfilesSection() {
           </ul>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDeleteTarget(undefined)}>
-              Close
+              {t("Close")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -122,20 +126,23 @@ function ConfirmDeleteDialog({
   target?: NetworkProfile;
   onClose: () => void;
 }) {
+  const t = useT();
   const deleteProfile = useDeleteNetworkProfile();
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete profile?</DialogTitle>
+          <DialogTitle>{t("Delete profile?")}</DialogTitle>
           <DialogDescription>
-            Delete "{target?.name}"? Connections already route directly; this only removes
-            the profile so it can no longer be chosen.
+            {t('Delete "{name}"?', { name: target?.name ?? "" })}{" "}
+            {t(
+              "Connections already route directly; this only removes the profile so it can no longer be chosen."
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             type="button"
@@ -146,13 +153,13 @@ function ConfirmDeleteDialog({
               deleteProfile.mutate(target.id, {
                 onSuccess: () => {
                   onClose();
-                  toast.success(`Profile "${target.name}" deleted.`);
+                  toast.success(t('Profile "{name}" deleted.', { name: target.name }));
                 },
                 onError: (error) => toast.error(formatAppError(error, "Failed to delete profile."))
               });
             }}
           >
-            Delete profile
+            {t("Delete profile")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -173,11 +180,12 @@ function ProfileList({
   onSelect: (id: string) => void;
   onRequestDelete: (profile: NetworkProfile) => void;
 }) {
+  const t = useT();
   const saveProfile = useSaveNetworkProfile();
 
   const handleCreate = () => {
     const input: NetworkProfileInput = {
-      name: nextProfileName(profiles),
+      name: nextProfileName(profiles, t),
       transport: defaultSshTransport(),
       // Enabled from birth: a brand-new profile is the user's active intent,
       // and the previous `false` default made every test click answer
@@ -187,7 +195,7 @@ function ProfileList({
     saveProfile.mutate(input, {
       onSuccess: (profile) => {
         onSelect(profile.id);
-        toast.success(`Profile "${profile.name}" created.`);
+        toast.success(t('Profile "{name}" created.', { name: profile.name }));
       },
       onError: (error) => toast.error(formatAppError(error, "Failed to create profile."))
     });
@@ -197,7 +205,7 @@ function ProfileList({
     const source = profiles.find((profile) => profile.id === selectedId);
     if (!source) return;
     const input: NetworkProfileInput = {
-      name: `${source.name} copy`,
+      name: t("{name} copy", { name: source.name }),
       transport: source.transport,
       // A copy starts enabled too — the user duplicates a working profile to
       // tweak it, not to have it inert.
@@ -206,7 +214,7 @@ function ProfileList({
     saveProfile.mutate(input, {
       onSuccess: (profile) => {
         onSelect(profile.id);
-        toast.success(`Profile copied as "${profile.name}".`);
+        toast.success(t('Profile copied as "{name}".', { name: profile.name }));
       },
       onError: (error) => toast.error(formatAppError(error, "Failed to copy profile."))
     });
@@ -250,7 +258,7 @@ function ProfileList({
       // intact, or it would quietly disable the thing it renamed.
       { id: profile.id, name, transport: profile.transport, enabled: profile.enabled },
       {
-        onSuccess: () => toast.success("Profile renamed."),
+        onSuccess: () => toast.success(t("Profile renamed.")),
         onError: (error) => toast.error(formatAppError(error, "Failed to rename profile."))
       }
     );
@@ -258,8 +266,8 @@ function ProfileList({
 
   return (
     <div className="flex min-h-0 flex-col">
-      <ul className="flex-1 space-y-1 overflow-y-auto p-2" aria-label="Network profiles">
-        {loading ? <li className="p-2 text-sm text-muted-foreground">Loading…</li> : null}
+      <ul className="flex-1 space-y-1 overflow-y-auto p-2" aria-label={t("Network profiles")}>
+        {loading ? <li className="p-2 text-sm text-muted-foreground">{t("Loading…")}</li> : null}
         {profiles.map((profile) => {
           const selected = profile.id === selectedId;
           const rowClass =
@@ -274,7 +282,7 @@ function ProfileList({
                   <Input
                     autoFocus
                     value={draftName}
-                    aria-label="Profile name"
+                    aria-label={t("Profile name")}
                     className="h-7 min-w-0 flex-1 text-sm"
                     onChange={(event) => setDraftName(event.target.value)}
                     onKeyDown={(event) => {
@@ -301,7 +309,7 @@ function ProfileList({
           );
         })}
         {!loading && profiles.length === 0 ? (
-          <li className="p-2 text-sm text-muted-foreground">No profiles yet.</li>
+          <li className="p-2 text-sm text-muted-foreground">{t("No profiles yet.")}</li>
         ) : null}
       </ul>
       <div className="flex items-center gap-1 border-t p-2">
@@ -312,14 +320,14 @@ function ProfileList({
               variant="ghost"
               size="icon"
               className="size-7"
-              aria-label="Create profile"
+              aria-label={t("Create profile")}
               disabled={saveProfile.isPending}
               onClick={handleCreate}
             >
               <Plus className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Create</TooltipContent>
+          <TooltipContent>{t("Create")}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -328,14 +336,14 @@ function ProfileList({
               variant="ghost"
               size="icon"
               className="size-7"
-              aria-label="Delete profile"
+              aria-label={t("Delete profile")}
               disabled={!selectedId}
               onClick={handleDelete}
             >
               <Trash2 className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Delete</TooltipContent>
+          <TooltipContent>{t("Delete")}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -344,22 +352,22 @@ function ProfileList({
               variant="ghost"
               size="icon"
               className="size-7"
-              aria-label="Copy profile"
+              aria-label={t("Copy profile")}
               disabled={!selectedId || saveProfile.isPending}
               onClick={handleCopy}
             >
               <Copy className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Copy</TooltipContent>
+          <TooltipContent>{t("Copy")}</TooltipContent>
         </Tooltip>
       </div>
     </div>
   );
 }
 
-function nextProfileName(profiles: NetworkProfile[]) {
-  const base = "New profile";
+function nextProfileName(profiles: NetworkProfile[], t: Translator) {
+  const base = t("New profile");
   if (!profiles.some((profile) => profile.name === base)) return base;
   let index = 2;
   while (profiles.some((profile) => profile.name === `${base} ${index}`)) index += 1;

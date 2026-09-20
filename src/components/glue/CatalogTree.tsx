@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { CatalogRow } from "@/components/catalog/CatalogRow";
 import { CatalogToolbar } from "@/components/catalog/CatalogToolbar";
 import { useGlueDatabases, useGlueTables } from "@/hooks/useGlue";
+import { useT } from "@/i18n";
 
 /**
  * The Glue catalog tree: two levels (databases, then a database's tables),
@@ -39,6 +40,7 @@ export function CatalogTree({
   onCollapse?: () => void;
   collapseShortcut?: string;
 }) {
+  const t = useT();
   const databases = useGlueDatabases();
   const [filter, setFilter] = useState("");
 
@@ -72,11 +74,11 @@ export function CatalogTree({
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <CatalogToolbar
-        backLabel={activeDatabase ? "Back to databases" : undefined}
+        backLabel={activeDatabase ? t("Back to databases") : undefined}
         onBack={exitDatabase}
         filter={filter}
         onFilterChange={setFilter}
-        filterPlaceholder={activeDatabase ? "Filter tables" : "Filter databases"}
+        filterPlaceholder={t(activeDatabase ? "Filter tables" : "Filter databases")}
         onRefresh={onRefresh}
         refreshing={databases.isFetching}
         onCollapse={onCollapse}
@@ -123,9 +125,10 @@ function DatabaseListView({
   onEnterDatabase: (name: string) => void;
   onShowDatabaseMetadata: (name: string) => void;
 }) {
-  if (loading) return <p className="p-2 text-xs text-muted-foreground">Loading databases...</p>;
+  const t = useT();
+  if (loading) return <p className="p-2 text-xs text-muted-foreground">{t("Loading databases...")}</p>;
   if (error) return <p className="p-2 text-xs text-destructive">Failed to load databases.</p>;
-  if (databases.length === 0) return <p className="p-2 text-xs text-muted-foreground">No databases found.</p>;
+  if (databases.length === 0) return <p className="p-2 text-xs text-muted-foreground">{t("No databases found.")}</p>;
 
   return (
     <ul className="divide-y">
@@ -136,8 +139,8 @@ function DatabaseListView({
             emphasis
             icon={<Database className="size-3.5 shrink-0 text-muted-foreground" />}
             onSelect={() => onEnterDatabase(database.name)}
-            infoLabel={`Show details for ${database.name}`}
-            infoTooltip="Database details"
+            infoLabel={t("Show details for {name}", { name: database.name })}
+            infoTooltip={t("Database details")}
             onShowInfo={() => onShowDatabaseMetadata(database.name)}
           />
         </li>
@@ -167,6 +170,7 @@ function DatabaseTablesView({
   onShowDatabaseMetadata: (databaseName: string) => void;
   onShowTableMetadata: (databaseName: string, tableName: string) => void;
 }) {
+  const t = useT();
   return (
     <div>
       {/* Which database these tables belong to, and its own details button —
@@ -183,19 +187,19 @@ function DatabaseTablesView({
               variant="ghost"
               size="icon"
               className="size-6 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-              aria-label={`Show details for ${databaseName}`}
+              aria-label={t("Show details for {name}", { name: databaseName })}
               onClick={() => onShowDatabaseMetadata(databaseName)}
             >
               <Info className="size-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Database details</TooltipContent>
+          <TooltipContent>{t("Database details")}</TooltipContent>
         </Tooltip>
       </div>
-      {loading ? <p className="p-2 text-xs text-muted-foreground">Loading tables...</p> : null}
+      {loading ? <p className="p-2 text-xs text-muted-foreground">{t("Loading tables...")}</p> : null}
       {error ? <p className="p-2 text-xs text-destructive">Failed to load tables.</p> : null}
       {!loading && tables.length === 0 ? (
-        <p className="p-2 text-xs text-muted-foreground">No tables in this database.</p>
+        <p className="p-2 text-xs text-muted-foreground">{t("No tables in this database.")}</p>
       ) : null}
       <ul className="divide-y">
         {tables.map((table) => (
@@ -205,8 +209,8 @@ function DatabaseTablesView({
               selected={selectedDatabase === databaseName && selectedTable === table.name}
               icon={<Table2 className="size-3.5 shrink-0" />}
               onSelect={() => onSelectTable(databaseName, table.name)}
-              infoLabel={`Show details for ${table.name}`}
-              infoTooltip="Table details"
+              infoLabel={t("Show details for {name}", { name: table.name })}
+              infoTooltip={t("Table details")}
               onShowInfo={() => onShowTableMetadata(databaseName, table.name)}
             />
           </li>

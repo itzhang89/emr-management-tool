@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { S3PathPickerDialog } from "@/components/s3/S3PathPicker";
 import { useAthenaWorkgroups } from "@/hooks/useAthena";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export type AthenaQuerySettingsMode = "normal" | "setup" | "error";
@@ -54,6 +55,7 @@ export function AthenaQuerySettingsDialog({
   preferencesReady: boolean;
   errorMessage?: string;
 }) {
+  const t = useT();
   const [s3DialogOpen, setS3DialogOpen] = useState(false);
   const workgroups = useAthenaWorkgroups();
 
@@ -68,15 +70,21 @@ export function AthenaQuerySettingsDialog({
     [workgroups.data]
   );
 
-  const title =
-    mode === "setup" ? "Set up Athena query output" : mode === "error" ? "Fix query output settings" : "Query settings";
+  const title = t(
+    mode === "setup"
+      ? "Set up Athena query output"
+      : mode === "error"
+        ? "Fix query output settings"
+        : "Query settings"
+  );
 
-  const description =
+  const description = t(
     mode === "setup"
       ? "Choose a workgroup and an S3 folder for Athena query results before running SQL."
       : mode === "error"
         ? "Athena could not write query results with the current settings. Update the S3 output path or workgroup."
-        : "Configure the Athena workgroup and S3 path used when running queries.";
+        : "Configure the Athena workgroup and S3 path used when running queries."
+  );
 
   return (
     <>
@@ -92,8 +100,8 @@ export function AthenaQuerySettingsDialog({
 
           {mode === "setup" ? (
             <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground break-words">
-              Query results are written to S3. Pick a bucket prefix your AWS account can write to, for example{" "}
-              <span className="break-all font-mono">s3://my-bucket/athena-results/</span>.
+              {t("Query results are written to S3. Pick a bucket prefix your AWS account can write to, for example")}{" "}
+              <span className="break-all font-mono">s3://my-bucket/athena-results/</span>{t(".")}
             </div>
           ) : null}
 
@@ -112,20 +120,24 @@ export function AthenaQuerySettingsDialog({
               )}
             >
               <div className="flex min-w-0 items-center justify-between gap-2">
-                <Label htmlFor="athena-workgroup">Workgroup</Label>
+                <Label htmlFor="athena-workgroup">{t("Workgroup")}</Label>
                 <Badge variant={managedResultsEnabled ? "secondary" : "outline"} className="shrink-0 font-normal">
-                  {managedResultsEnabled ? "Managed results" : "S3 results"}
+                  {t(managedResultsEnabled ? "Managed results" : "S3 results")}
                 </Badge>
               </div>
               <Select value={workgroup} onValueChange={onWorkgroupChange}>
                 <SelectTrigger id="athena-workgroup" className="h-9 w-full max-w-full">
-                  <SelectValue placeholder="Workgroup" />
+                  <SelectValue placeholder={t("Workgroup")} />
                 </SelectTrigger>
                 <SelectContent>
                   {workgroups.isLoading ? <SelectItem value={workgroup}>{workgroup}</SelectItem> : null}
                   {workgroupOptions.map((name) => {
                     const entry = workgroupByName.get(name);
-                    const suffix = entry?.managedResultsEnabled ? " · Managed" : entry?.sparkEnabled ? " · Spark" : "";
+                    const suffix = entry?.managedResultsEnabled
+                      ? ` · ${t("Managed")}`
+                      : entry?.sparkEnabled
+                        ? " · Spark"
+                        : "";
                     return (
                       <SelectItem key={name} value={name}>
                         {name}
@@ -137,7 +149,7 @@ export function AthenaQuerySettingsDialog({
               </Select>
               {managedResultsEnabled ? (
                 <p className="text-[11px] text-muted-foreground">
-                  This workgroup uses Athena managed query results. An S3 path is optional.
+                  {t("This workgroup uses Athena managed query results. An S3 path is optional.")}
                 </p>
               ) : null}
             </div>
@@ -149,7 +161,7 @@ export function AthenaQuerySettingsDialog({
                 outputPathRequired && "border-destructive/40"
               )}
             >
-              <Label htmlFor="athena-output-path">S3 query results path</Label>
+              <Label htmlFor="athena-output-path">{t("S3 query results path")}</Label>
               <div className="flex min-w-0 items-stretch gap-2">
                 <p
                   id="athena-output-path"
@@ -160,15 +172,15 @@ export function AthenaQuerySettingsDialog({
                 >
                   {preferencesReady
                     ? displayResultsPath ||
-                      (outputPathRequired ? "Not configured" : "s3://bucket/athena-results/")
-                    : "Loading saved settings..."}
+                      (outputPathRequired ? t("Not configured") : "s3://bucket/athena-results/")
+                    : t("Loading saved settings...")}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
                   className="h-auto min-h-9 w-9 shrink-0 self-stretch"
-                  aria-label="Browse S3 results path"
+                  aria-label={t("Browse S3 results path")}
                   onClick={() => setS3DialogOpen(true)}
                 >
                   <FolderOpen className="size-4 shrink-0" />
@@ -181,7 +193,7 @@ export function AthenaQuerySettingsDialog({
                   onCheckedChange={(checked) => onAppendSubmitUserChange(checked === true)}
                 />
                 <Label htmlFor="append-submit-user" className="min-w-0 text-xs font-normal break-words">
-                  Append submit user folder ({submitUser || "user"})
+                  {t("Append submit user folder ({user})", { user: submitUser || "user" })}
                 </Label>
               </div>
               {outputPathRequired ? (
@@ -192,7 +204,7 @@ export function AthenaQuerySettingsDialog({
 
           <DialogFooter>
             <Button type="button" onClick={() => onOpenChange(false)}>
-              Done
+              {t("Done")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -221,14 +233,15 @@ export function AthenaQuerySettingsButton({
   onClick: () => void;
   setupRequired: boolean;
 }) {
+  const t = useT();
   return (
     <Button
       type="button"
       variant="outline"
       size="icon"
       className={cn("relative size-8 shrink-0", setupRequired && "border-destructive/50")}
-      aria-label="Query settings"
-      title="Query settings"
+      aria-label={t("Query settings")}
+      title={t("Query settings")}
       onClick={onClick}
     >
       <Settings2 className="size-4" />

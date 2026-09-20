@@ -19,6 +19,7 @@ import {
   useTestDbConnectionDraft,
   useUpdateDbConnection
 } from "@/hooks/useDbHub";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
 
@@ -54,6 +55,7 @@ export function ConnectionFormDialog({
   connection?: DbConnection;
   onSaved?: (connection: DbConnection) => void;
 }) {
+  const t = useT();
   const createConnection = useCreateDbConnection();
   const updateConnection = useUpdateDbConnection();
   const testDraftConnection = useTestDbConnectionDraft();
@@ -187,17 +189,18 @@ export function ConnectionFormDialog({
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {connection ? "Edit connection" : "Connect to a database"}
+            {t(connection ? "Edit connection" : "Connect to a database")}
           </DialogTitle>
           <DialogDescription>
-            Settings apply to the active AWS account. Passwords are stored in the
-            system credential store, never in the app database.
+            {t(
+              "Settings apply to the active AWS account. Passwords are stored in the system credential store, never in the app database."
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
           <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-            <Label htmlFor="conn-driver" className="text-right text-sm">Driver</Label>
+            <Label htmlFor="conn-driver" className="text-right text-sm">{t("Driver")}</Label>
             <select
               id="conn-driver"
               value={kind}
@@ -215,20 +218,20 @@ export function ConnectionFormDialog({
               ))}
             </select>
 
-            <Label htmlFor="conn-name" className="text-right text-sm">Name</Label>
+            <Label htmlFor="conn-name" className="text-right text-sm">{t("Name")}</Label>
             <Input
               id="conn-name"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="My MySQL Prod"
+              placeholder={t("My MySQL Prod")}
               className="max-w-xs"
             />
           </div>
 
           <fieldset className="space-y-3 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">Server</legend>
+            <legend className="px-1 text-sm font-medium">{t("Server")}</legend>
             <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-              <Label className="text-right text-sm">Connect by</Label>
+              <Label className="text-right text-sm">{t("Connect by")}</Label>
               <RadioGroup
                 value={connectBy}
                 onValueChange={(value) => setConnectBy(value as "host" | "url")}
@@ -236,7 +239,7 @@ export function ConnectionFormDialog({
               >
                 <div className="flex items-center gap-1.5">
                   <RadioGroupItem value="host" id="connect-host" />
-                  <Label htmlFor="connect-host" className="text-sm font-normal">Host</Label>
+                  <Label htmlFor="connect-host" className="text-sm font-normal">{t("Host")}</Label>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <RadioGroupItem value="url" id="connect-url" />
@@ -254,7 +257,7 @@ export function ConnectionFormDialog({
                 className="max-w-sm font-mono text-xs"
               />
 
-              <Label htmlFor="conn-host" className="text-right text-sm">Server Host</Label>
+              <Label htmlFor="conn-host" className="text-right text-sm">{t("Server Host")}</Label>
               <div className="flex max-w-sm items-center gap-2">
                 <Input
                   id="conn-host"
@@ -264,7 +267,7 @@ export function ConnectionFormDialog({
                   placeholder="10.xx.xx.50"
                   className="flex-1"
                 />
-                <Label htmlFor="conn-port" className="sr-only">Port</Label>
+                <Label htmlFor="conn-port" className="sr-only">{t("Port")}</Label>
                 <Input
                   id="conn-port"
                   type="number"
@@ -277,7 +280,7 @@ export function ConnectionFormDialog({
                 />
               </div>
 
-              <Label htmlFor="conn-database" className="text-right text-sm">Database</Label>
+              <Label htmlFor="conn-database" className="text-right text-sm">{t("Database")}</Label>
               <Input
                 id="conn-database"
                 value={database}
@@ -288,32 +291,32 @@ export function ConnectionFormDialog({
           </fieldset>
 
           <fieldset className="space-y-3 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">Authentication</legend>
+            <legend className="px-1 text-sm font-medium">{t("Authentication")}</legend>
             <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-              <Label htmlFor="conn-username" className="text-right text-sm">Username</Label>
+              <Label htmlFor="conn-username" className="text-right text-sm">{t("Username")}</Label>
               <Input
                 id="conn-username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 className="max-w-xs"
               />
-              <Label htmlFor="conn-password" className="text-right text-sm">Password</Label>
+              <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
               <div className="flex max-w-xs items-center gap-2">
                 <Input
                   id="conn-password"
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder={connection ? "•••••••• (saved — leave blank to keep)" : ""}
+                  placeholder={connection ? t("•••••••• (saved — leave blank to keep)") : ""}
                 />
               </div>
             </div>
           </fieldset>
 
           <fieldset className="space-y-3 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">Routing &amp; AI</legend>
+            <legend className="px-1 text-sm font-medium">{t("Routing & AI")}</legend>
             <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-              <Label htmlFor="conn-profile" className="text-right text-sm">Network Profile</Label>
+              <Label htmlFor="conn-profile" className="text-right text-sm">{t("Network Profile")}</Label>
               <div className="flex max-w-sm items-center gap-2">
                 <select
                   id="conn-profile"
@@ -321,7 +324,7 @@ export function ConnectionFormDialog({
                   onChange={(event) => setNetworkProfileId(event.target.value)}
                   className="h-9 flex-1 rounded-md border bg-background px-3 text-sm"
                 >
-                  <option value="">(None — direct connection)</option>
+                  <option value="">{t("(None — direct connection)")}</option>
                   {profiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
                       {profile.name} ({profile.transport.type === "ssh-tunnel" ? "SSH" : "SOCKS5"})
@@ -338,7 +341,7 @@ export function ConnectionFormDialog({
                   onCheckedChange={(checked) => setShowAsTab(checked === true)}
                 />
                 <Label htmlFor="conn-show-tab" className="text-sm font-normal">
-                  Show as tab (next to Glue Catalog)
+                  {t("Show as tab (next to Glue Catalog)")}
                 </Label>
               </div>
 
@@ -350,7 +353,7 @@ export function ConnectionFormDialog({
                   onCheckedChange={(checked) => setEnabledForAi(checked === true)}
                 />
                 <Label htmlFor="conn-ai" className="text-sm font-normal">
-                  Enable read-only SQL tool for AI
+                  {t("Enable read-only SQL tool for AI")}
                 </Label>
               </div>
             </div>
@@ -359,14 +362,14 @@ export function ConnectionFormDialog({
 
         <DialogFooter className="mt-2 flex items-center gap-2 sm:justify-between">
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void handleTest()}>
-            Test Connection
+            {t("Test Connection")}
           </Button>
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" size="sm" disabled={busy} onClick={() => void handleSave()}>
-              {connection ? "Save" : "Save and Close"}
+              {t(connection ? "Save" : "Save and Close")}
             </Button>
           </div>
         </DialogFooter>

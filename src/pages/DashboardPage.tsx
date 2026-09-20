@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useJobRuns } from "@/hooks/useEmr";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import {
   STATS_RANGE_OPTIONS,
@@ -23,6 +24,7 @@ import {
 } from "@/services/jobRunStats";
 
 export function DashboardPage() {
+  const t = useT();
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const [rangeDays, setRangeDays] = useState<StatsRangeDays>(7);
   const [selectedDate, setSelectedDate] = useState(() => toLocalDateKey(new Date()));
@@ -77,7 +79,7 @@ export function DashboardPage() {
                   variant={rangeDays === days ? "default" : "ghost"}
                   onClick={() => setRangeDays(days)}
                 >
-                  {days}d
+                  {t("{days}d", { days })}
                 </Button>
               ))}
             </div>
@@ -88,20 +90,20 @@ export function DashboardPage() {
       {!effectiveVirtualClusterId ? (
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Select a virtual cluster to view job statistics.</p>
+            <p className="text-sm text-muted-foreground">{t("Select a virtual cluster to view job statistics.")}</p>
           </CardContent>
         </Card>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-4">
             {[
-              ["Running", String(runningJobs), "Currently running jobs"],
+              [t("Running"), String(runningJobs), t("Currently running jobs")],
               [
-                `Success Rate (${rangeDays}d)`,
+                t("Success Rate ({days}d)", { days: rangeDays }),
                 successRate == null ? "—" : `${successRate}%`,
-                "Completed / (completed + failed)"
+                t("Completed / (completed + failed)")
               ],
-              ["Failed (24h)", String(failed24h), "Rolling last 24 hours"]
+              [t("Failed (24h)"), String(failed24h), t("Rolling last 24 hours")]
             ].map(([title, value, description]) => (
               <Card key={title}>
                 <CardHeader>

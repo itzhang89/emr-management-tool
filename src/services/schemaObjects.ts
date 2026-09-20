@@ -1,3 +1,4 @@
+import { t } from "@/i18n/translate";
 import type { DbConnectionKind, SchemaObjectKind } from "@/types/domain";
 
 export interface SchemaObjectOption {
@@ -14,22 +15,22 @@ export interface SchemaObjectOption {
 export function schemaObjectOptions(kind: DbConnectionKind): SchemaObjectOption[] {
   if (kind === "mysql") {
     return [
-      { kind: "table", label: "Tables" },
-      { kind: "view", label: "Views" },
-      { kind: "procedure", label: "Procedures" },
+      { kind: "table", label: t("Tables") },
+      { kind: "view", label: t("Views") },
+      { kind: "procedure", label: t("Procedures") },
       // Listed because MySQL keeps routines in one catalogue read either way;
       // omitting functions would only leave the user wondering where they went.
-      { kind: "function", label: "Functions" },
-      { kind: "event", label: "Events" }
+      { kind: "function", label: t("Functions") },
+      { kind: "event", label: t("Events") }
     ];
   }
   // Postgres, and Yellowbrick on the same wire.
   return [
-    { kind: "table", label: "Tables" },
-    { kind: "foreign-table", label: "Foreign Tables" },
-    { kind: "view", label: "Views" },
-    { kind: "materialized-view", label: "Materialized Views" },
-    { kind: "function", label: "Functions" }
+    { kind: "table", label: t("Tables") },
+    { kind: "foreign-table", label: t("Foreign Tables") },
+    { kind: "view", label: t("Views") },
+    { kind: "materialized-view", label: t("Materialized Views") },
+    { kind: "function", label: t("Functions") }
   ];
 }
 

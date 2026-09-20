@@ -3,6 +3,7 @@ import { Eraser, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { formatModShortcut } from "@/lib/keyboardShortcut";
 
 /**
@@ -36,6 +37,7 @@ export function Composer({
   onClearContext: () => void;
   onCancelEdit: () => void;
 }) {
+  const t = useT();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Editing starts from the composer, so it should take focus there.
@@ -57,10 +59,10 @@ export function Composer({
     <div className="shrink-0 space-y-2 border-t p-3">
       {editing && (
         <div className="flex items-center justify-between gap-2 rounded-md bg-accent/60 px-2 py-1 text-xs text-muted-foreground">
-          <span>Editing a message — Enter re-answers · Esc cancels</span>
+          <span>{t("Editing a message — Enter re-answers · Esc cancels")}</span>
           <button
             type="button"
-            aria-label="Cancel editing"
+            aria-label={t("Cancel editing")}
             onClick={onCancelEdit}
             className="flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
           >
@@ -83,13 +85,13 @@ export function Composer({
         }}
         placeholder={
           editing
-            ? "Edit the question…"
+            ? t("Edit the question…")
             : disabled
-              ? "Select or create a conversation to start"
-              : "Ask why a job failed — paste its job id"
+              ? t("Select or create a conversation to start")
+              : t("Ask why a job failed — paste its job id")
         }
         disabled={disabled}
-        aria-label="Message"
+        aria-label={t("Message")}
         className="max-h-40 min-h-[4.5rem] resize-none text-sm"
       />
       <div className="flex items-center justify-between gap-2">
@@ -103,23 +105,25 @@ export function Composer({
               disabled={disabled || streaming}
             >
               <Eraser className="mr-1.5 size-3.5" />
-              Clear context
+              {t("Clear context")}
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Keep the history visible but stop sending it to the model ({formatModShortcut("K")})
+            {t("Keep the history visible but stop sending it to the model ({shortcut})", {
+              shortcut: formatModShortcut("K")
+            })}
           </TooltipContent>
         </Tooltip>
 
         {streaming ? (
           <Button type="button" variant="outline" size="sm" onClick={onCancel}>
             <Square className="mr-1.5 size-3.5" />
-            Stop
+            {t("Stop")}
           </Button>
         ) : (
           <Button type="button" size="sm" onClick={submit} disabled={disabled || !trimmed}>
             <Send className="mr-1.5 size-3.5" />
-            Send
+            {t("Send")}
           </Button>
         )}
       </div>

@@ -7,6 +7,7 @@ import {
   type ModelActionOption
 } from "@/components/ai/chat/MessageBubble";
 import { toolStepFromEvent, toolStepFromStored } from "@/components/ai/chat/ToolCallStep";
+import { useT } from "@/i18n";
 import type { StreamingTurn } from "@/services/chatStream";
 import type { ChatAssistant, ChatMessage } from "@/types/domain";
 
@@ -63,8 +64,9 @@ export function MessageList({
   onRegenerateWithModel: (message: ChatMessage, modelId: string) => void;
   onSwitchVersion: (message: ChatMessage, versionId: string) => void;
 }) {
+  const t = useT();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const assistantName = assistant?.name ?? "Assistant";
+  const assistantName = assistant?.name ?? t("Assistant");
 
   const scrollToBottom = () => {
     const container = scrollRef.current;
@@ -123,7 +125,7 @@ export function MessageList({
       {isLoading ? (
         <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
           <LoaderCircle className="size-4 animate-spin" />
-          Loading conversation...
+          {t("Loading conversation...")}
         </p>
       ) : messages.length === 0 && !streaming ? (
         <div className="p-4">{emptyHint}</div>

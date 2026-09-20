@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSaveNetworkProfile, useTestNetworkProfileDraft } from "@/hooks/useDbHub";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile } from "@/types/domain";
 import { SSH_AUTH_METHODS } from "@/types/domain";
@@ -32,6 +33,7 @@ import {
  * turns the other off; turning it off disables the profile.
  */
 export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
+  const t = useT();
   const saveProfile = useSaveNetworkProfile();
   const testDraftProfile = useTestNetworkProfileDraft();
 
@@ -105,9 +107,9 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   const transport = active === "ssh-tunnel" ? ssh : socks;
   const sshAuthMethod = ssh.authMethod;
   const authLabels: Record<string, { secret: string; host: string }> = {
-    password: { secret: "Password", host: "Host/IP" },
-    "private-key": { secret: "Key passphrase", host: "Host/IP" },
-    "ssh-config": { secret: "Key passphrase (if encrypted)", host: "SSH config alias" }
+    password: { secret: t("Password"), host: t("Host/IP") },
+    "private-key": { secret: t("Key passphrase"), host: t("Host/IP") },
+    "ssh-config": { secret: t("Key passphrase (if encrypted)"), host: t("SSH config alias") }
   };
   const labels = authLabels[sshAuthMethod] ?? authLabels.password;
 
@@ -131,7 +133,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
         onSuccess: () => {
           setSecret("");
           setDirty(false);
-          toast.success("Profile applied.");
+          toast.success(t("Profile applied."));
         },
         onError: (error) => toast.error(formatAppError(error, "Failed to apply profile."))
       }
@@ -162,13 +164,13 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
-        <span className="text-sm text-muted-foreground">Name</span>
+        <span className="text-sm text-muted-foreground">{t("Name")}</span>
         {/* Shown, not edited: renaming happens where the name lives, in the
             list. This line is here so a scrolled-away selection is still
             legible while you edit the transport below. */}
         <span className="min-w-0 truncate text-sm font-medium">{name}</span>
         <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-          Double-click the name in the list to rename.
+          {t("Double-click the name in the list to rename.")}
         </span>
       </div>
       <Tabs
@@ -179,11 +181,11 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
         <div className="flex shrink-0 items-center justify-between gap-2">
           <TabsList>
             <TabsTrigger value="ssh-tunnel" className="gap-1.5">
-              SSH Tunnel
+              {t("SSH Tunnel")}
               {inUse("ssh-tunnel") ? <ActiveMark /> : null}
             </TabsTrigger>
             <TabsTrigger value="socks5" className="gap-1.5">
-              Proxy
+              {t("Proxy")}
               {inUse("socks5") ? <ActiveMark /> : null}
             </TabsTrigger>
           </TabsList>
@@ -191,7 +193,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               makes this transport the profile's and turns the other one off. */}
           <div className="flex items-center gap-2">
             <Label htmlFor={`profile-enabled-${profile.id}`} className="text-sm">
-              Enabled
+              {t("Enabled")}
             </Label>
             <Switch
               id={`profile-enabled-${profile.id}`}
@@ -203,15 +205,13 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
 
         <TabsContent value="ssh-tunnel" className="mt-0 space-y-4">
           <p className="text-xs text-muted-foreground">
-            Forwards database traffic through an SSH server. The database host/port
-            you enter here is the *target* the tunnel opens on the far side.
+            {t("Forwards database traffic through an SSH server. The database host/port you enter here is the *target* the tunnel opens on the far side.")}
           </p>
           {sshAuthMethod === "ssh-config" ? (
             <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-              Alias mode reads <code>~/.ssh/config</code>: HostName, User, Port,
-              IdentityFile and your existing jump chains come from there — the
-              fields below are ignored except the alias itself. The passphrase
-              field is only used when the config&apos;s key file is encrypted.
+              {t("Alias mode reads")}{" "}
+              <code>~/.ssh/config</code>
+              {t(": HostName, User, Port, IdentityFile and your existing jump chains come from there — the fields below are ignored except the alias itself. The passphrase field is only used when the config's key file is encrypted.")}
             </p>
           ) : null}
           <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
@@ -223,7 +223,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               placeholder={sshAuthMethod === "ssh-config" ? "bastion-prod" : "10.xx.xx.50"}
               className="max-w-xs"
             />
-            <Label htmlFor="ssh-user" className="text-right text-sm">User Name</Label>
+            <Label htmlFor="ssh-user" className="text-right text-sm">{t("User Name")}</Label>
             <Input
               id="ssh-user"
               value={ssh.username}
@@ -231,7 +231,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               disabled={sshAuthMethod === "ssh-config"}
               className="max-w-xs"
             />
-            <Label htmlFor="ssh-auth" className="text-right text-sm">Authentication</Label>
+            <Label htmlFor="ssh-auth" className="text-right text-sm">{t("Authentication")}</Label>
             <div>
               <select
                 id="ssh-auth"
@@ -246,7 +246,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             </div>
             {sshAuthMethod === "private-key" || sshAuthMethod === "ssh-config" ? (
               <>
-                <Label htmlFor="ssh-key-path" className="text-right text-sm">Key file</Label>
+                <Label htmlFor="ssh-key-path" className="text-right text-sm">{t("Key file")}</Label>
                 <Input
                   id="ssh-key-path"
                   value={ssh.privateKeyPath ?? ""}
@@ -276,10 +276,10 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
                 id="ssh-save-cred"
                 checked={ssh.credentialsSaved}
                 disabled
-                aria-label="Save credentials"
+                aria-label={t("Save credentials")}
               />
               <Label htmlFor="ssh-save-cred" className="text-sm font-normal text-muted-foreground">
-                Save credentials {ssh.credentialsSaved ? "(saved)" : ""}
+                {t("Save credentials")} {ssh.credentialsSaved ? t("(saved)") : ""}
               </Label>
             </div>
           </div>
@@ -287,10 +287,10 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
 
         <TabsContent value="socks5" className="mt-0 space-y-4">
           <p className="text-xs text-muted-foreground">
-            Dials database hosts through a SOCKS5 proxy.
+            {t("Dials database hosts through a SOCKS5 proxy.")}
           </p>
           <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-            <Label htmlFor="socks-host" className="text-right text-sm">Host</Label>
+            <Label htmlFor="socks-host" className="text-right text-sm">{t("Host")}</Label>
             <Input
               id="socks-host"
               value={socks.host}
@@ -298,7 +298,7 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               placeholder="127.0.0.1"
               className="max-w-xs"
             />
-            <Label htmlFor="socks-port" className="text-right text-sm">Port</Label>
+            <Label htmlFor="socks-port" className="text-right text-sm">{t("Port")}</Label>
             <Input
               id="socks-port"
               type="number"
@@ -308,14 +308,14 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
               onChange={(event) => patchSocks({ port: Number(event.target.value) || 0 })}
               className="max-w-32"
             />
-            <Label htmlFor="socks-user" className="text-right text-sm">User name</Label>
+            <Label htmlFor="socks-user" className="text-right text-sm">{t("User name")}</Label>
             <Input
               id="socks-user"
               value={socks.username ?? ""}
               onChange={(event) => patchSocks({ username: event.target.value || undefined })}
               className="max-w-xs"
             />
-            <Label htmlFor="socks-secret" className="text-right text-sm">Password</Label>
+            <Label htmlFor="socks-secret" className="text-right text-sm">{t("Password")}</Label>
             <div className="flex max-w-xs items-center gap-2">
               <Input
                 id="socks-secret"
@@ -334,10 +334,10 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
                 id="socks-save-cred"
                 checked={socks.credentialsSaved}
                 disabled
-                aria-label="Save password/passphrase"
+                aria-label={t("Save password/passphrase")}
               />
               <Label htmlFor="socks-save-cred" className="text-sm font-normal text-muted-foreground">
-                Save password {socks.credentialsSaved ? "(saved)" : ""}
+                {t("Save password")} {socks.credentialsSaved ? t("(saved)") : ""}
               </Label>
             </div>
           </div>
@@ -348,15 +348,15 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" variant="outline" size="sm" onClick={handleTest}>
-                  {active === "ssh-tunnel" ? "Test tunnel configuration" : "Test proxy configuration"}
+                  {t(active === "ssh-tunnel" ? "Test tunnel configuration" : "Test proxy configuration")}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Handshake-only; no SQL runs.</TooltipContent>
+              <TooltipContent>{t("Handshake-only; no SQL runs.")}</TooltipContent>
             </Tooltip>
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" size="sm" disabled={!dirty || saveProfile.isPending} onClick={handleApply}>
-              Apply
+              {t("Apply")}
             </Button>
           </div>
         </div>
@@ -370,12 +370,13 @@ export function ProfileDetail({ profile }: { profile: NetworkProfile }) {
  * it is a visual cue, not part of the tab's name.
  */
 function ActiveMark() {
+  const t = useT();
   return (
     <span
       aria-hidden
       className="rounded bg-primary/15 px-1 py-0.5 text-[10px] font-medium leading-none text-primary"
     >
-      active
+      {t("active")}
     </span>
   );
 }

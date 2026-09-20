@@ -2,6 +2,7 @@ import { ArrowLeft, PanelLeftClose, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -35,6 +36,8 @@ export function CatalogToolbar({
   onCollapse?: () => void;
   collapseShortcut?: string;
 }) {
+  const t = useT();
+
   return (
     <div className="flex items-center gap-1.5">
       {backLabel && onBack ? (
@@ -64,7 +67,7 @@ export function CatalogToolbar({
         size="icon"
         className="size-7"
         onClick={onRefresh}
-        aria-label="Refresh catalog"
+        aria-label={t("Refresh catalog")}
       >
         <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
       </Button>
@@ -76,14 +79,15 @@ export function CatalogToolbar({
               variant="outline"
               size="icon"
               className="size-7"
-              aria-label="Collapse catalog panel"
+              aria-label={t("Collapse catalog panel")}
               onClick={onCollapse}
             >
               <PanelLeftClose className="size-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Hide catalog{collapseShortcut ? ` · ${collapseShortcut}` : ""}
+            {t("Hide catalog")}
+            {collapseShortcut ? ` · ${collapseShortcut}` : ""}
           </TooltipContent>
         </Tooltip>
       ) : null}

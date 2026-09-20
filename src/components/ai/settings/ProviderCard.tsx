@@ -17,6 +17,7 @@ import { ApiKeysDialog } from "@/components/ai/settings/ApiKeysDialog";
 import { CommitInput } from "@/components/ai/settings/CommitInput";
 import { CustomHeadersDialog } from "@/components/ai/settings/CustomHeadersDialog";
 import { useTestLlmProvider, useUpdateLlmProvider } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import { LLM_PROTOCOLS, defaultBaseUrl } from "@/services/llmProtocols";
 import { cn } from "@/lib/utils";
 import type { LlmProtocol, LlmProvider, LlmProviderTestResult } from "@/types/domain";
@@ -34,6 +35,7 @@ import type { LlmProtocol, LlmProvider, LlmProviderTestResult } from "@/types/do
  * of both.
  */
 export function ProviderCard({ provider }: { provider: LlmProvider }) {
+  const t = useT();
   const updateProvider = useUpdateLlmProvider();
   const testProvider = useTestLlmProvider();
   const [testResult, setTestResult] = useState<LlmProviderTestResult | null>(null);
@@ -66,13 +68,13 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
           <h4 className="truncate text-base font-semibold">{provider.name}</h4>
           {provider.builtIn && (
             <Badge variant="secondary" className="shrink-0 text-[10px]">
-              Preset
+              {t("Preset")}
             </Badge>
           )}
         </div>
         <div className="flex items-center gap-2">
           <Label htmlFor={`provider-enabled-${provider.id}`} className="text-xs text-muted-foreground">
-            {provider.enabled ? "Enabled" : "Disabled"}
+            {provider.enabled ? t("Enabled") : t("Disabled")}
           </Label>
           <Switch
             id={`provider-enabled-${provider.id}`}
@@ -93,7 +95,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
 
       {/* Row one: the key, then its two icon buttons. */}
       <div className="space-y-2">
-        <Label htmlFor={`provider-key-${provider.id}`}>API key</Label>
+        <Label htmlFor={`provider-key-${provider.id}`}>{t("API key")}</Label>
         <div className="flex items-center gap-2">
           <input
             id={`provider-key-${provider.id}`}
@@ -101,7 +103,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
             // Keys are managed in their own dialog because there can be several;
             // this is a summary that opens it, not an input.
             value={provider.apiKeys[0]?.masked ?? ""}
-            placeholder="No key yet"
+            placeholder={t("No key yet")}
             onClick={() => setKeysOpen(true)}
             className="h-9 min-w-0 flex-1 cursor-pointer rounded-md border border-input bg-transparent px-3 py-1 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
@@ -112,7 +114,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
                 variant="outline"
                 size="icon"
                 className="relative size-9 shrink-0"
-                aria-label="Manage API keys"
+                aria-label={t("Manage API keys")}
                 onClick={() => setKeysOpen(true)}
               >
                 <KeyRound className="size-4" />
@@ -125,8 +127,11 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
             </TooltipTrigger>
             <TooltipContent>
               {provider.apiKeys.length > 1
-                ? `Manage keys — ${usableKeys} of ${provider.apiKeys.length} usable`
-                : "Manage API keys"}
+                ? t("Manage keys — {usable} of {total} usable", {
+                    usable: usableKeys,
+                    total: provider.apiKeys.length
+                  })
+                : t("Manage API keys")}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -136,7 +141,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
                 variant="outline"
                 size="icon"
                 className="size-9 shrink-0"
-                aria-label="Test connection"
+                aria-label={t("Test connection")}
                 onClick={test}
                 disabled={testProvider.isPending || !canReach}
               >
@@ -148,7 +153,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {canReach ? "Test connection" : "Add an address and key first"}
+              {canReach ? t("Test connection") : t("Add an address and key first")}
             </TooltipContent>
           </Tooltip>
         </div>
@@ -167,15 +172,15 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
         ) : (
           <p className="text-xs text-muted-foreground">
             {hasKey
-              ? "Stored in your OS keychain. Keys can be shown while you type them, but never read back."
-              : "Stored in your OS keychain, never in the app database and never sent to this UI."}
+              ? t("Stored in your OS keychain. Keys can be shown while you type them, but never read back.")
+              : t("Stored in your OS keychain, never in the app database and never sent to this UI.")}
           </p>
         )}
       </div>
 
       {/* Row two: the address, then the protocol and header controls. */}
       <div className="space-y-2">
-        <Label htmlFor={`provider-url-${provider.id}`}>API address</Label>
+        <Label htmlFor={`provider-url-${provider.id}`}>{t("API address")}</Label>
         <div className="flex items-center gap-2">
           <CommitInput
             id={`provider-url-${provider.id}`}
@@ -197,7 +202,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
               );
             }}
           >
-            <SelectTrigger className="h-9 w-32 shrink-0" aria-label="Protocol">
+            <SelectTrigger className="h-9 w-32 shrink-0" aria-label={t("Protocol")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -215,7 +220,7 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
                 variant="outline"
                 size="icon"
                 className="relative size-9 shrink-0"
-                aria-label="Custom request headers"
+                aria-label={t("Custom request headers")}
                 onClick={() => setHeadersOpen(true)}
               >
                 <Settings2 className="size-4" />
@@ -228,18 +233,18 @@ export function ProviderCard({ provider }: { provider: LlmProvider }) {
             </TooltipTrigger>
             <TooltipContent>
               {provider.headerNames.length === 0
-                ? "Custom request headers"
+                ? t("Custom request headers")
                 : provider.headerNames.join(", ")}
             </TooltipContent>
           </Tooltip>
         </div>
         {!provider.baseUrl && (
           <p className="text-xs text-muted-foreground">
-            Add an API address before enabling this provider.
+            {t("Add an API address before enabling this provider.")}
           </p>
         )}
         {provider.baseUrl && !hasKey && (
-          <p className="text-xs text-muted-foreground">Add an API key to use this provider.</p>
+          <p className="text-xs text-muted-foreground">{t("Add an API key to use this provider.")}</p>
         )}
       </div>
 

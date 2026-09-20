@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod athena;
 pub mod chat;
 pub mod credentials;

@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobRuns } from "@/hooks/useEmr";
 import { useJobHistoryAutoRefresh } from "@/hooks/useJobHistoryAutoRefresh";
+import { useT } from "@/i18n";
 import { isFocusSearchKey } from "@/lib/keyboardShortcut";
 import { isLikelyEmrJobRunId, normalizeEmrJobRunId } from "@/services/emrJobId";
 import { JOB_HISTORY_REFRESH_INTERVAL_SECONDS } from "@/services/jobHistoryConstants";
@@ -26,6 +27,7 @@ export function JobHistoryPage({
   onOpenSubmit?: () => void;
   onOpenAiAssistant?: () => void;
 }) {
+  const t = useT();
   const effectiveVirtualClusterId = useEffectiveVirtualClusterId();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -87,8 +89,8 @@ export function JobHistoryPage({
               onChange={setSearchInput}
               onSubmit={submitLocalSearch}
               recentSearches={recentSearches}
-              placeholder="Search jobs by name, id, or state"
-              listLabel="Recent job searches"
+              placeholder={t("Search jobs by name, id, or state")}
+              listLabel={t("Recent job searches")}
             />
             <JobAutoRefreshToggle
               id="job-history-auto-refresh"
@@ -98,7 +100,9 @@ export function JobHistoryPage({
               refreshCountdown={refreshCountdown}
             />
             <VirtualClusterSelect />
-            <span className="shrink-0 text-sm text-muted-foreground">{(jobs.data ?? []).length} jobs</span>
+            <span className="shrink-0 text-sm text-muted-foreground">
+              {t("{count} jobs", { count: (jobs.data ?? []).length })}
+            </span>
           </div>
         }
       />

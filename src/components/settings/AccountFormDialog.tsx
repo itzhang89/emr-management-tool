@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useT } from "@/i18n";
 import {
   useCreateAwsAccount,
   useTestAwsAccount,
@@ -66,6 +67,7 @@ function CreateAccountDialog({
   onOpenChange: (open: boolean) => void;
   defaults: CreateAccountDefaults | null;
 }) {
+  const t = useT();
   const createAccount = useCreateAwsAccount();
   const testCredentials = useTestAwsCredentials();
   const [showSecret, setShowSecret] = useState(false);
@@ -98,7 +100,7 @@ function CreateAccountDialog({
   const testConnection = form.handleSubmit(async (values) => {
     try {
       const identity = await testCredentials.mutateAsync(values);
-      toast.success(`Connected to AWS account ${identity.account}`);
+      toast.success(t("Connected to AWS account {account}", { account: identity.account }));
     } catch (error) {
       toast.error(errorMessage(error, "AWS connection test failed."));
     }
@@ -107,7 +109,7 @@ function CreateAccountDialog({
   const save = form.handleSubmit(async (values) => {
     try {
       await createAccount.mutateAsync(values);
-      toast.success("AWS account saved.");
+      toast.success(t("AWS account saved."));
       onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to save AWS account."));
@@ -118,24 +120,27 @@ function CreateAccountDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{defaults?.title ?? "Add AWS Account"}</DialogTitle>
+          <DialogTitle>{t(defaults?.title ?? "Add AWS Account")}</DialogTitle>
           <DialogDescription>
-            {defaults?.description ?? "Create a named access-key account for EMR, CloudWatch, and S3."}
+            {t(
+              defaults?.description ??
+                "Create a named access-key account for EMR, CloudWatch, and S3."
+            )}
           </DialogDescription>
         </DialogHeader>
         {defaults?.notice ? (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-foreground">{defaults.notice}</p>
         ) : null}
         <form className="flex flex-col gap-4" onSubmit={save}>
-          <Field label="Account Name">
+          <Field label={t("Account Name")}>
             <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
             <FieldError>{form.formState.errors.name?.message}</FieldError>
           </Field>
-          <Field label="Access Key ID">
+          <Field label={t("Access Key ID")}>
             <Input placeholder="AKIA..." {...form.register("accessKeyId")} aria-invalid={Boolean(form.formState.errors.accessKeyId)} />
             <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
           </Field>
-          <Field label="Secret Access Key">
+          <Field label={t("Secret Access Key")}>
             <div className="relative">
               <Input
                 type={showSecret ? "text" : "password"}
@@ -149,7 +154,9 @@ function CreateAccountDialog({
                 variant="ghost"
                 size="icon"
                 className="absolute right-0 top-0 h-10 w-10 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? "Hide secret access key" : "Show secret access key"}
+                aria-label={
+                  showSecret ? t("Hide secret access key") : t("Show secret access key")
+                }
                 onClick={() => setShowSecret((visible) => !visible)}
               >
                 {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -157,7 +164,7 @@ function CreateAccountDialog({
             </div>
             <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
           </Field>
-          <Field label="Region">
+          <Field label={t("Region")}>
             <Controller
               control={form.control}
               name="region"
@@ -175,11 +182,11 @@ function CreateAccountDialog({
           <DialogFooter>
             <Button type="button" variant="outline" disabled={testCredentials.isPending} onClick={testConnection}>
               <ShieldCheck data-icon="inline-start" />
-              {testCredentials.isPending ? "Testing..." : "Test Connection"}
+              {testCredentials.isPending ? t("Testing...") : t("Test Connection")}
             </Button>
             <Button type="submit" disabled={createAccount.isPending}>
               <Save data-icon="inline-start" />
-              {createAccount.isPending ? "Saving..." : "Save Account"}
+              {createAccount.isPending ? t("Saving...") : t("Save Account")}
             </Button>
           </DialogFooter>
         </form>
@@ -197,6 +204,7 @@ function EditAccountDialog({
   onOpenChange: (open: boolean) => void;
   account: AwsAccountSummary | null;
 }) {
+  const t = useT();
   const updateAccount = useUpdateAwsAccount();
   const testAccount = useTestAwsAccount();
   const [secretUnlocked, setSecretUnlocked] = useState(false);
@@ -228,7 +236,7 @@ function EditAccountDialog({
         region: parsed.region,
         secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined
       });
-      toast.success(`Connected to AWS account ${identity.account}`);
+      toast.success(t("Connected to AWS account {account}", { account: identity.account }));
     } catch (error) {
       toast.error(errorMessage(error, "AWS connection test failed."));
     }
@@ -244,7 +252,7 @@ function EditAccountDialog({
         region: parsed.region,
         secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined
       });
-      toast.success("AWS account updated.");
+      toast.success(t("AWS account updated."));
       onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to update AWS account."));
@@ -255,39 +263,48 @@ function EditAccountDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Edit AWS Account</DialogTitle>
+          <DialogTitle>{t("Edit AWS Account")}</DialogTitle>
           <DialogDescription>
-            Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the
-            secret for the same key. To replace the full key pair, delete the account and add a new one.
+            {t("Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key. To replace the full key pair, delete the account and add a new one.")}
           </DialogDescription>
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={save}>
-          <Field label="Account Name">
+          <Field label={t("Account Name")}>
             <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
             <FieldError>{form.formState.errors.name?.message}</FieldError>
           </Field>
-          <Field label="Access Key ID">
-            <Input value={account?.accessKeyIdMasked ?? ""} readOnly disabled aria-label="Access Key ID (read-only)" />
+          <Field label={t("Access Key ID")}>
+            <Input
+              value={account?.accessKeyIdMasked ?? ""}
+              readOnly
+              disabled
+              aria-label={t("Access Key ID (read-only)")}
+            />
           </Field>
-          <Field label="Secret Access Key">
+          <Field label={t("Secret Access Key")}>
             {secretUnlocked ? (
               <Input
                 type="password"
-                placeholder="Enter new secret to update"
+                placeholder={t("Enter new secret to update")}
                 {...form.register("secretAccessKey")}
                 aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
               />
             ) : (
               <div className="flex gap-2">
-                <Input value="••••••••••••••••" readOnly disabled aria-label="Secret Access Key (masked)" />
+                <Input
+                  value="••••••••••••••••"
+                  readOnly
+                  disabled
+                  aria-label={t("Secret Access Key (masked)")}
+                />
                 <Button type="button" variant="outline" onClick={() => setSecretUnlocked(true)}>
-                  Change
+                  {t("Change")}
                 </Button>
               </div>
             )}
             <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
           </Field>
-          <Field label="Region">
+          <Field label={t("Region")}>
             <Controller
               control={form.control}
               name="region"
@@ -305,11 +322,11 @@ function EditAccountDialog({
           <DialogFooter>
             <Button type="button" variant="outline" disabled={testAccount.isPending || !account} onClick={testConnection}>
               <ShieldCheck data-icon="inline-start" />
-              {testAccount.isPending ? "Testing..." : "Test Connection"}
+              {testAccount.isPending ? t("Testing...") : t("Test Connection")}
             </Button>
             <Button type="submit" disabled={updateAccount.isPending || !account}>
               <Save data-icon="inline-start" />
-              {updateAccount.isPending ? "Saving..." : "Save Changes"}
+              {updateAccount.isPending ? t("Saving...") : t("Save Changes")}
             </Button>
           </DialogFooter>
         </form>

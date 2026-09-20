@@ -2,6 +2,7 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { buildPodLabelIndex, formatLogPodLabel } from "@/services/logPathDisplay";
 import type { JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/domain";
@@ -25,12 +26,13 @@ export function LogFileTree({
   onToggleCollapsed: () => void;
   collapseShortcut?: string;
 }) {
+  const t = useT();
   const podLabelIndex = buildPodLabelIndex(tree);
 
   if (collapsed) {
     return (
       <nav
-        aria-label="Log files"
+        aria-label={t("Log files")}
         className="flex min-h-0 w-[4.75rem] shrink-0 flex-col border-r bg-card py-2"
       >
         <div className="flex justify-center px-1">
@@ -41,14 +43,15 @@ export function LogFileTree({
                 variant="outline"
                 size="icon"
                 className="mb-2 size-7"
-                aria-label="Expand log files panel"
+                aria-label={t("Expand log files panel")}
                 onClick={onToggleCollapsed}
               >
                 <PanelLeftOpen className="size-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              Show log files{collapseShortcut ? ` · ${collapseShortcut}` : ""}
+              {t("Show log files")}
+              {collapseShortcut ? ` · ${collapseShortcut}` : ""}
             </TooltipContent>
           </Tooltip>
         </div>
@@ -101,9 +104,9 @@ export function LogFileTree({
   }
 
   return (
-    <nav aria-label="Log files" className="flex min-h-0 w-[280px] shrink-0 flex-col border-r bg-card">
+    <nav aria-label={t("Log files")} className="flex min-h-0 w-[280px] shrink-0 flex-col border-r bg-card">
       <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5">
-        <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium">Log files</div>
+        <div className="min-w-0 flex-1 truncate px-1 text-sm font-medium">{t("Log files")}</div>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -111,20 +114,21 @@ export function LogFileTree({
               variant="outline"
               size="icon"
               className="size-7 shrink-0"
-              aria-label="Collapse log files panel"
+              aria-label={t("Collapse log files panel")}
               onClick={onToggleCollapsed}
             >
               <PanelLeftClose className="size-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Hide log files{collapseShortcut ? ` · ${collapseShortcut}` : ""}
+            {t("Hide log files")}
+            {collapseShortcut ? ` · ${collapseShortcut}` : ""}
           </TooltipContent>
         </Tooltip>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {tree.length === 0 ? (
-          <p className="p-2 text-xs text-muted-foreground">No log streams found for this job.</p>
+          <p className="p-2 text-xs text-muted-foreground">{t("No log streams found for this job.")}</p>
         ) : null}
         {tree.map((section) => (
           <div key={section.type} className="mb-2">
@@ -162,7 +166,7 @@ export function LogFileTree({
                             selected ? "text-primary-foreground/80" : "text-muted-foreground"
                           )}
                         >
-                          {item.source === "s3" ? formatBytes((item as JobLogObject).size) : "live"}
+                          {item.source === "s3" ? formatBytes((item as JobLogObject).size) : t("live")}
                         </span>
                       </button>
                     );

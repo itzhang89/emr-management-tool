@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSetLlmProviderHeaders } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import type { LlmProvider } from "@/types/domain";
 
 type Row = {
@@ -39,6 +40,7 @@ export function CustomHeadersDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const setHeaders = useSetLlmProviderHeaders();
   const [rows, setRows] = useState<Row[]>([]);
 
@@ -74,7 +76,9 @@ export function CustomHeadersDialog({
       },
       {
         onSuccess: (names) => {
-          toast.success(names.length === 0 ? "Custom headers cleared" : "Custom headers saved");
+          toast.success(
+            names.length === 0 ? t("Custom headers cleared") : t("Custom headers saved")
+          );
           onOpenChange(false);
         },
         onError: (error: Error) => toast.error(error.message || "Failed to save the headers")
@@ -86,10 +90,9 @@ export function CustomHeadersDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[80vh] max-w-lg flex-col">
         <DialogHeader>
-          <DialogTitle>Custom headers for {provider.name}</DialogTitle>
+          <DialogTitle>{t("Custom headers for {name}", { name: provider.name })}</DialogTitle>
           <DialogDescription>
-            Sent with every request to this provider. Values are stored in your OS keychain like API
-            keys, and cannot be shown again.
+            {t("Sent with every request to this provider. Values are stored in your OS keychain like API keys, and cannot be shown again.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -103,15 +106,14 @@ export function CustomHeadersDialog({
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {rows.length === 0 ? (
               <p className="rounded-md border border-dashed p-4 text-xs text-muted-foreground">
-                No custom headers. Most providers need none — the protocol's own auth header is added
-                automatically.
+                {t("No custom headers. Most providers need none — the protocol's own auth header is added automatically.")}
               </p>
             ) : (
               rows.map((row, index) => (
                 <div key={index} className="flex items-end gap-2">
                   <div className="min-w-0 flex-1 space-y-1">
                     <Label htmlFor={`header-name-${index}`} className="text-xs">
-                      Name
+                      {t("Name")}
                     </Label>
                     <Input
                       id={`header-name-${index}`}
@@ -123,14 +125,14 @@ export function CustomHeadersDialog({
                   </div>
                   <div className="min-w-0 flex-1 space-y-1">
                     <Label htmlFor={`header-value-${index}`} className="text-xs">
-                      Value
+                      {t("Value")}
                     </Label>
                     <Input
                       id={`header-value-${index}`}
                       type="password"
                       value={row.value}
                       onChange={(event) => update(index, { value: event.target.value })}
-                      placeholder={row.stored ? "Stored — type to replace" : "value"}
+                      placeholder={row.stored ? t("Stored — type to replace") : t("value")}
                       className="h-9 font-mono text-sm"
                       autoComplete="off"
                     />
@@ -140,7 +142,7 @@ export function CustomHeadersDialog({
                     variant="ghost"
                     size="icon"
                     className="size-9 shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={`Remove header ${row.name || index + 1}`}
+                    aria-label={t("Remove header {header}", { header: row.name || index + 1 })}
                     onClick={() => setRows((current) => current.filter((_, at) => at !== index))}
                   >
                     <Trash2 className="size-4" />
@@ -158,15 +160,15 @@ export function CustomHeadersDialog({
             onClick={() => setRows((current) => [...current, { name: "", value: "", stored: false }])}
           >
             <Plus className="mr-1 size-3.5" />
-            Add header
+            {t("Add header")}
           </Button>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="submit" disabled={setHeaders.isPending}>
-              {setHeaders.isPending ? "Saving..." : "Save"}
+              {setHeaders.isPending ? t("Saving...") : t("Save")}
             </Button>
           </DialogFooter>
         </form>

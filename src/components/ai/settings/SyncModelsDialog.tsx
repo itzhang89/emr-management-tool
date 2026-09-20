@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useAddLlmModels } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import { groupBySeries } from "@/services/llmModelSeries";
 import type { LlmModelCandidate } from "@/types/domain";
 
@@ -38,6 +39,7 @@ export function SyncModelsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const addModels = useAddLlmModels();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
@@ -106,7 +108,11 @@ export function SyncModelsDialog({
       },
       {
         onSuccess: (added) => {
-          toast.success(added === 1 ? "1 model imported" : `${added} models imported`);
+          toast.success(
+            added === 1
+              ? t("1 model imported")
+              : t("{count} models imported", { count: added })
+          );
           setSelected(new Set());
           onOpenChange(false);
         },
@@ -119,18 +125,20 @@ export function SyncModelsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[80vh] max-w-lg flex-col">
         <DialogHeader>
-          <DialogTitle>Import models</DialogTitle>
+          <DialogTitle>{t("Import models")}</DialogTitle>
           <DialogDescription>
             {loading
-              ? "Asking the provider what models it offers..."
-              : `${candidates.length} models reported. Pick the ones you want.`}
+              ? t("Asking the provider what models it offers...")
+              : t("{count} models reported. Pick the ones you want.", {
+                  count: candidates.length
+                })}
           </DialogDescription>
         </DialogHeader>
 
         {loading ? (
           <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />
-            Loading model list...
+            {t("Loading model list...")}
           </div>
         ) : (
           <>
@@ -138,7 +146,7 @@ export function SyncModelsDialog({
               <Input
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
-                placeholder="Filter by model id or series"
+                placeholder={t("Filter by model id or series")}
                 className="h-9"
               />
               <Button
@@ -149,13 +157,15 @@ export function SyncModelsDialog({
                 disabled={selectableVisible.length === 0}
                 className="shrink-0"
               >
-                {allVisibleSelected ? "Clear" : "Select all"}
+                {allVisibleSelected ? t("Clear") : t("Select all")}
               </Button>
             </div>
 
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {grouped.length === 0 ? (
-                <p className="py-4 text-sm text-muted-foreground">No models match that filter.</p>
+                <p className="py-4 text-sm text-muted-foreground">
+                  {t("No models match that filter.")}
+                </p>
               ) : (
                 grouped.map(([series, seriesCandidates]) => (
                   <div key={series} className="space-y-1">
@@ -177,7 +187,7 @@ export function SyncModelsDialog({
                         </span>
                         {candidate.alreadyAdded && (
                           <Badge variant="secondary" className="shrink-0 text-[10px]">
-                            Added
+                            {t("Added")}
                           </Badge>
                         )}
                       </label>
@@ -191,12 +201,14 @@ export function SyncModelsDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="button" onClick={submit} disabled={loading || addModels.isPending}>
             {addModels.isPending
-              ? "Importing..."
-              : `Import${selected.size > 0 ? ` ${selected.size}` : ""}`}
+              ? t("Importing...")
+              : selected.size > 0
+                ? t("Import {count}", { count: selected.size })
+                : t("Import")}
           </Button>
         </DialogFooter>
       </DialogContent>

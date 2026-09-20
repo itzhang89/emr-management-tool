@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { SQL_DDL_TEMPLATES } from "@/services/glueSqlTemplates";
 import type { SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
@@ -20,7 +21,7 @@ import type { SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
 export function FavoriteNameDialog({
   open,
   onOpenChange,
-  defaultName = "Saved query",
+  defaultName,
   onConfirm
 }: {
   open: boolean;
@@ -28,13 +29,15 @@ export function FavoriteNameDialog({
   defaultName?: string;
   onConfirm: (name: string) => void;
 }) {
-  const [name, setName] = useState(defaultName);
+  const t = useT();
+  const initialName = defaultName ?? t("Saved query");
+  const [name, setName] = useState(initialName);
 
   useEffect(() => {
     if (open) {
-      setName(defaultName);
+      setName(initialName);
     }
-  }, [defaultName, open]);
+  }, [initialName, open]);
 
   const handleConfirm = () => {
     const trimmed = name.trim();
@@ -47,11 +50,11 @@ export function FavoriteNameDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Save to favorites</DialogTitle>
-          <DialogDescription>Choose a name for this saved SQL query.</DialogDescription>
+          <DialogTitle>{t("Save to favorites")}</DialogTitle>
+          <DialogDescription>{t("Choose a name for this saved SQL query.")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
-          <Label htmlFor="favorite-name">Favorite name</Label>
+          <Label htmlFor="favorite-name">{t("Favorite name")}</Label>
           <Input
             id="favorite-name"
             value={name}
@@ -67,10 +70,10 @@ export function FavoriteNameDialog({
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button type="button" disabled={!name.trim()} onClick={handleConfirm}>
-            Save
+            {t("Save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -86,6 +89,7 @@ export function SqlTemplatesButton({
   /** Defaults to Glue's Hive DDL list; a JDBC workspace brings its own. */
   templates?: ReadonlyArray<{ label: string; sql: string }>;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -93,12 +97,12 @@ export function SqlTemplatesButton({
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="SQL templates">
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label={t("SQL templates")}>
               <LayoutTemplate className="size-3.5" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>SQL templates</TooltipContent>
+        <TooltipContent>{t("SQL templates")}</TooltipContent>
       </Tooltip>
       <PopoverContent align="start" className="w-56 p-1">
         <ul>
@@ -112,7 +116,7 @@ export function SqlTemplatesButton({
                   setOpen(false);
                 }}
               >
-                {template.label}
+                {t(template.label)}
               </button>
             </li>
           ))}
@@ -133,6 +137,7 @@ export function HistoryMenu({
   onSelect: (entry: SqlHistoryEntry) => void;
   onFavorite: (entry: SqlHistoryEntry) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -140,16 +145,16 @@ export function HistoryMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="Query history">
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label={t("Query history")}>
               <History className="size-3.5" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>Query history</TooltipContent>
+        <TooltipContent>{t("Query history")}</TooltipContent>
       </Tooltip>
       <PopoverContent align="start" className="w-[420px] p-0">
         {history.length === 0 ? (
-          <p className="p-3 text-sm text-muted-foreground">No recent queries yet.</p>
+          <p className="p-3 text-sm text-muted-foreground">{t("No recent queries yet.")}</p>
         ) : (
           <ul className="max-h-72 overflow-auto divide-y">
             {history.map((entry) => {
@@ -172,8 +177,8 @@ export function HistoryMenu({
                     variant="ghost"
                     size="icon"
                     className="mt-1 size-7 shrink-0"
-                    aria-label={isFavorited ? "Already in favorites" : "Add to favorites"}
-                    title={isFavorited ? "Already in favorites" : "Add to favorites"}
+                    aria-label={t(isFavorited ? "Already in favorites" : "Add to favorites")}
+                    title={t(isFavorited ? "Already in favorites" : "Add to favorites")}
                     disabled={isFavorited}
                     onClick={(event) => {
                       event.preventDefault();
@@ -203,6 +208,7 @@ export function FavoritesMenu({
   onSelect: (entry: SqlFavoriteEntry) => void;
   onRemove: (favoriteId: string) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -210,16 +216,16 @@ export function FavoritesMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="icon" className="size-7" aria-label="Saved favorites">
+            <Button type="button" variant="outline" size="icon" className="size-7" aria-label={t("Saved favorites")}>
               <Star className="size-3.5" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>Saved favorites</TooltipContent>
+        <TooltipContent>{t("Saved favorites")}</TooltipContent>
       </Tooltip>
       <PopoverContent align="start" className="w-[420px] p-0">
         {favorites.length === 0 ? (
-          <p className="p-3 text-sm text-muted-foreground">No favorite queries yet.</p>
+          <p className="p-3 text-sm text-muted-foreground">{t("No favorite queries yet.")}</p>
         ) : (
           <ul className="max-h-72 overflow-auto divide-y">
             {favorites.map((entry) => (
@@ -241,8 +247,8 @@ export function FavoritesMenu({
                   variant="ghost"
                   size="icon"
                   className="size-7 shrink-0"
-                  aria-label={`Remove ${entry.name}`}
-                  title="Remove favorite"
+                  aria-label={t("Remove {name}", { name: entry.name })}
+                  title={t("Remove favorite")}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();

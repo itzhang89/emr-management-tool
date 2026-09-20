@@ -65,6 +65,7 @@ import {
 } from "@/services/dbWorkspaceCache";
 import { executeSqlToolName } from "@/services/aiAnalyzeDb";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useT } from "@/i18n";
 import { useSessionStore } from "@/stores/sessionStore";
 import type {
   DbCatalogEntry,
@@ -99,6 +100,7 @@ export function ConnectionQueryTab({
   /** Jump to the AI Assistant Chat tab after queuing a DB analysis intent. */
   onOpenAiAssistant?: () => void;
 }) {
+  const t = useT();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
   const setPendingDbAnalyze = useSessionStore((state) => state.setPendingDbAnalyze);
@@ -437,13 +439,13 @@ export function ConnectionQueryTab({
           variant="outline"
           size="icon"
           className="size-7"
-          aria-label="Analyze with AI"
+          aria-label={t("Analyze with AI")}
           onClick={openAnalyzeDialog}
         >
           <Sparkles className="size-3.5" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>Analyze with AI · opens Chat with this connection&apos;s context</TooltipContent>
+      <TooltipContent>{t("Analyze with AI · opens Chat with this connection's context")}</TooltipContent>
     </Tooltip>
   ) : null;
 
@@ -458,13 +460,13 @@ export function ConnectionQueryTab({
                 variant="outline"
                 size="icon"
                 className="size-7"
-                aria-label="Expand catalog panel"
+                aria-label={t("Expand catalog panel")}
                 onClick={() => setCatalogCollapsed(false)}
               >
                 <PanelLeftOpen className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Show catalog · {CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
+            <TooltipContent>{t("Show catalog")}{" · "}{CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
           </Tooltip>
         </div>
       ) : (
@@ -534,12 +536,12 @@ export function ConnectionQueryTab({
             variant={connection.allowWrites ? "destructive" : "outline"}
             className="text-[10px]"
           >
-            {connection.allowWrites ? "Write" : "Read-only"}
+            {t(connection.allowWrites ? "Write" : "Read-only")}
           </Badge>
           <span className="text-xs text-muted-foreground">
             {connection.kind} ·{" "}
-            {connection.allowWrites ? "writes allowed here" : "the AI reads this one"} ·{" "}
-            {connection.enabledForAi ? "enabled for AI" : "manual"}
+            {t(connection.allowWrites ? "writes allowed here" : "the AI reads this one")} ·{" "}
+            {t(connection.enabledForAi ? "enabled for AI" : "manual")}
           </span>
           <div className="ml-auto flex items-center gap-1">
             {analyzeButton}
@@ -572,14 +574,14 @@ export function ConnectionQueryTab({
                   size="icon"
                   className="size-7"
                   disabled={!running}
-                  aria-label="Stop query"
+                  aria-label={t("Stop query")}
                   onClick={handleStop}
                 >
                   <Square className="size-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Stop query · stops reading; the server notices when the connection closes
+                {t("Stop query")}{" · "}{t("stops reading; the server notices when the connection closes")}
               </TooltipContent>
             </Tooltip>
             <Tooltip>
@@ -590,13 +592,13 @@ export function ConnectionQueryTab({
                   size="icon"
                   className="size-7"
                   disabled={running || runQuery.isPending}
-                  aria-label="Run in new tab"
+                  aria-label={t("Run in new tab")}
                   onClick={() => void handleRunNewTab()}
                 >
                   <Plus className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Run in new tab</TooltipContent>
+              <TooltipContent>{t("Run in new tab")}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -605,7 +607,7 @@ export function ConnectionQueryTab({
                   size="icon"
                   className="size-7"
                   disabled={running || runQuery.isPending}
-                  aria-label="Run query"
+                  aria-label={t("Run query")}
                   onClick={() => void handleRun()}
                 >
                   {running ? (
@@ -616,7 +618,7 @@ export function ConnectionQueryTab({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Run query · the read-only gate blocks every non-SELECT statement
+                {t("Run query")}{" · "}{t("the read-only gate blocks every non-SELECT statement")}
               </TooltipContent>
             </Tooltip>
           </div>
@@ -626,7 +628,7 @@ export function ConnectionQueryTab({
           value={sql}
           onChange={setSql}
           dialect={dialectFor(connection.kind)}
-          placeholder={`Write ${connection.kind} SQL here…`}
+          placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
           onRun={() => void handleRun()}
           onRunNewTab={() => void handleRunNewTab()}
         />
@@ -762,6 +764,7 @@ function CatalogPane({
   onCollapse: () => void;
   collapseShortcut: string;
 }) {
+  const t = useT();
   const [filter, setFilter] = useState("");
 
   // The tree is a drill-down: databases, then schemas inside one (when there is
@@ -796,11 +799,11 @@ function CatalogPane({
   return (
     <aside className="flex h-full min-h-0 flex-col gap-2 overflow-hidden">
       <CatalogToolbar
-        backLabel={inDatabase ? "Back one level" : undefined}
+        backLabel={inDatabase ? t("Back one level") : undefined}
         onBack={onBack}
         filter={filter}
         onFilterChange={setFilter}
-        filterPlaceholder={inDatabase ? "Filter tables" : "Filter databases"}
+        filterPlaceholder={t(inDatabase ? "Filter tables" : "Filter databases")}
         onRefresh={() => void onRefresh()}
         refreshing={refreshing}
         onCollapse={onCollapse}
@@ -856,7 +859,7 @@ function CatalogPane({
         </ul>
         {!loading && filtered.length === 0 && !errorMessage ? (
           <p className="p-2 text-xs text-muted-foreground">
-            {!inDatabase ? "No databases." : inSchemaList ? "No schemas." : "No tables."}
+            {t(!inDatabase ? "No databases." : inSchemaList ? "No schemas." : "No tables.")}
           </p>
         ) : null}
       </div>
@@ -893,6 +896,7 @@ function ObjectKindMenu({
   selected: SchemaObjectKind[];
   onToggle: (kind: SchemaObjectKind, on: boolean) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   return (
@@ -905,14 +909,17 @@ function ObjectKindMenu({
               variant="ghost"
               size="icon"
               className="ml-auto size-5 shrink-0"
-              aria-label="Choose what to show"
+              aria-label={t("Choose what to show")}
             >
               <ListFilter className="size-3" />
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent>
-          Showing {selected.length} of {options.length} object kinds
+          {t("Showing {selected} of {total} object kinds", {
+            selected: selected.length,
+            total: options.length
+          })}
         </TooltipContent>
       </Tooltip>
       <PopoverContent align="end" className="w-56 p-1">
@@ -971,10 +978,12 @@ function ResultPane({
   onExport: () => void;
   analyzeButton?: ReactNode;
 }) {
+  const t = useT();
+
   if (!meta) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-        Run a query to see results here.
+        {t("Run a query to see results here.")}
       </div>
     );
   }
@@ -985,7 +994,7 @@ function ResultPane({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
         <span className="truncate font-medium text-foreground">{meta.title}</span>
-        {state === "cancelled" ? <span>Cancelled</span> : null}
+        {state === "cancelled" ? <span>{t("Cancelled")}</span> : null}
         {state === "failed" ? (
           <span className="text-destructive">
             Failed{meta.runError ? `: ${meta.runError}` : ""}
@@ -994,9 +1003,11 @@ function ResultPane({
         {meta.durationMs !== undefined ? <span>{meta.durationMs}ms</span> : null}
         {result ? (
           <span>
-            {result.rowCount} row{result.rowCount === 1 ? "" : "s"}
-            {result.truncated ? " · truncated" : ""}
-            {result.offset > 0 ? ` · from row ${result.offset + 1}` : ""}
+            {t(result.rowCount === 1 ? "{count} row" : "{count} rows", {
+              count: result.rowCount
+            })}
+            {result.truncated ? ` · ${t("truncated")}` : ""}
+            {result.offset > 0 ? ` · ${t("from row {row}", { row: result.offset + 1 })}` : ""}
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-1">
@@ -1009,14 +1020,14 @@ function ResultPane({
                   variant="ghost"
                   size="icon"
                   className="size-6"
-                  aria-label="Export CSV"
+                  aria-label={t("Export CSV")}
                   onClick={onExport}
                 >
                   <Download className="size-3" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                Export CSV · the rows loaded here, not the whole result
+                {t("Export CSV")} · {t("the rows loaded here, not the whole result")}
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -1049,7 +1060,7 @@ function ResultPane({
               </tbody>
             </table>
             {result.rows.length === 0 ? (
-              <p className="p-3 text-xs text-muted-foreground">Query returned no rows.</p>
+              <p className="p-3 text-xs text-muted-foreground">{t("Query returned no rows.")}</p>
             ) : null}
           </div>
 
@@ -1063,20 +1074,20 @@ function ResultPane({
                 disabled={rerunning}
                 onClick={onLoadMore}
               >
-                Load more rows
+                {t("Load more rows")}
               </Button>
               {/* Said out loud because it is not obvious and it is not free:
                   there is no cursor to resume from, so each page re-runs the
                   statement and discards the rows it skips. */}
               <span className="text-[10px] text-muted-foreground">
-                Each page re-runs the query. Add an ORDER BY so pages stay stable.
+                {t("Each page re-runs the query. Add an ORDER BY so pages stay stable.")}
               </span>
             </div>
           ) : null}
         </>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
-          <p>The result set exceeded the local cache budget, so only this tab's metadata was kept.</p>
+          <p>{t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}</p>
           <Button
             type="button"
             variant="outline"
@@ -1085,7 +1096,7 @@ function ResultPane({
             disabled={rerunning}
             onClick={onRerun}
           >
-            Rerun to load fresh results
+            {t("Rerun to load fresh results")}
           </Button>
         </div>
       )}

@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DbKindIcon, dbKindLabel } from "@/components/dbhub/DbKindIcon";
 import { useSetDbConnectionFlags } from "@/hooks/useDbHub";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import { toast } from "sonner";
 import type { DbConnection, DbConnectionFlags, NetworkProfile } from "@/types/domain";
@@ -28,6 +29,7 @@ export function ConnectionCard({
   onEdit?: (connection: DbConnection) => void;
   onDelete?: (connection: DbConnection) => void;
 }) {
+  const t = useT();
   const setFlags = useSetDbConnectionFlags();
 
   const update = (flags: DbConnectionFlags) => {
@@ -37,12 +39,12 @@ export function ConnectionCard({
         onSuccess: (updated) => {
           const parts: string[] = [];
           if (flags.showAsTab !== undefined) {
-            parts.push(flags.showAsTab ? "pinned to tabs" : "removed from tabs");
+            parts.push(t(flags.showAsTab ? "pinned to tabs" : "removed from tabs"));
           }
           if (flags.enabledForAi !== undefined) {
-            parts.push(flags.enabledForAi ? "enabled for AI" : "disabled for AI");
+            parts.push(t(flags.enabledForAi ? "enabled for AI" : "disabled for AI"));
           }
-          toast.success(`${updated.name}: ${parts.join(", ")}.`);
+          toast.success(t("{name}: {items}.", { name: updated.name, items: parts.join(", ") }));
         },
         onError: (error) => toast.error(formatAppError(error, "Failed to update connection."))
       }
@@ -67,7 +69,7 @@ export function ConnectionCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Badge variant="outline" className="text-xs">
-            {connection.enabledForAi ? "AI read-only" : "Manual"}
+            {t(connection.enabledForAi ? "AI read-only" : "Manual")}
           </Badge>
           {onDelete ? (
             <Tooltip>
@@ -77,13 +79,13 @@ export function ConnectionCard({
                   variant="ghost"
                   size="icon"
                   className="size-7 text-destructive hover:text-destructive"
-                  aria-label={`Delete ${connection.name}`}
+                  aria-label={t("Delete {name}", { name: connection.name })}
                   onClick={() => onDelete(connection)}
                 >
                   <Trash2 className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Delete connection</TooltipContent>
+              <TooltipContent>{t("Delete connection")}</TooltipContent>
             </Tooltip>
           ) : null}
           {onEdit ? (
@@ -94,13 +96,13 @@ export function ConnectionCard({
                   variant="ghost"
                   size="icon"
                   className="size-7"
-                  aria-label={`Edit ${connection.name}`}
+                  aria-label={t("Edit {name}", { name: connection.name })}
                   onClick={() => onEdit(connection)}
                 >
                   <Pencil className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Edit connection</TooltipContent>
+              <TooltipContent>{t("Edit connection")}</TooltipContent>
             </Tooltip>
           ) : null}
         </div>
@@ -108,11 +110,11 @@ export function ConnectionCard({
 
       <dl className="mt-3 space-y-1 text-xs text-muted-foreground">
         <div className="flex gap-1">
-          <dt>Network:</dt>
-          <dd>{profile ? `${profile.name} (${profile.transport.type})` : "Direct connection"}</dd>
+          <dt>{t("Network:")}</dt>
+          <dd>{profile ? `${profile.name} (${profile.transport.type})` : t("Direct connection")}</dd>
         </div>
         <div className="flex gap-1">
-          <dt>Auth:</dt>
+          <dt>{t("Auth:")}</dt>
           <dd>{connection.username}</dd>
         </div>
       </dl>
@@ -120,7 +122,7 @@ export function ConnectionCard({
       <div className="mt-4 space-y-3 border-t pt-3">
         <div className="flex items-center justify-between gap-2">
           <Label htmlFor={`tab-${connection.id}`} className="text-sm font-normal">
-            Show as tab
+            {t("Show as tab")}
           </Label>
           <Switch
             id={`tab-${connection.id}`}
@@ -132,10 +134,10 @@ export function ConnectionCard({
         <div className="flex items-center justify-between gap-2">
           <div>
             <Label htmlFor={`writes-${connection.id}`} className="text-sm font-normal">
-              Allow writes
+              {t("Allow writes")}
             </Label>
             <p className="text-xs text-muted-foreground">
-              Your own queries may modify this database — the AI still cannot
+              {t("Your own queries may modify this database — the AI still cannot")}
             </p>
           </div>
           <Switch
@@ -148,10 +150,10 @@ export function ConnectionCard({
         <div className="flex items-center justify-between gap-2">
           <div>
             <Label htmlFor={`ai-${connection.id}`} className="text-sm font-normal">
-              Enabled for AI
+              {t("Enabled for AI")}
             </Label>
             <p className="text-xs text-muted-foreground">
-              Read-only SQL tool ({connection.aiReadOnlyPolicy})
+              {t("Read-only SQL tool")} ({connection.aiReadOnlyPolicy})
             </p>
           </div>
           <Switch

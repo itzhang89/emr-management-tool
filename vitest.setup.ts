@@ -1,4 +1,6 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
+import { setLanguagePreference } from "@/i18n/store";
 
 /**
  * Node 25+ may expose a non-functional global `localStorage` (requires
@@ -76,3 +78,14 @@ if (typeof Element.prototype.hasPointerCapture === "undefined") {
 if (typeof Element.prototype.scrollIntoView === "undefined") {
   Element.prototype.scrollIntoView = () => {};
 }
+
+/**
+ * The i18n store caches the resolved language in a module variable, so a test
+ * that switches language would otherwise leak into every later file and the
+ * suite would become order-dependent. Reset the cached state first, then drop
+ * the stored preference it just wrote.
+ */
+afterEach(() => {
+  setLanguagePreference("system");
+  window.localStorage.clear();
+});

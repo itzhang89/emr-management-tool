@@ -5,6 +5,7 @@ import { useMemo, useRef } from "react";
 import { lineNumberToPosition, parseAthenaErrorLine } from "@/services/athenaSqlErrors";
 import { createSqlCompletion, type SqlCatalogContext } from "@/services/athenaSqlCompletion";
 import { analyzeSql, type SqlLintOptions } from "@/services/sqlLint";
+import { useT } from "@/i18n";
 import { SqlEditor } from "@/components/sql/SqlEditor";
 
 /**
@@ -91,6 +92,7 @@ export function AthenaSqlEditor({
   className?: string;
   readOnly?: boolean;
 }) {
+  const t = useT();
   // Both sources read through refs, so the extensions only need rebuilding
   // when their inputs change — never to stay current between those changes.
   const lintOptionsRef = useRef<SqlLintOptions>({ selectedDatabase });
@@ -128,7 +130,7 @@ export function AthenaSqlEditor({
       onRun={onRun}
       onRunNewTab={onRunNewTab}
       dialect={hiveDialect}
-      placeholder="Write Athena SQL here…"
+      placeholder={t("Write Athena SQL here…")}
       diagnostics={diagnostics}
       completion={completion}
       className={className}

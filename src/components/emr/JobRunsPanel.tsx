@@ -14,6 +14,7 @@ import {
   type JobRunsQuery
 } from "@/hooks/useEmr";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useLocale, useT, localeTag, type Translator } from "@/i18n";
 import { isLikelyEmrJobRunId } from "@/services/emrJobId";
 import { emrService } from "@/services/emrService";
 import { formatAppError, formatJobHistoryError } from "@/services/appErrorMessage";
@@ -67,6 +68,8 @@ export function JobRunsPanel({
       hosts (submit page, dashboard) stay unchanged. */
   onOpenAiAssistant?: () => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const [detailJobId, setDetailJobId] = useState<string>();
   const [page, setPage] = useState(1);
   const [remoteJob, setRemoteJob] = useState<JobRunSummary>();
@@ -135,7 +138,7 @@ export function JobRunsPanel({
       setDetailJobId(job.id);
       setPage(1);
       void jobs.refetch?.();
-      toast.success(`Found ${job.name}`);
+      toast.success(t("Found {name}", { name: job.name }));
     } catch (error) {
       const message = remoteLookupErrorMessage(error, searchedJobId, virtualClusterId);
       setRemoteLookupError(message);
@@ -159,7 +162,7 @@ export function JobRunsPanel({
       const templateLabel = job.sourceRequest.templateName?.trim() || job.name;
       startJob.mutate(job.sourceRequest, {
         onSuccess: () => {
-          toast.success(`Rerun · ${templateLabel}`);
+          toast.success(t("Rerun · {name}", { name: templateLabel }));
           onSubmissionStarted?.();
         },
         onError: (error) => toast.error(errorMessage(error))
@@ -196,12 +199,16 @@ export function JobRunsPanel({
               <h2 className="text-sm font-semibold">{title}</h2>
               {submittedOnly ? (
                 <p className="text-xs text-muted-foreground">
-                  Latest {SUBMISSION_HISTORY_LIMIT} jobs submitted from this app for the selected virtual cluster.
+                  {t("Latest {count} jobs submitted from this app for the selected virtual cluster.", {
+                    count: SUBMISSION_HISTORY_LIMIT
+                  })}
                 </p>
               ) : null}
             </div>
           ) : (
-            <span className="text-sm text-muted-foreground">{allJobs.length} jobs</span>
+            <span className="text-sm text-muted-foreground">
+              {t("{count} jobs", { count: allJobs.length })}
+            </span>
           )}
           {showAutoRefreshControl && onAutoRefreshChange ? (
             <JobAutoRefreshToggle
@@ -217,7 +224,7 @@ export function JobRunsPanel({
 
       {jobs.isLoading && allJobs.length === 0 ? (
         <p className="shrink-0 text-sm text-muted-foreground">
-          {submittedOnly ? "Loading recent submissions..." : "Loading job history..."}
+          {submittedOnly ? t("Loading recent submissions...") : t("Loading job history...")}
         </p>
       ) : null}
       {jobs.error ? (
@@ -231,11 +238,11 @@ export function JobRunsPanel({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Job Name</TableHead>
-                <TableHead>State</TableHead>
-                <TableHead>Created Time</TableHead>
-                <TableHead>Duration</TableHead>
-                <TableHead className="w-[360px] min-w-[360px] text-left">Actions</TableHead>
+                <TableHead>{t("Job Name")}</TableHead>
+                <TableHead>{t("State")}</TableHead>
+                <TableHead>{t("Created Time")}</TableHead>
+                <TableHead>{t("Duration")}</TableHead>
+                <TableHead className="w-[360px] min-w-[360px] text-left">{t("Actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -249,7 +256,7 @@ export function JobRunsPanel({
                       {job.state}
                     </Badge>
                   </TableCell>
-                  <TableCell>{new Date(job.createdAt).toLocaleString()}</TableCell>
+                  <TableCell>{new Date(job.createdAt).toLocaleString(localeTag(locale))}</TableCell>
                   <TableCell>{formatJobRunDuration(job)}</TableCell>
                   <TableCell className="w-[360px] min-w-[360px]">
                     <div className="flex justify-start gap-2">
@@ -273,7 +280,7 @@ export function JobRunsPanel({
                           }}
                         >
                           <Sparkles data-icon="inline-start" />
-                          Analyze
+                          {t("Analyze")}
                         </Button>
                       ) : null}
                       {job.state === "RUNNING" ? (
@@ -285,14 +292,14 @@ export function JobRunsPanel({
                             cancelJob.mutate(
                               { id: job.id, virtualClusterId: job.virtualClusterId },
                               {
-                                onSuccess: () => toast.success("Kill requested."),
+                                onSuccess: () => toast.success(t("Kill requested.")),
                                 onError: (error) => toast.error(errorMessage(error))
                               }
                             )
                           }
                         >
                           <Skull data-icon="inline-start" />
-                          Kill
+                          {t("Kill")}
                         </Button>
                       ) : null}
                       {(job.state === "FAILED" || job.state === "CANCELLED") ? (
@@ -305,7 +312,7 @@ export function JobRunsPanel({
                           }}
                         >
                           <Play data-icon="inline-start" />
-                          Rerun
+                          {t("Rerun")}
                         </Button>
                       ) : null}
                     </div>
@@ -322,7 +329,8 @@ export function JobRunsPanel({
                           effectiveVirtualClusterId: virtualClusterId,
                           isSyncingJobs,
                           autoRefresh,
-                          submittedOnly
+                          submittedOnly,
+                          t
                         })}
                       </span>
                       {canFindInAws ? (
@@ -333,7 +341,7 @@ export function JobRunsPanel({
                           onClick={() => void findJobInAws()}
                         >
                           <Search data-icon="inline-start" />
-                          {remoteLookupPending ? "Finding..." : "Find in AWS"}
+                          {remoteLookupPending ? t("Finding...") : t("Find in AWS")}
                         </Button>
                       ) : null}
                       {remoteLookupError ? (
@@ -349,11 +357,11 @@ export function JobRunsPanel({
         {!submittedOnly ? (
           <div className="flex shrink-0 items-center justify-between border-t px-4 py-3">
             <p className="text-sm text-muted-foreground">
-              Page {page} of {pageCount}
+              {t("Page {page} of {pageCount}", { page, pageCount })}
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
-                Previous
+                {t("Previous")}
               </Button>
               <Button
                 variant="outline"
@@ -361,7 +369,7 @@ export function JobRunsPanel({
                 disabled={page === pageCount}
                 onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
               >
-                Next
+                {t("Next")}
               </Button>
             </div>
           </div>
@@ -372,6 +380,7 @@ export function JobRunsPanel({
 }
 
 function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: () => void }) {
+  const t = useT();
   const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
 
   return (
@@ -384,7 +393,7 @@ function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: (
       }}
     >
       <FileText data-icon="inline-start" />
-      Logs
+      {t("Logs")}
     </Button>
   );
 }
@@ -416,35 +425,38 @@ function emptyJobsMessage({
   effectiveVirtualClusterId,
   isSyncingJobs,
   autoRefresh,
-  submittedOnly = false
+  submittedOnly = false,
+  t
 }: {
   submittedKeyword?: string;
   effectiveVirtualClusterId?: string;
   isSyncingJobs: boolean;
   autoRefresh: boolean;
   submittedOnly?: boolean;
+  /** Threaded in because this helper is not a component and cannot call hooks. */
+  t: Translator;
 }) {
   if (submittedKeyword) {
-    return "No jobs match the current filters.";
+    return t("No jobs match the current filters.");
   }
   if (isSyncingJobs) {
     return submittedOnly
-      ? "Loading recent submissions..."
+      ? t("Loading recent submissions...")
       : autoRefresh
-        ? "Syncing job runs from AWS. Auto refresh is enabled."
-        : "Loading job runs from AWS...";
+        ? t("Syncing job runs from AWS. Auto refresh is enabled.")
+        : t("Loading job runs from AWS...");
   }
   if (!effectiveVirtualClusterId) {
     return submittedOnly
-      ? "Select a virtual cluster to see jobs submitted from this app."
-      : "Select a virtual cluster to sync job runs from AWS.";
+      ? t("Select a virtual cluster to see jobs submitted from this app.")
+      : t("Select a virtual cluster to sync job runs from AWS.");
   }
   if (submittedOnly) {
     return autoRefresh
-      ? "No jobs submitted from this app yet. Auto refresh is enabled."
-      : "No jobs submitted from this app for the selected virtual cluster.";
+      ? t("No jobs submitted from this app yet. Auto refresh is enabled.")
+      : t("No jobs submitted from this app for the selected virtual cluster.");
   }
   return autoRefresh
-    ? "No job runs found yet. Auto refresh will keep checking AWS."
-    : "No job runs found for the selected virtual cluster.";
+    ? t("No job runs found yet. Auto refresh will keep checking AWS.")
+    : t("No job runs found for the selected virtual cluster.");
 }

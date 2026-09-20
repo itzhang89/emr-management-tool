@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAddLlmApiKey, useDeleteLlmApiKey, useProbeLlmApiKeys } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { LlmApiKey, LlmProvider } from "@/types/domain";
 
@@ -35,6 +36,7 @@ export function ApiKeysDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const addKey = useAddLlmApiKey();
   const deleteKey = useDeleteLlmApiKey();
   const probeKeys = useProbeLlmApiKeys();
@@ -65,7 +67,7 @@ export function ApiKeysDialog({
       { providerId: provider.id, value: trimmed, label: label.trim() || undefined },
       {
         onSuccess: () => {
-          toast.success("API key added");
+          toast.success(t("API key added"));
           setValue("");
           setLabel("");
           setRevealed(false);
@@ -79,10 +81,9 @@ export function ApiKeysDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[80vh] max-w-lg flex-col">
         <DialogHeader>
-          <DialogTitle>API keys for {provider.name}</DialogTitle>
+          <DialogTitle>{t("API keys for {name}", { name: provider.name })}</DialogTitle>
           <DialogDescription>
-            The first key that has not been refused is used. When one is rejected it is marked and the
-            next is tried automatically.
+            {t("The first key that has not been refused is used. When one is rejected it is marked and the next is tried automatically.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -96,7 +97,7 @@ export function ApiKeysDialog({
           <div className="space-y-2">
             <Label htmlFor="new-api-key" className="flex items-center gap-2">
               <KeyRound className="size-3.5" />
-              Add a key
+              {t("Add a key")}
             </Label>
             <div className="flex gap-2">
               <Input
@@ -117,21 +118,25 @@ export function ApiKeysDialog({
                     variant="outline"
                     size="icon"
                     className="size-9 shrink-0"
-                    aria-label={revealed ? "Hide the key you are typing" : "Show the key you are typing"}
+                    aria-label={
+                      revealed
+                        ? t("Hide the key you are typing")
+                        : t("Show the key you are typing")
+                    }
                     onClick={() => setRevealed((shown) => !shown)}
                   >
                     {revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {revealed ? "Hide what you are typing" : "Check what you just pasted"}
+                  {revealed ? t("Hide what you are typing") : t("Check what you just pasted")}
                 </TooltipContent>
               </Tooltip>
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="new-api-key-label">Label (optional)</Label>
+            <Label htmlFor="new-api-key-label">{t("Label (optional)")}</Label>
             <Input
               id="new-api-key-label"
               value={label}
@@ -143,13 +148,13 @@ export function ApiKeysDialog({
 
           <Button type="submit" size="sm" disabled={addKey.isPending}>
             <Plus className="mr-1 size-3.5" />
-            {addKey.isPending ? "Adding..." : "Add key"}
+            {addKey.isPending ? t("Adding...") : t("Add key")}
           </Button>
         </form>
 
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">
-            Stored keys
+            {t("Stored keys")}
             {provider.apiKeys.length > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">{provider.apiKeys.length}</span>
             )}
@@ -163,7 +168,12 @@ export function ApiKeysDialog({
               probeKeys.mutate(provider.id, {
                 onSuccess: (keys) => {
                   const healthy = keys.filter((key) => key.status === "healthy").length;
-                  toast.success(`${healthy} of ${keys.length} keys answered`);
+                  toast.success(
+                    t("{healthy} of {total} keys answered", {
+                      healthy,
+                      total: keys.length
+                    })
+                  );
                 },
                 onError: (error: Error) => toast.error(error.message || "Could not probe the keys")
               })
@@ -172,14 +182,14 @@ export function ApiKeysDialog({
             {probeKeys.isPending ? (
               <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
             ) : null}
-            Detect
+            {t("Detect")}
           </Button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {provider.apiKeys.length === 0 ? (
             <p className="rounded-md border border-dashed p-4 text-xs text-muted-foreground">
-              No keys yet. This provider cannot be used until one is added.
+              {t("No keys yet. This provider cannot be used until one is added.")}
             </p>
           ) : (
             <div className="divide-y rounded-md border">
@@ -203,7 +213,7 @@ export function ApiKeysDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Done
+            {t("Done")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -222,6 +232,7 @@ function ApiKeyRow({
   onDelete: () => void;
   deleting: boolean;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-2 px-3 py-2">
       <StatusIcon status={apiKey.status} message={apiKey.statusMessage} />
@@ -233,7 +244,7 @@ function ApiKeyRow({
           left guessing. */}
       {isActive && (
         <Badge variant="secondary" className="shrink-0 text-[10px]">
-          In use
+          {t("In use")}
         </Badge>
       )}
       <Tooltip>
@@ -243,30 +254,31 @@ function ApiKeyRow({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-            aria-label={`Remove key ${apiKey.masked}`}
+            aria-label={t("Remove key {key}", { key: apiKey.masked })}
             disabled={deleting}
             onClick={onDelete}
           >
             <Trash2 className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Remove this key</TooltipContent>
+        <TooltipContent>{t("Remove this key")}</TooltipContent>
       </Tooltip>
     </div>
   );
 }
 
 function StatusIcon({ status, message }: { status: LlmApiKey["status"]; message?: string | null }) {
+  const t = useT();
   if (status === "unknown") {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            aria-label="Not checked"
+            aria-label={t("Not checked")}
             className="size-3.5 shrink-0 rounded-full border border-muted-foreground/40"
           />
         </TooltipTrigger>
-        <TooltipContent>Not checked yet</TooltipContent>
+        <TooltipContent>{t("Not checked yet")}</TooltipContent>
       </Tooltip>
     );
   }
@@ -275,7 +287,7 @@ function StatusIcon({ status, message }: { status: LlmApiKey["status"]; message?
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span aria-label={healthy ? "Working" : "Refused"} className="shrink-0">
+        <span aria-label={healthy ? t("Working") : t("Refused")} className="shrink-0">
           {healthy ? (
             <CircleCheck className={cn("size-3.5", "text-green-600 dark:text-green-500")} />
           ) : (
@@ -284,7 +296,7 @@ function StatusIcon({ status, message }: { status: LlmApiKey["status"]; message?
         </span>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">
-        {healthy ? "This key answered" : message || "This key was refused"}
+        {healthy ? t("This key answered") : message || t("This key was refused")}
       </TooltipContent>
     </Tooltip>
   );

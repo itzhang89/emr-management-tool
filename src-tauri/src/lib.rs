@@ -7,6 +7,7 @@ pub mod distribution;
 pub mod emr_log_path;
 pub mod error;
 pub mod mcp;
+pub mod menu;
 pub mod models;
 pub mod portable_updater;
 pub mod secrets;
@@ -14,8 +15,6 @@ pub mod state;
 
 use state::AppState;
 
-#[cfg(desktop)]
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(desktop)]
 use tauri::Emitter;
 #[cfg(desktop)]
@@ -173,6 +172,7 @@ pub fn run() {
             commands::dbhub::list_db_schemas,
             commands::dbhub::list_db_objects,
             commands::dbhub::refresh_db_catalog,
+            commands::appearance::set_app_language,
         ]);
 
     #[cfg(desktop)]
@@ -197,38 +197,10 @@ pub fn run() {
                         }
                     }
                 }
-                let undo = PredefinedMenuItem::undo(app, None)?;
-                let redo = PredefinedMenuItem::redo(app, None)?;
-                let separator = PredefinedMenuItem::separator(app)?;
-                let cut = PredefinedMenuItem::cut(app, None)?;
-                let copy = PredefinedMenuItem::copy(app, None)?;
-                let paste = PredefinedMenuItem::paste(app, None)?;
-                let select_all = PredefinedMenuItem::select_all(app, None)?;
-                let edit = Submenu::with_items(
-                    app,
-                    "Edit",
-                    true,
-                    &[&undo, &redo, &separator, &cut, &copy, &paste, &select_all],
-                )?;
-                let view_logs =
-                    MenuItem::with_id(app, "view_logs", "View Logs", true, None::<&str>)?;
-                let show_shortcuts = MenuItem::with_id(
-                    app,
-                    "show_shortcuts",
-                    "Keyboard Shortcuts",
-                    true,
-                    None::<&str>,
-                )?;
-                let help_separator = PredefinedMenuItem::separator(app)?;
-                let show_about =
-                    MenuItem::with_id(app, "show_about", "About EMR on EKS", true, None::<&str>)?;
-                let help = Submenu::with_items(
-                    app,
-                    "Help",
-                    true,
-                    &[&show_shortcuts, &view_logs, &help_separator, &show_about],
-                )?;
-                let menu = Menu::with_items(app, &[&edit, &help])?;
+                // Built in English and rebuilt by `set_app_language` once the
+                // frontend resolves the stored preference, which Rust cannot read.
+                let menu =
+                    crate::menu::build_menu(app.handle(), crate::menu::AppLanguage::En)?;
                 app.set_menu(menu)?;
 
                 app.global_shortcut().on_shortcut(

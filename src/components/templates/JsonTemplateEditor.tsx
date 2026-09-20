@@ -5,6 +5,7 @@ import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { Compartment, EditorState, RangeSetBuilder, type Extension } from "@codemirror/state";
 import { Decoration, drawSelection, EditorView, highlightActiveLine, keymap, lineNumbers, tooltips, ViewPlugin } from "@codemirror/view";
 import { useEffect, useMemo, useRef, type JSX } from "react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   createTemplateVariableCompletion,
@@ -161,6 +162,7 @@ export function JsonTemplateEditor({
   /** Constrain editor to parent height and scroll overflow inside the viewport. */
   fillHeight?: boolean;
 }): JSX.Element {
+  const t = useT();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -249,7 +251,7 @@ export function JsonTemplateEditor({
     <div
       ref={containerRef}
       role="textbox"
-      aria-label="Payload JSON"
+      aria-label={t("Payload JSON")}
       aria-multiline="true"
       className={cn(
         "json-template-editor w-full min-w-0 max-w-full overflow-hidden rounded-lg border bg-background",

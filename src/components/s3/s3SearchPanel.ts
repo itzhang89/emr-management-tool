@@ -9,6 +9,7 @@ import {
   replaceNext,
   closeSearchPanel
 } from "@codemirror/search";
+import { t } from "@/i18n/translate";
 import { formatModShortcut } from "@/lib/keyboardShortcut";
 import {
   addExcludedRange,
@@ -101,8 +102,8 @@ class S3SearchPanel implements Panel {
 
     this.searchField = elt("input", {
       value: query.search,
-      placeholder: "Find",
-      "aria-label": "Find",
+      placeholder: t("Find"),
+      "aria-label": t("Find"),
       class: "cm-s3-field-input",
       name: "search",
       form: "",
@@ -113,8 +114,8 @@ class S3SearchPanel implements Panel {
 
     this.replaceField = elt("input", {
       value: query.replace,
-      placeholder: "Replace",
-      "aria-label": "Replace",
+      placeholder: t("Replace"),
+      "aria-label": t("Replace"),
       class: "cm-s3-field-input",
       name: "replace",
       form: "",
@@ -122,17 +123,17 @@ class S3SearchPanel implements Panel {
       onchange: () => this.commit()
     }) as HTMLInputElement;
 
-    this.caseButton = iconToggle("Cc", "Match case", this.caseSensitive, () => {
+    this.caseButton = iconToggle("Cc", t("Match case"), this.caseSensitive, () => {
       this.caseSensitive = !this.caseSensitive;
       this.syncOptionButtons();
       this.commit();
     });
-    this.wordButton = iconToggle("W", "By word", this.wholeWord, () => {
+    this.wordButton = iconToggle("W", t("By word"), this.wholeWord, () => {
       this.wholeWord = !this.wholeWord;
       this.syncOptionButtons();
       this.commit();
     });
-    this.regexpButton = iconToggle(".*", "Regexp", this.regexp, () => {
+    this.regexpButton = iconToggle(".*", t("Regexp"), this.regexp, () => {
       this.regexp = !this.regexp;
       this.syncOptionButtons();
       this.commit();
@@ -143,8 +144,10 @@ class S3SearchPanel implements Panel {
       "aria-live": "polite"
     });
 
-    const prevTitle = `Previous match (${formatModShortcut("G", { shift: true })})`;
-    const nextTitle = `Next match (${formatModShortcut("G")})`;
+    const prevTitle = t("Previous match ({shortcut})", {
+      shortcut: formatModShortcut("G", { shift: true })
+    });
+    const nextTitle = t("Next match ({shortcut})", { shortcut: formatModShortcut("G") });
 
     const findShell = elt("div", { class: "cm-s3-field-shell" }, [
       this.searchField,
@@ -183,12 +186,12 @@ class S3SearchPanel implements Panel {
     const actionButton = (name: string, label: string, onclick: () => void) =>
       elt("button", { class: "cm-button", name, type: "button", onclick }, [label]);
 
-    this.excludeButton = actionButton("exclude", "Exclude", () => this.excludeCurrent()) as HTMLButtonElement;
+    this.excludeButton = actionButton("exclude", t("Exclude"), () => this.excludeCurrent()) as HTMLButtonElement;
 
     this.replaceRow = elt("div", { class: "cm-s3-search-row cm-s3-search-replace" }, [
       elt("div", { class: "cm-s3-field-shell cm-s3-replace-shell" }, [this.replaceField]),
-      actionButton("replace", "Replace", () => replaceNext(view)),
-      actionButton("replaceAll", "Replace all", () => this.replaceAllWithExclusions()),
+      actionButton("replace", t("Replace"), () => replaceNext(view)),
+      actionButton("replaceAll", t("Replace all"), () => this.replaceAllWithExclusions()),
       this.excludeButton
     ]);
 
@@ -200,7 +203,7 @@ class S3SearchPanel implements Panel {
         {
           name: "close",
           type: "button",
-          "aria-label": "Close",
+          "aria-label": t("Close"),
           onclick: () => closeSearchPanel(view)
         },
         ["×"]
@@ -278,7 +281,7 @@ class S3SearchPanel implements Panel {
   private refreshCount() {
     const query = this.query;
     if (query.regexp && !query.valid) {
-      this.countLabel.textContent = formatS3SearchMatchLabel(0, 0, { error: "Invalid regex" });
+      this.countLabel.textContent = formatS3SearchMatchLabel(0, 0, { error: t("Invalid regex") });
       this.excludeButton.disabled = true;
       return;
     }

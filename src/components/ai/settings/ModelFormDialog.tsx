@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useAddLlmModels, useUpdateLlmModel } from "@/hooks/useLlmConfig";
+import { useT } from "@/i18n";
 import { modelSeries } from "@/services/llmModelSeries";
 import type { LlmModel, LlmModelCapabilities, LlmModelType } from "@/types/domain";
 
@@ -65,6 +66,7 @@ export function ModelFormDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useT();
   const addModels = useAddLlmModels();
   const updateModel = useUpdateLlmModel();
   const editing = model != null;
@@ -127,7 +129,7 @@ export function ModelFormDialog({
         },
         {
           onSuccess: () => {
-            toast.success(`${trimmedId} saved`);
+            toast.success(t("{model} saved", { model: trimmedId }));
             onOpenChange(false);
           },
           onError: (error: Error) => toast.error(error.message || "Failed to save the model")
@@ -158,7 +160,7 @@ export function ModelFormDialog({
             toast.error(`${trimmedId} is already on this provider`);
             return;
           }
-          toast.success(`${trimmedId} added`);
+          toast.success(t("{model} added", { model: trimmedId }));
           onOpenChange(false);
         },
         onError: (error: Error) => toast.error(error.message || "Failed to add the model")
@@ -170,9 +172,9 @@ export function ModelFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] max-w-md flex-col">
         <DialogHeader>
-          <DialogTitle>{editing ? "Edit model" : "Add model"}</DialogTitle>
+          <DialogTitle>{editing ? t("Edit model") : t("Add model")}</DialogTitle>
           <DialogDescription>
-            The model id is sent to the API as-is. The group only organises this list.
+            {t("The model id is sent to the API as-is. The group only organises this list.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -186,10 +188,10 @@ export function ModelFormDialog({
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
             <section className="space-y-3">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Basics
+                {t("Basics")}
               </p>
               <div className="space-y-2">
-                <Label htmlFor="model-id">Model id</Label>
+                <Label htmlFor="model-id">{t("Model id")}</Label>
                 <Input
                   id="model-id"
                   value={modelId}
@@ -200,7 +202,7 @@ export function ModelFormDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="model-display-name">Display name</Label>
+                <Label htmlFor="model-display-name">{t("Display name")}</Label>
                 <Input
                   id="model-display-name"
                   value={displayName}
@@ -209,7 +211,7 @@ export function ModelFormDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="model-group">Group</Label>
+                <Label htmlFor="model-group">{t("Group")}</Label>
                 <Input
                   id="model-group"
                   value={group}
@@ -221,17 +223,17 @@ export function ModelFormDialog({
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Inferred from the model id. Edit it if the grouping looks wrong.
+                  {t("Inferred from the model id. Edit it if the grouping looks wrong.")}
                 </p>
               </div>
             </section>
 
             <section className="space-y-3">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Capabilities
+                {t("Capabilities")}
               </p>
               <div className="space-y-2">
-                <Label>Model type</Label>
+                <Label>{t("Model type")}</Label>
                 <RadioGroup
                   value={modelType}
                   onValueChange={(value) => setModelType(value as LlmModelType)}
@@ -240,19 +242,19 @@ export function ModelFormDialog({
                   {MODEL_TYPES.map((option) => (
                     <label key={option.value} className="flex cursor-pointer items-center gap-2 text-sm">
                       <RadioGroupItem value={option.value} />
-                      {option.label}
+                      {t(option.label)}
                     </label>
                   ))}
                 </RadioGroup>
                 {modelType !== "chat" && (
                   <p className="text-xs text-muted-foreground">
-                    Only chat models appear in Chat's model picker.
+                    {t("Only chat models appear in Chat's model picker.")}
                   </p>
                 )}
               </div>
 
               <div className="space-y-2">
-                <Label>Abilities</Label>
+                <Label>{t("Abilities")}</Label>
                 <div className="flex flex-wrap gap-4">
                   <CapabilityBox
                     id="cap-reasoning"
@@ -270,7 +272,7 @@ export function ModelFormDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Input modalities</Label>
+                <Label>{t("Input modalities")}</Label>
                 <div className="grid grid-cols-2 gap-2">
                   <CapabilityBox
                     id="cap-text"
@@ -298,17 +300,17 @@ export function ModelFormDialog({
                   />
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Recorded for reference. Requests are not yet trimmed to these.
+                  {t("Recorded for reference. Requests are not yet trimmed to these.")}
                 </p>
               </div>
             </section>
 
             <section className="space-y-3">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Token limits
+                {t("Token limits")}
               </p>
               <div className="space-y-2">
-                <Label htmlFor="model-context-window">Context window</Label>
+                <Label htmlFor="model-context-window">{t("Context window")}</Label>
                 <Input
                   id="model-context-window"
                   value={contextWindow}
@@ -319,7 +321,7 @@ export function ModelFormDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="model-max-input">Max input tokens</Label>
+                <Label htmlFor="model-max-input">{t("Max input tokens")}</Label>
                 <Input
                   id="model-max-input"
                   value={maxInputTokens}
@@ -330,7 +332,7 @@ export function ModelFormDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="model-max-output">Max output tokens</Label>
+                <Label htmlFor="model-max-output">{t("Max output tokens")}</Label>
                 <Input
                   id="model-max-output"
                   value={maxOutputTokens}
@@ -345,10 +347,10 @@ export function ModelFormDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="submit" disabled={addModels.isPending || updateModel.isPending}>
-              {addModels.isPending || updateModel.isPending ? "Saving..." : "Save"}
+              {addModels.isPending || updateModel.isPending ? t("Saving...") : t("Save")}
             </Button>
           </DialogFooter>
         </form>
@@ -368,10 +370,11 @@ function CapabilityBox({
   checked: boolean;
   onToggle: () => void;
 }) {
+  const t = useT();
   return (
     <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-sm">
       <Checkbox id={id} checked={checked} onCheckedChange={onToggle} />
-      {label}
+      {t(label)}
     </label>
   );
 }

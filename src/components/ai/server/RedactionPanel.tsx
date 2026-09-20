@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useT } from "@/i18n";
 import type { RedactCategory, RedactRule, RedactTestResult } from "@/types/domain";
 import { REDACT_CATEGORIES } from "@/types/domain";
 import {
@@ -62,6 +63,7 @@ const TEST_BOOTSTRAP =
 
 /** The working copy (unsaved edits) of the rule set the panel edits. */
 export function RedactionPanel() {
+  const t = useT();
   const source = useRedactConfig();
   const saveRule = useSaveRedactConfig();
   const reset = useResetRedactConfig();
@@ -98,7 +100,7 @@ export function RedactionPanel() {
     saveRule.mutate(rules, {
       onSuccess: (config) => {
         adopt(config.rules);
-        toast.success("Redaction rules saved");
+        toast.success(t("Redaction rules saved"));
       },
       onError: (error: Error) => toast.error(error.message || "Failed to save redaction rules")
     });
@@ -108,7 +110,7 @@ export function RedactionPanel() {
     reset.mutate(undefined, {
       onSuccess: (config) => {
         adopt(config.rules);
-        toast.success("Restored the built-in defaults");
+        toast.success(t("Restored the built-in defaults"));
       },
       onError: (error: Error) => toast.error(error.message || "Failed to reset")
     });
@@ -124,9 +126,11 @@ export function RedactionPanel() {
     <div className="flex w-full flex-1 flex-col gap-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold leading-tight tracking-tight">Redaction rules</h2>
+          <h2 className="text-lg font-semibold leading-tight tracking-tight">
+            {t("Redaction rules")}
+          </h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Which values in MCP tool log output are masked before it reaches an AI model.
+            {t("Which values in MCP tool log output are masked before it reaches an AI model.")}
           </p>
         </div>
         <Button
@@ -134,19 +138,19 @@ export function RedactionPanel() {
           onClick={() => setEditor({ draft: blankCustomRule(), isNew: true })}
         >
           <Plus data-icon="inline-start" />
-          Add custom rule
+          {t("Add custom rule")}
         </Button>
       </header>
 
       {!loadedOnce ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : (
         <div className="space-y-4">
           {REDACT_CATEGORIES.map((category) => {
             const rows = rules.filter((rule) => rule.category === category);
             if (rows.length === 0) return null;
             return (
-              <RuleGroup key={category} label={CATEGORY_LABELS[category]}>
+              <RuleGroup key={category} label={t(CATEGORY_LABELS[category])}>
                 {rows.map((rule) => (
                   <RuleRow
                     key={rule.id}
@@ -161,7 +165,9 @@ export function RedactionPanel() {
                       rule.kind === "custom"
                         ? () => {
                             deleteById(rule.id);
-                            toast.success(`Removed "${rule.name}". Save to apply.`);
+                            toast.success(
+                              t('Removed "{name}". Save to apply.', { name: rule.name })
+                            );
                           }
                         : undefined
                     }
@@ -190,10 +196,10 @@ export function RedactionPanel() {
             className="text-muted-foreground"
           >
             <RotateCcw data-icon="inline-start" />
-            Reset to defaults
+            {t("Reset to defaults")}
           </Button>
           <Button variant="outline" size="sm" onClick={onDiscard} disabled={!hasLocalEdits(rules, source.data?.rules)}>
-            Discard
+            {t("Discard")}
           </Button>
           <div className="flex-1" />
           <Button
@@ -202,7 +208,7 @@ export function RedactionPanel() {
             disabled={saveRule.isPending || !hasLocalEdits(rules, source.data?.rules)}
           >
             <ShieldCheck data-icon="inline-start" />
-            {saveRule.isPending ? "Saving…" : "Save changes"}
+            {saveRule.isPending ? t("Saving…") : t("Save changes")}
           </Button>
         </div>
       )}
@@ -274,27 +280,38 @@ function RuleRow({
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
+  const t = useT();
   const builtin = rule.kind === "builtin";
   const hint = builtin
-    ? BUILTIN_HINTS[rule.id]
-    : `pattern ${rule.pattern}`;
+    ? t(BUILTIN_HINTS[rule.id])
+    : t("pattern {pattern}", { pattern: rule.pattern ?? "" });
   return (
     <div className="flex items-center gap-3 border-b border-muted/40 px-4 py-2.5 last:border-b-0">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{rule.name}</span>
           {builtin ? (
-            <Badge variant="secondary">Built-in</Badge>
+            <Badge variant="secondary">{t("Built-in")}</Badge>
           ) : null}
           {!rule.enabled ? (
-            <span className="text-xs text-muted-foreground">off</span>
+            <span className="text-xs text-muted-foreground">{t("off")}</span>
           ) : null}
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p>
       </div>
-      <Switch checked={rule.enabled} onCheckedChange={onToggle} aria-label={`Toggle ${rule.name}`} />
+      <Switch
+        checked={rule.enabled}
+        onCheckedChange={onToggle}
+        aria-label={t("Toggle {name}", { name: rule.name })}
+      />
       {onEdit ? (
-        <Button variant="ghost" size="icon" className="size-8" aria-label={`Edit ${rule.name}`} onClick={onEdit}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label={t("Edit {name}", { name: rule.name })}
+          onClick={onEdit}
+        >
           <Pencil className="size-4" />
         </Button>
       ) : null}
@@ -303,7 +320,7 @@ function RuleRow({
           variant="ghost"
           size="icon"
           className="size-8 text-muted-foreground hover:text-destructive"
-          aria-label={`Delete ${rule.name}`}
+          aria-label={t("Delete {name}", { name: rule.name })}
           onClick={onDelete}
         >
           <Trash2 className="size-4" />
@@ -324,13 +341,14 @@ function TestRules({
   result: RedactTestResult | null;
   onRun: (text: string) => void;
 }) {
+  const t = useT();
   const [text, setText] = useState(TEST_BOOTSTRAP);
   return (
     <Card>
       <CardHeader className="px-4 py-3">
-        <CardTitle className="text-sm font-medium">Test against these rules</CardTitle>
+        <CardTitle className="text-sm font-medium">{t("Test against these rules")}</CardTitle>
         <CardDescription className="text-xs">
-          Runs over the current (unsaved) set — add a token your custom rule matches.
+          {t("Runs over the current (unsaved) set — add a token your custom rule matches.")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 px-4 pb-4">
@@ -343,22 +361,23 @@ function TestRules({
         />
         <div className="flex justify-end">
           <Button size="sm" variant="outline" disabled={isTesting} onClick={() => onRun(text)} data-testid="redact-test-run">
-            {isTesting ? "Running…" : "Preview masking"}
+            {isTesting ? t("Running…") : t("Preview masking")}
           </Button>
         </div>
         {result ? (
           <div>
-            <p className="mb-1 text-xs font-medium text-muted-foreground">Masked</p>
+            <p className="mb-1 text-xs font-medium text-muted-foreground">{t("Masked")}</p>
             <pre
               className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 font-mono text-xs text-foreground"
               data-testid="redact-test-masked"
             >
-              {result.masked.trim() === "" ? "(empty)" : result.masked}
+              {result.masked.trim() === "" ? t("(empty)") : result.masked}
             </pre>
             <p className="mt-2 text-xs text-muted-foreground" data-testid="redact-test-meta">
               {result.count > 0 ? (
                 <>
-                  Replaced <span className="font-medium text-foreground">{result.count}</span> spans
+                  {t("Replaced")}{" "}
+                  <span className="font-medium text-foreground">{result.count}</span> {t("spans")}
                   {result.hits.length > 0 ? (
                     <>
                       {" · "}
@@ -371,12 +390,12 @@ function TestRules({
                   ) : null}
                 </>
               ) : (
-                "Nothing matched"
+                t("Nothing matched")
               )}
             </p>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">Nothing run yet.</p>
+          <p className="text-xs text-muted-foreground">{t("Nothing run yet.")}</p>
         )}
       </CardContent>
     </Card>
@@ -394,6 +413,7 @@ function RuleEditorDialog({
   onClose: () => void;
   onCommit: (rule: RedactRule) => void;
 }) {
+  const t = useT();
   const [name, setName] = useState(draft.name ?? "");
   const [category, setCategory] = useState<RedactCategory>(draft.category ?? "custom");
   const [pattern, setPattern] = useState(draft.pattern ?? "");
@@ -433,6 +453,7 @@ function RuleEditorDialog({
       id: draft.id,
       kind: "custom",
       enabled: true,
+      sortOrder: draft.sortOrder,
       name: name.trim(),
       category,
       pattern: pattern.trim(),
@@ -445,27 +466,26 @@ function RuleEditorDialog({
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isNew ? "Add a custom rule" : "Edit rule"}</DialogTitle>
+          <DialogTitle>{isNew ? t("Add a custom rule") : t("Edit rule")}</DialogTitle>
           <DialogDescription>
-            Matches a whole value with a regular expression and replaces it. Built-ins can only
-            be switched on or off.
+            {t("Matches a whole value with a regular expression and replaces it. Built-ins can only be switched on or off.")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-[1fr_auto] items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="rule-name">Name</Label>
+              <Label htmlFor="rule-name">{t("Name")}</Label>
               <Input
                 id="rule-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="e.g. Internal ticket id"
+                placeholder={t("e.g. Internal ticket id")}
                 data-testid="rule-name"
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Category</Label>
+              <Label>{t("Category")}</Label>
               <Select value={category} onValueChange={(value) => setCategory(value as RedactCategory)}>
                 <SelectTrigger className="w-44" data-testid="rule-category">
                   <SelectValue />
@@ -473,7 +493,7 @@ function RuleEditorDialog({
                 <SelectContent>
                   {REDACT_CATEGORIES.map((value) => (
                     <SelectItem key={value} value={value}>
-                      {CATEGORY_LABELS[value]}
+                      {t(CATEGORY_LABELS[value])}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -482,7 +502,7 @@ function RuleEditorDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="rule-pattern">Pattern (regular expression)</Label>
+            <Label htmlFor="rule-pattern">{t("Pattern (regular expression)")}</Label>
             <Input
               id="rule-pattern"
               className="font-mono"
@@ -494,7 +514,7 @@ function RuleEditorDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="rule-replacement">Replacement</Label>
+            <Label htmlFor="rule-replacement">{t("Replacement")}</Label>
             <Input
               id="rule-replacement"
               className="font-mono"
@@ -503,25 +523,26 @@ function RuleEditorDialog({
               data-testid="rule-replacement"
             />
             <p className="text-xs text-muted-foreground">
-              <Code>__MASK_ALL__</Code> equal-length stars · <Code>__KEEP_HEAD_TAIL_3_4__</Code>{" "}
-              keep head + tail · or a literal like <Code>[REDACTED]</Code>
+              <Code>__MASK_ALL__</Code> {t("equal-length stars")} ·{" "}
+              <Code>__KEEP_HEAD_TAIL_3_4__</Code> {t("keep head + tail")} ·{" "}
+              {t("or a literal like")} <Code>[REDACTED]</Code>
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="rule-sample">Sample text (optional)</Label>
+            <Label htmlFor="rule-sample">{t("Sample text (optional)")}</Label>
             <Input
               id="rule-sample"
               className="font-mono"
               value={sample}
               onChange={(event) => setSample(event.target.value)}
-              placeholder="A value this rule should redact"
+              placeholder={t("A value this rule should redact")}
               data-testid="rule-sample"
             />
           </div>
 
           <div className="space-y-1.5 rounded-lg border bg-muted/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Preview</p>
+            <p className="text-xs font-medium text-muted-foreground">{t("Preview")}</p>
             {patternOk ? (
               preview ? (
                 <p className="flex flex-wrap items-center gap-2 font-mono text-xs">
@@ -530,19 +551,19 @@ function RuleEditorDialog({
                   <span className="break-all text-emerald-600">{preview.after}</span>
                 </p>
               ) : (
-                <p className="text-xs text-muted-foreground">Pattern didn’t match the sample.</p>
+                <p className="text-xs text-muted-foreground">{t("Pattern didn’t match the sample.")}</p>
               )
             ) : (
-              <p className="text-xs text-muted-foreground">Awaiting a pattern to preview.</p>
+              <p className="text-xs text-muted-foreground">{t("Awaiting a pattern to preview.")}</p>
             )}
           </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t("Cancel")}
           </Button>
-          <Button onClick={commit}>Save rule</Button>
+          <Button onClick={commit}>{t("Save rule")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { LlmProvider } from "@/types/domain";
 
@@ -44,6 +45,7 @@ export function ProviderList({
   onDuplicate: (provider: LlmProvider) => void;
   onDelete: (provider: LlmProvider) => void;
 }) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [enabledFilter, setEnabledFilter] = useState<EnabledFilter>("all");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -69,8 +71,8 @@ export function ProviderList({
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search providers"
-            aria-label="Search providers"
+            placeholder={t("Search providers")}
+            aria-label={t("Search providers")}
             className="h-8 w-full pl-6 pr-1 text-xs"
           />
         </div>
@@ -80,7 +82,7 @@ export function ProviderList({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Filter providers"
+              aria-label={t("Filter providers")}
               aria-pressed={enabledFilter !== "all"}
               className="size-8 shrink-0"
             >
@@ -108,7 +110,7 @@ export function ProviderList({
                   )}
                 >
                   <Check className={cn("size-3.5", active ? "opacity-100" : "opacity-0")} />
-                  {option.label}
+                  {t(option.label)}
                 </button>
               );
             })}
@@ -118,9 +120,9 @@ export function ProviderList({
 
       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
         {providers.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-muted-foreground">No providers yet.</p>
+          <p className="px-2 py-1 text-xs text-muted-foreground">{t("No providers yet.")}</p>
         ) : visible.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-muted-foreground">Nothing matches.</p>
+          <p className="px-2 py-1 text-xs text-muted-foreground">{t("Nothing matches.")}</p>
         ) : (
           visible.map((provider) => {
             const usable = provider.enabled && provider.apiKeys.length > 0;
@@ -161,13 +163,13 @@ export function ProviderList({
                       variant="ghost"
                       size="icon"
                       className="size-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Duplicate ${provider.name}`}
+                      aria-label={t("Duplicate {name}", { name: provider.name })}
                       onClick={() => onDuplicate(provider)}
                     >
                       <Copy className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Duplicate for another account or gateway</TooltipContent>
+                  <TooltipContent>{t("Duplicate for another account or gateway")}</TooltipContent>
                 </Tooltip>
 
                 <Tooltip>
@@ -177,19 +179,19 @@ export function ProviderList({
                       variant="ghost"
                       size="icon"
                       className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Delete ${provider.name}`}
+                      aria-label={t("Delete {name}", { name: provider.name })}
                       onClick={() => onDelete(provider)}
                     >
                       <Trash2 className="size-3.5" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Delete this provider</TooltipContent>
+                  <TooltipContent>{t("Delete this provider")}</TooltipContent>
                 </Tooltip>
 
                 <Badge
                   variant="secondary"
                   className="shrink-0 text-[10px]"
-                  aria-label={`${provider.name} models`}
+                  aria-label={t("{name} models", { name: provider.name })}
                 >
                   {provider.models.length}
                 </Badge>
@@ -201,7 +203,7 @@ export function ProviderList({
 
       <Button type="button" variant="outline" size="sm" onClick={onAdd} className="shrink-0">
         <Plus className="mr-1.5 size-3.5" />
-        Add provider
+        {t("Add provider")}
       </Button>
     </div>
   );

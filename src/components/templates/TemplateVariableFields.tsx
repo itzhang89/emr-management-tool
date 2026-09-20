@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   COMPACT_BOOLEAN_CONTROL_CLASS,
@@ -48,8 +49,10 @@ export function TemplateVariableFields({
   values: Record<string, string | number | boolean | string[]>;
   onChange: (next: Record<string, string | number | boolean | string[]>) => void;
 }) {
+  const t = useT();
+
   if (variables.length === 0) {
-    return <p className="text-sm text-muted-foreground">This template has no custom variables.</p>;
+    return <p className="text-sm text-muted-foreground">{t("This template has no custom variables.")}</p>;
   }
 
   return (
@@ -81,6 +84,7 @@ function VariableField({
   value: string | number | boolean | string[] | undefined;
   onChange: (value: string | number | boolean | string[]) => void;
 }) {
+  const t = useT();
   const label = definition.label ?? definition.name;
 
   if (definition.type === "boolean") {
@@ -167,7 +171,7 @@ function VariableField({
         >
           <Select value={String(value ?? "")} onValueChange={onChange}>
             <SelectTrigger className={COMPACT_SELECT_TRIGGER_CLASS}>
-              <SelectValue placeholder={`Select ${label}`} />
+              <SelectValue placeholder={t("Select {name}", { name: label })} />
             </SelectTrigger>
             <SelectContent>
               {options.map((option) => (
@@ -265,8 +269,9 @@ function EnumCombobox({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
-  const displayText = value || `Select ${label}`;
+  const displayText = value || t("Select {name}", { name: label });
 
   return (
     <CompactFieldShell
@@ -289,9 +294,9 @@ function EnumCombobox({
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
           <Command>
-            <CommandInput placeholder={`Search ${label.toLowerCase()}...`} />
+            <CommandInput placeholder={t("Search {name}...", { name: label.toLowerCase() })} />
             <CommandList>
-              <CommandEmpty>No option found.</CommandEmpty>
+              <CommandEmpty>{t("No option found.")}</CommandEmpty>
               <CommandGroup>
                 {options.map((option) => (
                   <CommandItem
@@ -336,13 +341,14 @@ function DateTimeField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useT();
   const selected = value ? parseDateValue(value) : undefined;
   const [time, setTime] = useState(selected ? format(selected, "HH:mm") : "00:00");
 
   const display = useMemo(() => {
-    if (!selected) return `Pick ${label.toLowerCase()}`;
+    if (!selected) return t("Pick {name}", { name: label.toLowerCase() });
     return formatWithPattern(selected, displayFormat);
-  }, [displayFormat, label, selected]);
+  }, [displayFormat, label, selected, t]);
 
   return (
     <CompactFieldShell

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cloneGlueDatabaseDetail } from "@/hooks/useGlue";
+import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import { buildCreateDatabaseDdl } from "@/services/glueDatabaseDdl";
 import type { GlueDatabaseDetail } from "@/types/domain";
@@ -27,6 +28,7 @@ export function DatabaseMetadataPanel({
   onSave: (database: GlueDatabaseDetail) => void;
   saving: boolean;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState<GlueDatabaseDetail | undefined>();
   const [newPropertyKey, setNewPropertyKey] = useState("");
   const [newPropertyValue, setNewPropertyValue] = useState("");
@@ -38,7 +40,7 @@ export function DatabaseMetadataPanel({
   }, [database]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading database metadata...</p>;
+    return <p className="text-sm text-muted-foreground">{t("Loading database metadata...")}</p>;
   }
 
   if (error) {
@@ -48,7 +50,7 @@ export function DatabaseMetadataPanel({
   if (!database || !draft) {
     return (
       <p className="text-sm text-muted-foreground">
-        Hover a database in the catalog and click the info icon to view metadata.
+        {t("Hover a database in the catalog and click the info icon to view metadata.")}
       </p>
     );
   }
@@ -73,7 +75,7 @@ export function DatabaseMetadataPanel({
             {database.name}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Read-only by default. Enable edit mode to update Glue database metadata.
+            {t("Read-only by default. Enable edit mode to update Glue database metadata.")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -85,14 +87,14 @@ export function DatabaseMetadataPanel({
             onClick={async () => {
               try {
                 await navigator.clipboard?.writeText(buildCreateDatabaseDdl(database));
-                toast.success("CREATE DATABASE DDL copied.");
+                toast.success(t("CREATE DATABASE DDL copied."));
               } catch (error) {
                 toast.error(formatAppError(error, "Failed to copy DDL."));
               }
             }}
           >
             <Copy data-icon="inline-start" />
-            Copy DDL
+            {t("Copy DDL")}
           </Button>
           {editMode ? (
             <>
@@ -106,17 +108,17 @@ export function DatabaseMetadataPanel({
                 }}
               >
                 <X data-icon="inline-start" />
-                Cancel
+                {t("Cancel")}
               </Button>
               <Button type="button" size="sm" disabled={saving} onClick={() => onSave(draft)}>
                 <Save data-icon="inline-start" />
-                Save
+                {t("Save")}
               </Button>
             </>
           ) : (
             <Button type="button" variant="outline" size="sm" onClick={() => onEditModeChange(true)}>
               <Pencil data-icon="inline-start" />
-              Edit metadata
+              {t("Edit metadata")}
             </Button>
           )}
         </div>
@@ -146,7 +148,7 @@ export function DatabaseMetadataPanel({
         )}
       </MetadataField>
 
-      <MetadataField label="Created" readOnly>
+      <MetadataField label={t("Created")} readOnly>
         <p className="text-sm">{database.createTime || "—"}</p>
       </MetadataField>
 
@@ -156,8 +158,8 @@ export function DatabaseMetadataPanel({
           <table className="min-w-full text-sm">
             <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2">Key</th>
-                <th className="px-3 py-2">Value</th>
+                <th className="px-3 py-2">{t("Key")}</th>
+                <th className="px-3 py-2">{t("Value")}</th>
                 {editMode ? <th className="px-3 py-2 w-12" /> : null}
               </tr>
             </thead>
@@ -165,7 +167,7 @@ export function DatabaseMetadataPanel({
               {Object.entries(editMode ? draft.parameters : database.parameters).length === 0 ? (
                 <tr>
                   <td colSpan={editMode ? 3 : 2} className="px-3 py-2 text-muted-foreground">
-                    No properties.
+                    {t("No properties.")}
                   </td>
                 </tr>
               ) : (
@@ -194,7 +196,7 @@ export function DatabaseMetadataPanel({
                           variant="ghost"
                           size="icon"
                           className="size-7"
-                          aria-label={`Remove property ${key}`}
+                          aria-label={t("Remove property {key}", { key })}
                           onClick={() => {
                             const next = { ...draft.parameters };
                             delete next[key];
@@ -214,16 +216,16 @@ export function DatabaseMetadataPanel({
         {editMode ? (
           <div className="flex flex-wrap items-end gap-2">
             <div className="min-w-[140px] flex-1 space-y-1">
-              <Label className="text-xs text-muted-foreground">New key</Label>
+              <Label className="text-xs text-muted-foreground">{t("New key")}</Label>
               <Input value={newPropertyKey} onChange={(event) => setNewPropertyKey(event.target.value)} />
             </div>
             <div className="min-w-[140px] flex-1 space-y-1">
-              <Label className="text-xs text-muted-foreground">New value</Label>
+              <Label className="text-xs text-muted-foreground">{t("New value")}</Label>
               <Input value={newPropertyValue} onChange={(event) => setNewPropertyValue(event.target.value)} />
             </div>
             <Button type="button" variant="outline" size="sm" onClick={addProperty} disabled={!newPropertyKey.trim()}>
               <Plus data-icon="inline-start" />
-              Add
+              {t("Add")}
             </Button>
           </div>
         ) : null}
@@ -241,11 +243,12 @@ function MetadataField({
   readOnly?: boolean;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">
         {label}
-        {readOnly ? " (read-only)" : ""}
+        {readOnly ? t(" (read-only)") : ""}
       </Label>
       {children}
     </div>

@@ -49,6 +49,7 @@ import {
   useUpdateGlueTable
 } from "@/hooks/useGlue";
 import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
+import { useT } from "@/i18n";
 import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import {
   displayAthenaResultsPath,
@@ -101,6 +102,7 @@ type MetadataKind = "table" | "database";
 const initialResultTab = createQueryResultTab(1);
 
 export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
+  const t = useT();
   const queryClient = useQueryClient();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
@@ -482,7 +484,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         execution: started
       });
       setHistory(addSqlHistory(accountId, sqlToRun));
-      toast.success("Athena query started.");
+      toast.success(t("Athena query started."));
     } catch (error) {
       const message = formatAppError(error, "Failed to start Athena query.");
       if (isAthenaOutputPathError(message)) {
@@ -543,7 +545,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     if (!executionId) return;
     try {
       await stopQuery.mutateAsync({ queryExecutionId: executionId });
-      toast.success("Athena query cancelled.");
+      toast.success(t("Athena query cancelled."));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to stop Athena query."));
     }
@@ -558,7 +560,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         suggestedName: "athena-query-results.csv"
       });
       if (savedPath) {
-        toast.success(`Exported CSV to ${savedPath}`);
+        toast.success(t("Exported CSV to {path}", { path: savedPath }));
       }
     } catch (error) {
       toast.error(formatAppError(error, "Failed to export query results."));
@@ -591,7 +593,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     try {
       await updateTable.mutateAsync({ table });
       setMetadataEditMode(false);
-      toast.success("Table metadata updated.");
+      toast.success(t("Table metadata updated."));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to update table metadata."));
     }
@@ -601,7 +603,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     try {
       await updateDatabase.mutateAsync({ database });
       setMetadataEditMode(false);
-      toast.success("Database metadata updated.");
+      toast.success(t("Database metadata updated."));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to update database metadata."));
     }
@@ -632,7 +634,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         setHistory(addSqlHistory(accountId, dropSql));
       }
       setSelectedTable(undefined);
-      toast.success("Drop table query started.");
+      toast.success(t("Drop table query started."));
       handleRefreshCatalog();
     } catch (error) {
       toast.error(formatAppError(error, "Failed to drop table."));
@@ -679,7 +681,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     if (!accountId || !pendingFavoriteEntry) return;
     setFavorites(addSqlFavorite(accountId, name, pendingFavoriteEntry.sql));
     setPendingFavoriteEntry(null);
-    toast.success("SQL saved to favorites.");
+    toast.success(t("SQL saved to favorites."));
   };
 
   const favoriteSqlSet = useMemo(
@@ -743,13 +745,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                   variant="outline"
                   size="icon"
                   className="size-7"
-                  aria-label="Expand catalog panel"
+                  aria-label={t("Expand catalog panel")}
                   onClick={() => athenaPrefs.setCatalogCollapsed(false)}
                 >
                   <PanelLeftOpen className="size-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Show catalog · {CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
+              <TooltipContent>{t("Show catalog")} · {CATALOG_TOGGLE_SHORTCUT}</TooltipContent>
             </Tooltip>
           </div>
         ) : (
@@ -793,9 +795,9 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
           >
             <div className="flex shrink-0 items-center justify-between gap-2">
               <TabsList className="self-start">
-                <TabsTrigger value="query">Query</TabsTrigger>
+                <TabsTrigger value="query">{t("Query")}</TabsTrigger>
                 <TabsTrigger value="metadata">
-                  {metadataKind === "database" ? "Database Metadata" : "Table Metadata"}
+                  {t(metadataKind === "database" ? "Database Metadata" : "Table Metadata")}
                 </TabsTrigger>
               </TabsList>
               <Tooltip>
@@ -808,7 +810,9 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {outputPathRequired ? "Query settings · S3 path required" : "Query settings"}
+                  {outputPathRequired
+                    ? `${t("Query settings")} · ${t("S3 path required")}`
+                    : t("Query settings")}
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -837,13 +841,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                         size="icon"
                         className="size-7"
                         disabled={!running}
-                        aria-label="Stop query"
+                        aria-label={t("Stop query")}
                         onClick={handleStopQuery}
                       >
                         <Square className="size-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Stop query</TooltipContent>
+                    <TooltipContent>{t("Stop query")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -853,13 +857,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                         size="icon"
                         className="size-7"
                         disabled={startQuery.isPending || running}
-                        aria-label="Run in new tab"
+                        aria-label={t("Run in new tab")}
                         onClick={() => handleRunQueryInNewTab()}
                       >
                         <Plus className="size-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Run in new tab · {RUN_NEW_TAB_SHORTCUT}</TooltipContent>
+                    <TooltipContent>{t("Run in new tab")} · {RUN_NEW_TAB_SHORTCUT}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -868,13 +872,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                         size="icon"
                         className="size-7"
                         disabled={startQuery.isPending || running}
-                        aria-label="Run query"
+                        aria-label={t("Run query")}
                         onClick={() => handleRunQuery()}
                       >
                         <Play className="size-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Run query · {RUN_SHORTCUT}</TooltipContent>
+                    <TooltipContent>{t("Run query")} · {RUN_SHORTCUT}</TooltipContent>
                   </Tooltip>
                 </div>
               </div>
@@ -965,17 +969,20 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
       <Dialog open={dropDialogOpen} onOpenChange={setDropDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Drop table?</DialogTitle>
+            <DialogTitle>{t("Drop table?")}</DialogTitle>
             <DialogDescription>
-              This runs `DROP TABLE IF EXISTS {selectedDatabase}.{selectedTable}` in Athena and cannot be undone.
+              {t("This runs `DROP TABLE IF EXISTS {database}.{table}` in Athena and cannot be undone.", {
+                database: selectedDatabase ?? "",
+                table: selectedTable ?? ""
+              })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setDropDialogOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" variant="destructive" onClick={handleDropTable}>
-              Drop table
+              {t("Drop table")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -990,12 +997,14 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Missing LOCATION clause</DialogTitle>
+            <DialogTitle>{t("Missing LOCATION clause")}</DialogTitle>
             <DialogDescription>
-              {createLocationReminderKind(pendingLocationRun?.sql ?? "") === "database"
-                ? "This CREATE DATABASE statement does not include LOCATION. Athena allows it, but databases without an S3 location can be harder to manage later."
-                : "This CREATE TABLE statement does not include LOCATION. Athena allows it for some cases, but external tables usually need an S3 path."}{" "}
-              Continue anyway?
+              {t(
+                createLocationReminderKind(pendingLocationRun?.sql ?? "") === "database"
+                  ? "This CREATE DATABASE statement does not include LOCATION. Athena allows it, but databases without an S3 location can be harder to manage later."
+                  : "This CREATE TABLE statement does not include LOCATION. Athena allows it for some cases, but external tables usually need an S3 path."
+              )}{" "}
+              {t("Continue anyway?")}
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2 py-2">
@@ -1005,7 +1014,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
               onCheckedChange={(checked) => setLocationReminderDontAsk(checked === true)}
             />
             <Label htmlFor="skip-location-reminder" className="text-sm font-normal">
-              Don&apos;t remind me again for this account
+              {t("Don't remind me again for this account")}
             </Label>
           </div>
           <DialogFooter>
@@ -1017,10 +1026,10 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                 setPendingLocationRun(null);
               }}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="button" onClick={confirmLocationReminder}>
-              Continue
+              {t("Continue")}
             </Button>
           </DialogFooter>
         </DialogContent>

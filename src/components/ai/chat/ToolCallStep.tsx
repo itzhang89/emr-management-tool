@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
 import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { useT } from "@/i18n";
 import { formatDuration, formatJson } from "@/lib/format";
 import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ export function toolStepFromStored(call: ChatToolCall): ToolStep {
  * and it reuses that tab's JSON rendering so both read alike.
  */
 export function ToolCallStep({ step }: { step: ToolStep }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const failed = Boolean(step.error);
   const clock = useLiveClock(step.running && step.startedAt != null);
@@ -101,7 +103,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
                 : "text-muted-foreground/50"
           )}
         >
-          {step.running ? "Running" : failed ? "Failed" : "Done"}
+          {step.running ? t("Running") : failed ? t("Failed") : t("Done")}
         </span>
       </button>
 
@@ -110,9 +112,9 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
           <div className="space-y-1">
             <div className="flex h-6 items-center justify-between gap-2">
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Arguments
+                {t("Arguments")}
               </p>
-              <CopyJsonButton value={step.args} label="Arguments" />
+              <CopyJsonButton value={step.args} label={t("Arguments")} />
             </div>
             <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
               {formatJson(step.args)}
@@ -121,7 +123,9 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
 
           {step.error ? (
             <div className="space-y-1">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-destructive">Error</p>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-destructive">
+                {t("Error")}
+              </p>
               <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-destructive/10 p-2 font-mono text-xs leading-relaxed text-destructive">
                 {step.error}
               </pre>
@@ -130,16 +134,16 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
             <div className="space-y-1">
               <div className="flex h-6 items-center justify-between gap-2">
                 <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Result
+                  {t("Result")}
                 </p>
-                <CopyJsonButton value={step.result} label="Result" />
+                <CopyJsonButton value={step.result} label={t("Result")} />
               </div>
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
                 {formatJson(step.result)}
               </pre>
             </div>
           ) : (
-            !step.running && <p className="text-xs text-muted-foreground">No output.</p>
+            !step.running && <p className="text-xs text-muted-foreground">{t("No output.")}</p>
           )}
         </div>
       )}

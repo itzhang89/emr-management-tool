@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
+import { useT } from "@/i18n";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
 
 export type ModelOption = {
@@ -66,7 +67,7 @@ export function ModelSelect({
   value,
   onChange,
   disabled,
-  placeholder = "Select a model",
+  placeholder,
   className
 }: {
   options: ModelOption[];
@@ -76,6 +77,8 @@ export function ModelSelect({
   placeholder?: string;
   className?: string;
 }) {
+  const t = useT();
+  const placeholderText = placeholder ?? t("Select a model");
   const grouped = useMemo(() => {
     const byProvider = new Map<string, ModelOption[]>();
     for (const option of options) {
@@ -95,8 +98,10 @@ export function ModelSelect({
       onValueChange={onChange}
       disabled={disabled || options.length === 0}
     >
-      <SelectTrigger className={className} aria-label="Model">
-        <SelectValue placeholder={options.length === 0 ? "No models configured" : placeholder} />
+      <SelectTrigger className={className} aria-label={t("Model")}>
+        <SelectValue
+          placeholder={options.length === 0 ? t("No models configured") : placeholderText}
+        />
       </SelectTrigger>
       <SelectContent>
         {grouped.map(([label, groupOptions]) => (
