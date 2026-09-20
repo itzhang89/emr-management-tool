@@ -184,6 +184,23 @@ describe("AppShell", () => {
     });
   });
 
+  // jsdom does no layout, so this guards the classes the viewport pinning
+  // depends on rather than the resulting heights: `min-h-screen` let the
+  // document grow past 100vh as soon as a tall child showed up — the DBHub
+  // second level under the nav was the one that did it — which handed the
+  // window a scrollbar and left the viewport-pinned pages (DBHub, Logs, S3,
+  // Submit) short of the bottom edge.
+  it("pins the shell to the viewport and scrolls the nav instead of the window", () => {
+    const queryClient = new QueryClient();
+    const { container } = renderAppShell(queryClient);
+
+    const shell = container.firstElementChild;
+    expect(shell).toHaveClass("h-screen", "overflow-hidden");
+    expect(shell).not.toHaveClass("min-h-screen");
+    expect(screen.getByRole("navigation", { name: "Primary" })).toHaveClass("min-h-0", "overflow-y-auto");
+    expect(screen.getByRole("main")).toHaveClass("overflow-y-auto");
+  });
+
   it("prioritizes Submit Job and switches pages from the sidebar", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();

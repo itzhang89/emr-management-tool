@@ -66,10 +66,13 @@ export function DbHubPage({
   const dynamicTabs = connections.filter((connection) => connection.showAsTab);
 
   return (
-    // Pinned to the viewport the same way Logs and AI Assistant are (3rem is
-    // the main element's padding): every tab scrolls inside itself, so the
-    // page must not grow and hand its overflow to the window.
-    <div className="flex h-[calc(100vh-3rem)] min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
+    // `h-full`, not `calc(100vh-3rem)`: the shell pins itself to the viewport
+    // and `main` is the only thing between them, so the page now measures
+    // whatever `main` actually has instead of re-deriving it from the window
+    // (which silently went stale as soon as anything else changed the shell's
+    // height). Every tab then scrolls inside itself and the page never hands
+    // its overflow to the window.
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-hidden">
       <Tabs
         value={activeTab}
         onValueChange={setActiveTab}

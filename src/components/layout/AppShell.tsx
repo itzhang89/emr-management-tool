@@ -276,8 +276,15 @@ export function AppShell() {
   }, [activePage, dbHubTabIntent, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside className={cn("flex shrink-0 flex-col border-r bg-card transition-[width]", sidebarCollapsed ? "w-20" : "w-72")}>
+    // `h-screen overflow-hidden`, not `min-h-screen`: the shell owns the
+    // viewport, so the window itself never scrolls. Pages that are taller than
+    // the window (Dashboard, Settings, …) scroll inside `main`; pages that pin
+    // themselves to the viewport (DBHub, Logs, S3, Submit) fit it exactly. With
+    // `min-h-screen` any tall child — the sidebar with the DBHub second level
+    // expanded is the usual one — grew the document past 100vh and dragged a
+    // window scrollbar in, leaving the pinned pages short of the bottom edge.
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <aside className={cn("flex shrink-0 flex-col overflow-hidden border-r bg-card transition-[width]", sidebarCollapsed ? "w-20" : "w-72")}>
         <div
           className={cn(
             sidebarCollapsed
@@ -344,7 +351,10 @@ export function AppShell() {
             )}
           </button>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 px-3 pb-4" aria-label={t("Primary")}>
+        {/* The nav is the sidebar's one growing region, so it scrolls inside the
+            sidebar instead of stretching the shell: with 11 pages plus a DBHub
+            second level the list is taller than a laptop window. */}
+        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4" aria-label={t("Primary")}>
           {navigationItems.map((item) => (
             <div key={item.id}>
               {renderNavButton({
@@ -369,7 +379,11 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
+        {/* `overflow-y-auto` rather than `hidden`: the window no longer scrolls,
+            so the content area has to be the scroll container for the
+            document-style pages. Pinned pages are exactly this box's height, so
+            they never trigger it. */}
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
           <Suspense fallback={<PageLoader />}>
             <div className="flex min-h-0 flex-1 flex-col">{activePageContent}</div>
           </Suspense>
