@@ -179,7 +179,9 @@ describe("SubmitJobPage", () => {
       </QueryClientProvider>
     );
 
-    expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+    // The page carries no PageHeader; its mode tabs and the Submit button on
+    // that same row are its controls.
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Template/i })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Source/i })).toBeInTheDocument();
     expect(screen.getByText("Runtime Selection")).toBeInTheDocument();

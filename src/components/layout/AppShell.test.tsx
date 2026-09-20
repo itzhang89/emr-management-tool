@@ -240,8 +240,10 @@ describe("AppShell", () => {
     const queryClient = new QueryClient();
     renderAppShell(queryClient);
 
-    expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByText("Template-driven submission")).toBeInTheDocument();
+    // No PageHeader here either — the sidebar entry names the page — so its
+    // own Template/Source tabs are what prove the body rendered.
+    expect(within(screen.getByRole("main")).getByRole("tab", { name: "Template" })).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByRole("tab", { name: "Source" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
@@ -330,7 +332,7 @@ describe("AppShell", () => {
       within(screen.getByRole("row", { name: /failed-no-source FAILED/i })).getByRole("button", { name: /Rerun/i })
     );
 
-    expect(await screen.findByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Template" })).toBeInTheDocument();
   });
 
   it("opens the shortcuts dialog with the global shortcut in browser mode", async () => {
@@ -468,7 +470,7 @@ describe("AppShell", () => {
     const queryClient = new QueryClient();
     renderAppShell(queryClient);
 
-    expect(screen.getByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Template" })).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "]", code: "BracketRight", metaKey: true });
 
@@ -476,6 +478,6 @@ describe("AppShell", () => {
 
     fireEvent.keyDown(document, { key: "[", code: "BracketLeft", metaKey: true });
 
-    expect(await screen.findByRole("heading", { name: "Submit Job" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Template" })).toBeInTheDocument();
   });
 });

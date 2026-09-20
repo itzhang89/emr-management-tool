@@ -15,7 +15,6 @@ import {
   DialogTitle
 } from "@/components/ui/dialog";
 import { useEffectiveVirtualClusterId, VirtualClusterSelect } from "@/components/emr/VirtualClusterSelect";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -498,25 +497,9 @@ export function SubmitJobPage({
 
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
-      <PageHeader
-        pageId="submit"
-        actions={
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
-                  <Send data-icon="inline-start" />
-                  {startJobRun.isPending ? t("Submitting...") : t("Submit")}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("Submit job")} · {SUBMIT_SHORTCUT}
-              </TooltipContent>
-            </Tooltip>
-          </>
-        }
-      />
-
+      {/* No PageHeader here: the sidebar entry and the workspace tab already
+          name this page, and the description was the only thing a header
+          added. Its actions moved down onto the Template/Source row. */}
       <div ref={splitContainerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {cloneRequest ? (
           <Card className="shrink-0">
@@ -552,25 +535,38 @@ export function SubmitJobPage({
                     <TabsTrigger value="source">{t("Source")}</TabsTrigger>
                   </TabsList>
                 </Tabs>
-                {mode === "template" ? (
+                <div className="flex items-center gap-2">
+                  {mode === "template" ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label={t("Preview JSON")}
+                          disabled={!previewPayload}
+                          onClick={openPreview}
+                        >
+                          <Eye className="size-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t("Preview JSON")} · {PREVIEW_JSON_SHORTCUT}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        aria-label={t("Preview JSON")}
-                        disabled={!previewPayload}
-                        onClick={openPreview}
-                      >
-                        <Eye className="size-4" />
+                      <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
+                        <Send data-icon="inline-start" />
+                        {startJobRun.isPending ? t("Submitting...") : t("Submit")}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {t("Preview JSON")} · {PREVIEW_JSON_SHORTCUT}
+                      {t("Submit job")} · {SUBMIT_SHORTCUT}
                     </TooltipContent>
                   </Tooltip>
-                ) : null}
+                </div>
               </div>
               {mode === "template" ? (
                 <div className="min-h-0 flex-1 space-y-4 overflow-auto">
