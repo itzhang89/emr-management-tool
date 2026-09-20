@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Eye, EyeOff, KeyRound, Plus, RefreshCw, Search } from "lucide-react";
+import { Fragment, useMemo, useState, type MouseEvent } from "react";
+import { Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,7 @@ import { useCreateSecret, useGetSecretValue, useSecrets } from "@/hooks/useSecre
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { SecretSummary } from "@/types/domain";
+import { cn } from "@/lib/utils";
 
 const JSON_TEMPLATE = `{
   "username": "",
@@ -31,8 +33,32 @@ const JSON_TEMPLATE = `{
   "database": ""
 }`;
 
+const MASK = "••••••••";
+
 function tagValue(secret: SecretSummary, key: string): string | undefined {
   return secret.tags.find((tag) => tag.key === key)?.value;
+}
+
+/** First-level JSON object entries only; non-objects become a single synthetic field. */
+export function firstLevelSecretFields(
+  raw: string
+): { kind: "object"; fields: { key: string; value: string }[] } | { kind: "raw"; value: string } {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const fields = Object.entries(parsed as Record<string, unknown>).map(([key, value]) => ({
+        key,
+        value:
+          value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+            ? String(value)
+            : JSON.stringify(value)
+      }));
+      return { kind: "object", fields };
+    }
+  } catch {
+    // fall through
+  }
+  return { kind: "raw", value: raw };
 }
 
 export function SecretsPage() {
@@ -46,8 +72,13 @@ export function SecretsPage() {
   const [search, setSearch] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [selected, setSelected] = useState<SecretSummary | null>(null);
-  const [revealed, setRevealed] = useState<string | null>(null);
+  /** ARN of the expanded row. */
+  const [expandedArn, setExpandedArn] = useState<string | null>(null);
+  /** Fetched SecretString for the expanded row. */
+  const [expandedRaw, setExpandedRaw] = useState<string | null>(null);
+  const [expandLoading, setExpandLoading] = useState(false);
+  /** Keys whose values are currently revealed (within the expanded row). */
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -68,6 +99,11 @@ export function SecretsPage() {
       );
     });
   }, [secrets, search, mineOnly, submitUser.data]);
+
+  const expandedFields = useMemo(
+    () => (expandedRaw === null ? null : firstLevelSecretFields(expandedRaw)),
+    [expandedRaw]
+  );
 
   const resetCreate = () => {
     setName("");
@@ -100,32 +136,60 @@ export function SecretsPage() {
     }
   };
 
-  const copyValue = async (secret: SecretSummary) => {
+  const copyText = async (text: string, successLabel?: string) => {
+    await navigator.clipboard.writeText(text);
+    toast.success(successLabel ?? t("Copied to clipboard"));
+  };
+
+  const copyWholeSecret = async (secret: SecretSummary, event: MouseEvent) => {
+    event.stopPropagation();
     try {
       const { value } = await getSecretValue.mutateAsync(secret.arn);
-      await navigator.clipboard.writeText(value);
-      toast.success(t("Copied to clipboard"));
+      await copyText(value, t("Copied entire secret"));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to copy secret value."));
     }
   };
 
-  const toggleReveal = async (secret: SecretSummary) => {
-    if (revealed !== null && selected?.arn === secret.arn) {
-      setRevealed(null);
-      return;
-    }
+  const copyFieldValue = async (value: string, key: string, event: MouseEvent) => {
+    event.stopPropagation();
     try {
-      const { value } = await getSecretValue.mutateAsync(secret.arn);
-      setRevealed(value);
+      await copyText(value, t('Copied "{key}"', { key }));
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to reveal secret value."));
+      toast.error(formatAppError(error, "Failed to copy secret value."));
     }
   };
 
-  const openDetail = (secret: SecretSummary) => {
-    setSelected(secret);
-    setRevealed(null);
+  const toggleRevealKey = (key: string, event: MouseEvent) => {
+    event.stopPropagation();
+    setRevealedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleExpand = async (secret: SecretSummary) => {
+    if (expandedArn === secret.arn) {
+      setExpandedArn(null);
+      setExpandedRaw(null);
+      setRevealedKeys(new Set());
+      return;
+    }
+    setExpandedArn(secret.arn);
+    setExpandedRaw(null);
+    setRevealedKeys(new Set());
+    setExpandLoading(true);
+    try {
+      const { value } = await getSecretValue.mutateAsync(secret.arn);
+      setExpandedRaw(value);
+    } catch (error) {
+      setExpandedArn(null);
+      toast.error(formatAppError(error, "Failed to load secret value."));
+    } finally {
+      setExpandLoading(false);
+    }
   };
 
   if (!activeAccount.data) {
@@ -196,7 +260,7 @@ export function SecretsPage() {
               <th className="px-3 py-2 font-medium">{t("Description")}</th>
               <th className="px-3 py-2 font-medium">{t("Tags")}</th>
               <th className="px-3 py-2 font-medium">{t("Last changed")}</th>
-              <th className="px-3 py-2 font-medium">{t("Actions")}</th>
+              <th className="w-12 px-3 py-2 font-medium">{t("Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -215,55 +279,110 @@ export function SecretsPage() {
             ) : (
               filtered.map((secret) => {
                 const owner = tagValue(secret, "submitUser");
+                const isExpanded = expandedArn === secret.arn;
                 return (
-                  <tr key={secret.arn} className="border-b last:border-0">
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        className="flex items-center gap-1.5 font-medium hover:underline"
-                        onClick={() => openDetail(secret)}
-                      >
-                        <KeyRound className="size-3.5 text-muted-foreground" />
-                        {secret.name}
-                      </button>
-                    </td>
-                    <td className="max-w-[14rem] truncate px-3 py-2 text-muted-foreground">
-                      {secret.description || "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
-                        {owner ? (
-                          <Badge variant="outline" className="text-xs">
-                            submitUser={owner}
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="text-xs">
-                            {t("untagged")}
-                          </Badge>
-                        )}
-                        {tagValue(secret, "managedBy") ? (
-                          <Badge variant="outline" className="text-xs">
-                            managedBy
-                          </Badge>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                      {secret.lastChangedDate
-                        ? new Date(secret.lastChangedDate).toLocaleString()
-                        : "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="flex gap-1">
-                        <Button type="button" variant="ghost" size="sm" onClick={() => openDetail(secret)}>
-                          {t("View")}
-                        </Button>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => copyValue(secret)}>
-                          {t("Copy")}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                  <Fragment key={secret.arn}>
+                    <tr
+                      className={cn(
+                        "cursor-pointer border-b last:border-0 hover:bg-muted/30",
+                        isExpanded && "bg-muted/20"
+                      )}
+                      onClick={() => void toggleExpand(secret)}
+                    >
+                      <td className="px-3 py-2">
+                        <span className="flex items-center gap-1.5 font-medium">
+                          <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
+                          {secret.name}
+                        </span>
+                      </td>
+                      <td className="max-w-[14rem] truncate px-3 py-2 text-muted-foreground">
+                        {secret.description || "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {owner ? (
+                            <Badge variant="outline" className="text-xs">
+                              submitUser={owner}
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs">
+                              {t("untagged")}
+                            </Badge>
+                          )}
+                          {tagValue(secret, "managedBy") ? (
+                            <Badge variant="outline" className="text-xs">
+                              managedBy
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                        {secret.lastChangedDate
+                          ? new Date(secret.lastChangedDate).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-8"
+                              aria-label={t("Copy entire secret")}
+                              disabled={getSecretValue.isPending}
+                              onClick={(event) => void copyWholeSecret(secret, event)}
+                            >
+                              <Copy className="size-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{t("Copy entire secret")}</TooltipContent>
+                        </Tooltip>
+                      </td>
+                    </tr>
+                    {isExpanded ? (
+                      <tr className="border-b bg-muted/10 last:border-0">
+                        <td colSpan={5} className="px-3 py-3">
+                          {expandLoading || expandedRaw === null || expandedFields === null ? (
+                            <p className="text-sm text-muted-foreground">{t("Loading secret fields…")}</p>
+                          ) : expandedFields.kind === "raw" ? (
+                            <SecretFieldRow
+                              fieldKey="value"
+                              displayValue={expandedFields.value}
+                              revealed={revealedKeys.has("value")}
+                              onToggleReveal={(event) => toggleRevealKey("value", event)}
+                              onCopy={(event) =>
+                                void copyFieldValue(expandedFields.value, "value", event)
+                              }
+                              t={t}
+                            />
+                          ) : expandedFields.fields.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">{t("Empty JSON object.")}</p>
+                          ) : (
+                            <ul className="divide-y rounded-md border bg-background">
+                              {expandedFields.fields.map((field) => (
+                                <li key={field.key}>
+                                  <SecretFieldRow
+                                    fieldKey={field.key}
+                                    displayValue={field.value}
+                                    revealed={revealedKeys.has(field.key)}
+                                    onToggleReveal={(event) => toggleRevealKey(field.key, event)}
+                                    onCopy={(event) =>
+                                      void copyFieldValue(field.value, field.key, event)
+                                    }
+                                    t={t}
+                                  />
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {t("Showing first-level JSON keys only. Nested values are stringified.")}
+                          </p>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })
             )}
@@ -334,72 +453,71 @@ export function SecretsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
 
-      <Dialog
-        open={Boolean(selected)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelected(null);
-            setRevealed(null);
-          }
-        }}
+function SecretFieldRow({
+  fieldKey,
+  displayValue,
+  revealed,
+  onToggleReveal,
+  onCopy,
+  t
+}: {
+  fieldKey: string;
+  displayValue: string;
+  revealed: boolean;
+  onToggleReveal: (event: MouseEvent) => void;
+  onCopy: (event: MouseEvent) => void;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2">
+      <span className="w-36 shrink-0 truncate font-mono text-xs font-medium" title={fieldKey}>
+        {fieldKey}
+      </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate font-mono text-xs",
+          revealed ? "text-foreground" : "text-muted-foreground"
+        )}
+        title={revealed ? displayValue : undefined}
       >
-        <DialogContent className="max-w-lg">
-          {selected ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>{selected.name}</DialogTitle>
-                <DialogDescription className="break-all font-mono text-xs">{selected.arn}</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <p>
-                  <span className="text-muted-foreground">{t("Description")}: </span>
-                  {selected.description || "—"}
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {selected.tags.length === 0 ? (
-                    <Badge variant="secondary">{t("untagged")}</Badge>
-                  ) : (
-                    selected.tags.map((tag) => (
-                      <Badge key={`${tag.key}:${tag.value}`} variant="outline">
-                        {tag.key}={tag.value}
-                      </Badge>
-                    ))
-                  )}
-                </div>
-                <div className="rounded-md border bg-muted/30 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {t("Secret value")}
-                    </span>
-                    <div className="flex gap-1">
-                      <Button type="button" variant="ghost" size="sm" onClick={() => copyValue(selected)}>
-                        {t("Copy")}
-                      </Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => toggleReveal(selected)}>
-                        {revealed !== null ? (
-                          <>
-                            <EyeOff className="mr-1 size-3.5" />
-                            {t("Hide")}
-                          </>
-                        ) : (
-                          <>
-                            <Eye className="mr-1 size-3.5" />
-                            {t("Reveal")}
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">
-                    {revealed ?? "••••••••"}
-                  </pre>
-                </div>
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+        {revealed ? displayValue : MASK}
+      </span>
+      <div className="flex shrink-0 gap-0.5">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              aria-label={revealed ? t("Hide value") : t("Reveal value")}
+              onClick={onToggleReveal}
+            >
+              {revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{revealed ? t("Hide value") : t("Reveal value")}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              aria-label={t('Copy "{key}"', { key: fieldKey })}
+              onClick={onCopy}
+            >
+              <Copy className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Copy "{key}"', { key: fieldKey })}</TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 }
