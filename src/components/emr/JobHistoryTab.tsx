@@ -113,10 +113,7 @@ export function JobHistoryTab({
           refreshCountdown={refreshCountdown}
         />
         <VirtualClusterSelect />
-        <span className="shrink-0 text-sm text-muted-foreground">
-          {t("{count} jobs", { count: (jobs.data ?? []).length })}
-        </span>
-      </div>
+c      </div>
 
       <JobRunsPanel
         virtualClusterId={effectiveVirtualClusterId}
