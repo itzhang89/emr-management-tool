@@ -502,25 +502,6 @@ export function SubmitJobPage({
         pageId="submit"
         actions={
           <>
-            {mode === "template" ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    aria-label={t("Preview JSON")}
-                    disabled={!previewPayload}
-                    onClick={openPreview}
-                  >
-                    <Eye className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t("Preview JSON")} · {PREVIEW_JSON_SHORTCUT}
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" disabled={startJobRun.isPending} onClick={validateAndSubmit}>
@@ -564,12 +545,33 @@ export function SubmitJobPage({
         >
           <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-6">
-              <Tabs value={mode} onValueChange={handleModeChange} className="shrink-0">
-                <TabsList title={`${t("Toggle mode")} · ${TOGGLE_MODE_SHORTCUT}`}>
-                  <TabsTrigger value="template">{t("Template")}</TabsTrigger>
-                  <TabsTrigger value="source">{t("Source")}</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <div className="flex shrink-0 items-center justify-between gap-2">
+                <Tabs value={mode} onValueChange={handleModeChange}>
+                  <TabsList title={`${t("Toggle mode")} · ${TOGGLE_MODE_SHORTCUT}`}>
+                    <TabsTrigger value="template">{t("Template")}</TabsTrigger>
+                    <TabsTrigger value="source">{t("Source")}</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                {mode === "template" ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label={t("Preview JSON")}
+                        disabled={!previewPayload}
+                        onClick={openPreview}
+                      >
+                        <Eye className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t("Preview JSON")} · {PREVIEW_JSON_SHORTCUT}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+              </div>
               {mode === "template" ? (
                 <div className="min-h-0 flex-1 space-y-4 overflow-auto">
                   <Field label={t("Template")}>
