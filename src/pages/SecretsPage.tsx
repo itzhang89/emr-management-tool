@@ -1,12 +1,22 @@
 import { Fragment, useMemo, useState, type MouseEvent } from "react";
-import { Copy, Eye, EyeOff, KeyRound, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import {
+  Copy,
+  CopyPlus,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -31,16 +41,60 @@ import { formatAppError } from "@/services/appErrorMessage";
 import type { SecretSummary } from "@/types/domain";
 import { cn } from "@/lib/utils";
 
-const JSON_TEMPLATE = `{
-  "username": "",
-  "password": "",
-  "host": "",
-  "port": 3306,
-  "database": ""
-}`;
-
 const MASK = "••••••••";
 const DEFAULT_RECOVERY_DAYS = 7;
+
+export type SecretKvPair = { id: string; key: string; value: string };
+
+function newPairId(): string {
+  return crypto.randomUUID();
+}
+
+/** Default DB credential fields for a new secret. */
+export function defaultSecretKvPairs(): SecretKvPair[] {
+  return [
+    { id: newPairId(), key: "username", value: "" },
+    { id: newPairId(), key: "password", value: "" },
+    { id: newPairId(), key: "host", value: "" },
+    { id: newPairId(), key: "port", value: "3306" },
+    { id: newPairId(), key: "database", value: "" }
+  ];
+}
+
+/** Aggregate first-level key/value rows into a JSON object string for the API. */
+export function pairsToSecretJson(pairs: SecretKvPair[]): string {
+  const object: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const key = pair.key.trim();
+    if (!key) continue;
+    const trimmed = pair.value.trim();
+    if (key === "port" && /^-?\d+$/.test(trimmed)) {
+      object[key] = Number(trimmed);
+    } else {
+      object[key] = pair.value;
+    }
+  }
+  return JSON.stringify(object);
+}
+
+/** Load first-level fields from a SecretString into editable pairs. */
+export function pairsFromSecretJson(raw: string): SecretKvPair[] {
+  const parsed = firstLevelSecretFields(raw);
+  if (parsed.kind === "object") {
+    if (parsed.fields.length === 0) return defaultSecretKvPairs();
+    return parsed.fields.map((field) => ({
+      id: newPairId(),
+      key: field.key,
+      value: field.value
+    }));
+  }
+  return [{ id: newPairId(), key: "value", value: parsed.value }];
+}
+
+function suggestCloneName(name: string): string {
+  const base = name.trim() || "secret";
+  return `${base}-copy`;
+}
 
 function tagValue(secret: SecretSummary, key: string): string | undefined {
   return secret.tags.find((tag) => tag.key === key)?.value;
@@ -73,6 +127,8 @@ export function firstLevelSecretFields(
   return { kind: "raw", value: raw };
 }
 
+type FormMode = "create" | "edit" | "clone";
+
 export function SecretsPage() {
   const t = useT();
   const activeAccount = useActiveAwsAccount();
@@ -85,8 +141,8 @@ export function SecretsPage() {
 
   const [search, setSearch] = useState("");
   const [mineOnly, setMineOnly] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<SecretSummary | null>(null);
+  const [formMode, setFormMode] = useState<FormMode | null>(null);
+  const [formSecret, setFormSecret] = useState<SecretSummary | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SecretSummary | null>(null);
   const [expandedArn, setExpandedArn] = useState<string | null>(null);
   const [expandedRaw, setExpandedRaw] = useState<string | null>(null);
@@ -95,7 +151,7 @@ export function SecretsPage() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [secretString, setSecretString] = useState(JSON_TEMPLATE);
+  const [pairs, setPairs] = useState<SecretKvPair[]>(() => defaultSecretKvPairs());
 
   const secrets = secretsQuery.data ?? [];
   const filtered = useMemo(() => {
@@ -118,35 +174,20 @@ export function SecretsPage() {
     [expandedRaw]
   );
 
-  const resetCreate = () => {
+  const resetForm = () => {
+    setFormMode(null);
+    setFormSecret(null);
     setName("");
     setDescription("");
-    setSecretString(JSON_TEMPLATE);
+    setPairs(defaultSecretKvPairs());
   };
 
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      toast.error(t("Secret name is required."));
-      return;
-    }
-    try {
-      JSON.parse(secretString);
-    } catch {
-      toast.error(t("Secret value must be valid JSON."));
-      return;
-    }
-    try {
-      await createSecret.mutateAsync({
-        name: name.trim(),
-        description: description.trim() || undefined,
-        secretString
-      });
-      toast.success(t('Secret "{name}" created.', { name: name.trim() }));
-      setCreateOpen(false);
-      resetCreate();
-    } catch (error) {
-      toast.error(formatAppError(error, "Failed to create secret."));
-    }
+  const openCreate = () => {
+    setFormMode("create");
+    setFormSecret(null);
+    setName("");
+    setDescription("");
+    setPairs(defaultSecretKvPairs());
   };
 
   const openEdit = async (secret: SecretSummary, event: MouseEvent) => {
@@ -157,36 +198,95 @@ export function SecretsPage() {
     }
     try {
       const { value } = await getSecretValue.mutateAsync(secret.arn);
-      setEditing(secret);
+      setFormMode("edit");
+      setFormSecret(secret);
+      setName(secret.name);
       setDescription(secret.description ?? "");
-      setSecretString(value);
+      setPairs(pairsFromSecretJson(value));
     } catch (error) {
       toast.error(formatAppError(error, "Failed to load secret value."));
     }
   };
 
-  const handleUpdate = async () => {
-    if (!editing) return;
+  const openClone = async (secret: SecretSummary, event: MouseEvent) => {
+    event.stopPropagation();
     try {
-      JSON.parse(secretString);
-    } catch {
-      toast.error(t("Secret value must be valid JSON."));
+      const { value } = await getSecretValue.mutateAsync(secret.arn);
+      setFormMode("clone");
+      setFormSecret(secret);
+      setName(suggestCloneName(secret.name));
+      setDescription(secret.description ?? "");
+      setPairs(pairsFromSecretJson(value));
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to load secret value."));
+    }
+  };
+
+  const validatePairs = (): string | null => {
+    const keys = pairs.map((pair) => pair.key.trim()).filter(Boolean);
+    if (keys.length === 0) {
+      return t("Add at least one key.");
+    }
+    const seen = new Set<string>();
+    for (const key of keys) {
+      if (seen.has(key)) {
+        return t('Duplicate key "{key}".', { key });
+      }
+      seen.add(key);
+    }
+    return null;
+  };
+
+  const handleSubmitForm = async () => {
+    if (!formMode) return;
+    if (formMode !== "edit" && !name.trim()) {
+      toast.error(t("Secret name is required."));
       return;
     }
+    const pairError = validatePairs();
+    if (pairError) {
+      toast.error(pairError);
+      return;
+    }
+    const secretString = pairsToSecretJson(pairs);
+
     try {
-      await updateSecret.mutateAsync({
-        secretId: editing.arn,
-        secretString,
-        description: description.trim()
-      });
-      toast.success(t('Secret "{name}" updated.', { name: editing.name }));
-      if (expandedArn === editing.arn) {
-        setExpandedRaw(secretString);
-        setRevealedKeys(new Set());
+      if (formMode === "edit" && formSecret) {
+        await updateSecret.mutateAsync({
+          secretId: formSecret.arn,
+          secretString,
+          description: description.trim()
+        });
+        toast.success(t('Secret "{name}" updated.', { name: formSecret.name }));
+        if (expandedArn === formSecret.arn) {
+          setExpandedRaw(secretString);
+          setRevealedKeys(new Set());
+        }
+      } else {
+        const createdName = name.trim();
+        await createSecret.mutateAsync({
+          name: createdName,
+          description: description.trim() || undefined,
+          secretString
+        });
+        toast.success(
+          formMode === "clone"
+            ? t('Secret "{name}" cloned.', { name: createdName })
+            : t('Secret "{name}" created.', { name: createdName })
+        );
       }
-      setEditing(null);
+      resetForm();
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to update secret."));
+      toast.error(
+        formatAppError(
+          error,
+          formMode === "edit"
+            ? "Failed to update secret."
+            : formMode === "clone"
+              ? "Failed to clone secret."
+              : "Failed to create secret."
+        )
+      );
     }
   };
 
@@ -269,6 +369,26 @@ export function SecretsPage() {
     }
   };
 
+  const updatePair = (id: string, patch: Partial<Pick<SecretKvPair, "key" | "value">>) => {
+    setPairs((prev) => prev.map((pair) => (pair.id === id ? { ...pair, ...patch } : pair)));
+  };
+
+  const removePair = (id: string) => {
+    setPairs((prev) => (prev.length <= 1 ? prev : prev.filter((pair) => pair.id !== id)));
+  };
+
+  const addPair = () => {
+    setPairs((prev) => [...prev, { id: newPairId(), key: "", value: "" }]);
+  };
+
+  const formBusy = createSecret.isPending || updateSecret.isPending || getSecretValue.isPending;
+  const formTitle =
+    formMode === "edit"
+      ? t("Edit Secret")
+      : formMode === "clone"
+        ? t("Clone Secret")
+        : t("Create Secret");
+
   if (!activeAccount.data) {
     return (
       <div className="space-y-6 p-6">
@@ -296,7 +416,7 @@ export function SecretsPage() {
               <RefreshCw className={`mr-1.5 size-3.5 ${secretsQuery.isFetching ? "animate-spin" : ""}`} />
               {t("Refresh")}
             </Button>
-            <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
+            <Button type="button" size="sm" onClick={openCreate}>
               <Plus className="mr-1.5 size-3.5" />
               {t("Create Secret")}
             </Button>
@@ -337,7 +457,7 @@ export function SecretsPage() {
               <th className="px-3 py-2 font-medium">{t("Description")}</th>
               <th className="px-3 py-2 font-medium">{t("Tags")}</th>
               <th className="px-3 py-2 font-medium">{t("Last changed")}</th>
-              <th className="w-28 px-3 py-2 font-medium">{t("Actions")}</th>
+              <th className="w-36 px-3 py-2 font-medium">{t("Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -416,6 +536,22 @@ export function SecretsPage() {
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>{t("Copy entire secret")}</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                aria-label={t("Clone secret")}
+                                disabled={getSecretValue.isPending}
+                                onClick={(event) => void openClone(secret, event)}
+                              >
+                                <CopyPlus className="size-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Clone secret")}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -518,18 +654,23 @@ export function SecretsPage() {
       </div>
 
       <Dialog
-        open={createOpen}
+        open={formMode !== null}
         onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) resetCreate();
+          if (!open) resetForm();
         }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t("Create Secret")}</DialogTitle>
+            <DialogTitle>{formTitle}</DialogTitle>
             <DialogDescription>
-              {t(
-                "Creates a secret in the active account region. Tags submitUser and managedBy are added automatically."
+              {formMode === "edit" ? (
+                <span className="break-all font-mono text-xs">{formSecret?.arn}</span>
+              ) : formMode === "clone" ? (
+                t("Creates a new secret from a copy. Tags submitUser and managedBy are added automatically.")
+              ) : (
+                t(
+                  "Creates a secret in the active account region. Tags submitUser and managedBy are added automatically."
+                )
               )}
             </DialogDescription>
           </DialogHeader>
@@ -542,6 +683,7 @@ export function SecretsPage() {
                 onChange={(event) => setName(event.target.value)}
                 placeholder="mysql.sales_ro"
                 className="font-mono text-sm"
+                disabled={formMode === "edit"}
               />
             </div>
             <div className="space-y-1.5">
@@ -553,76 +695,65 @@ export function SecretsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="secret-value">{t("Value (JSON)")}</Label>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setSecretString(JSON_TEMPLATE)}>
-                  {t("Insert template")}
+              <div className="flex items-center justify-between gap-2">
+                <Label>{t("Fields")}</Label>
+                <Button type="button" variant="ghost" size="sm" onClick={addPair}>
+                  <Plus className="mr-1 size-3.5" />
+                  {t("Add field")}
                 </Button>
               </div>
-              <Textarea
-                id="secret-value"
-                value={secretString}
-                onChange={(event) => setSecretString(event.target.value)}
-                className="min-h-[10rem] font-mono text-xs"
-              />
+              <div className="space-y-2 rounded-md border p-2">
+                {pairs.map((pair) => (
+                  <div key={pair.id} className="flex items-center gap-2">
+                    <Input
+                      value={pair.key}
+                      onChange={(event) => updatePair(pair.id, { key: event.target.value })}
+                      placeholder={t("Key")}
+                      className="h-8 w-[9rem] shrink-0 font-mono text-xs"
+                      aria-label={t("Key")}
+                    />
+                    <Input
+                      value={pair.value}
+                      onChange={(event) => updatePair(pair.id, { value: event.target.value })}
+                      placeholder={t("Value")}
+                      className="h-8 min-w-0 flex-1 font-mono text-xs"
+                      type={pair.key.trim().toLowerCase() === "password" ? "password" : "text"}
+                      aria-label={t("Value")}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 shrink-0"
+                      aria-label={t("Remove field")}
+                      disabled={pairs.length <= 1}
+                      onClick={() => removePair(pair.id)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t("Fields are saved as a JSON object. Empty keys are skipped.")}
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {t("Auto tags")}: submitUser={submitUser.data ?? "…"}, managedBy=emr-management-tool
-            </p>
+            {formMode !== "edit" ? (
+              <p className="text-xs text-muted-foreground">
+                {t("Auto tags")}: submitUser={submitUser.data ?? "…"}, managedBy=emr-management-tool
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
+            <Button type="button" variant="outline" onClick={resetForm}>
               {t("Cancel")}
             </Button>
-            <Button type="button" onClick={handleCreate} disabled={createSecret.isPending}>
-              {t("Create")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(editing)}
-        onOpenChange={(open) => {
-          if (!open) setEditing(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t("Edit Secret")}</DialogTitle>
-            <DialogDescription className="break-all font-mono text-xs">
-              {editing?.arn}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>{t("Name")}</Label>
-              <Input value={editing?.name ?? ""} disabled className="font-mono text-sm" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-secret-description">{t("Description")}</Label>
-              <Input
-                id="edit-secret-description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="edit-secret-value">{t("Value (JSON)")}</Label>
-              <Textarea
-                id="edit-secret-value"
-                value={secretString}
-                onChange={(event) => setSecretString(event.target.value)}
-                className="min-h-[10rem] font-mono text-xs"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditing(null)}>
-              {t("Cancel")}
-            </Button>
-            <Button type="button" onClick={handleUpdate} disabled={updateSecret.isPending}>
-              {t("Save")}
+            <Button type="button" onClick={() => void handleSubmitForm()} disabled={formBusy}>
+              {formMode === "edit"
+                ? t("Save")
+                : formMode === "clone"
+                  ? t("Clone")
+                  : t("Create")}
             </Button>
           </DialogFooter>
         </DialogContent>
