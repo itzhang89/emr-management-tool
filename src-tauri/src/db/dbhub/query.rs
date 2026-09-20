@@ -182,10 +182,97 @@ fn page_sql(statement: &str, cap: usize, offset: usize) -> String {
     )
 }
 
+/// How many rows a statement would return.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbQueryCount {
+    pub count: u64,
+    pub duration_ms: u64,
+}
+
+/// Count a statement's rows by wrapping it, not by reading it.
+///
+/// `COUNT(*)` over the statement as a subquery asks the server for one number
+/// instead of every row — the difference between a query that is merely slow
+/// and one that is slow *and* moves a warehouse's worth of data across the
+/// wire to be discarded here.
+///
+/// It is still the same query underneath, so it costs what running it costs.
+/// That is why nothing calls this on its own: the grid's count is a button the
+/// user presses, not something a run does on their behalf.
+pub(crate) async fn count(
+    shape: &DbConnectionShape,
+    target: &DialTarget,
+    sql: &str,
+    cancel: &QueryCancellation<'_>,
+) -> AppResult<DbQueryCount> {
+    // The same check paging makes, for the same reason: a statement that
+    // cannot become a subquery (`SHOW TABLES`) cannot be counted this way
+    // either, and refusing beats counting something else and not saying so.
+    let Some(statement) = gate::pageable_statement(sql) else {
+        return Err(AppError::validation(
+            "Only a single SELECT can be counted. Refine the query, or add a LIMIT.",
+        ));
+    };
+
+    let started = std::time::Instant::now();
+    // A cap of one: the answer is a single row, and asking for more would only
+    // make the driver read past it.
+    let page = driver::driver_for(shape.connection.kind)
+        .query(&shape.dial(target), &count_sql(&statement), 1, cancel)
+        .await?;
+
+    Ok(DbQueryCount {
+        count: read_count(&page)?,
+        duration_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
+fn count_sql(statement: &str) -> String {
+    format!("select count(*) as dbhub_count from (\n{statement}\n) as dbhub_count_source")
+}
+
+/// Pull the number out of the one row the count returns.
+///
+/// The alias is ours, so the column name is known; the *type* is not. An
+/// engine may hand a big integer back as a JSON number or as a string, and
+/// both are correct answers.
+fn read_count(page: &driver::QueryPage) -> AppResult<u64> {
+    let value = page
+        .rows
+        .first()
+        .and_then(|row| row.get("dbhub_count"))
+        .ok_or_else(|| AppError::internal("The count query returned no rows."))?;
+    if let Some(count) = value.as_u64() {
+        return Ok(count);
+    }
+    if let Some(count) = value.as_i64() {
+        return Ok(count.max(0) as u64);
+    }
+    value
+        .as_str()
+        .and_then(|text| text.trim().parse::<u64>().ok())
+        .ok_or_else(|| AppError::internal("The count query returned a value that is not a number."))
+}
+
+/// The grid's count button's entry point.
+pub async fn count_for_command(
+    app: &tauri::AppHandle,
+    connection_id: &str,
+    sql: &str,
+) -> AppResult<DbQueryCount> {
+    let shape = shape_for(app, connection_id, false).await?;
+    complete_operation("count", async {
+        let (target, _forward) =
+            tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        count(&shape, &target, sql, &QueryCancellation::never()).await
+    })
+    .await
+}
+
 /// The human query tab's entry point: resolve the connection, open its route,
 /// run the statement.
-pub async fn run_for_command(
-    app: &tauri::AppHandle,
+pub async fn run_for_command(    app: &tauri::AppHandle,
     connection_id: &str,
     require_ai_enabled: bool,
     sql: &str,
@@ -298,8 +385,62 @@ mod tests {
     }
 
     #[test]
-    fn a_page_asks_for_one_row_past_itself() {
-        // The extra row is the sentinel `project` reads to set `truncated`;
+    fn a_count_wraps_the_statement_rather_than_reading_it() {
+        // The whole point of counting this way: the server returns one number
+        // instead of every row, so a wide result never crosses the wire.
+        let sql = count_sql("select * from orders");
+        assert!(sql.contains("count(*)"), "{sql}");
+        assert!(sql.contains("select * from orders"), "{sql}");
+    }
+
+    #[test]
+    fn a_count_reads_the_number_however_the_engine_typed_it() {
+        // Postgres hands a bigint back as a JSON number; a driver may give the
+        // same answer as a string. Both are the count.
+        let as_number = driver::QueryPage {
+            columns: vec!["dbhub_count".into()],
+            rows: vec![serde_json::json!({ "dbhub_count": 42 })],
+            truncated: false,
+        };
+        let as_text = driver::QueryPage {
+            columns: vec!["dbhub_count".into()],
+            rows: vec![serde_json::json!({ "dbhub_count": "42" })],
+            truncated: false,
+        };
+
+        assert_eq!(read_count(&as_number).expect("number"), 42);
+        assert_eq!(read_count(&as_text).expect("text"), 42);
+    }
+
+    #[test]
+    fn a_count_that_came_back_empty_is_an_error_not_a_zero() {
+        // Reporting 0 for a query that returned nothing to read would be a
+        // confident lie about how many rows the table holds.
+        let empty = driver::QueryPage {
+            columns: vec![],
+            rows: vec![],
+            truncated: false,
+        };
+        assert!(read_count(&empty).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_count_refuses_a_statement_it_cannot_wrap_without_dialing() {
+        // Same refusal as paging, and for the same reason. The host is a closed
+        // port, so a dial would fail differently.
+        let mut shape = shape_for_gate_test();
+        shape.connection.host = "127.0.0.1".into();
+        shape.connection.port = 1;
+        let target = DialTarget::direct(&shape.connection);
+
+        let error = count(&shape, &target, "SHOW TABLES", &QueryCancellation::never())
+            .await
+            .expect_err("a SHOW cannot be counted this way");
+        assert!(error.message.contains("counted"), "{error:?}");
+    }
+
+    #[test]
+    fn a_page_asks_for_one_row_past_itself() {        // The extra row is the sentinel `project` reads to set `truncated`;
         // asking for exactly the cap would make every page look complete.
         let sql = page_sql("select * from orders", 500, 1000);
         assert!(sql.contains("limit 501 offset 1000"), "{sql}");

@@ -184,6 +184,7 @@ const dbhub: TranslationDictionary = {
   "stops reading; the server notices when the connection closes":
     "停止读取；连接关闭后服务端会察觉",
   "Run in new tab": "在新标签页中运行",
+  "the result opens as its own tab beside this one": "结果会在本标签页旁以独立标签页打开",
   "Run query": "运行查询",
   "the read-only gate blocks every non-SELECT statement": "只读闸门会拦截所有非 SELECT 语句",
   "Write {kind} SQL here…": "在此编写 {kind} SQL…",
@@ -210,6 +211,62 @@ const dbhub: TranslationDictionary = {
   "The result set exceeded the local cache budget, so only this tab's metadata was kept.":
     "结果集超出本地缓存配额，因此仅保留了此标签页的元数据。",
   "Rerun to load fresh results": "重新运行以加载最新结果",
+
+  // --- ResultPane / ResultViewRail -----------------------------------------
+  // The rail's three labels reach `t()` through a variable, so they are absent
+  // from the literal-key scanner and are listed here for the runtime lookup.
+  // ("Text" already lives in the AI shard; this sidebar and that one agree on it.)
+  Grid: "网格",
+  Record: "单条记录",
+  "Stopped before it returned any rows.": "在返回任何行之前已停止。",
+  "The run failed, so there are no rows to show.": "运行失败，因此没有可显示的行。",
+
+  // --- ResultGrid ----------------------------------------------------------
+  "Drag a column header here to group rows": "将列标题拖到此处即可按该列分组",
+  "Drop to group by this column": "松开即可按此列分组",
+  "Remove {column} from grouping": "将 {column} 移出分组",
+  "Drag to group · click the arrow to sort": "拖动可分组 · 点击箭头可排序",
+  "Sort by {column}": "按 {column} 排序",
+  "Column actions for {column}": "{column} 的列操作",
+  "Sort ascending": "升序排列",
+  "Sort descending": "降序排列",
+  "Clear sort": "清除排序",
+  "Group by this column": "按此列分组",
+  "Remove from grouping": "移出分组",
+  "Expand all groups": "展开所有分组",
+  "Collapse all groups": "折叠所有分组",
+
+  // --- ResultTextView ------------------------------------------------------
+  "Tab-separated · {count} rows on this page": "制表符分隔 · 本页 {count} 行",
+  "Copy as text": "复制为文本",
+
+  // --- ResultRecordView ----------------------------------------------------
+  "Select a row in the grid to read it here.": "在网格中选择一行即可在此查看。",
+  "Previous record": "上一条记录",
+  "Next record": "下一条记录",
+  "Record {position} of {total}": "第 {position} 条记录，共 {total} 条",
+
+  // --- ResultBottomBar -----------------------------------------------------
+  "First page": "第一页",
+  "Next page · re-runs the query": "下一页 · 会重新执行查询",
+  "Last page · needs a row count first": "最后一页 · 需先统计总行数",
+  Export: "导出",
+  // Format names, not prose — they are spelled the same in every locale.
+  CSV: "CSV",
+  JSON: "JSON",
+  "one object per row, as the driver sent it": "每行一个对象，与驱动返回的一致",
+  "Rows per page": "每页行数",
+  "Rows per page · takes effect on the next run, up to {max}":
+    "每页行数 · 下次运行时生效，最大 {max}",
+  Count: "统计",
+  "Total rows · runs COUNT(*) over the whole statement": "总行数 · 对整个语句执行 COUNT(*)",
+  "Count all rows · re-runs the query inside COUNT(*), which can be slow":
+    "统计总行数 · 在 COUNT(*) 中重新执行查询，可能较慢",
+  "rows {from}–{to}": "第 {from}–{to} 行",
+  "updated {at}": "更新于 {at}",
+
+  // --- QueryTabsPanel ------------------------------------------------------
+  "New query tab": "新建查询标签页",
 
   // --- SqlEditor / AthenaSqlEditor -----------------------------------------
   "Write SQL here…": "在此编写 SQL…",

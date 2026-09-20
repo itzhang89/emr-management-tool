@@ -88,6 +88,8 @@ import type {
   NetworkProfileTestInput,
   DbQueryResult,
   DbQueryRequest,
+  DbQueryCount,
+  DbQueryCountRequest,
   DbCatalogEntry,
   SchemaObjectKind,
   SecretSummary,
@@ -316,6 +318,10 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbTestResult>("test_network_profile_draft", request),
     // Read-only query execution for connection tabs (gate + read-only tx).
     runDbQuery: (request: DbQueryRequest) => call<DbQueryResult>("run_db_query", request),
+    // Separate from the run: a count re-runs the statement inside COUNT(*),
+    // so it is asked for on its own rather than fetched with every page.
+    countDbQuery: (request: DbQueryCountRequest) =>
+      call<DbQueryCount>("count_db_query", request),
     cancelDbQuery: (requestId: string) =>
       call<boolean>("cancel_db_query", { requestId }),
     refreshDbCatalog: (connectionId: string) =>

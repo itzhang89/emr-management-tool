@@ -1345,6 +1345,24 @@ export interface DbQueryRequest {
   requestId?: string;
 }
 
+/**
+ * Asks how many rows a statement would return.
+ *
+ * Its own request rather than a flag on the run: the count re-runs the whole
+ * statement inside a `COUNT(*)`, which on a warehouse costs what running it
+ * costs, so it is a thing the user asks for and not a thing a run does.
+ */
+export interface DbQueryCountRequest {
+  connectionId: string;
+  sql: string;
+}
+
+/** One statement's total row count, and what counting it cost. */
+export interface DbQueryCount {
+  count: number;
+  durationMs: number;
+}
+
 /** One entry of the workspace catalog tree (database or table). */
 /**
  * What a schema can hold. A fixed set rather than each engine's own spelling

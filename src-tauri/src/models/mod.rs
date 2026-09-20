@@ -1937,6 +1937,16 @@ pub struct DbQueryCancelRequest {
     pub request_id: String,
 }
 
+/// Asks how many rows a statement would return. Separate from `DbQueryRequest`
+/// because it is a different act: nothing is paged, nothing is returned but a
+/// number, and the caller has to mean it — the count re-runs the whole query.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbQueryCountRequest {
+    pub connection_id: String,
+    pub sql: String,
+}
+
 #[cfg(test)]
 mod dbhub_wire_tests {
     use super::*;

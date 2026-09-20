@@ -5,6 +5,7 @@ import type {
   DbConnectionTestInput,
   DbConnectionUpdateInput,
   DbQueryRequest,
+  DbQueryCountRequest,
   NetworkProfileInput,
   NetworkProfileTestInput,
   SchemaObjectKind
@@ -138,6 +139,17 @@ export function useTestNetworkProfileDraft() {
 export function useRunDbQuery() {
   return useMutation({
     mutationFn: (request: DbQueryRequest) => dbHubService.runQuery(request)
+  });
+}
+
+/**
+ * Ask how many rows a statement would return. Deliberately its own mutation and
+ * not part of the run: the count re-runs the statement, so the user asks for it
+ * by clicking, and a slow answer must not hold up the page they already have.
+ */
+export function useCountDbQuery() {
+  return useMutation({
+    mutationFn: (request: DbQueryCountRequest) => dbHubService.countQuery(request)
   });
 }
 

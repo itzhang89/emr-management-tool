@@ -54,6 +54,9 @@ const listDbObjects = vi
     }
   );
 const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
+// Counting re-runs the statement, so it is asked for on its own and never
+// happens as a side effect of a run.
+const countDbQuery = vi.fn().mockResolvedValue({ count: 1, durationMs: 2 });
 const cancelDbQuery = vi.fn().mockResolvedValue(true);
 const refreshDbCatalog = vi.fn().mockResolvedValue(undefined);
 const saveTextFile = vi.fn().mockResolvedValue(undefined);
@@ -80,6 +83,7 @@ vi.mock("@/services/tauriClient", () => ({
     listDbSchemas: (...args: unknown[]) => listDbSchemas(...args),
     listDbObjects: (...args: unknown[]) => listDbObjects(...args),
     runDbQuery: (...args: unknown[]) => runDbQuery(...args),
+    countDbQuery: (...args: unknown[]) => countDbQuery(...args),
     cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
     refreshDbCatalog: (...args: unknown[]) => refreshDbCatalog(...args),
     saveTextFile: (...args: unknown[]) => saveTextFile(...args)
@@ -258,38 +262,96 @@ describe("ConnectionQueryTab", () => {
     );
   });
 
-  it("runs into the tab on screen, titling it from the statement", async () => {
+  it("runs into the editor's own result tab, named Result 1", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "warehouse" }));
 
-    // One blank tab to begin with, so the strip is never empty.
-    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    // A fresh editor has no results yet — the strip says where they will go.
+    expect(await screen.findByText("Run a query to see results here.")).toBeInTheDocument();
 
-    // Clicking a table writes its SELECT into the editor; running fills the
-    // blank tab in place rather than adding a second one. The table arrives
-    // with the catalog query, so this waits for it rather than assuming it
-    // landed alongside the tab strip.
+    // Clicking a table writes its SELECT into the editor; running opens the
+    // first result tab, numbered rather than named after the table. The table
+    // arrives with the catalog query, so this waits for it rather than
+    // assuming it landed alongside the editor.
     await user.click(await screen.findByRole("button", { name: "warehouse_rows" }));
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
     await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
-    // Two buttons carry that name now — the tree's row and the tab the run
-    // filled in place, titled from the statement rather than "Result 1".
-    await waitFor(() =>
-      expect(screen.getAllByRole("button", { name: "warehouse_rows" })).toHaveLength(2)
-    );
-    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
   });
 
-  it("gives a run-in-new-tab one of its own", async () => {
+  it("gives a run-in-new-tab one of its own, and keeps running into it", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Run in new tab" }));
-
     await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
-    expect(screen.getByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
     expect(await screen.findByRole("button", { name: "Result 2" })).toBeInTheDocument();
+
+    // A plain run replaces the tab on screen instead of opening a third.
+    await user.click(screen.getByRole("button", { name: "Result 1" }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(runDbQuery).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("button", { name: "Result 3" })).not.toBeInTheDocument();
+  });
+
+  it("gives each editor its own results", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("button", { name: "Result 1" });
+
+    // A second editor starts empty: results belong to the editor, not the page.
+    await user.click(screen.getByRole("button", { name: "New query tab" }));
+    expect(await screen.findByRole("button", { name: "Query 2" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+    expect(screen.getByText("Run a query to see results here.")).toBeInTheDocument();
+
+    // Back to the first editor: its result is still there, untouched.
+    await user.click(screen.getByRole("button", { name: "Query 1" }));
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    expect(screen.queryByText("Run a query to see results here.")).not.toBeInTheDocument();
+  });
+
+  it("closes an editor's results with the editor", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "New query tab" }));
+    await screen.findByRole("button", { name: "Query 2" });
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 1" });
+
+    await user.click(screen.getByRole("button", { name: "Close Query 2" }));
+
+    // Query 1 is back on screen and has never run, so its strip is empty again.
+    expect(await screen.findByRole("button", { name: "Query 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+  });
+
+  it("writes a clicked table into the editor on screen, not into every editor", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "New query tab" }));
+    await screen.findByRole("button", { name: "Query 2" });
+
+    // The second editor is still on the default statement.
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent("SELECT 1;");
+
+    await user.click(screen.getByRole("button", { name: "orders" }));
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
+      "SELECT * FROM `sales`.`orders` LIMIT 100;"
+    );
+
+    // And the first editor never saw it — each tab is its own document.
+    await user.click(screen.getByRole("button", { name: "Query 1" }));
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent("SELECT 1;");
   });
 
   it("closes a result tab and drops the close buttons once one is left", async () => {
@@ -297,6 +359,9 @@ describe("ConnectionQueryTab", () => {
     renderWorkspace();
 
     await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 1" });
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 2" });
     await waitFor(() => expect(screen.getAllByRole("button", { name: /^Close / })).toHaveLength(2));
 
     await user.click(screen.getByRole("button", { name: "Close Result 1" }));
@@ -329,7 +394,11 @@ describe("ConnectionQueryTab", () => {
 
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
-    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    // The run still gets the tab it would have filled, saying only that it was
+    // stopped: silence would leave the user wondering whether the click landed.
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText("Stopped before it returned any rows.")).toBeInTheDocument();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -350,26 +419,85 @@ describe("ConnectionQueryTab", () => {
     expect(cancelDbQuery).toHaveBeenCalledWith(expect.any(String));
   });
 
-  it("adds the next page to the tab it belongs to", async () => {
+  it("shows one page at a time, and can step both ways", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    // A full page, and the sentinel saying there is more after it.
+    runDbQuery.mockResolvedValueOnce(page(200, 0, true));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    const next = await screen.findByRole("button", { name: "Next page · re-runs the query" });
+    // First page: nothing before it.
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+
+    // The page after it is the last one, and a last page is short: one row
+    // where a full page held two hundred.
+    runDbQuery.mockResolvedValueOnce(page(1, 200, false));
+    await user.click(next);
+
+    // The second page was asked for by offset, at the tab's own page size —
+    // and it *replaced* the first, which is what makes Previous meaningful.
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenLastCalledWith(
+        expect.objectContaining({ offset: 200, maxRows: 200, sql: "SELECT 1;" })
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Next page · re-runs the query" })).toBeDisabled()
+    );
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+
+    // Back by a whole page, not by the rows on it: subtracting this page's one
+    // row would land on 199 and skip everything between, without saying so.
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 0 }))
+    );
+  });
+
+  it("will not offer the last page until a count has said where it is", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     runDbQuery.mockResolvedValueOnce(page(2, 0, true));
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    await screen.findByRole("button", { name: "Load more rows" });
 
-    runDbQuery.mockResolvedValueOnce(page(1, 2, false));
-    await user.click(screen.getByRole("button", { name: "Load more rows" }));
+    const last = await screen.findByRole("button", { name: "Last page · needs a row count first" });
+    expect(last).toBeDisabled();
 
-    // The second page was asked for by offset, and its rows joined the first.
+    countDbQuery.mockResolvedValueOnce({ count: 500, durationMs: 4 });
+    await user.click(screen.getByRole("button", { name: "Count" }));
+
+    // Counting is explicit, so the number is only ever there because asked —
+    // and it is what makes "last" a place that exists.
+    expect(await screen.findByRole("button", { name: "500" })).toBeInTheDocument();
     await waitFor(() =>
-      expect(runDbQuery).toHaveBeenLastCalledWith(
-        expect.objectContaining({ offset: 2, sql: "SELECT 1;" })
-      )
+      expect(screen.getByRole("button", { name: "Last page · needs a row count first" })).toBeEnabled()
     );
-    await waitFor(() => expect(screen.getByText(/3 rows/)).toBeInTheDocument());
-    // Nothing left to load, so the offer goes away.
-    expect(screen.queryByRole("button", { name: "Load more rows" })).not.toBeInTheDocument();
+
+    // 500 rows at 200 per page puts the last page at 400, not at 300.
+    await user.click(screen.getByRole("button", { name: "Last page · needs a row count first" }));
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 400 }))
+    );
+  });
+
+  it("says why a count failed instead of inventing a number", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(page(2, 0, false));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("button", { name: "Count" });
+
+    countDbQuery.mockRejectedValueOnce({ code: "Validation", message: "Only a single SELECT can be counted." });
+    await user.click(screen.getByRole("button", { name: "Count" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Only a single SELECT can be counted.")
+    );
+    // The button still says "Count": there is no number to show.
+    expect(await screen.findByRole("button", { name: "Count" })).toBeInTheDocument();
   });
 
   it("exports the rows it has loaded", async () => {
@@ -378,12 +506,53 @@ describe("ConnectionQueryTab", () => {
 
     runDbQuery.mockResolvedValueOnce(page(2, 0, false));
     await user.click(screen.getByRole("button", { name: "Run query" }));
-    await user.click(await screen.findByRole("button", { name: "Export CSV" }));
+    await user.click(await screen.findByRole("button", { name: "Export" }));
+    await user.click(await screen.findByRole("button", { name: /^CSV/ }));
 
     await waitFor(() => expect(saveTextFile).toHaveBeenCalled());
-    // "Result 2": the blank placeholder counts towards the fallback index,
-    // which is what the Glue workspace does too.
-    expect(saveTextFile).toHaveBeenCalledWith("Result 2.csv", "id\n0\n1");
+    expect(saveTextFile).toHaveBeenCalledWith("Result 1.csv", "id\n0\n1");
+  });
+
+  it("switches the result between the grid, the text dump and one record", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(page(2, 0, false));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    // The grid is where a result lands — and it says how to group, always.
+    expect(await screen.findByText("Drag a column header here to group rows")).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("tab", { name: "Text" }));
+    expect(await screen.findByText(/Tab-separated · 2 rows on this page/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Record" }));
+    // One record at a time, with a way to reach the next.
+    expect(await screen.findByRole("button", { name: "Next record" })).toBeInTheDocument();
+    expect(screen.getByText("Record 1 of 2")).toBeInTheDocument();
+  });
+
+  it("groups the loaded rows by a column and folds what it found", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce({
+      ...page(2, 0, false),
+      columns: ["region"],
+      rows: [{ region: "eu" }, { region: "eu" }]
+    });
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    await user.click(await screen.findByRole("button", { name: "Column actions for region" }));
+    await user.click(await screen.findByRole("button", { name: "Group by this column" }));
+
+    // The header carries the value its rows share, and how many that is —
+    // the only place a folded group can be counted from.
+    const header = await screen.findByRole("button", { name: /region: eu/ });
+    expect(header).toHaveTextContent("2 rows");
+
+    await user.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
   });
 
   it("answers the catalog shortcut only while it is the visible tab", async () => {

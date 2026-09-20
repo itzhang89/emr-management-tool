@@ -772,8 +772,21 @@ pub async fn run_db_query(
     .await
 }
 
-/// Stop a run the WebView started and named.
+/// How many rows a statement would return.
 ///
+/// Deliberately its own command rather than something `run_db_query` does on
+/// the side: counting wraps the statement in a `COUNT(*)`, which on a warehouse
+/// costs what running the query costs, so it happens when the user asks and not
+/// once per page.
+#[tauri::command]
+pub async fn count_db_query(
+    app: AppHandle,
+    request: crate::models::DbQueryCountRequest,
+) -> AppResult<query::DbQueryCount> {
+    query::count_for_command(&app, &request.connection_id, &request.sql).await
+}
+
+/// Stop a run the WebView started and named.///
 /// This is cooperative: the row stream stops being read and its connection is
 /// dropped, which is what makes a server notice. It is **not** `KILL QUERY` —
 /// the server-side statement may live a moment longer than this returns.

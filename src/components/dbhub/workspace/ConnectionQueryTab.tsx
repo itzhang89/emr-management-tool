@@ -1,18 +1,13 @@
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Braces,
   CalendarClock,
   Database,
-  Download,
   Eye,
   Folder,
   ListFilter,
   Loader2,
   PanelLeftOpen,
-  Play,
-  Plus,
-  RefreshCw,
-  Sparkles,
   Square,
   Table2
 } from "lucide-react";
@@ -23,6 +18,7 @@ import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  useCountDbQuery,
   useDbDatabases,
   useDbSchemas,
   useDbObjects,
@@ -33,7 +29,9 @@ import {
 import { SqlEditor } from "@/components/sql/SqlEditor";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
-import { buildResultTabTitle } from "@/services/queryResultTabs";
+import { QueryTabsPanel } from "@/components/dbhub/workspace/QueryTabsPanel";
+import { ResultPane, lastPageOffset, previousPageOffset } from "@/components/dbhub/result/ResultPane";
+import { AiMark, ExecuteMark, ExecuteNewTabMark } from "@/components/dbhub/workspace/RunMarks";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
 import {
   FavoriteNameDialog,
@@ -59,8 +57,12 @@ import { formatAppError } from "@/services/appErrorMessage";
 import { toCsv } from "@/services/dbCsv";
 import { saveTextFile } from "@/services/fileDownload";
 import {
+  MAX_QUERY_TABS,
+  MAX_RESULT_TABS,
+  blankQueryTab,
   readDbWorkspace,
   writeDbWorkspace,
+  type CachedQueryTab,
   type CachedResultTab
 } from "@/services/dbWorkspaceCache";
 import { executeSqlToolName } from "@/services/aiAnalyzeDb";
@@ -70,7 +72,6 @@ import { useSessionStore } from "@/stores/sessionStore";
 import type {
   DbCatalogEntry,
   DbConnection,
-  DbQueryResult,
   SqlFavoriteEntry,
   SchemaObjectKind,
   SqlHistoryEntry
@@ -82,11 +83,17 @@ import type {
  * left, SQL editor and results on the right — with per-dialect metadata reads
  * instead of Glue.
  *
+ * The right-hand side is two strips of tabs, one inside the other: the outer
+ * holds the editor tabs (each an SQL draft of its own) and the inner holds the
+ * result tabs of whichever editor is on screen. That nesting is the point —
+ * an editor's results belong to the editor, so closing it closes them, and
+ * two drafts open side by side never overwrite each other's grid.
+ *
  * State lives in two layers (design section 7): React state for the live
  * editing experience, and the local workspace cache keyed by
  * (accountId, connectionId) as the persistence layer. The cache is written on
  * every change and rehydrated on mount, so switching accounts or leaving the
- * page and coming back restores the draft, the last selection and result-tab
+ * page and coming back restores every draft, the last selection and result-tab
  * metadata (big result bodies are dropped; a rerun restores them).
  */
 export function ConnectionQueryTab({
@@ -105,18 +112,20 @@ export function ConnectionQueryTab({
   const accountId = activeAccount.data?.id;
   const setPendingDbAnalyze = useSessionStore((state) => state.setPendingDbAnalyze);
   const runQuery = useRunDbQuery();
+  const countQuery = useCountDbQuery();
   const refreshCatalog = useRefreshDbCatalog(connection.id);
   const cancelQuery = useCancelDbQuery();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
-  const [sql, setSql] = useState("SELECT 1;");
-  const [resultTabs, setResultTabs] = useState<CachedResultTab[]>([]);
-  const [activeResultId, setActiveResultId] = useState<string>();
+  const [queryTabs, setQueryTabs] = useState<CachedQueryTab[]>([]);
+  const [activeQueryTabId, setActiveQueryTabId] = useState<string>();
   const [hydrated, setHydrated] = useState(false);
   const [running, setRunning] = useState(false);
-  /** Which tab the in-flight run belongs to, so only it shows the marker. */
+  /** Which result tab the in-flight run belongs to, so only it shows the marker. */
   const [runningTabId, setRunningTabId] = useState<string>();
+  /** Which result tab is being counted, so only its button spins. */
+  const [countingTabId, setCountingTabId] = useState<string>();
   /** The in-flight run's handle, for the stop button to name. */
   const [activeRequestId, setActiveRequestId] = useState<string>();
   const [history, setHistory] = useState<SqlHistoryEntry[]>([]);
@@ -131,14 +140,20 @@ export function ConnectionQueryTab({
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
 
   // Rehydrate once per mount+account: switching AWS accounts swaps the cache
-  // key space, so each account's draft is restored independently. The tree
+  // key space, so each account's drafts are restored independently. The tree
   // selection persists with the workspace as well.
   useEffect(() => {
     if (!accountId) return;
     const state = readDbWorkspace(accountId, connection.id);
-    setSql(state.sql || "SELECT 1;");
-    setResultTabs(state.resultTabs.length ? state.resultTabs : [blankTab()]);
-    setActiveResultId(state.activeResultTabId ?? state.resultTabs.at(-1)?.id);
+    // A workspace always has at least one editor: an empty strip has nowhere
+    // to type, and every run needs an editor to land in.
+    const tabs = state.queryTabs.length ? state.queryTabs : [blankQueryTab()];
+    setQueryTabs(tabs);
+    setActiveQueryTabId(
+      tabs.some((tab) => tab.id === state.activeQueryTabId)
+        ? state.activeQueryTabId
+        : tabs[0].id
+    );
     // If the connection declares a default database and the workspace has no
     // remembered selection, land inside it so the tree shows its tables
     // immediately (user request, mirroring how Glue restores a catalog view).
@@ -159,15 +174,24 @@ export function ConnectionQueryTab({
   useEffect(() => {
     if (!hydrated || !accountId) return;
     writeDbWorkspace(accountId, connection.id, {
-      sql,
-      activeResultTabId: activeResultId,
-      resultTabs,
+      queryTabs,
+      activeQueryTabId,
       selectedDatabase,
       selectedSchema,
       catalogCollapsed,
       objectKinds
     });
-  }, [accountId, connection.id, hydrated, sql, resultTabs, activeResultId, selectedDatabase, selectedSchema, catalogCollapsed, objectKinds]);
+  }, [
+    accountId,
+    connection.id,
+    hydrated,
+    queryTabs,
+    activeQueryTabId,
+    selectedDatabase,
+    selectedSchema,
+    catalogCollapsed,
+    objectKinds
+  ]);
 
   const databases = useDbDatabases(connection.id, active);
   const schemas = useDbSchemas(connection.id, selectedDatabase, active);
@@ -184,91 +208,188 @@ export function ConnectionQueryTab({
 
   const objects = useDbObjects(connection.id, selectedDatabase, activeSchema, objectKinds, active);
 
-  const activeResult = useMemo(
-    () => resultTabs.find((tab) => tab.id === activeResultId) ?? resultTabs.at(-1),
-    [activeResultId, resultTabs]
+  const activeQueryTab = useMemo(
+    () => queryTabs.find((tab) => tab.id === activeQueryTabId) ?? queryTabs[0],
+    [activeQueryTabId, queryTabs]
   );
 
-  /** Replace a tab where it sits, or append it — the strip keeps its order. */
-  const upsertTab = useCallback((tab: CachedResultTab) => {
-    setResultTabs((tabs) => {
-      const at = tabs.findIndex((entry) => entry.id === tab.id);
-      if (at < 0) return [...tabs, tab].slice(-MAX_RESULT_TABS);
-      const next = [...tabs];
-      next[at] = tab;
-      return next;
-    });
+  /** Replace one editor tab where it sits, or append it — the strip keeps order. */
+  const patchQueryTab = useCallback((id: string, patch: Partial<CachedQueryTab>) => {
+    setQueryTabs((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)));
   }, []);
 
-  const markTab = useCallback((id: string, patch: Partial<CachedResultTab>) => {
-    setResultTabs((tabs) => tabs.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)));
-  }, []);
+  /** The SQL on screen — every writer of it goes through here. */
+  const setEditorSql = useCallback(
+    (next: string) => {
+      if (activeQueryTab) patchQueryTab(activeQueryTab.id, { sql: next });
+    },
+    [activeQueryTab, patchQueryTab]
+  );
 
-  /** A later page joins the rows the tab already holds rather than replacing them. */
-  const appendRows = useCallback((id: string, page: DbQueryResult) => {
-    setResultTabs((tabs) =>
-      tabs.map((tab) => {
-        if (tab.id !== id || !tab.result) return tab;
-        return {
-          ...tab,
-          result: {
-            ...page,
-            // A page past the end comes back with no rows and therefore no
-            // column names; the first page's are still the right ones.
-            columns: page.columns.length ? page.columns : tab.result.columns,
-            rows: [...tab.result.rows, ...page.rows],
-            rowCount: tab.result.rowCount + page.rowCount,
-            offset: tab.result.offset
-          }
-        };
-      })
-    );
-  }, []);
+  /** Replace one result tab in place, or append it. */
+  const patchResultTab = useCallback(
+    (queryTabId: string, resultTabId: string, patch: Partial<CachedResultTab>) => {
+      setQueryTabs((tabs) =>
+        tabs.map((tab) =>
+          tab.id === queryTabId
+            ? {
+                ...tab,
+                resultTabs: tab.resultTabs.map((entry) =>
+                  entry.id === resultTabId ? { ...entry, ...patch } : entry
+                )
+              }
+            : tab
+        )
+      );
+    },
+    []
+  );
 
+  /**
+   * Put a result tab into an editor, and follow it there.
+   *
+   * A tab that is not in the strip yet costs a number (`nextResultIndex`);
+   * one that is already there is a rerun or a page and keeps the name it has,
+   * so rerunning "Result 2" does not quietly turn it into "Result 3".
+   */
+  const putResultTab = useCallback(
+    (queryTabId: string, tab: CachedResultTab, focus: boolean) => {
+      setQueryTabs((tabs) =>
+        tabs.map((editor) => {
+          if (editor.id !== queryTabId) return editor;
+          const known = editor.resultTabs.some((entry) => entry.id === tab.id);
+          return {
+            ...editor,
+            resultTabs: known
+              ? editor.resultTabs.map((entry) => (entry.id === tab.id ? tab : entry))
+              : [...editor.resultTabs, tab].slice(-MAX_RESULT_TABS),
+            activeResultTabId: focus ? tab.id : editor.activeResultTabId,
+            nextResultIndex: known ? editor.nextResultIndex : editor.nextResultIndex + 1
+          };
+        })
+      );
+    },
+    []
+  );
+
+  /**
+   * Run a statement into one of an editor's result tabs.
+   *
+   * `mode` decides which: `"replace"` lands in the tab on screen — creating one
+   * if the editor has none yet — and `"new"` always opens a fresh one.
+   * `targetId` names a tab outright, which is what paging does: a later page
+   * belongs to the tab it came from, wherever the user has since clicked.
+   */
   const execute = useCallback(
-    async (statement: string, tabId?: string, offset = 0) => {
+    async (
+      statement: string,
+      queryTabId: string,
+      options: { mode?: "replace" | "new"; targetId?: string; offset?: number } = {}
+    ) => {
       if (!statement.trim()) return;
-      const id = tabId ?? crypto.randomUUID();
+      const editor = queryTabs.find((tab) => tab.id === queryTabId);
+      if (!editor) return;
+
+      const offset = options.offset ?? 0;
+      const paging = offset > 0;
+      const reuseId = paging
+        ? options.targetId
+        : options.mode === "new"
+          ? undefined
+          : (options.targetId ?? editor.activeResultTabId);
+      const existing = reuseId
+        ? editor.resultTabs.find((tab) => tab.id === reuseId)
+        : undefined;
+      // A page whose tab has been closed has nowhere to land; the rows it
+      // would hold belong to a result the user has already dismissed.
+      if (paging && !existing) return;
+
+      const resultTabId = existing?.id ?? crypto.randomUUID();
+      const title = existing?.title ?? `Result ${editor.nextResultIndex}`;
       const requestId = crypto.randomUUID();
       setRunning(true);
-      setRunningTabId(id);
+      setRunningTabId(resultTabId);
       setActiveRequestId(requestId);
       try {
         const result = await runQuery.mutateAsync({
           connectionId: connection.id,
           sql: statement,
+          maxRows: editor.fetchSize,
           offset,
           requestId
         });
-        if (offset > 0) {
-          appendRows(id, result);
+        const ranAt = new Date().toISOString();
+        if (paging) {
+          // A page replaces the rows before it rather than joining them: the
+          // strip offers a previous page, and an appended page has no "before".
+          patchResultTab(queryTabId, resultTabId, {
+            result,
+            ranAt,
+            durationMs: result.durationMs,
+            runState: undefined,
+            runError: undefined
+          });
         } else {
           // Only a run that finished enters the history: a cancelled or failed
           // statement is not something to offer back.
           if (accountId) {
             setHistory(dbSqlStore.addHistory(dbSqlScope(accountId, connection.id), statement));
           }
-          upsertTab({
-            id,
-            title: buildResultTabTitle(statement, resultTabs.length + 1),
-            sql: statement,
-            ranAt: new Date().toISOString(),
-            durationMs: result.durationMs,
-            result
-          });
+          putResultTab(
+            queryTabId,
+            {
+              id: resultTabId,
+              title,
+              sql: statement,
+              ranAt,
+              durationMs: result.durationMs,
+              result,
+              // A rerun is a new result set: keep how the grid was arranged,
+              // because sort and grouping are the user's reading of the data,
+              // but drop the row count and the selected record — both describe
+              // rows that are no longer here.
+              view: existing?.view,
+              sort: existing?.sort,
+              groupBy: existing?.groupBy,
+              collapsedGroups: existing?.collapsedGroups,
+              runState: undefined,
+              runError: undefined
+            },
+            true
+          );
         }
-        setActiveResultId(id);
         // The run may have dropped the very table the tree is showing. The
         // backend has already forgotten its copy; this forgets the WebView's.
         if (result.catalogChanged) void refreshCatalog();
       } catch (error) {
         const appError = error as { code?: string; message?: string };
-        if (appError?.code === "Cancelled") {
-          // A stopped run is a state, not a failure — it belongs in the tab,
-          // not in a toast apologising for something the user asked for.
-          markTab(id, { runState: "cancelled", runError: undefined });
+        const cancelled = appError?.code === "Cancelled";
+        if (existing) {
+          patchResultTab(queryTabId, resultTabId, {
+            runState: cancelled ? "cancelled" : "failed",
+            runError: cancelled ? undefined : appError?.message
+          });
+        } else if (cancelled) {
+          // Nothing to mark and nothing to apologise for — but a run the user
+          // stopped did happen, and a strip that says nothing at all would
+          // leave them wondering whether the click landed. So it gets the tab
+          // it would have filled, saying only that it was stopped.
+          putResultTab(
+            queryTabId,
+            {
+              id: resultTabId,
+              title,
+              sql: statement,
+              ranAt: new Date().toISOString(),
+              runState: "cancelled"
+            },
+            true
+          );
         } else {
-          markTab(id, { runState: "failed", runError: appError?.message });
+          // A failure with no tab to record it in is only a toast: opening a
+          // tab to hold an error would spend a "Result N" on a statement that
+          // never returned anything, and the toast already says what went
+          // wrong.
           toast.error(formatAppError(error, "Query failed."));
         }
       } finally {
@@ -277,7 +398,15 @@ export function ConnectionQueryTab({
         setActiveRequestId(undefined);
       }
     },
-    [appendRows, connection.id, markTab, resultTabs.length, runQuery, upsertTab]
+    [
+      accountId,
+      connection.id,
+      patchResultTab,
+      putResultTab,
+      queryTabs,
+      refreshCatalog,
+      runQuery
+    ]
   );
 
   /** Stop the run in flight. The backend answers `false` if it already ended. */
@@ -285,52 +414,102 @@ export function ConnectionQueryTab({
     if (activeRequestId) void cancelQuery(activeRequestId);
   };
 
-  const handleLoadMore = (tab?: CachedResultTab) => {
-    const offset = tab?.result?.nextOffset;
-    if (!tab || offset == null) return;
-    void execute(tab.sql, tab.id, offset);
+  /** Step a result tab to another page of the same statement. */
+  const handlePage = (queryTabId: string, tab: CachedResultTab, offset: number) => {
+    if (offset < 0) return;
+    void execute(tab.sql, queryTabId, { targetId: tab.id, offset });
   };
 
-  const handleExport = async (tab: CachedResultTab) => {
+  const handleExport = async (tab: CachedResultTab, format: "csv" | "json") => {
     if (!tab.result) return;
     try {
-      await saveTextFile(`${tab.title || "result"}.csv`, toCsv(tab.result.columns, tab.result.rows));
+      const name = tab.title || "result";
+      const body =
+        format === "csv"
+          ? toCsv(tab.result.columns, tab.result.rows)
+          : JSON.stringify(tab.result.rows, null, 2);
+      await saveTextFile(`${name}.${format}`, body);
     } catch (error) {
-      toast.error(formatAppError(error, "Failed to export CSV."));
+      toast.error(formatAppError(error, "Failed to export the result."));
     }
   };
 
   /**
-   * Which tab a run lands in, following the Glue workspace: a plain run
-   * replaces what the tab on screen held, and a run-in-new-tab gets its own.
+   * How many rows the statement would return — asked for, never assumed.
+   *
+   * The count re-runs the whole statement inside a `COUNT(*)`, so on a
+   * warehouse it costs what the query costs. It is a button for that reason,
+   * and a count that fails leaves the reason on the tab rather than replacing
+   * a number the user already had.
    */
-  const handleRun = (sqlOverride?: string) => void execute(sqlOverride ?? sql, activeResult?.id);
-  const handleRunNewTab = (sqlOverride?: string) => void execute(sqlOverride ?? sql);
-
-  /** Closing the last tab leaves a blank one, so the strip is never empty. */
-  const closeResultTab = (tabId: string) => {
-    setResultTabs((tabs) => {
-      const kept = tabs.filter((tab) => tab.id !== tabId);
-      if (kept.length > 0) {
-        if (tabId === activeResultId) setActiveResultId(kept.at(-1)?.id);
-        return kept;
-      }
-      const fresh = blankTab();
-      setActiveResultId(fresh.id);
-      return [fresh];
-    });
+  const handleCount = async (queryTabId: string, tab: CachedResultTab) => {
+    if (!tab.sql.trim()) return;
+    setCountingTabId(tab.id);
+    try {
+      const counted = await countQuery.mutateAsync({
+        connectionId: connection.id,
+        sql: tab.sql
+      });
+      patchResultTab(queryTabId, tab.id, { totalCount: counted.count, countError: undefined });
+    } catch (error) {
+      const message = formatAppError(error, "Failed to count the rows.");
+      patchResultTab(queryTabId, tab.id, { countError: message });
+      toast.error(message);
+    } finally {
+      setCountingTabId(undefined);
+    }
   };
 
-  /** What the strip renders: five scalars, not the whole cached tab. */
-  const stripTabs = useMemo(
-    () =>
-      resultTabs.map((tab) => ({
-        ...tab,
-        tooltip: tab.sql || tab.title,
-        running: running && tab.id === runningTabId
-      })),
-    [resultTabs, running, runningTabId]
-  );
+  /**
+   * Which tab a run lands in: a plain run replaces the result on screen and a
+   * run-in-new-tab gets a result of its own, both inside the editor that is
+   * currently open.
+   */
+  const handleRun = (statement?: string) => {
+    if (!activeQueryTab) return;
+    void execute(statement ?? activeQueryTab.sql, activeQueryTab.id, { mode: "replace" });
+  };
+  const handleRunNewTab = (statement?: string) => {
+    if (!activeQueryTab) return;
+    void execute(statement ?? activeQueryTab.sql, activeQueryTab.id, { mode: "new" });
+  };
+
+  /** Open an editor of its own, and put the cursor in it. */
+  const openQueryTab = () => {
+    const fresh = blankQueryTab(nextQueryTitle(queryTabs));
+    setQueryTabs((tabs) => [...tabs, fresh].slice(-MAX_QUERY_TABS));
+    setActiveQueryTabId(fresh.id);
+  };
+
+  /** Closing an editor takes its results with it — that is what owning them means. */
+  const closeQueryTab = (tabId: string) => {
+    const kept = queryTabs.filter((tab) => tab.id !== tabId);
+    if (kept.length === 0) {
+      // Never leave nowhere to type: the last editor closes into a fresh one.
+      const fresh = blankQueryTab();
+      setQueryTabs([fresh]);
+      setActiveQueryTabId(fresh.id);
+      return;
+    }
+    setQueryTabs(kept);
+    if (tabId === activeQueryTab?.id) setActiveQueryTabId(kept[kept.length - 1].id);
+  };
+
+  /** Closing the last result tab leaves the editor with none, not with a blank one. */
+  const closeResultTab = (queryTabId: string, resultTabId: string) => {
+    setQueryTabs((tabs) =>
+      tabs.map((editor) => {
+        if (editor.id !== queryTabId) return editor;
+        const kept = editor.resultTabs.filter((tab) => tab.id !== resultTabId);
+        return {
+          ...editor,
+          resultTabs: kept,
+          activeResultTabId:
+            resultTabId === editor.activeResultTabId ? kept[kept.length - 1]?.id : editor.activeResultTabId
+        };
+      })
+    );
+  };
 
   // Only the visible workspace answers. The Glue tab is mounted for the life
   // of the page once opened, so both listeners fire from any sub-tab unless
@@ -372,7 +551,7 @@ export function ConnectionQueryTab({
     // would be refused by the read-only gate — so a click puts the name in the
     // editor and stops there, which is as far as it can honestly go.
     if (!isRelation(entry.kind)) {
-      setSql(entry.name);
+      setEditorSql(entry.name);
       setSelectedTable(undefined);
       return;
     }
@@ -385,7 +564,7 @@ export function ConnectionQueryTab({
       .filter((part): part is string => Boolean(part))
       .map((part) => quoteIdentifier(connection.kind, part))
       .join(".");
-    setSql(`SELECT * FROM ${reference} LIMIT 100;`);
+    setEditorSql(`SELECT * FROM ${reference} LIMIT 100;`);
   };
 
   const analyzeFocusLabel =
@@ -442,7 +621,7 @@ export function ConnectionQueryTab({
           aria-label={t("Analyze with AI")}
           onClick={openAnalyzeDialog}
         >
-          <Sparkles className="size-3.5" />
+          <AiMark />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{t("Analyze with AI · opens Chat with this connection's context")}</TooltipContent>
@@ -547,17 +726,17 @@ export function ConnectionQueryTab({
             {analyzeButton}
             <SqlTemplatesButton
               templates={dbSqlTemplates(connection.kind)}
-              onSelect={setSql}
+              onSelect={setEditorSql}
             />
             <HistoryMenu
               history={history}
               favoriteSqlSet={new Set(favorites.map((entry) => entry.sql.trim()))}
-              onSelect={(entry) => setSql(entry.sql)}
+              onSelect={(entry) => setEditorSql(entry.sql)}
               onFavorite={setFavoritePrompt}
             />
             <FavoritesMenu
               favorites={favorites}
-              onSelect={(entry) => setSql(entry.sql)}
+              onSelect={(entry) => setEditorSql(entry.sql)}
               onRemove={(favoriteId) => {
                 if (accountId) {
                   setFavorites(
@@ -566,6 +745,9 @@ export function ConnectionQueryTab({
                 }
               }}
             />
+            {/* Stays in the toolbar as well as the result strip: a first run
+                has no result tab yet, so the strip's Stop is not on screen
+                when a query is slow enough to want stopping. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -584,6 +766,8 @@ export function ConnectionQueryTab({
                 {t("Stop query")}{" · "}{t("stops reading; the server notices when the connection closes")}
               </TooltipContent>
             </Tooltip>
+            {/* The two marks below are the whole point of the toolbar, so they
+                are drawn rather than borrowed from the icon set — see RunMarks. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -595,10 +779,12 @@ export function ConnectionQueryTab({
                   aria-label={t("Run in new tab")}
                   onClick={() => void handleRunNewTab()}
                 >
-                  <Plus className="size-3.5" />
+                  <ExecuteNewTabMark />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t("Run in new tab")}</TooltipContent>
+              <TooltipContent>
+                {t("Run in new tab")}{" · "}{t("the result opens as its own tab beside this one")}
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -613,7 +799,7 @@ export function ConnectionQueryTab({
                   {running ? (
                     <Loader2 className="size-3.5 animate-spin" />
                   ) : (
-                    <Play className="size-3.5" />
+                    <ExecuteMark />
                   )}
                 </Button>
               </TooltipTrigger>
@@ -624,36 +810,82 @@ export function ConnectionQueryTab({
           </div>
         </div>
 
-        <SqlEditor
-          value={sql}
-          onChange={setSql}
-          dialect={dialectFor(connection.kind)}
-          placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
-          onRun={() => void handleRun()}
-          onRunNewTab={() => void handleRunNewTab()}
-        />
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <ResultTabsPanel
-            tabs={stripTabs}
-            activeTabId={activeResult?.id ?? ""}
-            onSelectTab={setActiveResultId}
-            onCloseTab={closeResultTab}
+        {activeQueryTab ? (
+          <QueryTabsPanel
+            tabs={queryTabs}
+            activeTabId={activeQueryTab.id}
+            onSelectTab={setActiveQueryTabId}
+            onCloseTab={closeQueryTab}
+            onNewTab={openQueryTab}
           >
-            {(tab) => (
-              <ResultPane
-                key={tab.id}
-                result={tab.result}
-                meta={tab}
-                rerunning={running}
-                onRerun={() => void execute(tab.sql, tab.id)}
-                onLoadMore={() => handleLoadMore(tab)}
-                onExport={() => void handleExport(tab)}
-                analyzeButton={analyzeButton}
-              />
+            {(queryTab) => (
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                {/* Keyed by editor: each tab is its own CodeMirror document, so
+                    undo in one never reaches into another's text. */}
+                <SqlEditor
+                  key={queryTab.id}
+                  value={queryTab.sql}
+                  onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
+                  dialect={dialectFor(connection.kind)}
+                  placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
+                  onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
+                  onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
+                />
+
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  <ResultTabsPanel
+                    tabs={queryTab.resultTabs.map((tab) => ({
+                      ...tab,
+                      tooltip: tab.sql || tab.title,
+                      running: running && tab.id === runningTabId
+                    }))}
+                    activeTabId={queryTab.activeResultTabId ?? ""}
+                    onSelectTab={(resultTabId) =>
+                      patchQueryTab(queryTab.id, { activeResultTabId: resultTabId })
+                    }
+                    onCloseTab={(resultTabId) => closeResultTab(queryTab.id, resultTabId)}
+                    emptyLabel={t("Run a query to see results here.")}
+                  >
+                    {(tab) => (
+                      <ResultPane
+                        key={tab.id}
+                        meta={tab}
+                        result={tab.result}
+                        running={running && tab.id === runningTabId}
+                        counting={countingTabId === tab.id}
+                        offset={tab.result?.offset ?? 0}
+                        fetchSize={queryTab.fetchSize}
+                        onPatch={(patch) => patchResultTab(queryTab.id, tab.id, patch)}
+                        onFetchSizeChange={(size) => patchQueryTab(queryTab.id, { fetchSize: size })}
+                        onRefresh={() => handlePage(queryTab.id, tab, 0)}
+                        onFirst={() => handlePage(queryTab.id, tab, 0)}
+                        onPrev={() =>
+                          handlePage(
+                            queryTab.id,
+                            tab,
+                            previousPageOffset(tab.result?.offset ?? 0, queryTab.fetchSize)
+                          )
+                        }
+                        onNext={() => {
+                          const next = tab.result?.nextOffset;
+                          if (next != null) handlePage(queryTab.id, tab, next);
+                        }}
+                        onLast={() => {
+                          const last = lastPageOffset(tab, queryTab.fetchSize);
+                          if (last !== undefined) handlePage(queryTab.id, tab, last);
+                        }}
+                        onExport={(format) => void handleExport(tab, format)}
+                        onStop={handleStop}
+                        onCount={() => void handleCount(queryTab.id, tab)}
+                        analyzeButton={analyzeButton}
+                      />
+                    )}
+                  </ResultTabsPanel>
+                </div>
+              </div>
             )}
-          </ResultTabsPanel>
-        </div>
+          </QueryTabsPanel>
+        ) : null}
       </section>
 
       <FavoriteNameDialog
@@ -704,15 +936,17 @@ const MAX_CATALOG_WIDTH = 720;
 const clampPaneWidth = (width: number) =>
   Math.min(MAX_CATALOG_WIDTH, Math.max(MIN_CATALOG_WIDTH, width));
 
-/** How many result tabs a workspace keeps before the oldest rolls off. */
-const MAX_RESULT_TABS = 10;
-
 /**
- * A tab to stand in before anything has run — and the one closing the last
- * result leaves behind, so the strip always has something to show.
+ * What the next editor tab is called. Numbered from the highest one in use
+ * rather than from the count, so closing "Query 2" does not hand its name to
+ * the next tab while a "Query 3" is still open beside it.
  */
-function blankTab(): CachedResultTab {
-  return { id: `blank-${Date.now()}`, title: "Result 1", sql: "", ranAt: "" };
+function nextQueryTitle(tabs: CachedQueryTab[]): string {
+  const used = tabs
+    .map((tab) => /^Query (\d+)$/.exec(tab.title)?.[1])
+    .filter((index): index is string => index !== undefined)
+    .map(Number);
+  return `Query ${(used.length ? Math.max(...used) : 0) + 1}`;
 }
 
 function CatalogPane({
@@ -955,157 +1189,3 @@ function SkeletonRows() {
   );
 }
 
-/**
- * One page of a result, with the two things a JDBC result can do that an
- * Athena one cannot: read the next page, and be stopped mid-flight. Both are
- * said in the user's terms — a page re-runs the query, and a cancelled run is
- * a state rather than a failure.
- */
-function ResultPane({
-  result,
-  meta,
-  rerunning,
-  onRerun,
-  onLoadMore,
-  onExport,
-  analyzeButton
-}: {
-  result?: DbQueryResult;
-  meta?: CachedResultTab;
-  rerunning: boolean;
-  onRerun: () => void;
-  onLoadMore: () => void;
-  onExport: () => void;
-  analyzeButton?: ReactNode;
-}) {
-  const t = useT();
-
-  if (!meta) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-        {t("Run a query to see results here.")}
-      </div>
-    );
-  }
-
-  const state = meta.runState;
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-        <span className="truncate font-medium text-foreground">{meta.title}</span>
-        {state === "cancelled" ? <span>{t("Cancelled")}</span> : null}
-        {state === "failed" ? (
-          <span className="text-destructive">
-            Failed{meta.runError ? `: ${meta.runError}` : ""}
-          </span>
-        ) : null}
-        {meta.durationMs !== undefined ? <span>{meta.durationMs}ms</span> : null}
-        {result ? (
-          <span>
-            {t(result.rowCount === 1 ? "{count} row" : "{count} rows", {
-              count: result.rowCount
-            })}
-            {result.truncated ? ` · ${t("truncated")}` : ""}
-            {result.offset > 0 ? ` · ${t("from row {row}", { row: result.offset + 1 })}` : ""}
-          </span>
-        ) : null}
-        <div className="ml-auto flex items-center gap-1">
-          {analyzeButton}
-          {result ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-6"
-                  aria-label={t("Export CSV")}
-                  onClick={onExport}
-                >
-                  <Download className="size-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("Export CSV")} · {t("the rows loaded here, not the whole result")}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-      </div>
-
-      {result ? (
-        <>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="min-w-full border-collapse text-[10px]">
-              <thead className="sticky top-0 z-10 bg-muted/80">
-                <tr>
-                  {result.columns.map((column) => (
-                    <th key={column} className="border-b px-2 py-1 text-left font-medium">
-                      {column}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, index) => (
-                  <tr key={index} className="odd:bg-secondary/20">
-                    {result.columns.map((column) => (
-                      <td key={column} className="max-w-xs truncate px-2 py-1 font-mono">
-                        {formatCell(row[column])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {result.rows.length === 0 ? (
-              <p className="p-3 text-xs text-muted-foreground">{t("Query returned no rows.")}</p>
-            ) : null}
-          </div>
-
-          {result.nextOffset != null ? (
-            <div className="flex shrink-0 items-center gap-2 border-t px-2 py-1">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-[10px]"
-                disabled={rerunning}
-                onClick={onLoadMore}
-              >
-                {t("Load more rows")}
-              </Button>
-              {/* Said out loud because it is not obvious and it is not free:
-                  there is no cursor to resume from, so each page re-runs the
-                  statement and discards the rows it skips. */}
-              <span className="text-[10px] text-muted-foreground">
-                {t("Each page re-runs the query. Add an ORDER BY so pages stay stable.")}
-              </span>
-            </div>
-          ) : null}
-        </>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
-          <p>{t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7"
-            disabled={rerunning}
-            onClick={onRerun}
-          >
-            {t("Rerun to load fresh results")}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
