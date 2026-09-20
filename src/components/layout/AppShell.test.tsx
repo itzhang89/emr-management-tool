@@ -201,6 +201,41 @@ describe("AppShell", () => {
     expect(screen.getByRole("main")).toHaveClass("overflow-y-auto");
   });
 
+  // The order is a request, not an accident: DBHub leads the working set, the
+  // pages that answer "what is running" follow, then the things you configure.
+  it("lists the sidebar pages in the requested order", () => {
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    const labels = within(screen.getByRole("navigation", { name: "Primary" }))
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+
+    expect(labels).toEqual([
+      "Submit Job",
+      "Job History",
+      "Logs",
+      "S3 Browser",
+      "DBHub",
+      "AI Assistant",
+      "Secrets",
+      "Dashboard",
+      "Templates",
+      "Virtual Clusters"
+    ]);
+  });
+
+  // Settings hangs below the list that scrolls, so it holds its place as the
+  // nav grows (a pinned DBHub connection is enough to scroll the list).
+  it("pins Settings at the sidebar's foot instead of inside the scrolling nav", () => {
+    const queryClient = new QueryClient();
+    renderAppShell(queryClient);
+
+    const navigation = screen.getByRole("navigation", { name: "Primary" });
+    expect(within(navigation).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+  });
+
   it("prioritizes Submit Job and switches pages from the sidebar", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();

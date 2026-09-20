@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
-import { navigationItems, type PageId } from "@/pages/pageMeta";
+import { isBottomNavItem, navigationItems, type PageId } from "@/pages/pageMeta";
 import { OVERVIEW_TAB } from "@/pages/DbHubPage";
 import { DbHubSubNav } from "@/components/layout/DbHubSubNav";
 import { PageLoader } from "@/components/layout/PageLoader";
@@ -354,8 +354,8 @@ export function AppShell() {
         {/* The nav is the sidebar's one growing region, so it scrolls inside the
             sidebar instead of stretching the shell: with 11 pages plus a DBHub
             second level the list is taller than a laptop window. */}
-        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3 pb-4" aria-label={t("Primary")}>
-          {navigationItems.map((item) => (
+        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3 pb-3" aria-label={t("Primary")}>
+          {scrollingNavItems.map((item) => (
             <div key={item.id}>
               {renderNavButton({
                 item,
@@ -376,6 +376,19 @@ export function AppShell() {
             </div>
           ))}
         </nav>
+        {/* Pinned below the scrolling list, so the entry stays put no matter how
+            many pages (or DBHub connections) the nav above grows to hold. */}
+        <div className={cn("shrink-0 border-t py-3", sidebarCollapsed ? "px-2" : "px-3")}>
+          {bottomNavItems.map((item) =>
+            renderNavButton({
+              item,
+              activePage,
+              setActivePage: navigateToPage,
+              sidebarCollapsed,
+              t
+            })
+          )}
+        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -462,6 +475,12 @@ export function AppShell() {
 }
 
 type NavItem = (typeof navigationItems)[number];
+
+/** `navigationItems` split by where the sidebar puts them: the list that
+ *  scrolls, and the foot that stays put. The order within each half is the
+ *  order of the source list. */
+const scrollingNavItems = navigationItems.filter((item) => !isBottomNavItem(item.id));
+const bottomNavItems = navigationItems.filter((item) => isBottomNavItem(item.id));
 
 function renderNavButton({
   item,
