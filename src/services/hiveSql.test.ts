@@ -9,25 +9,25 @@ describe("hiveSql", () => {
   });
 
   it("qualifies database and table names", () => {
-    expect(qualifyHiveTable("shiji", "ods__project__account")).toBe("shiji.ods__project__account");
+    expect(qualifyHiveTable("projectname", "ods__project__account")).toBe("projectname.ods__project__account");
     expect(qualifyHiveTable("my-db", "my-table")).toBe("`my-db`.`my-table`");
   });
 
   it("preserves backticks in sql", () => {
-    expect(sanitizeHiveSql("SELECT * FROM `shiji`.`ods__project__account` LIMIT 100;")).toBe(
-      "SELECT * FROM `shiji`.`ods__project__account` LIMIT 100"
+    expect(sanitizeHiveSql("SELECT * FROM `projectname`.`ods__project__account` LIMIT 100;")).toBe(
+      "SELECT * FROM `projectname`.`ods__project__account` LIMIT 100"
     );
   });
 
   it("drops redundant database prefix when database context is set", () => {
     expect(
-      sanitizeHiveSql("SELECT * FROM `shiji`.`ods__project__account` LIMIT 100", "shiji")
+      sanitizeHiveSql("SELECT * FROM `projectname`.`ods__project__account` LIMIT 100", "projectname")
     ).toBe("SELECT * FROM `ods__project__account` LIMIT 100");
   });
 
   it("builds hive-style select sql with qualified table", () => {
-    expect(buildSelectSql("shiji", "ods__project__account")).toBe(
-      "SELECT * FROM shiji.ods__project__account LIMIT 100"
+    expect(buildSelectSql("projectname", "ods__project__account")).toBe(
+      "SELECT * FROM projectname.ods__project__account LIMIT 100"
     );
   });
 

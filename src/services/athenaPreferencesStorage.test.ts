@@ -23,10 +23,10 @@ describe("athenaPreferencesStorage", () => {
   });
 
   it("stores last database per account", () => {
-    mergeAthenaPreferences("aws-profile-a", { lastDatabase: "shiji" });
+    mergeAthenaPreferences("aws-profile-a", { lastDatabase: "projectname" });
     mergeAthenaPreferences("aws-profile-b", { lastDatabase: "analytics" });
 
-    expect(readAthenaPreferences("aws-profile-a").lastDatabase).toBe("shiji");
+    expect(readAthenaPreferences("aws-profile-a").lastDatabase).toBe("projectname");
     expect(readAthenaPreferences("aws-profile-b").lastDatabase).toBe("analytics");
   });
 

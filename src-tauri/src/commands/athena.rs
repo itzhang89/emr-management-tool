@@ -606,8 +606,8 @@ mod tests {
     fn preserves_hive_backticks_and_strips_database_prefix() {
         assert_eq!(
             normalize_athena_sql(
-                "SELECT * FROM `shiji`.`ods__table` LIMIT 100",
-                Some("shiji")
+                "SELECT * FROM `projectname`.`ods__table` LIMIT 100",
+                Some("projectname")
             ),
             "SELECT * FROM `ods__table` LIMIT 100"
         );
