@@ -1,4 +1,6 @@
-import { Database, Table2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { Table2 } from "lucide-react";
+import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { useDbConnections } from "@/hooks/useDbHub";
 import { GLUE_TAB, connectionTabValue } from "@/pages/DbHubPage";
 import { cn } from "@/lib/utils";
@@ -28,19 +30,25 @@ export function DbHubSubNav({
 
   if (collapsed) return null;
 
-  const entries = [
-    { value: GLUE_TAB, label: "Glue Catalog", icon: Table2 },
+  // Each connection carries its engine's own glyph — the same `DbKindIcon` the
+  // tab bar and the Overview card use — so the list reads MySQL / PostgreSQL /
+  // Yellowbrick at a glance instead of three identical cylinders.
+  const entries: { value: string; label: string; icon: ReactNode }[] = [
+    {
+      value: GLUE_TAB,
+      label: "Glue Catalog",
+      icon: <Table2 className="size-3 shrink-0" aria-hidden />
+    },
     ...connections.map((connection) => ({
       value: connectionTabValue(connection.id),
       label: connection.name,
-      icon: Database
+      icon: <DbKindIcon kind={connection.kind} className="size-3" />
     }))
   ];
 
   return (
     <div className="ml-8 space-y-0.5 border-l pl-2" role="list" aria-label="DBHub data sources">
       {entries.map((entry) => {
-        const Icon = entry.icon;
         const active = entry.value === activeSubTab;
         return (
           <button
@@ -55,7 +63,7 @@ export function DbHubSubNav({
                 : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
             )}
           >
-            <Icon className="size-3 shrink-0" aria-hidden />
+            {entry.icon}
             <span className="min-w-0 truncate">{entry.label}</span>
           </button>
         );
