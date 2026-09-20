@@ -60,7 +60,12 @@ vi.mock("@/services/tauriClient", () => ({
     createDbConnection: (...args: unknown[]) => createConnection(...args),
     updateDbConnection: (...args: unknown[]) => updateConnection(...args),
     testDbConnectionDraft: (...args: unknown[]) => testDraftConnection(...args),
-    listSecrets: vi.fn().mockResolvedValue([])
+    listSecrets: vi.fn().mockResolvedValue([]),
+    createSecret: vi.fn().mockResolvedValue({
+      name: "mysql.sales",
+      arn: "arn:aws:secretsmanager:us-east-1:123:secret:mysql.sales",
+      tags: []
+    })
   }
 }));
 
