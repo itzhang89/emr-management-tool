@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { JobAutoRefreshToggle } from "@/components/emr/JobAutoRefreshToggle";
 import { JobRunsPanel } from "@/components/emr/JobRunsPanel";
 import { VirtualClusterSelect, useEffectiveVirtualClusterId } from "@/components/emr/VirtualClusterSelect";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { RecentSearchInput, type RecentSearchInputHandle } from "@/components/search/RecentSearchInput";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useJobRuns } from "@/hooks/useEmr";
@@ -90,33 +89,32 @@ export function JobHistoryTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        pageId="history"
-        actions={
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <RecentSearchInput
-              ref={searchInputRef}
-              value={searchInput}
-              onChange={setSearchInput}
-              onSubmit={submitLocalSearch}
-              recentSearches={recentSearches}
-              placeholder={t("Search jobs by name, id, or state")}
-              listLabel={t("Recent job searches")}
-            />
-            <JobAutoRefreshToggle
-              id="job-history-auto-refresh"
-              autoRefresh={autoRefresh}
-              onAutoRefreshChange={setAutoRefresh}
-              isFetching={jobs.isFetching}
-              refreshCountdown={refreshCountdown}
-            />
-            <VirtualClusterSelect />
-            <span className="shrink-0 text-sm text-muted-foreground">
-              {t("{count} jobs", { count: (jobs.data ?? []).length })}
-            </span>
-          </div>
-        }
-      />
+      {/* No PageHeader here: the workspace's first tab is already labelled
+          "Job History", and the sidebar entry right above it carries the
+          description a page header would repeat verbatim. What is left is a
+          toolbar, so it is written as one. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <RecentSearchInput
+          ref={searchInputRef}
+          value={searchInput}
+          onChange={setSearchInput}
+          onSubmit={submitLocalSearch}
+          recentSearches={recentSearches}
+          placeholder={t("Search jobs by name, id, or state")}
+          listLabel={t("Recent job searches")}
+        />
+        <JobAutoRefreshToggle
+          id="job-history-auto-refresh"
+          autoRefresh={autoRefresh}
+          onAutoRefreshChange={setAutoRefresh}
+          isFetching={jobs.isFetching}
+          refreshCountdown={refreshCountdown}
+        />
+        <VirtualClusterSelect />
+        <span className="shrink-0 text-sm text-muted-foreground">
+          {t("{count} jobs", { count: (jobs.data ?? []).length })}
+        </span>
+      </div>
 
       <JobRunsPanel
         virtualClusterId={effectiveVirtualClusterId}

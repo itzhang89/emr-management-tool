@@ -245,7 +245,9 @@ describe("AppShell", () => {
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
 
-    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+    // No PageHeader on this page any more — its own tab names it — so the
+    // search box is what proves the page rendered.
+    expect(await screen.findByPlaceholderText(/Search jobs/i)).toBeInTheDocument();
   });
 
   it("collapses the sidebar to icon-only navigation", async () => {
@@ -307,7 +309,7 @@ describe("AppShell", () => {
     renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
-    await screen.findByRole("heading", { name: "Job History" });
+    await screen.findByPlaceholderText(/Search jobs/i);
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
     // Logs are a tab beside the list now, not a page of their own.
@@ -323,7 +325,7 @@ describe("AppShell", () => {
     renderAppShell(queryClient);
 
     await user.click(screen.getByRole("button", { name: /Job History/i }));
-    await screen.findByRole("heading", { name: "Job History" });
+    await screen.findByPlaceholderText(/Search jobs/i);
     await user.click(
       within(screen.getByRole("row", { name: /failed-no-source FAILED/i })).getByRole("button", { name: /Rerun/i })
     );
@@ -453,7 +455,7 @@ describe("AppShell", () => {
 
     await user.keyboard("{Meta>}2{/Meta}");
 
-    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Search jobs/i)).toBeInTheDocument();
 
     await user.keyboard("{Meta>}4{/Meta}");
 
@@ -470,7 +472,7 @@ describe("AppShell", () => {
 
     fireEvent.keyDown(document, { key: "]", code: "BracketRight", metaKey: true });
 
-    expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText(/Search jobs/i)).toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "[", code: "BracketLeft", metaKey: true });
 

@@ -17,7 +17,6 @@ import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { S3PathPickerDialog } from "@/components/s3/S3PathPicker";
 import { S3ObjectEditor, type S3ObjectEditorHandle } from "@/components/s3/S3ObjectEditor";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
@@ -603,7 +602,6 @@ export function S3BrowserPage() {
 
   return (
     <div className="flex h-[calc(100vh-3rem)] min-h-0 flex-col gap-4 overflow-hidden">
-      <PageHeader pageId="s3" />
       {uploadProgress ? (
         <Card className="shrink-0 border-primary/20 bg-primary/5 py-3">
           <CardContent className="space-y-2 px-4 py-0">
