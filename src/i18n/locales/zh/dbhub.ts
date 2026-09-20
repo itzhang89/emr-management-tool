@@ -68,6 +68,8 @@ const dbhub: TranslationDictionary = {
   "Auth mode": "认证方式",
   "Manual password": "手动密码",
   Secret: "密钥",
+  // Product name: it stays as AWS spells it.
+  "AWS Secrets Manager": "AWS Secrets Manager",
   "Select a secret…": "选择密钥…",
   "Optional fallback — secret may override": "可选回退 — 密钥可能覆盖",
   "Password and optional host/user/database come from the bound secret JSON at connect time.":

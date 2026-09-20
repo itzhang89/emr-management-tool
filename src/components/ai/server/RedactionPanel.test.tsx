@@ -171,7 +171,7 @@ describe("RedactionPanel", () => {
     await user.click(screen.getByRole("button", { name: "Preview masking" }));
     await waitFor(() => expect(hookBag.runTest).toHaveBeenCalled());
     const payload = hookBag.runTest.mock.calls[0][0];
-    expect(payload.rules.some((rule) => rule.id === "c1")).toBe(true);
+    expect(payload.rules.some((rule: { id: string }) => rule.id === "c1")).toBe(true);
     expect(typeof payload.text).toBe("string");
   });
 });

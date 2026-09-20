@@ -48,7 +48,9 @@ export function JobRunsPanel({
 }: {
   virtualClusterId?: string;
   keyword?: string;
-  onOpenLogs?: () => void;
+  /** Carries the job whose Logs button was pressed, so the caller does not have
+   *  to re-read the session store to find out which one it was. */
+  onOpenLogs?: (job: JobRunSummary) => void;
   title?: string;
   className?: string;
   autoRefresh?: boolean;
@@ -379,7 +381,7 @@ export function JobRunsPanel({
   );
 }
 
-function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: () => void }) {
+function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: (job: JobRunSummary) => void }) {
   const t = useT();
   const setSelectedJobForLogs = useSessionStore((state) => state.setSelectedJobForLogs);
 
@@ -388,8 +390,10 @@ function JobLogActions({ job, onOpenLogs }: { job: JobRunSummary; onOpenLogs?: (
       variant="ghost"
       size="sm"
       onClick={() => {
+        // The store handoff stays: Submit Job's Recent Submissions table reaches
+        // logs through the same callback from another page.
         setSelectedJobForLogs(job.id, job.virtualClusterId);
-        onOpenLogs?.();
+        onOpenLogs?.(job);
       }}
     >
       <FileText data-icon="inline-start" />

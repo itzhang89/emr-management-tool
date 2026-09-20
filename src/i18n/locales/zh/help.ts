@@ -70,6 +70,13 @@ const help: TranslationDictionary = {
 
   // Shortcuts — Job Logs
   "Toggle log files panel": "折叠 / 展开日志文件面板",
+  "Previous tab": "上一个标签页",
+  "Move to the tab on the left in the Job History workspace": "切到作业历史工作区左侧的标签页",
+  "Next tab": "下一个标签页",
+  "Move to the tab on the right in the Job History workspace": "切到作业历史工作区右侧的标签页",
+  "Close tab": "关闭标签页",
+  "Close the log tab in front — the job list tab always stays":
+    "关闭当前日志标签页——作业列表标签页始终保留",
   "Collapse or expand the log files sidebar": "折叠或展开日志文件侧边栏",
   "Focus job id": "聚焦作业 ID",
   "Focus the job id search box when no log viewer is open": "未打开日志查看器时，聚焦作业 ID 搜索框",

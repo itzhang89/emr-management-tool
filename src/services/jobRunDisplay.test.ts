@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatJobRunDuration } from "./jobRunDisplay";
+import { formatJobRunDuration, stripJobNameTimestamp } from "./jobRunDisplay";
 import type { JobRunSummary } from "@/types/domain";
 
 describe("formatJobRunDuration", () => {
@@ -26,3 +26,23 @@ function makeJob(overrides: Partial<JobRunSummary>): JobRunSummary {
     ...overrides
   };
 }
+
+describe("stripJobNameTimestamp", () => {
+  it("drops a trailing date-time stamp", () => {
+    expect(stripJobNameTimestamp("job_name_260920_0735")).toBe(
+      "job_name"
+    );
+    expect(stripJobNameTimestamp("nightly-etl-20260920-0735")).toBe("nightly-etl");
+  });
+
+  it("leaves a name that has no stamp alone", () => {
+    expect(stripJobNameTimestamp("nightly-etl")).toBe("nightly-etl");
+    expect(stripJobNameTimestamp("g2_5mins_latest_only")).toBe("g2_5mins_latest_only");
+    // A bare date is not a stamp: the time has to sit beside it.
+    expect(stripJobNameTimestamp("report_260920")).toBe("report_260920");
+  });
+
+  it("keeps a name that stripping would empty", () => {
+    expect(stripJobNameTimestamp("260920_0735")).toBe("260920_0735");
+  });
+});

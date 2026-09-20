@@ -273,6 +273,10 @@ Display complete job configuration.
 
 #### Logs
 
+Reached from a job's `Logs` action, which opens the logs as a tab inside Job
+History (fixed first tab = the job list; each open job gets its own tab, capped
+and cached locally, and closing one releases its cache).
+
 Tabs:
 
 * Driver Log

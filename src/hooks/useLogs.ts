@@ -12,8 +12,13 @@ const logQueryOptions = {
 } as const;
 
 export function useJobLogStreams(request: JobLogStreamsRequest | undefined, autoRefresh = false) {
+  const accountId = useActiveAwsAccount().data?.id;
+
   return useQuery({
-    queryKey: ["job-log-streams", request],
+    // Every log key carries the account: job run ids are only unique within an
+    // account, so without it switching accounts can serve one account's logs
+    // for another's job.
+    queryKey: ["job-log-streams", accountId, request],
     queryFn: () => cloudWatchLogsService.listJobLogStreams(request!),
     enabled: Boolean(request?.jobId && request.logGroupName && request.streamNamePrefix),
     refetchInterval: autoRefresh ? 10_000 : false,
@@ -22,8 +27,10 @@ export function useJobLogStreams(request: JobLogStreamsRequest | undefined, auto
 }
 
 export function useJobLogs(request: JobLogsRequest | undefined, autoRefresh = false) {
+  const accountId = useActiveAwsAccount().data?.id;
+
   return useQuery({
-    queryKey: ["job-logs", request],
+    queryKey: ["job-logs", accountId, request],
     queryFn: () => cloudWatchLogsService.getJobLogs(request!),
     enabled: Boolean(request?.jobId),
     refetchInterval: autoRefresh ? 10_000 : false,
@@ -32,8 +39,10 @@ export function useJobLogs(request: JobLogsRequest | undefined, autoRefresh = fa
 }
 
 export function useS3JobLogObjects(request: S3JobLogObjectsRequest | undefined) {
+  const accountId = useActiveAwsAccount().data?.id;
+
   return useQuery({
-    queryKey: ["s3-job-log-objects", request],
+    queryKey: ["s3-job-log-objects", accountId, request],
     queryFn: () => s3Service.listJobLogObjects(request!),
     enabled: Boolean(request?.bucket && request.prefix),
     ...logQueryOptions

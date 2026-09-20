@@ -17,6 +17,9 @@ export const SHORTCUT_IDS = {
   LOGS_FOCUS_JOB_ID: "logs-focus-job-id",
   CHAT_CLEAR_CONTEXT: "chat-clear-context",
   HISTORY_FOCUS_SEARCH: "history-focus-search",
+  TAB_PREVIOUS: "tab-previous",
+  TAB_NEXT: "tab-next",
+  TAB_CLOSE: "tab-close",
   S3_LIST_MOVE: "s3-list-move",
   S3_LIST_ENTER: "s3-list-enter",
   S3_FOCUS_EDITOR: "s3-focus-editor",
@@ -130,6 +133,27 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Focus job search",
     description: "Focus the Job History search box",
     keys: [formatModShortcut("F")]
+  },
+  {
+    id: SHORTCUT_IDS.TAB_PREVIOUS,
+    category: "history",
+    label: "Previous tab",
+    description: "Move to the tab on the left in the Job History workspace",
+    keys: [formatModShortcut("[", { shift: true })]
+  },
+  {
+    id: SHORTCUT_IDS.TAB_NEXT,
+    category: "history",
+    label: "Next tab",
+    description: "Move to the tab on the right in the Job History workspace",
+    keys: [formatModShortcut("]", { shift: true })]
+  },
+  {
+    id: SHORTCUT_IDS.TAB_CLOSE,
+    category: "history",
+    label: "Close tab",
+    description: "Close the log tab in front — the job list tab always stays",
+    keys: [formatModShortcut("W")]
   },
   {
     id: SHORTCUT_IDS.LOGS_TREE_TOGGLE,

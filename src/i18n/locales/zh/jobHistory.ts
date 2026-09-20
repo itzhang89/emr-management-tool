@@ -78,6 +78,13 @@ const jobHistory: TranslationDictionary = {
   "Auto refresh job history": "自动刷新作业历史",
   "Auto refresh": "自动刷新",
 
+  // The workspace's tab strip: Job History is the fixed first tab, every job
+  // whose logs are open gets one of its own, and `+` starts an empty one.
+  "New log tab": "新建日志标签页",
+  "Open a log tab": "新建日志标签页",
+  "Close a log tab first — {used} of {max} are open.":
+    "请先关闭一个日志标签页——当前已打开 {used}/{max} 个。",
+
   // Virtual cluster picker.
   "Loading virtual clusters...": "正在加载虚拟集群...",
   "Select virtual cluster": "选择虚拟集群",

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LogsPage } from "./LogsPage";
+import { LogsTab, type LogsTabSnapshot } from "./LogsTab";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MAX_LOG_VIEW_CHARACTERS } from "@/services/logDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -58,7 +58,7 @@ vi.mock("@/services/s3Service", () => ({
   }
 }));
 
-describe("LogsPage", () => {
+describe("LogsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal(
@@ -197,33 +197,23 @@ describe("LogsPage", () => {
     useEffectiveVirtualClusterId.mockReturnValue("vc-1");
   });
 
-  it("lets users enter a job id directly and view its logs in the selected virtual cluster", async () => {
+  it("hands a typed job id to the workspace instead of picking it itself", async () => {
     const user = userEvent.setup();
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
+    const onOpenJob = vi.fn();
 
-    renderLogsPage();
+    renderDraftTab({ onOpenJob });
 
     await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual{Enter}");
 
-    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
-    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
-    expect(useDescribeJobRun).toHaveBeenLastCalledWith("job-manual", "vc-1");
-    expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")!)).toEqual(["job-manual"]);
+    // A draft tab does not retarget itself: the workspace decides whether this
+    // becomes this tab's job or a new one.
+    expect(onOpenJob).toHaveBeenCalledWith("job-manual", "vc-1");
   });
 
   it("focuses the job id input with Mod+F when no log viewer is open", async () => {
     const user = userEvent.setup();
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
 
-    renderLogsPage();
+    renderDraftTab();
 
     const input = screen.getByPlaceholderText(/Enter job id/i);
     expect(input).not.toHaveFocus();
@@ -235,40 +225,31 @@ describe("LogsPage", () => {
 
   it("shows recent job ids on click and applies one immediately", async () => {
     const user = userEvent.setup();
+    const onOpenJob = vi.fn();
     window.localStorage.setItem(
       "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history", "job-other"])
     );
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
 
-    renderLogsPage();
+    renderDraftTab({ onOpenJob });
     const input = screen.getByPlaceholderText(/Enter job id/i);
     await user.click(input);
     const dropdown = await screen.findByRole("listbox", { name: /Recent job ids/i });
     expect(within(dropdown).getByRole("button", { name: "job-from-history" })).toBeInTheDocument();
     await user.click(within(dropdown).getByRole("button", { name: "job-from-history" }));
 
-    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-from-history"));
-    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
+    expect(onOpenJob).toHaveBeenCalledWith("job-from-history", "vc-1");
   });
 
   it("shows recently viewed jobs in the empty state and opens logs on click", async () => {
     const user = userEvent.setup();
+    const onOpenJob = vi.fn();
     window.localStorage.setItem(
       "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history", "job-other"])
     );
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
 
-    renderLogsPage();
+    renderDraftTab({ onOpenJob });
 
     expect(
       screen.getByText(/Select a job from Job History or enter a job id to view logs/i)
@@ -280,19 +261,11 @@ describe("LogsPage", () => {
 
     await user.click(within(recentList).getByRole("button", { name: "job-other" }));
 
-    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-other"));
-    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
-    expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
+    expect(onOpenJob).toHaveBeenCalledWith("job-other", "vc-1");
   });
 
   it("hides recently viewed section when history is empty", () => {
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
+    renderDraftTab();
 
     expect(
       screen.getByText(/Select a job from Job History or enter a job id to view logs/i)
@@ -305,13 +278,7 @@ describe("LogsPage", () => {
       "emr-eks:logs-job-id-search-recent",
       JSON.stringify(["legacy-job"])
     );
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
+    renderDraftTab();
 
     expect(screen.queryByText("Recently viewed")).not.toBeInTheDocument();
     expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent")).toBeNull();
@@ -326,13 +293,7 @@ describe("LogsPage", () => {
       "emr-eks:logs-job-id-search-recent:acct-other",
       JSON.stringify(["job-for-other-account"])
     );
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
+    renderDraftTab();
 
     const recentList = screen.getByRole("list", { name: /Recently viewed job ids/i });
     expect(within(recentList).getByRole("button", { name: "job-for-test-account" })).toBeInTheDocument();
@@ -345,13 +306,7 @@ describe("LogsPage", () => {
       "emr-eks:logs-job-id-search-recent:acct-test",
       JSON.stringify(["job-from-history"])
     );
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
+    renderDraftTab();
     const input = screen.getByPlaceholderText(/Enter job id/i);
     await user.click(input);
     expect(await screen.findByRole("listbox", { name: /Recent job ids/i })).toBeInTheDocument();
@@ -363,91 +318,31 @@ describe("LogsPage", () => {
 
   it("strips spark- before opening logs for a job id", async () => {
     const user = userEvent.setup();
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
+    const onOpenJob = vi.fn();
 
-    renderLogsPage();
+    renderDraftTab({ onOpenJob });
     await user.type(screen.getByPlaceholderText(/Enter job id/i), "spark-000000037tga8qam664{Enter}");
 
-    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("000000037tga8qam664"));
-    expect(useDescribeJobRun).toHaveBeenLastCalledWith("000000037tga8qam664", "vc-1");
-  });
-
-  it("records job ids opened from Job History into logs search history", async () => {
-    const user = userEvent.setup();
-    useSessionStore.setState({
-      selectedJobId: undefined,
-      selectedJobVirtualClusterId: undefined,
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
-    expect(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")).toBeNull();
-
-    useSessionStore.getState().setSelectedJobForLogs("job-from-history-page", "vc-1");
-
-    await waitFor(() =>
-      expect(JSON.parse(window.localStorage.getItem("emr-eks:logs-job-id-search-recent:acct-test")!)).toEqual([
-        "job-from-history-page"
-      ])
-    );
-
-    const input = screen.getByPlaceholderText(/Enter job id/i);
-    await user.click(input);
-    const dropdown = await screen.findByRole("listbox", { name: /Recent job ids/i });
-    expect(within(dropdown).getByRole("button", { name: "job-from-history-page" })).toBeInTheDocument();
+    expect(onOpenJob).toHaveBeenCalledWith("000000037tga8qam664", "vc-1");
   });
 
   it("uses the effective virtual cluster for manual job entry submit", async () => {
     const user = userEvent.setup();
+    const onOpenJob = vi.fn();
     useEffectiveVirtualClusterId.mockReturnValue("current-vc");
-    useSessionStore.setState({
-      selectedJobId: "old-job",
-      selectedJobVirtualClusterId: "stale-vc",
-      selectedVirtualClusterId: "current-vc"
-    });
 
-    renderLogsPage();
+    renderDraftTab({ onOpenJob });
 
     expect(screen.getByTestId("virtual-cluster-select")).toBeInTheDocument();
-    await user.clear(screen.getByPlaceholderText(/Enter job id/i));
     await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-manual{Enter}");
 
-    await waitFor(() => expect(useSessionStore.getState().selectedJobId).toBe("job-manual"));
-    expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("current-vc");
-  });
-
-  it("auto-selects virtual cluster from navigation when the cluster exists in the list", async () => {
-    useSessionStore.setState({
-      selectedJobId: "job-running",
-      selectedJobVirtualClusterId: "vc-1",
-      selectedVirtualClusterId: undefined
-    });
-
-    renderLogsPage();
-
-    await waitFor(() => expect(useSessionStore.getState().selectedVirtualClusterId).toBe("vc-1"));
-  });
-
-  it("does not auto-select virtual cluster when navigation cluster is missing from the list", async () => {
-    useSessionStore.setState({
-      selectedJobId: "job-running",
-      selectedJobVirtualClusterId: "missing-vc",
-      selectedVirtualClusterId: "vc-1"
-    });
-
-    renderLogsPage();
-
-    expect(useSessionStore.getState().selectedVirtualClusterId).toBe("vc-1");
+    expect(onOpenJob).toHaveBeenCalledWith("job-manual", "current-vc");
   });
 
   it("resolves destinations from describe, defaults to S3, and keeps CloudWatch as a tab", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     expect(useDescribeJobRun).toHaveBeenCalledWith("job-running", "vc-1");
     expect(useJobLogStreams).not.toHaveBeenCalled();
@@ -521,7 +416,7 @@ describe("LogsPage", () => {
       error: null
     });
 
-    renderLogsPage();
+    renderLogsTab();
 
     await waitFor(() => expect(useS3JobLogObject).toHaveBeenCalledWith("logs-bucket", driverStderrKey));
     expect(useS3JobLogObject).not.toHaveBeenCalledWith("logs-bucket", execStderrKey);
@@ -538,7 +433,7 @@ describe("LogsPage", () => {
   });
 
   it("removes low-value controls and manual CloudWatch inputs", () => {
-    renderLogsPage();
+    renderLogsTab();
 
     expect(screen.queryByPlaceholderText(/Search log text/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Refresh/i })).not.toBeInTheDocument();
@@ -571,7 +466,7 @@ describe("LogsPage", () => {
       error: null
     });
 
-    renderLogsPage();
+    renderLogsTab();
 
     expect(screen.getByRole("tab", { name: /^S3$/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: /^CloudWatch$/i })).toBeDisabled();
@@ -595,18 +490,40 @@ describe("LogsPage", () => {
       error: null
     });
 
-    renderLogsPage();
+    renderLogsTab();
 
     expect(screen.getByRole("tab", { name: /^CloudWatch$/i })).toHaveAttribute("aria-selected", "true");
     await openDestinationPopover(user);
     expect(screen.getByText("/aws/emr-containers/jobs/job-running")).toBeInTheDocument();
-    expect(screen.getByText("job-running")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByText("job-running")).toBeInTheDocument();
+  });
+
+  it("shows the cached copy instead of an error when the job cannot be described", () => {
+    // The whole point of caching the text: a restart with no AWS reachable
+    // still shows the log that was on screen, not a failure notice.
+    useDescribeJobRun.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("network down")
+    });
+
+    renderLogsTab({
+      jobId: "job-offline",
+      cachedContent: {
+        itemKey: "driver/stderr",
+        text: "cached driver output",
+        savedAt: "2026-09-19T10:00:00.000Z"
+      }
+    });
+
+    expect(screen.getByText(/cached driver output/i)).toBeInTheDocument();
+    expect(screen.getByText(/Offline copy saved/i)).toBeInTheDocument();
   });
 
   it("downloads the selected CloudWatch log from the title icon", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
@@ -634,7 +551,7 @@ describe("LogsPage", () => {
         entries: [{ timestamp: "2026-06-10T00:00:01Z", level: "info", message: "second page", streamName: "cw" }]
       });
 
-    renderLogsPage();
+    renderLogsTab();
 
     await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
@@ -657,7 +574,7 @@ describe("LogsPage", () => {
   });
 
   it("does not open a right-click download menu for log items or groups", () => {
-    renderLogsPage();
+    renderLogsTab();
 
     fireEvent.contextMenu(screen.getByRole("button", { name: /stdout/i }));
     fireEvent.contextMenu(screen.getByRole("navigation", { name: "Log files" }));
@@ -668,7 +585,7 @@ describe("LogsPage", () => {
   it("downloads the selected S3 log object from the title icon", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
     await user.click(screen.getByRole("button", { name: /Download selected log/i }));
@@ -687,7 +604,7 @@ describe("LogsPage", () => {
   it("renders CloudWatch messages without event time or level while preserving message whitespace", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     await user.click(screen.getByRole("tab", { name: /^CloudWatch$/i }));
     await user.click(screen.getByRole("button", { name: /stdout/i }));
@@ -698,7 +615,7 @@ describe("LogsPage", () => {
   it("collapses the log files panel by default and toggles with Cmd+\\", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     expect(screen.getByRole("button", { name: /Expand log files panel/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Collapse log files panel/i })).not.toBeInTheDocument();
@@ -719,7 +636,7 @@ describe("LogsPage", () => {
   it("opens find with Cmd+F, defaults to regex, and supports Enter plus next/previous navigation", async () => {
     const user = userEvent.setup();
 
-    renderLogsPage();
+    renderLogsTab();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("hello s3"));
 
@@ -775,7 +692,7 @@ describe("LogsPage", () => {
       content: rawLog
     });
 
-    renderLogsPage();
+    renderLogsTab();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toContain("ETLLogger"));
     expect(screen.getByTestId("log-content").textContent).not.toContain("UNIQUE_NOISE_TOKEN");
@@ -813,7 +730,7 @@ describe("LogsPage", () => {
       error: null
     });
 
-    renderLogsPage();
+    renderLogsTab();
 
     await waitFor(() => expect(screen.getByTestId("log-content").textContent).toHaveLength(MAX_LOG_VIEW_CHARACTERS));
 
@@ -833,11 +750,16 @@ async function openDestinationPopover(user: ReturnType<typeof userEvent.setup>) 
   await user.click(screen.getByRole("button", { name: /Log destination details/i }));
 }
 
-function renderLogsPage() {
+/** A tab with no job: the id box and the empty state. */
+function renderDraftTab(props: Partial<React.ComponentProps<typeof LogsTab>> = {}) {
+  return renderLogsTab({ jobId: undefined, virtualClusterId: undefined, ...props });
+}
+
+function renderLogsTab(props: Partial<React.ComponentProps<typeof LogsTab>> = {}) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <TooltipProvider>
-        <LogsPage />
+        <LogsTab active jobId="job-running" virtualClusterId="vc-1" {...props} />
       </TooltipProvider>
     </QueryClientProvider>
   );

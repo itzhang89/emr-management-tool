@@ -3,6 +3,7 @@ import { GlueCatalogTab } from "@/components/dbhub/workspace/GlueCatalogTab";
 import { ConnectionQueryTab } from "@/components/dbhub/workspace/ConnectionQueryTab";
 import { OverviewPanel } from "@/components/dbhub/overview/OverviewPanel";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
+import { PersistMount } from "@/components/layout/PersistMount";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useDbConnections } from "@/hooks/useDbHub";
 import { useT } from "@/i18n";
@@ -133,32 +134,4 @@ export function DbHubPage({
   );
 }
 
-/**
- * Flips `mounted` to true the first time `visible` is true and never flips
- * back, so children mount lazily (no Glue/Athena work until the tab is first
- * opened) and then keep their React state — editor text, result tabs, tree
- * selection — across tab switches. The wrapper is also the layout box the
- * workspace fills: `hidden` on an inactive TabsContent needs the child to
- * re-apply flex when the panel becomes active again.
- */
-function PersistMount({
-  visible,
-  className,
-  children
-}: {
-  visible: boolean;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  const [mounted, setMounted] = useState(visible);
-
-  useEffect(() => {
-    if (visible) {
-      setMounted(true);
-    }
-  }, [visible]);
-
-  if (!mounted) return null;
-  return <div className={className}>{children}</div>;
-}
 

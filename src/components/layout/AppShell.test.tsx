@@ -214,7 +214,6 @@ describe("AppShell", () => {
     expect(labels).toEqual([
       "Submit Job",
       "Job History",
-      "Logs",
       "S3 Browser",
       "DBHub",
       "AI Assistant",
@@ -302,7 +301,7 @@ describe("AppShell", () => {
     expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
   });
 
-  it("opens Logs from a Job History row", async () => {
+  it("opens a job's logs as a tab inside Job History", async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient();
     renderAppShell(queryClient);
@@ -311,7 +310,9 @@ describe("AppShell", () => {
     await screen.findByRole("heading", { name: "Job History" });
     await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
 
-    expect(await screen.findByRole("heading", { name: "Logs" })).toBeInTheDocument();
+    // Logs are a tab beside the list now, not a page of their own.
+    expect(await screen.findByRole("tab", { name: "running-etl" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Job History" })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Manual CloudWatch log group/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Job-level stream prefix/i)).not.toBeInTheDocument();
   });
@@ -454,7 +455,7 @@ describe("AppShell", () => {
 
     expect(await screen.findByRole("heading", { name: "Job History" })).toBeInTheDocument();
 
-    await user.keyboard("{Meta>}5{/Meta}");
+    await user.keyboard("{Meta>}4{/Meta}");
 
     // The DBHub page has no PageHeader; its fixed tab bar is the identity marker.
     expect(await screen.findByRole("tab", { name: "Glue Catalog" })).toBeInTheDocument();

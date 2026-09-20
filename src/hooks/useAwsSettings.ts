@@ -46,6 +46,12 @@ function invalidateAccountScopedQueries(queryClient: ReturnType<typeof useQueryC
   void queryClient.invalidateQueries({ queryKey: ["s3-buckets"] });
   void queryClient.invalidateQueries({ queryKey: ["s3-objects"] });
   void queryClient.invalidateQueries({ queryKey: ["s3-text-object"] });
+  // Logs are fetched through four more keys, all of them now account-scoped;
+  // leaving them out let the previous account's log text survive the switch.
+  void queryClient.invalidateQueries({ queryKey: ["job-log-streams"] });
+  void queryClient.invalidateQueries({ queryKey: ["job-logs"] });
+  void queryClient.invalidateQueries({ queryKey: ["s3-job-log-objects"] });
+  void queryClient.invalidateQueries({ queryKey: ["s3-job-log-object"] });
   void queryClient.invalidateQueries({ queryKey: ["jobConfigTemplates"] });
 }
 

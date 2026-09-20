@@ -52,6 +52,9 @@ const logs: TranslationDictionary = {
   "Current log file": "当前日志文件",
   "Select a log file": "选择日志文件",
 
+  // A tab restored from the local cache when its job cannot be reached.
+  "Offline copy saved {savedAt} — {reason}": "离线副本，保存于 {savedAt} —— {reason}",
+
   // Find bar.
   "Find in log": "在日志中查找",
   Find: "查找",

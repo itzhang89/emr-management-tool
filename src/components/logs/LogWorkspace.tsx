@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { LogCommandBar } from "@/components/logs/LogCommandBar";
 import { LogContentPanel } from "@/components/logs/LogContentPanel";
 import { LogFileTree } from "@/components/logs/LogFileTree";
@@ -18,6 +18,7 @@ import type { JobLogObject, JobLogStream, JobLogTreeSection } from "@/types/doma
 const LOG_FILES_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.LOGS_TREE_TOGGLE);
 
 export function LogWorkspace({
+  active,
   activeSource,
   onSourceChange,
   sourceAvailability,
@@ -32,6 +33,11 @@ export function LogWorkspace({
   onSelect,
   onDownload
 }: {
+  /** Whether this workspace sits in the tab the user is looking at. Several
+   *  workspaces stay mounted at once (one per open log tab), and each one
+   *  listens on `window`, so an ungated handler would have ⌘F toggle the find
+   *  bar in every hidden tab at the same time. */
+  active: boolean;
   activeSource: "s3" | "cloudwatch";
   onSourceChange: (source: "s3" | "cloudwatch") => void;
   sourceAvailability: { s3: boolean; cloudwatch: boolean };
@@ -58,6 +64,7 @@ export function LogWorkspace({
   const [logFilesCollapsed, setLogFilesCollapsed] = useState(true);
 
   useEffect(() => {
+    if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) {
@@ -104,7 +111,7 @@ export function LogWorkspace({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [findOpen]);
+  }, [active, findOpen]);
 
   const focused = useMemo(() => {
     if (!focusNoiseFilter) {
@@ -148,7 +155,14 @@ export function LogWorkspace({
   const fullPath = selectedItem ? getLogFullPath(selectedItem, destination, activeSource) : undefined;
   const destinationItems = formatDestinationItems(activeSource, destination);
 
+  // Only a genuinely different log resets the search. Comparing identity alone
+  // would wipe an open find bar — query, regex flag, active match — every time
+  // the tab refreshes in the background, since each refetch hands down a new
+  // string (and a new join for CloudWatch) even when the text is unchanged.
+  const lastLogText = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (lastLogText.current === logText) return;
+    lastLogText.current = logText;
     setDisplayFullLog(false);
     setFindOpen(false);
     setSearchInput("");

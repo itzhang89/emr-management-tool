@@ -3,9 +3,12 @@ import {
   formatShortcutsHelpLabel,
   isAccountSwitchKey,
   isClearContextKey,
+  isCloseTabKey,
   isFocusSearchKey,
   isPageCycleNextKey,
   isPageCyclePreviousKey,
+  isTabCycleNextKey,
+  isTabCyclePreviousKey,
   isShortcutsHelpKey,
   isSidebarToggleKey,
   getPageNavigationIndex
@@ -151,6 +154,29 @@ describe("page cycle keys", () => {
         altKey: false
       })
     ).toBe(true);
+  });
+});
+
+describe("tab cycle and close keys", () => {
+  const base = { metaKey: true, ctrlKey: false, altKey: false };
+
+  it("requires shift on the bracket keys, so the page cycle keeps the plain ones", () => {
+    expect(isTabCyclePreviousKey({ ...base, key: "[", code: "BracketLeft", shiftKey: true })).toBe(true);
+    expect(isTabCycleNextKey({ ...base, key: "]", code: "BracketRight", shiftKey: true })).toBe(true);
+    // With shift held, macOS reports "{" and "}" as the key — the physical
+    // bracket code is what actually identifies these two.
+    expect(isTabCyclePreviousKey({ ...base, key: "{", code: "BracketLeft", shiftKey: true })).toBe(true);
+    expect(isTabCycleNextKey({ ...base, key: "}", code: "BracketRight", shiftKey: true })).toBe(true);
+    expect(isTabCycleNextKey({ ...base, key: "]", code: "BracketRight", shiftKey: false })).toBe(false);
+    expect(
+      isPageCycleNextKey({ ...base, key: "]", code: "BracketRight", shiftKey: false })
+    ).toBe(true);
+  });
+
+  it("matches modifier plus W for closing a tab", () => {
+    expect(isCloseTabKey({ ...base, key: "w", shiftKey: false })).toBe(true);
+    expect(isCloseTabKey({ ...base, key: "W", shiftKey: true })).toBe(false);
+    expect(isCloseTabKey({ ...base, key: "w", shiftKey: false, altKey: true })).toBe(false);
   });
 });
 

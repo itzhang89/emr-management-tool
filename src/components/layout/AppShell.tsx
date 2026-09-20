@@ -21,7 +21,9 @@ import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCy
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { isBottomNavItem, navigationItems, type PageId } from "@/pages/pageMeta";
+import type { JobRunSummary } from "@/types/domain";
 import { OVERVIEW_TAB } from "@/pages/DbHubPage";
+import type { LogTabIntent } from "@/pages/JobHistoryPage";
 import { DbHubSubNav } from "@/components/layout/DbHubSubNav";
 import { PageLoader } from "@/components/layout/PageLoader";
 import { appUpdater } from "@/services/appUpdater";
@@ -30,7 +32,6 @@ import { getAdjacentPageId, getNavigationIndex, getPageIdByNavigationIndex } fro
 
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const JobHistoryPage = lazy(() => import("@/pages/JobHistoryPage").then((module) => ({ default: module.JobHistoryPage })));
-const LogsPage = lazy(() => import("@/pages/LogsPage").then((module) => ({ default: module.LogsPage })));
 const TemplatesPage = lazy(() => import("@/pages/TemplatesPage").then((module) => ({ default: module.TemplatesPage })));
 const VirtualClustersPage = lazy(() =>
   import("@/pages/VirtualClustersPage").then((module) => ({ default: module.VirtualClustersPage }))
@@ -59,16 +60,24 @@ export function AppShell() {
   // user navigated there through the sub-nav; the page keeps its own state
   // otherwise.
   const [dbHubTabIntent, setDbHubTabIntent] = useState<string>();
+  // Which job's logs the Job History page should open, as a one-shot token.
+  // The job itself also rides in the session store (JobRunsPanel writes it);
+  // the nonce is what makes each request distinct, so a tab the user closed
+  // does not come back the next time the page re-renders.
+  const [logTabIntent, setLogTabIntent] = useState<LogTabIntent>();
   const [, startPageTransition] = useTransition();
   const accounts = useAwsAccounts();
   const accountList = accounts.data ?? [];
   const activeAccount = accountList.find((account) => account.isActive);
   const setActiveAccount = useSetActiveAwsAccount();
-  const openLogsPage = useCallback(() => {
-    startPageTransition(() => setActivePage("logs"));
-  }, []);
-  const openS3Page = useCallback(() => {
-    startPageTransition(() => setActivePage("s3"));
+  // Logs live inside Job History now: go there and ask for a tab.
+  const openLogsPage = useCallback((job: JobRunSummary) => {
+    setLogTabIntent((current) => ({
+      jobId: job.id,
+      virtualClusterId: job.virtualClusterId,
+      nonce: (current?.nonce ?? 0) + 1
+    }));
+    startPageTransition(() => setActivePage("history"));
   }, []);
   const openSubmitPage = useCallback(() => {
     startPageTransition(() => setActivePage("submit"));
@@ -246,14 +255,11 @@ export function AppShell() {
       case "history":
         return (
           <JobHistoryPage
-            onOpenLogs={openLogsPage}
-            onOpenS3={openS3Page}
+            logTabIntent={logTabIntent}
             onOpenSubmit={openSubmitPage}
             onOpenAiAssistant={openAiAssistantPage}
           />
         );
-      case "logs":
-        return <LogsPage />;
       case "templates":
         return <TemplatesPage />;
       case "clusters":
@@ -273,13 +279,14 @@ export function AppShell() {
       default:
         return <SubmitJobPage onOpenLogs={openLogsPage} onOpenAiAssistant={openAiAssistantPage} />;
     }
-  }, [activePage, dbHubTabIntent, openLogsPage, openS3Page, openSubmitPage, openAiAssistantPage]);
+  }, [activePage, dbHubTabIntent, logTabIntent, openLogsPage, openSubmitPage, openAiAssistantPage]);
 
   return (
     // `h-screen overflow-hidden`, not `min-h-screen`: the shell owns the
     // viewport, so the window itself never scrolls. Pages that are taller than
     // the window (Dashboard, Settings, …) scroll inside `main`; pages that pin
-    // themselves to the viewport (DBHub, Logs, S3, Submit) fit it exactly. With
+    // themselves to the viewport (DBHub, Job History, S3, Submit) fit it exactly.
+    // With
     // `min-h-screen` any tall child — the sidebar with the DBHub second level
     // expanded is the usual one — grew the document past 100vh and dragged a
     // window scrollbar in, leaving the pinned pages short of the bottom edge.

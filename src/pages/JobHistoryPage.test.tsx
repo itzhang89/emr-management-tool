@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { JobHistoryPage } from "./JobHistoryPage";
+import { JobHistoryPage, type LogTabIntent } from "./JobHistoryPage";
 import { useSessionStore } from "@/stores/sessionStore";
+import { MAX_LOG_TABS } from "@/services/logsTabStorage";
 import type { JobRunSummary } from "@/types/domain";
 
 const mutate = vi.fn();
@@ -63,7 +64,7 @@ vi.mock("@/hooks/useAwsSettings", () => ({
 
 let jobs: JobRunSummary[];
 
-function renderJobHistoryPage(props?: { onOpenLogs?: () => void; onOpenS3?: () => void; onOpenSubmit?: () => void }) {
+function renderJobHistoryPage(props?: { logTabIntent?: LogTabIntent; onOpenSubmit?: () => void; onOpenAiAssistant?: () => void }) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <JobHistoryPage {...props} />
@@ -372,20 +373,225 @@ describe("JobHistoryPage", () => {
     expect(input).toHaveFocus();
   });
 
-  it("opens logs with only the job context and lets Logs resolve destinations", async () => {
+  it("opens a log tab for the job whose Logs button was pressed", async () => {
     const user = userEvent.setup();
-    const onOpenLogs = vi.fn();
 
-    renderJobHistoryPage({ onOpenLogs });
+    renderJobHistoryPage();
 
-    await user.click(within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i }));
+    await user.click(
+      within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i })
+    );
 
-    expect(describeJobRun).not.toHaveBeenCalled();
+    // The list is still the first tab, and the job's logs are a tab beside it.
+    expect(screen.getByRole("tab", { name: "Job History" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "running-etl" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: /Job run details/i })).not.toBeInTheDocument();
+    // The session handoff stays for the cross-page path (Submit Job's
+    // Recent Submissions table reaches logs through the same button).
     expect(useSessionStore.getState().selectedJobId).toBe("job-running");
     expect(useSessionStore.getState().selectedJobVirtualClusterId).toBe("vc-1");
-    expect(onOpenLogs).toHaveBeenCalled();
     expect(useSessionStore.getState().selectedS3Bucket).toBeUndefined();
+  });
+
+  it("keeps the job list as a fixed first tab with no close button", async () => {
+    renderJobHistoryPage();
+
+    const historyTab = screen.getByRole("tab", { name: "Job History" });
+    expect(historyTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("button", { name: "Close Job History" })).not.toBeInTheDocument();
+  });
+
+  it("activates an open tab instead of opening a second one for the same job", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    const logsButton = within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", {
+      name: /Logs/i
+    });
+
+    await user.click(logsButton);
+    await user.click(screen.getByRole("tab", { name: "Job History" }));
+    await user.click(logsButton);
+
+    expect(screen.getAllByRole("tab", { name: "running-etl" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "running-etl" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("closes a log tab, falls back to the neighbour, and releases its cache", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.click(
+      within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i })
+    );
+
+    await user.click(screen.getByRole("button", { name: "Close running-etl" }));
+
+    expect(screen.queryByRole("tab", { name: "running-etl" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Job History" })).toHaveAttribute("aria-selected", "true");
+    // Closing is what releases the local copy — the payload is gone, not
+    // merely unhooked from the strip.
+    expect(window.localStorage.getItem("emr-eks:job-history-tabs:acct-test")).toBeNull();
+  });
+
+  it("turns a draft tab into the job whose id was entered", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.click(screen.getByRole("button", { name: "Open a log tab" }));
+
+    expect(screen.getByRole("tab", { name: "New log tab" })).toHaveAttribute("aria-selected", "true");
+
+    await user.type(screen.getByPlaceholderText(/Enter job id/i), "job-typed{Enter}");
+
+    expect(screen.queryByRole("tab", { name: "New log tab" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "job-typed" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("refuses a tab past the limit and says why", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    for (let index = 0; index < MAX_LOG_TABS; index += 1) {
+      await user.click(screen.getByRole("button", { name: "Open a log tab" }));
+    }
+    expect(screen.getAllByRole("tab")).toHaveLength(MAX_LOG_TABS + 1);
+
+    await user.click(screen.getByRole("button", { name: "Open a log tab" }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining(`${MAX_LOG_TABS} of ${MAX_LOG_TABS} are open`)
+    );
+    expect(screen.getAllByRole("tab")).toHaveLength(MAX_LOG_TABS + 1);
+  });
+
+  it("cycles tabs with Mod+Shift+bracket and wraps around", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.click(
+      within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i })
+    );
+    expect(screen.getByRole("tab", { name: "running-etl" })).toHaveAttribute("aria-selected", "true");
+
+    // Brackets are userEvent descriptor syntax, so fire the events directly.
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true, shiftKey: true });
+    expect(screen.getByRole("tab", { name: "Job History" })).toHaveAttribute("aria-selected", "true");
+
+    // Wrapping backwards from the first tab lands on the last one.
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true, shiftKey: true });
+    expect(screen.getByRole("tab", { name: "running-etl" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("closes the tab in front with Mod+W and keeps the job list", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.click(
+      within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i })
+    );
+
+    await user.keyboard("{Meta>}w{/Meta}");
+
+    expect(screen.queryByRole("tab", { name: "running-etl" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Job History" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("ignores Mod+W on the fixed tab instead of letting the window take it", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    const event = new KeyboardEvent("keydown", { key: "w", metaKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.getByRole("tab", { name: "Job History" })).toBeInTheDocument();
+  });
+
+  it("drops the submission timestamp from the tab label but keeps it on hover", async () => {
+    const user = userEvent.setup();
+    jobs = [{ ...makeJobs()[0]!, id: "job-stamped", name: "g2_5mins_latest_only_260920_0735", state: "RUNNING" }];
+
+    renderJobHistoryPage();
+    await user.click(
+      within(screen.getByRole("row", { name: /g2_5mins_latest_only_260920_0735 RUNNING/i })).getByRole("button", {
+        name: /Logs/i
+      })
+    );
+
+    const tab = screen.getByRole("tab", { name: "g2_5mins_latest_only" });
+    expect(tab).toHaveAttribute("title", "g2_5mins_latest_only_260920_0735");
+  });
+
+  it("carries the keyboard focus to the tab a shortcut switched to", async () => {
+    const user = userEvent.setup();
+
+    renderJobHistoryPage();
+    await user.click(
+      within(screen.getByRole("row", { name: /running-etl RUNNING/i })).getByRole("button", { name: /Logs/i })
+    );
+    // Clicking the row action deliberately leaves focus on it, so the shortcut
+    // is what has to move the ring.
+    expect(screen.getByRole("tab", { name: "running-etl" })).not.toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "]", code: "BracketRight", metaKey: true, shiftKey: true });
+
+    // The pane follows the value, but so must the ring — otherwise the user
+    // sees the highlight sitting on the tab they just left.
+    expect(screen.getByRole("tab", { name: "Job History" })).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "[", code: "BracketLeft", metaKey: true, shiftKey: true });
+    expect(screen.getByRole("tab", { name: "running-etl" })).toHaveFocus();
+  });
+
+  it("restores the tabs and their cached log text from the last session", () => {
+    window.localStorage.setItem(
+      "emr-eks:job-history-tabs:acct-test",
+      JSON.stringify({
+        version: 1,
+        activeTabId: "vc-1:job-1",
+        tabs: [
+          {
+            id: "vc-1:job-1",
+            jobId: "job-1",
+            virtualClusterId: "vc-1",
+            jobName: "restored-etl",
+            openedAt: "2026-09-19T00:00:00.000Z",
+            lastViewedAt: "2026-09-19T00:00:00.000Z",
+            contentLength: 5,
+            content: { itemKey: "driver/stderr", text: "hello", savedAt: "2026-09-19T00:00:00.000Z" }
+          }
+        ]
+      })
+    );
+
+    renderJobHistoryPage();
+
+    expect(screen.getByRole("tab", { name: "restored-etl" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens the tab named by a cross-page intent, once", async () => {
+    const intent = (nonce: number): LogTabIntent => ({ jobId: "job-1", virtualClusterId: "vc-1", nonce });
+
+    const { rerender } = renderJobHistoryPage({ logTabIntent: intent(1) });
+
+    expect(await screen.findByRole("tab", { name: "job-1" })).toBeInTheDocument();
+
+    // Closing it must stick: re-rendering with the intent the page already
+    // handled must not reopen a tab the user just closed.
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <JobHistoryPage logTabIntent={intent(1)} />
+      </QueryClientProvider>
+    );
+    expect(screen.queryByRole("tab", { name: "job-1" })).toBeInTheDocument();
+
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <JobHistoryPage logTabIntent={intent(2)} />
+      </QueryClientProvider>
+    );
+    expect(screen.getByRole("tab", { name: "job-1" })).toBeInTheDocument();
   });
 
   it("looks up a missing local job id from AWS using the selected virtual cluster", async () => {

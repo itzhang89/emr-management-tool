@@ -53,7 +53,7 @@ import {
   writeSubmitJobLastTemplate
 } from "@/services/submitJobFormStorage";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { JobConfigTemplate, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
+import type { JobConfigTemplate, JobRunSummary, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
 
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
@@ -66,7 +66,7 @@ export function SubmitJobPage({
   onOpenLogs,
   onOpenAiAssistant
 }: {
-  onOpenLogs?: () => void;
+  onOpenLogs?: (job: JobRunSummary) => void;
   /** When provided, FAILED rows in Recent Submissions gain the same "Analyze"
       action as Job History, opening the AI assistant for failure analysis. */
   onOpenAiAssistant?: () => void;

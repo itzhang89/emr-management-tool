@@ -6,7 +6,6 @@ import {
   KeyRound,
   LayoutDashboard,
   Layers3,
-  ScrollText,
   Send,
   Settings,
   Sparkles,
@@ -17,7 +16,6 @@ export type PageId =
   | "dashboard"
   | "submit"
   | "history"
-  | "logs"
   | "templates"
   | "clusters"
   | "s3"
@@ -32,13 +30,15 @@ export type PageId =
  * is a product decision, not a dependency or alphabetical one: moving an entry
  * moves what its number key opens.
  *
+ * There is no Logs page: the log viewer lives in a tab of Job History, which is
+ * why Job History carries no "open logs" navigation of its own.
+ *
  * Settings is last because the sidebar pins it to its foot instead of letting
  * it scroll with the rest (see `isBottomNavItem`).
  */
 export const navigationItems = [
   { id: "submit", label: "Submit Job", description: "Template-driven submission", icon: Send },
   { id: "history", label: "Job History", description: "Track and clone jobs", icon: History },
-  { id: "logs", label: "Logs", description: "Job log browsing", icon: ScrollText },
   { id: "s3", label: "S3 Browser", description: "Text file editing", icon: FileCode2 },
   { id: "glue", label: "DBHub", description: "Databases, connections & queries", icon: Table2 },
   { id: "ai", label: "AI Assistant", description: "Chat, models, and MCP tools", icon: Sparkles },
