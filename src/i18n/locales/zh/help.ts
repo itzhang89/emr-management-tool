@@ -45,6 +45,7 @@ const help: TranslationDictionary = {
   "Go to AI Assistant": "前往「AI 助手」",
   "Go to Dashboard": "前往「概览」",
   "Go to Virtual Clusters": "前往「虚拟集群」",
+  "Go to Secrets": "前往「密钥管理」",
   "Go to Settings": "前往「设置」",
   "Previous page": "上一页",
   "Go to the previous page in the sidebar order": "按侧边栏顺序切换到上一页",

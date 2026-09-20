@@ -7,6 +7,7 @@ import jobHistory from "@/i18n/locales/zh/jobHistory";
 import logs from "@/i18n/locales/zh/logs";
 import navigation from "@/i18n/locales/zh/navigation";
 import s3 from "@/i18n/locales/zh/s3";
+import secrets from "@/i18n/locales/zh/secrets";
 import settings from "@/i18n/locales/zh/settings";
 import submitJob from "@/i18n/locales/zh/submitJob";
 import templates from "@/i18n/locales/zh/templates";
@@ -32,6 +33,7 @@ export const shards: Record<string, TranslationDictionary> = {
   dashboard,
   templates,
   ai,
+  secrets,
   settings
 };
 

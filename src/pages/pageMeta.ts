@@ -3,6 +3,7 @@ import {
   Database,
   FileCode2,
   History,
+  KeyRound,
   LayoutDashboard,
   Layers3,
   ScrollText,
@@ -22,6 +23,7 @@ export type PageId =
   | "s3"
   | "glue"
   | "ai"
+  | "secrets"
   | "settings";
 
 export const navigationItems = [
@@ -34,6 +36,7 @@ export const navigationItems = [
   { id: "ai", label: "AI Assistant", description: "Chat, models, and MCP tools", icon: Sparkles },
   { id: "dashboard", label: "Dashboard", description: "Cluster job statistics", icon: LayoutDashboard },
   { id: "clusters", label: "Virtual Clusters", description: "EMR on EKS clusters", icon: Database },
+  { id: "secrets", label: "Secrets", description: "Account secrets and DB credentials", icon: KeyRound },
   { id: "settings", label: "Settings", description: "AWS credentials", icon: Settings }
 ] as const satisfies Array<{
   id: PageId;

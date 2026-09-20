@@ -1111,6 +1111,9 @@ export interface RedactTestResult {
 /** What wire protocol a connection speaks. Yellowbrick rides Postgres wire. */
 export type DbConnectionKind = "mysql" | "postgres" | "yellowbrick";
 
+/** How a connection authenticates — local keychain or AWS Secrets Manager. */
+export type DbAuthMode = "manual" | "aws_secret";
+
 /** The SQL the AI tools may run — always select-only in this first cut. */
 export type DbReadOnlyPolicy = "select-only";
 
@@ -1137,6 +1140,11 @@ export interface DbConnection {
    * ignore this flag. This is the human's escape hatch — off by default.
    */
   allowWrites: boolean;
+  authMode: DbAuthMode;
+  /** Bound Secrets Manager ARN when authMode is aws_secret. */
+  secretArn?: string;
+  /** Display cache for the bound secret; dial uses secretArn. */
+  secretName?: string;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -1156,6 +1164,9 @@ export interface DbConnectionInput {
   aiReadOnlyPolicy?: DbReadOnlyPolicy;
   sortOrder?: number;
   password?: string;
+  authMode?: DbAuthMode;
+  secretArn?: string;
+  secretName?: string;
 }
 
 /** Patch body — absent fields keep their stored values. */
@@ -1177,6 +1188,8 @@ export interface DbConnectionTestInput {
   username: string;
   networkProfileId?: string;
   password?: string;
+  authMode?: DbAuthMode;
+  secretArn?: string;
 }
 
 /** Overview-card switches; absent fields stay untouched. */
@@ -1185,6 +1198,32 @@ export interface DbConnectionFlags {
   enabledForAi?: boolean;
   aiReadOnlyPolicy?: DbReadOnlyPolicy;
   allowWrites?: boolean;
+}
+
+/** One tag on an AWS Secrets Manager secret. */
+export interface SecretTag {
+  key: string;
+  value: string;
+}
+
+/** List/describe projection — never includes SecretString. */
+export interface SecretSummary {
+  name: string;
+  arn: string;
+  description?: string;
+  tags: SecretTag[];
+  lastChangedDate?: string;
+}
+
+export interface CreateSecretInput {
+  name: string;
+  description?: string;
+  secretString: string;
+  tags?: SecretTag[];
+}
+
+export interface SecretValueResponse {
+  value: string;
 }
 
 /** Transport details of one network profile (tagged union on `type`). */

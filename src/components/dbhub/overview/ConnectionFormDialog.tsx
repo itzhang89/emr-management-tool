@@ -21,7 +21,8 @@ import {
 } from "@/hooks/useDbHub";
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
-import type { DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
+import type { DbAuthMode, DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
+import { useSecrets } from "@/hooks/useSecrets";
 
 /**
  * The "Connect to a database" form (design section 5): Server and
@@ -61,6 +62,8 @@ export function ConnectionFormDialog({
   const testDraftConnection = useTestDbConnectionDraft();
   const profilesQuery = useNetworkProfiles();
   const profiles = profilesQuery.data ?? [];
+  const secretsQuery = useSecrets();
+  const secrets = secretsQuery.data ?? [];
 
   const [kind, setKind] = useState<DbConnectionKind>(connection?.kind ?? "mysql");
   const [name, setName] = useState(connection?.name ?? "");
@@ -71,6 +74,8 @@ export function ConnectionFormDialog({
   const [database, setDatabase] = useState(connection?.database ?? "");
   const [username, setUsername] = useState(connection?.username ?? "");
   const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<DbAuthMode>(connection?.authMode ?? "manual");
+  const [secretArn, setSecretArn] = useState(connection?.secretArn ?? "");
   const [networkProfileId, setNetworkProfileId] = useState(connection?.networkProfileId ?? "");
   const [showAsTab, setShowAsTab] = useState(connection?.showAsTab ?? false);
   const [enabledForAi, setEnabledForAi] = useState(connection?.enabledForAi ?? true);
@@ -86,6 +91,8 @@ export function ConnectionFormDialog({
     setDatabase(connection?.database ?? "");
     setUsername(connection?.username ?? "");
     setPassword("");
+    setAuthMode(connection?.authMode ?? "manual");
+    setSecretArn(connection?.secretArn ?? "");
     setNetworkProfileId(connection?.networkProfileId ?? "");
     setShowAsTab(connection?.showAsTab ?? false);
     setEnabledForAi(connection?.enabledForAi ?? true);
@@ -105,13 +112,23 @@ export function ConnectionFormDialog({
       if (!url.trim()) return "URL is required.";
       return undefined;
     }
-    if (!host.trim()) return "Server host is required.";
+    if (authMode === "manual" && !host.trim()) return "Server host is required.";
     if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
       return "Port must be 1-65535.";
     }
-    if (!username.trim()) return "Username is required.";
+    if (authMode === "manual" && !username.trim()) return "Username is required.";
+    if (authMode === "aws_secret" && !secretArn.trim()) {
+      return "Select an AWS Secrets Manager secret.";
+    }
     return undefined;
   };
+
+  const selectedSecret = secrets.find((secret) => secret.arn === secretArn);
+  const preferredSecrets = [...secrets].sort((left, right) => {
+    const leftPreferred = left.name.startsWith(`${kind}.`) ? 0 : 1;
+    const rightPreferred = right.name.startsWith(`${kind}.`) ? 0 : 1;
+    return leftPreferred - rightPreferred || left.name.localeCompare(right.name);
+  });
 
   const buildSave = () => ({
     kind,
@@ -123,7 +140,15 @@ export function ConnectionFormDialog({
     networkProfileId: networkProfileId || undefined,
     showAsTab,
     enabledForAi,
-    password: password || undefined
+    authMode,
+    secretArn: authMode === "aws_secret" ? secretArn.trim() : connection ? "" : undefined,
+    secretName:
+      authMode === "aws_secret"
+        ? selectedSecret?.name ?? connection?.secretName
+        : connection
+          ? ""
+          : undefined,
+    password: authMode === "manual" ? password || undefined : undefined
   });
 
   /** The form as a probe request. `id` is carried only so editing can reuse
@@ -136,7 +161,9 @@ export function ConnectionFormDialog({
     database: database.trim() || undefined,
     username: username.trim(),
     networkProfileId: networkProfileId || undefined,
-    password: password || undefined
+    password: authMode === "manual" ? password || undefined : undefined,
+    authMode,
+    secretArn: authMode === "aws_secret" ? secretArn.trim() : undefined
   });
 
   /**
@@ -293,23 +320,78 @@ export function ConnectionFormDialog({
           <fieldset className="space-y-3 rounded-lg border p-3">
             <legend className="px-1 text-sm font-medium">{t("Authentication")}</legend>
             <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
+              <Label className="text-right text-sm">{t("Auth mode")}</Label>
+              <RadioGroup
+                value={authMode}
+                onValueChange={(value) => setAuthMode(value as DbAuthMode)}
+                className="flex flex-wrap gap-4"
+              >
+                <div className="flex items-center gap-1.5">
+                  <RadioGroupItem value="manual" id="auth-manual" />
+                  <Label htmlFor="auth-manual" className="text-sm font-normal">
+                    {t("Manual password")}
+                  </Label>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <RadioGroupItem value="aws_secret" id="auth-sm" />
+                  <Label htmlFor="auth-sm" className="text-sm font-normal">
+                    {t("AWS Secrets Manager")}
+                  </Label>
+                </div>
+              </RadioGroup>
+
+              {authMode === "aws_secret" ? (
+                <>
+                  <Label htmlFor="conn-secret" className="text-right text-sm">
+                    {t("Secret")}
+                  </Label>
+                  <select
+                    id="conn-secret"
+                    value={secretArn}
+                    onChange={(event) => setSecretArn(event.target.value)}
+                    className="h-9 max-w-sm rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">{t("Select a secret…")}</option>
+                    {preferredSecrets.map((secret) => (
+                      <option key={secret.arn} value={secret.arn}>
+                        {secret.name.startsWith(`${kind}.`) ? "★ " : ""}
+                        {secret.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
+
               <Label htmlFor="conn-username" className="text-right text-sm">{t("Username")}</Label>
               <Input
                 id="conn-username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 className="max-w-xs"
+                placeholder={
+                  authMode === "aws_secret" ? t("Optional fallback — secret may override") : undefined
+                }
               />
-              <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
-              <div className="flex max-w-xs items-center gap-2">
-                <Input
-                  id="conn-password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={connection ? t("•••••••• (saved — leave blank to keep)") : ""}
-                />
-              </div>
+              {authMode === "manual" ? (
+                <>
+                  <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
+                  <div className="flex max-w-xs items-center gap-2">
+                    <Input
+                      id="conn-password"
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder={connection ? t("•••••••• (saved — leave blank to keep)") : ""}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="col-span-2 text-xs text-muted-foreground">
+                  {t(
+                    "Password and optional host/user/database come from the bound secret JSON at connect time."
+                  )}
+                </p>
+              )}
             </div>
           </fieldset>
 

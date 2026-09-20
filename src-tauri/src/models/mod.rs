@@ -63,6 +63,52 @@ pub struct AwsCommandContext {
     pub account_id: Option<String>,
 }
 
+/// One tag on an AWS Secrets Manager secret (metadata only).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretTag {
+    pub key: String,
+    pub value: String,
+}
+
+/// List/describe projection — never includes SecretString.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretSummary {
+    pub name: String,
+    pub arn: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<SecretTag>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_changed_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretIdRequest {
+    /// Secret name or ARN.
+    pub secret_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSecretInput {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub secret_string: String,
+    #[serde(default)]
+    pub tags: Vec<SecretTag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretValueResponse {
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AwsAccountCredentialsInput {
@@ -1484,6 +1530,39 @@ impl DbConnectionKind {
     }
 }
 
+/// How a DBHub connection authenticates.
+///
+/// `manual` keeps the password in the local keychain (`db/{id}/password`).
+/// `aws_secret` loads a JSON payload from AWS Secrets Manager by ARN at dial
+/// time (see `aws::secrets_manager`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DbAuthMode {
+    #[default]
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "aws_secret")]
+    AwsSecret,
+}
+
+impl DbAuthMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DbAuthMode::Manual => "manual",
+            DbAuthMode::AwsSecret => "aws_secret",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "manual" => Ok(DbAuthMode::Manual),
+            "aws_secret" => Ok(DbAuthMode::AwsSecret),
+            other => Err(format!(
+                "Unknown connection auth_mode in database: {other}"
+            )),
+        }
+    }
+}
+
 /// The SQL the AI tools may run against a connection. `select_only` is the
 /// default and only lets SELECT/SHOW/DESCRIBE/EXPLAIN through; read-only
 /// transaction mode enforces it a second time at the wire level.
@@ -1530,6 +1609,15 @@ pub struct DbConnection {
     /// by default, because a connection that can write is a connection that
     /// can be written to by mistake.
     pub allow_writes: bool,
+    /// `manual` (local keychain) or `aws_secret` (Secrets Manager by ARN).
+    #[serde(default)]
+    pub auth_mode: DbAuthMode,
+    /// Bound Secrets Manager ARN when `auth_mode` is `aws_secret`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_arn: Option<String>,
+    /// Display cache for the bound secret; dial uses `secret_arn`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_name: Option<String>,
     pub sort_order: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -1560,6 +1648,12 @@ pub struct DbConnectionInput {
     #[serde(default)]
     pub allow_writes: bool,
     #[serde(default)]
+    pub auth_mode: DbAuthMode,
+    #[serde(default)]
+    pub secret_arn: Option<String>,
+    #[serde(default)]
+    pub secret_name: Option<String>,
+    #[serde(default)]
     pub sort_order: Option<i64>,
     #[serde(default)]
     pub password: Option<String>,
@@ -1587,6 +1681,10 @@ pub struct DbConnectionTestInput {
     /// Only present when the user typed one in this sitting.
     #[serde(default)]
     pub password: Option<String>,
+    #[serde(default)]
+    pub auth_mode: DbAuthMode,
+    #[serde(default)]
+    pub secret_arn: Option<String>,
 }
 
 /// A profile test against the transport the user is still editing.
@@ -1655,6 +1753,12 @@ pub struct DbConnectionUpdateInput {
     pub sort_order: Option<i64>,
     #[serde(default)]
     pub password: Option<String>,
+    #[serde(default)]
+    pub auth_mode: Option<DbAuthMode>,
+    #[serde(default)]
+    pub secret_arn: Option<String>,
+    #[serde(default)]
+    pub secret_name: Option<String>,
 }
 
 /// Transport details for one network profile. `SshTunnel` forwards a local

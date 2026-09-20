@@ -22,6 +22,7 @@ const createConnection = vi.fn().mockResolvedValue({
   enabledForAi: true,
   aiReadOnlyPolicy: "select-only",
   allowWrites: false,
+  authMode: "manual" as const,
   sortOrder: 0
 });
 // Echo the id back the way the command does — a test that follows a create
@@ -58,7 +59,8 @@ vi.mock("@/services/tauriClient", () => ({
     ]),
     createDbConnection: (...args: unknown[]) => createConnection(...args),
     updateDbConnection: (...args: unknown[]) => updateConnection(...args),
-    testDbConnectionDraft: (...args: unknown[]) => testDraftConnection(...args)
+    testDbConnectionDraft: (...args: unknown[]) => testDraftConnection(...args),
+    listSecrets: vi.fn().mockResolvedValue([])
   }
 }));
 
@@ -198,6 +200,7 @@ describe("ConnectionFormDialog", () => {
         enabledForAi: true,
         aiReadOnlyPolicy: "select-only",
         allowWrites: false,
+        authMode: "manual",
         sortOrder: 0,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"
@@ -237,6 +240,7 @@ describe("ConnectionFormDialog", () => {
         enabledForAi: true,
         aiReadOnlyPolicy: "select-only",
         allowWrites: false,
+        authMode: "manual",
         sortOrder: 0,
         createdAt: "2026-09-08T00:00:00Z",
         updatedAt: "2026-09-08T00:00:00Z"

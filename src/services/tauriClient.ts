@@ -89,7 +89,10 @@ import type {
   DbQueryResult,
   DbQueryRequest,
   DbCatalogEntry,
-  SchemaObjectKind
+  SchemaObjectKind,
+  SecretSummary,
+  CreateSecretInput,
+  SecretValueResponse
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -324,6 +327,11 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       schema: string,
       kinds: SchemaObjectKind[]
     ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds }),
+    // AWS Secrets Manager (active-account scoped).
+    listSecrets: () => call<SecretSummary[]>("list_secrets"),
+    describeSecret: (secretId: string) => call<SecretSummary>("describe_secret", { secretId }),
+    createSecret: (request: CreateSecretInput) => call<SecretSummary>("create_secret", request),
+    getSecretValue: (secretId: string) => call<SecretValueResponse>("get_secret_value", { secretId }),
     /** Rebuilds the native menu. The frontend owns the language preference. */
     setAppLanguage: (request: { language: string }) => call<void>("set_app_language", request)
   };

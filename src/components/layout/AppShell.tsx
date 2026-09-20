@@ -39,6 +39,9 @@ const S3BrowserPage = lazy(() => import("@/pages/S3BrowserPage").then((module) =
 const DbHubPage = lazy(() =>
   import("@/pages/DbHubPage").then((module) => ({ default: module.DbHubPage }))
 );
+const SecretsPage = lazy(() =>
+  import("@/pages/SecretsPage").then((module) => ({ default: module.SecretsPage }))
+);
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const AiAssistantPage = lazy(() =>
   import("@/pages/AiAssistantPage").then((module) => ({ default: module.AiAssistantPage }))
@@ -263,6 +266,8 @@ export function AppShell() {
         );
       case "ai":
         return <AiAssistantPage />;
+      case "secrets":
+        return <SecretsPage />;
       case "settings":
         return <SettingsPage />;
       default:

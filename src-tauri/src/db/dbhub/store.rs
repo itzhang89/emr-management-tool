@@ -33,6 +33,9 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             enabled_for_ai integer not null default 1,
             allow_writes integer not null default 0,
             ai_read_only_policy text not null default 'select-only',
+            auth_mode text not null default 'manual',
+            secret_arn text,
+            secret_name text,
             sort_order integer not null default 0,
             created_at text not null,
             updated_at text not null
@@ -69,10 +72,24 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     // Columns added after the table shipped. `create table if not exists`
     // leaves an existing database exactly as it was, so a column that arrives
     // later arrives here or not at all.
-    for (column, definition) in [(
-        "allow_writes",
-        "alter table db_connections add column allow_writes integer not null default 0",
-    )] {
+    for (column, definition) in [
+        (
+            "allow_writes",
+            "alter table db_connections add column allow_writes integer not null default 0",
+        ),
+        (
+            "auth_mode",
+            "alter table db_connections add column auth_mode text not null default 'manual'",
+        ),
+        (
+            "secret_arn",
+            "alter table db_connections add column secret_arn text",
+        ),
+        (
+            "secret_name",
+            "alter table db_connections add column secret_name text",
+        ),
+    ] {
         if !connection_column_exists(pool, column).await? {
             sqlx::query(definition)
                 .execute(pool)
@@ -140,6 +157,10 @@ fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> 
         enabled_for_ai: row.get::<i64, _>("enabled_for_ai") != 0,
         allow_writes: row.get::<i64, _>("allow_writes") != 0,
         ai_read_only_policy: policy_from_column(&row.get::<String, _>("ai_read_only_policy"))?,
+        auth_mode: crate::models::DbAuthMode::parse(&row.get::<String, _>("auth_mode"))
+            .map_err(AppError::storage)?,
+        secret_arn: row.get("secret_arn"),
+        secret_name: row.get("secret_name"),
         sort_order: row.get::<i64, _>("sort_order"),
         created_at: crate::db::parse_timestamp(&row.get::<String, _>("created_at")),
         updated_at: crate::db::parse_timestamp(&row.get::<String, _>("updated_at")),
@@ -183,8 +204,9 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
         "insert into db_connections
             (id, account_id, kind, name, host, port, database, username, network_profile_id,
              show_as_tab, enabled_for_ai, ai_read_only_policy, allow_writes,
+             auth_mode, secret_arn, secret_name,
              sort_order, created_at, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
     )
     .bind(&connection.id)
     .bind(&connection.account_id)
@@ -199,6 +221,9 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     .bind(connection.enabled_for_ai as i64)
     .bind(policy_column(connection.ai_read_only_policy))
     .bind(connection.allow_writes as i64)
+    .bind(connection.auth_mode.as_str())
+    .bind(&connection.secret_arn)
+    .bind(&connection.secret_name)
     .bind(connection.sort_order)
     .bind(connection.created_at.to_rfc3339())
     .execute(pool)
@@ -303,6 +328,9 @@ pub struct ConnectionPatch<'a> {
     pub enabled_for_ai: Option<bool>,
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
     pub allow_writes: Option<bool>,
+    pub auth_mode: Option<crate::models::DbAuthMode>,
+    pub secret_arn: Option<Option<&'a str>>,
+    pub secret_name: Option<Option<&'a str>>,
     pub sort_order: Option<i64>,
 }
 
@@ -384,6 +412,33 @@ pub async fn update_connection(
             account_id,
             "ai_read_only_policy",
             value.as_str().to_string()
+        )?;
+    }
+    if let Some(value) = patch.auth_mode {
+        update_column!(
+            pool,
+            id,
+            account_id,
+            "auth_mode",
+            value.as_str().to_string()
+        )?;
+    }
+    if let Some(value) = patch.secret_arn {
+        update_column!(
+            pool,
+            id,
+            account_id,
+            "secret_arn",
+            value.map(|s| s.to_string())
+        )?;
+    }
+    if let Some(value) = patch.secret_name {
+        update_column!(
+            pool,
+            id,
+            account_id,
+            "secret_name",
+            value.map(|s| s.to_string())
         )?;
     }
     if let Some(value) = patch.sort_order {
@@ -622,6 +677,9 @@ mod tests {
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
             allow_writes: false,
+            auth_mode: crate::models::DbAuthMode::Manual,
+            secret_arn: None,
+            secret_name: None,
             sort_order: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -699,6 +757,9 @@ mod tests {
                 enabled_for_ai: Some(false),
                 ai_read_only_policy: None,
                 allow_writes: None,
+            auth_mode: None,
+            secret_arn: None,
+            secret_name: None,
                 sort_order: None,
             },
         )
@@ -741,6 +802,9 @@ mod tests {
                 enabled_for_ai: None,
                 ai_read_only_policy: None,
                 allow_writes: None,
+            auth_mode: None,
+            secret_arn: None,
+            secret_name: None,
                 sort_order: None,
             },
         )

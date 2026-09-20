@@ -40,10 +40,6 @@ pub struct DbQueryResult {
     pub catalog_changed: bool,
 }
 
-fn pool_secret_key(id: &str) -> String {
-    format!("db/{id}/password")
-}
-
 /// The fields the executor needs, split out so tests and the MCP tools can
 /// build one without a Tauri handle. `pool` is the app's SQLite pool (used to
 /// resolve the network profile when routing).
@@ -76,8 +72,8 @@ pub(crate) async fn shape_for(
             "This connection is not enabled for AI queries.",
         ));
     }
-    let password =
-        crate::secrets::read_optional_secret(app, &pool_secret_key(connection_id)).unwrap_or(None);
+    let (connection, password) =
+        crate::db::dbhub::credentials::resolve_for_dial(app, &connection, None).await?;
     Ok(DbConnectionShape {
         pool,
         connection,
@@ -269,6 +265,9 @@ mod tests {
                 enabled_for_ai: true,
                 ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
                 allow_writes: false,
+                auth_mode: crate::models::DbAuthMode::Manual,
+                secret_arn: None,
+                secret_name: None,
                 sort_order: 0,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),

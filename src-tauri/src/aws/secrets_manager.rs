@@ -1,0 +1,289 @@
+//! AWS Secrets Manager helpers: list/describe/create plus JSON overlay used by
+//! DBHub when a connection binds a secret by ARN.
+//!
+//! SecretString never lands in SQLite. List/describe DTOs omit it; reveal/copy
+//! and dial-time resolve are the only readers.
+
+use crate::error::{AppError, AppResult};
+use crate::models::{DbConnection, SecretSummary, SecretTag};
+use aws_sdk_secretsmanager::types::Tag;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
+pub const TAG_SUBMIT_USER: &str = "submitUser";
+pub const TAG_MANAGED_BY: &str = "managedBy";
+pub const MANAGED_BY_VALUE: &str = "emr-management-tool";
+
+const LIST_PAGE_SIZE: i32 = 100;
+const LIST_HARD_CAP: usize = 2000;
+
+/// Fields a DBHub JSON secret may carry. Absent keys leave the connection row
+/// untouched; empty strings are treated as absent.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DbSecretFields {
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub port: Option<i64>,
+    #[serde(default)]
+    pub database: Option<String>,
+}
+
+pub fn parse_db_secret_json(secret_string: &str) -> AppResult<DbSecretFields> {
+    let value: serde_json::Value = serde_json::from_str(secret_string).map_err(|error| {
+        AppError::validation(format!(
+            "Secret value is not valid JSON: {error}. Expected an object with username/password/host/port/database."
+        ))
+    })?;
+    if !value.is_object() {
+        return Err(AppError::validation(
+            "Secret value must be a JSON object with username/password/host/port/database.",
+        ));
+    }
+    serde_json::from_value(value).map_err(|error| {
+        AppError::validation(format!("Secret JSON could not be parsed: {error}"))
+    })
+}
+
+/// Overlay non-empty secret fields onto a connection. Returns the password to
+/// use for the dial (secret password if present, else `None` so the caller can
+/// fall back to the local keychain).
+pub fn apply_db_secret_overlay(
+    connection: &mut DbConnection,
+    fields: &DbSecretFields,
+) -> Option<String> {
+    if let Some(username) = non_empty(fields.username.as_deref()) {
+        connection.username = username.to_string();
+    }
+    if let Some(host) = non_empty(fields.host.as_deref()) {
+        connection.host = host.to_string();
+    }
+    if let Some(port) = fields.port.filter(|value| *value > 0 && *value <= 65535) {
+        connection.port = port;
+    }
+    if let Some(database) = fields.database.as_ref() {
+        let trimmed = database.trim();
+        connection.database = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    non_empty(fields.password.as_deref()).map(str::to_string)
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+pub fn required_create_tags(submit_user: &str) -> Vec<Tag> {
+    vec![
+        Tag::builder()
+            .key(TAG_SUBMIT_USER)
+            .value(submit_user)
+            .build(),
+        Tag::builder()
+            .key(TAG_MANAGED_BY)
+            .value(MANAGED_BY_VALUE)
+            .build(),
+    ]
+}
+
+pub fn merge_create_tags(
+    submit_user: &str,
+    extra: &[SecretTag],
+) -> AppResult<Vec<Tag>> {
+    let mut tags = required_create_tags(submit_user);
+    for tag in extra {
+        let key = tag.key.trim();
+        let value = tag.value.trim();
+        if key.is_empty() {
+            return Err(AppError::validation("Secret tag keys cannot be empty."));
+        }
+        if key == TAG_SUBMIT_USER && value != submit_user {
+            return Err(AppError::validation(format!(
+                "submitUser tag must be the local user ({submit_user}); forging another user is not allowed."
+            )));
+        }
+        if key == TAG_MANAGED_BY && value != MANAGED_BY_VALUE {
+            return Err(AppError::validation(format!(
+                "managedBy tag must be {MANAGED_BY_VALUE}."
+            )));
+        }
+        if key == TAG_SUBMIT_USER || key == TAG_MANAGED_BY {
+            continue;
+        }
+        tags.push(Tag::builder().key(key).value(value).build());
+    }
+    Ok(tags)
+}
+
+pub fn map_secret_list_entry(
+    entry: &aws_sdk_secretsmanager::types::SecretListEntry,
+) -> Option<SecretSummary> {
+    let name = entry.name()?.to_string();
+    let arn = entry.arn()?.to_string();
+    Some(SecretSummary {
+        name,
+        arn,
+        description: entry.description().map(str::to_string),
+        tags: entry
+            .tags()
+            .iter()
+            .filter_map(|tag| {
+                Some(SecretTag {
+                    key: tag.key()?.to_string(),
+                    value: tag.value().unwrap_or("").to_string(),
+                })
+            })
+            .collect(),
+        last_changed_date: entry
+            .last_changed_date()
+            .and_then(system_time_to_rfc3339),
+    })
+}
+
+fn system_time_to_rfc3339(
+    value: &aws_smithy_types::DateTime,
+) -> Option<String> {
+    let secs = value.secs();
+    let nanos = value.subsec_nanos();
+    DateTime::<Utc>::from_timestamp(secs, nanos).map(|dt| dt.to_rfc3339())
+}
+
+pub async fn list_all_secrets(
+    client: &aws_sdk_secretsmanager::Client,
+) -> AppResult<Vec<SecretSummary>> {
+    let mut out = Vec::new();
+    let mut next_token: Option<String> = None;
+    loop {
+        let mut operation = client.list_secrets().max_results(LIST_PAGE_SIZE);
+        if let Some(token) = next_token.as_deref() {
+            operation = operation.next_token(token);
+        }
+        let response = operation.send().await.map_err(|error| {
+            AppError::aws_sdk("secretsmanager", error)
+        })?;
+        for entry in response.secret_list() {
+            if let Some(summary) = map_secret_list_entry(entry) {
+                out.push(summary);
+            }
+        }
+        if out.len() >= LIST_HARD_CAP {
+            break;
+        }
+        next_token = response.next_token().map(str::to_string);
+        if next_token.is_none() {
+            break;
+        }
+    }
+    out.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(out)
+}
+
+pub async fn get_secret_string(
+    client: &aws_sdk_secretsmanager::Client,
+    secret_id: &str,
+) -> AppResult<String> {
+    let response = client
+        .get_secret_value()
+        .secret_id(secret_id)
+        .send()
+        .await
+        .map_err(|error| AppError::aws_sdk("secretsmanager", error))?;
+    response.secret_string().map(str::to_string).ok_or_else(|| {
+        AppError::validation(
+            "Secret has no SecretString (binary secrets are not supported for DBHub).",
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{DbAuthMode, DbConnectionKind, DbReadOnlyPolicy};
+
+    fn connection() -> DbConnection {
+        DbConnection {
+            id: "c1".into(),
+            account_id: "a1".into(),
+            kind: DbConnectionKind::Mysql,
+            name: "sales".into(),
+            host: "fallback.host".into(),
+            port: 3306,
+            database: Some("fallback_db".into()),
+            username: "fallback_user".into(),
+            network_profile_id: None,
+            show_as_tab: false,
+            enabled_for_ai: false,
+            ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            allow_writes: false,
+            auth_mode: DbAuthMode::Manual,
+            secret_arn: None,
+            secret_name: None,
+            sort_order: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn parse_and_overlay_json_secret() {
+        let fields = parse_db_secret_json(
+            r#"{"username":"bi","password":"s3cret","host":"db.internal","port":3307,"database":"sales"}"#,
+        )
+        .expect("parse");
+        let mut connection = connection();
+        let password = apply_db_secret_overlay(&mut connection, &fields);
+        assert_eq!(password.as_deref(), Some("s3cret"));
+        assert_eq!(connection.username, "bi");
+        assert_eq!(connection.host, "db.internal");
+        assert_eq!(connection.port, 3307);
+        assert_eq!(connection.database.as_deref(), Some("sales"));
+    }
+
+    #[test]
+    fn overlay_skips_empty_fields() {
+        let fields = parse_db_secret_json(r#"{"password":"only"}"#).expect("parse");
+        let mut connection = connection();
+        let password = apply_db_secret_overlay(&mut connection, &fields);
+        assert_eq!(password.as_deref(), Some("only"));
+        assert_eq!(connection.host, "fallback.host");
+        assert_eq!(connection.username, "fallback_user");
+    }
+
+    #[test]
+    fn merge_tags_rejects_forged_submit_user() {
+        let err = merge_create_tags(
+            "alice",
+            &[SecretTag {
+                key: "submitUser".into(),
+                value: "bob".into(),
+            }],
+        )
+        .expect_err("forge");
+        assert!(err.message.contains("submitUser"));
+    }
+
+    #[test]
+    fn merge_tags_keeps_required_and_extras() {
+        let tags = merge_create_tags(
+            "alice",
+            &[SecretTag {
+                key: "purpose".into(),
+                value: "dbhub".into(),
+            }],
+        )
+        .expect("merge");
+        assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn reject_non_object_json() {
+        assert!(parse_db_secret_json(r#""just-a-string""#).is_err());
+    }
+}

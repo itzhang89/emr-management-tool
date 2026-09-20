@@ -39,6 +39,33 @@ fn profile_secret_key(id: &str) -> String {
     format!("profile/{id}/password")
 }
 
+fn validate_auth_mode(connection: &DbConnection) -> AppResult<()> {
+    match connection.auth_mode {
+        crate::models::DbAuthMode::Manual => {
+            if connection.secret_arn.is_some() {
+                return Err(AppError::validation(
+                    "secretArn must be empty when authMode is manual.",
+                ));
+            }
+            Ok(())
+        }
+        crate::models::DbAuthMode::AwsSecret => {
+            if connection
+                .secret_arn
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                return Err(AppError::validation(
+                    "secretArn is required when authMode is aws_secret.",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Mirror the "did we store a secret" flag into the transport JSON so the UI
 /// can show a masked hint without the secret ever leaving the Rust process.
 fn with_credentials_saved(
@@ -77,13 +104,14 @@ pub async fn create_db_connection(
     if request.name.trim().is_empty() {
         return Err(AppError::validation("Connection name is required."));
     }
-    if request.host.trim().is_empty() {
+    if request.auth_mode == crate::models::DbAuthMode::Manual && request.host.trim().is_empty() {
         return Err(AppError::validation("Connection host is required."));
     }
     if request.port <= 0 || request.port > 65535 {
         return Err(AppError::validation("Connection port must be 1-65535."));
     }
-    if request.username.trim().is_empty() {
+    if request.auth_mode == crate::models::DbAuthMode::Manual && request.username.trim().is_empty()
+    {
         return Err(AppError::validation("Connection username is required."));
     }
 
@@ -131,15 +159,28 @@ pub async fn create_db_connection(
         // Off unless asked for: a connection that can write is one that can be
         // written to by mistake.
         allow_writes: request.allow_writes,
+        auth_mode: request.auth_mode,
+        secret_arn: request
+            .secret_arn
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        secret_name: request
+            .secret_name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         sort_order: request.sort_order.unwrap_or_else(|| 0),
         created_at: now,
         updated_at: now,
     };
 
+    validate_auth_mode(&connection)?;
+
     dbhub::insert_connection(&pool, &connection).await?;
 
-    if let Some(password) = request.password.filter(|value| !value.is_empty()) {
-        crate::secrets::write_secret(&app, &connection_secret_key(&connection.id), &password)?;
+    if connection.auth_mode == crate::models::DbAuthMode::Manual {
+        if let Some(password) = request.password.filter(|value| !value.is_empty()) {
+            crate::secrets::write_secret(&app, &connection_secret_key(&connection.id), &password)?;
+        }
     }
 
     Ok(connection)
@@ -224,26 +265,45 @@ pub async fn update_db_connection(
             enabled_for_ai: request.enabled_for_ai,
             ai_read_only_policy: request.ai_read_only_policy,
             allow_writes: request.allow_writes,
+            auth_mode: request.auth_mode,
+            secret_arn: request.secret_arn.as_deref().map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }),
+            secret_name: request.secret_name.as_deref().map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }),
             sort_order: request.sort_order,
         },
     )
     .await?;
 
-    if let Some(password) = password {
-        crate::secrets::write_optional_secret(
-            &app,
-            &connection_secret_key(&request.id),
-            Some(password.as_str()).filter(|value| !value.is_empty()),
-        )?;
+    // Re-read to validate the resulting auth mode after the patch.
+    let updated = dbhub::get_connection(&pool, &account_id, &request.id)
+        .await?
+        .ok_or_else(|| AppError::validation("Connection was not found."))?;
+    validate_auth_mode(&updated)?;
+
+    if updated.auth_mode == crate::models::DbAuthMode::Manual {
+        if let Some(password) = password {
+            crate::secrets::write_optional_secret(
+                &app,
+                &connection_secret_key(&request.id),
+                Some(password.as_str()).filter(|value| !value.is_empty()),
+            )?;
+        }
     }
 
-    dbhub::get_connection(&pool, &account_id, &request.id)
-        .await?
-        .map(|connection| {
-            let _ = existing; // scope check already ran through get_connection
-            connection
-        })
-        .ok_or_else(|| AppError::validation("Connection was not found."))
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -287,6 +347,9 @@ pub async fn set_db_connection_flags(
             enabled_for_ai: request.flags.enabled_for_ai,
             ai_read_only_policy: request.flags.ai_read_only_policy,
             allow_writes: request.flags.allow_writes,
+            auth_mode: None,
+            secret_arn: None,
+            secret_name: None,
             sort_order: None,
         },
     )
@@ -334,9 +397,7 @@ pub async fn test_db_connection(
     let connection = dbhub::get_connection(&pool, &account_id, &request.connection_id)
         .await?
         .ok_or_else(|| AppError::validation("Connection was not found."))?;
-    let password =
-        crate::secrets::read_optional_secret(&app, &connection_secret_key(&connection.id))
-            .unwrap_or(None);
+    let (connection, password) = dbhub::credentials::resolve_for_dial(&app, &connection, None).await?;
 
     probe_connection(&pool, &app, &connection, password, started).await
 }
@@ -352,42 +413,14 @@ pub async fn test_db_connection_draft(
     app: AppHandle,
     request: DbConnectionTestInput,
 ) -> AppResult<DbTestResult> {
-    // Same gate the save path applies, so an empty host reads the same way
-    // here instead of reaching a driver as a URL with no server in it.
-    if request.host.trim().is_empty() {
-        return Err(AppError::validation("Connection host is required."));
-    }
-
     let started = std::time::Instant::now();
     let pool = repository::pool().await?;
     let account_id = active_account_id(&pool).await?;
 
-    // A blank password means "keep the stored one" when this dialog is editing
-    // an existing connection, and "no password" when it is creating one.
-    // The id is checked against the active account first: an id from another
-    // account would otherwise hand that account's secret to whatever host the
-    // form happens to name.
-    let stored_id = match request.id.as_deref() {
-        Some(id)
-            if dbhub::get_connection(&pool, &account_id, id)
-                .await?
-                .is_some() =>
-        {
-            Some(id)
-        }
-        _ => None,
-    };
-    let password = match request.password.filter(|value| !value.is_empty()) {
-        Some(typed) => Some(typed),
-        None => stored_id.and_then(|id| {
-            crate::secrets::read_optional_secret(&app, &connection_secret_key(id)).unwrap_or(None)
-        }),
-    };
-
     let now = chrono::Utc::now();
     let connection = DbConnection {
         // Only ever read back by the probe below; never persisted.
-        id: request.id.unwrap_or_else(|| "draft".to_string()),
+        id: request.id.clone().unwrap_or_else(|| "draft".to_string()),
         account_id,
         kind: request.kind,
         name: "Draft connection".to_string(),
@@ -403,10 +436,25 @@ pub async fn test_db_connection_draft(
         enabled_for_ai: false,
         ai_read_only_policy: crate::models::DbReadOnlyPolicy::SelectOnly,
         allow_writes: false,
+        auth_mode: request.auth_mode,
+        secret_arn: request
+            .secret_arn
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        secret_name: None,
         sort_order: 0,
         created_at: now,
         updated_at: now,
     };
+    validate_auth_mode(&connection)?;
+
+    if connection.auth_mode == crate::models::DbAuthMode::Manual && connection.host.trim().is_empty()
+    {
+        return Err(AppError::validation("Connection host is required."));
+    }
+
+    let (connection, password) =
+        dbhub::credentials::resolve_for_dial(&app, &connection, request.password).await?;
 
     probe_connection(&pool, &app, &connection, password, started).await
 }

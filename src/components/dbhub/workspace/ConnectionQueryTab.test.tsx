@@ -130,6 +130,7 @@ function connection(overrides: Partial<{ database?: string; kind: string; allowW
     enabledForAi: true,
     aiReadOnlyPolicy: "select-only",
     allowWrites: false,
+        authMode: "manual",
     sortOrder: 0,
     createdAt: "2026-09-08T00:00:00Z",
     updatedAt: "2026-09-08T00:00:00Z",

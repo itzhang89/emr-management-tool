@@ -22,6 +22,8 @@ const navigation: TranslationDictionary = {
   "Cluster job statistics": "集群作业统计",
   "Virtual Clusters": "虚拟集群",
   "EMR on EKS clusters": "EMR on EKS 集群",
+  Secrets: "密钥管理",
+  "Account secrets and DB credentials": "账号密钥与数据库凭据",
   Settings: "设置",
   "AWS credentials": "AWS 凭据",
 

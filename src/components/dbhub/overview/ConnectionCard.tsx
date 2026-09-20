@@ -71,6 +71,13 @@ export function ConnectionCard({
           <Badge variant="outline" className="text-xs">
             {t(connection.enabledForAi ? "AI read-only" : "Manual")}
           </Badge>
+          <Badge variant="secondary" className="text-xs">
+            {connection.authMode === "aws_secret"
+              ? t("SM: {name}", {
+                  name: connection.secretName ?? connection.secretArn?.split(":").pop() ?? "…"
+                })
+              : t("Local password")}
+          </Badge>
           {onDelete ? (
             <Tooltip>
               <TooltipTrigger asChild>

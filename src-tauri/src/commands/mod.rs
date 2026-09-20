@@ -15,5 +15,6 @@ pub mod portable_updater;
 pub mod redact;
 pub mod runbooks;
 pub mod s3;
+pub mod secrets_manager;
 pub mod system;
 pub mod templates;

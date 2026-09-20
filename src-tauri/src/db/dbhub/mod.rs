@@ -21,6 +21,7 @@
 //!   loopback [`driver::DialTarget`] that drivers dial without knowing why.
 
 pub mod catalog;
+pub mod credentials;
 pub mod driver;
 pub mod gate;
 pub mod query;
