@@ -12,6 +12,23 @@ describe("createTauriClient", () => {
     expect(invoke).toHaveBeenCalledWith("list_virtual_clusters", { request: { accountId: "acct-prod" } });
   });
 
+  // These four commands are the whole update surface. Their Rust counterparts
+  // take a `request` struct (`UpdateChannelRequest`), so a payload sent at the
+  // top level would deserialize as a missing field and fail the check outright.
+  it("sends the update channel nested under request", async () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    const client = createTauriClient(invoke);
+
+    await client.checkAppUpdate("beta");
+    expect(invoke).toHaveBeenCalledWith("check_app_update", { request: { channel: "beta" } });
+
+    await client.installAppUpdate("stable");
+    expect(invoke).toHaveBeenCalledWith("install_app_update", { request: { channel: "stable" } });
+
+    await client.checkPortableUpdate("beta");
+    expect(invoke).toHaveBeenCalledWith("check_portable_update", { request: { channel: "beta" } });
+  });
+
   it("lists importable AWS CLI profiles without exposing secrets", async () => {
     const profiles = [{ profileName: "dev", region: "us-east-1", accessKeyIdMasked: "AKIA****1234", canImport: true }];
     const invoke = vi.fn().mockResolvedValue(profiles);
