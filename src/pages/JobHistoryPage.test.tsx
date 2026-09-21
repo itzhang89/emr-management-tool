@@ -673,7 +673,7 @@ describe("JobHistoryPage", () => {
 
     renderJobHistoryPage();
 
-    await user.type(screen.getByPlaceholderText(/search jobs/i), "jinghui{Enter}");
+    await user.type(screen.getByPlaceholderText(/search jobs/i), "username{Enter}");
     const emptyResultRow = screen.getByRole("row", { name: /No jobs match the current filters/i });
 
     expect(within(emptyResultRow).queryByRole("button", { name: /Find in AWS/i })).not.toBeInTheDocument();

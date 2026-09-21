@@ -10,7 +10,7 @@ describe("TemplateVariableFields", () => {
       <TooltipProvider>
         <TemplateVariableFields
           variables={[{ name: "submitUser", type: "text" }]}
-          values={{ submitUser: "jinghui" }}
+          values={{ submitUser: "username" }}
           onChange={vi.fn()}
         />
       </TooltipProvider>
