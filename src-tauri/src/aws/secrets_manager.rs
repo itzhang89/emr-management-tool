@@ -10,9 +10,10 @@ use aws_sdk_secretsmanager::types::Tag;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-pub const TAG_SUBMIT_USER: &str = "submitUser";
-pub const TAG_MANAGED_BY: &str = "managedBy";
-pub const MANAGED_BY_VALUE: &str = "emr-management-tool";
+/// Who created the secret from this app. Written once, on Create.
+pub const TAG_CREATED_BY: &str = "createdBy";
+/// Who last wrote the secret from this app. Refreshed on every Update.
+pub const TAG_LAST_MODIFIED_BY: &str = "lastModifiedBy";
 
 const LIST_PAGE_SIZE: i32 = 100;
 const LIST_HARD_CAP: usize = 2000;
@@ -80,61 +81,55 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-pub fn required_create_tags(submit_user: &str) -> Vec<Tag> {
+/// Tags stamped on Create: the local user is recorded as the creator.
+pub fn required_create_tags(created_by: &str) -> Vec<Tag> {
     vec![
         Tag::builder()
-            .key(TAG_SUBMIT_USER)
-            .value(submit_user)
-            .build(),
-        Tag::builder()
-            .key(TAG_MANAGED_BY)
-            .value(MANAGED_BY_VALUE)
+            .key(TAG_CREATED_BY)
+            .value(created_by)
             .build(),
     ]
 }
 
+/// Tags stamped on every Update: whoever wrote last, including secrets another
+/// user created.
+pub fn modifier_tags(modified_by: &str) -> Vec<Tag> {
+    vec![
+        Tag::builder()
+            .key(TAG_LAST_MODIFIED_BY)
+            .value(modified_by)
+            .build(),
+    ]
+}
+
+/// Identity tags are owned by the app, never by the caller: they always name the
+/// local user, so a UI client cannot attribute a write to somebody else.
+fn is_identity_tag(key: &str) -> bool {
+    key == TAG_CREATED_BY || key == TAG_LAST_MODIFIED_BY
+}
+
 pub fn merge_create_tags(
-    submit_user: &str,
+    created_by: &str,
     extra: &[SecretTag],
 ) -> AppResult<Vec<Tag>> {
-    let mut tags = required_create_tags(submit_user);
+    let mut tags = required_create_tags(created_by);
     for tag in extra {
         let key = tag.key.trim();
         let value = tag.value.trim();
         if key.is_empty() {
             return Err(AppError::validation("Secret tag keys cannot be empty."));
         }
-        if key == TAG_SUBMIT_USER && value != submit_user {
-            return Err(AppError::validation(format!(
-                "submitUser tag must be the local user ({submit_user}); forging another user is not allowed."
-            )));
-        }
-        if key == TAG_MANAGED_BY && value != MANAGED_BY_VALUE {
-            return Err(AppError::validation(format!(
-                "managedBy tag must be {MANAGED_BY_VALUE}."
-            )));
-        }
-        if key == TAG_SUBMIT_USER || key == TAG_MANAGED_BY {
+        if is_identity_tag(key) {
+            if value != created_by {
+                return Err(AppError::validation(format!(
+                    "{key} tag must be the local user ({created_by}); forging another user is not allowed."
+                )));
+            }
             continue;
         }
         tags.push(Tag::builder().key(key).value(value).build());
     }
     Ok(tags)
-}
-
-/// Update/Delete are allowed only when `submitUser` exactly matches the local user.
-pub fn owned_by_submit_user(tags: &[SecretTag], submit_user: &str) -> bool {
-    tags.iter().any(|tag| tag.key == TAG_SUBMIT_USER && tag.value == submit_user)
-}
-
-pub fn require_owned_by_submit_user(tags: &[SecretTag], submit_user: &str) -> AppResult<()> {
-    if owned_by_submit_user(tags, submit_user) {
-        Ok(())
-    } else {
-        Err(AppError::validation(format!(
-            "Only the owner (submitUser={submit_user}) can update or delete this secret from the app. Secrets without your submitUser tag are read-only here."
-        )))
-    }
 }
 
 pub fn map_secret_list_entry(
@@ -272,16 +267,29 @@ mod tests {
     }
 
     #[test]
-    fn merge_tags_rejects_forged_submit_user() {
+    fn merge_tags_rejects_forged_created_by() {
         let err = merge_create_tags(
             "alice",
             &[SecretTag {
-                key: "submitUser".into(),
+                key: "createdBy".into(),
                 value: "bob".into(),
             }],
         )
         .expect_err("forge");
-        assert!(err.message.contains("submitUser"));
+        assert!(err.message.contains("createdBy"));
+    }
+
+    #[test]
+    fn merge_tags_rejects_forged_last_modified_by() {
+        let err = merge_create_tags(
+            "alice",
+            &[SecretTag {
+                key: "lastModifiedBy".into(),
+                value: "bob".into(),
+            }],
+        )
+        .expect_err("forge");
+        assert!(err.message.contains("lastModifiedBy"));
     }
 
     #[test]
@@ -294,29 +302,35 @@ mod tests {
             }],
         )
         .expect("merge");
-        assert_eq!(tags.len(), 3);
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].key(), Some(TAG_CREATED_BY));
+        assert_eq!(tags[0].value(), Some("alice"));
+        assert_eq!(tags[1].key(), Some("purpose"));
+    }
+
+    #[test]
+    fn merge_tags_accepts_caller_supplied_identity_tag_for_local_user() {
+        let tags = merge_create_tags(
+            "alice",
+            &[SecretTag {
+                key: "createdBy".into(),
+                value: "alice".into(),
+            }],
+        )
+        .expect("merge");
+        assert_eq!(tags.len(), 1);
+    }
+
+    #[test]
+    fn modifier_tags_stamp_the_local_user() {
+        let tags = modifier_tags("bob");
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].key(), Some(TAG_LAST_MODIFIED_BY));
+        assert_eq!(tags[0].value(), Some("bob"));
     }
 
     #[test]
     fn reject_non_object_json() {
         assert!(parse_db_secret_json(r#""just-a-string""#).is_err());
-    }
-
-    #[test]
-    fn ownership_requires_exact_submit_user_tag() {
-        let tags = vec![
-            SecretTag {
-                key: "submitUser".into(),
-                value: "alice".into(),
-            },
-            SecretTag {
-                key: "managedBy".into(),
-                value: MANAGED_BY_VALUE.into(),
-            },
-        ];
-        assert!(owned_by_submit_user(&tags, "alice"));
-        assert!(!owned_by_submit_user(&tags, "bob"));
-        assert!(require_owned_by_submit_user(&tags, "bob").is_err());
-        assert!(require_owned_by_submit_user(&[], "alice").is_err());
     }
 }

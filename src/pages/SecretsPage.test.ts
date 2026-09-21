@@ -1,5 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { defaultSecretKvPairs, pairsFromSecretJson, pairsToSecretJson } from "./SecretsPage";
+import {
+  defaultSecretKvPairs,
+  isCreatedBy,
+  pairsFromSecretJson,
+  pairsToSecretJson
+} from "./SecretsPage";
+import type { SecretSummary } from "@/types/domain";
+
+function summary(tags: Array<{ key: string; value: string }>): SecretSummary {
+  return { name: "mysql.sales_ro", arn: "arn:aws:secretsmanager:::secret:mysql.sales_ro", tags };
+}
+
+describe("isCreatedBy", () => {
+  it("matches only the createdBy tag, not the last modifier", () => {
+    const secret = summary([
+      { key: "createdBy", value: "alice" },
+      { key: "lastModifiedBy", value: "bob" }
+    ]);
+    expect(isCreatedBy(secret, "alice")).toBe(true);
+    expect(isCreatedBy(secret, "bob")).toBe(false);
+  });
+
+  it("treats untagged secrets and unknown users as not mine", () => {
+    expect(isCreatedBy(summary([]), "alice")).toBe(false);
+    expect(isCreatedBy(summary([{ key: "createdBy", value: "alice" }]), undefined)).toBe(false);
+  });
+
+  it("ignores the legacy submitUser tag", () => {
+    expect(isCreatedBy(summary([{ key: "submitUser", value: "alice" }]), "alice")).toBe(false);
+  });
+});
 
 describe("pairsToSecretJson / pairsFromSecretJson", () => {
   it("builds a JSON object and keeps port numeric", () => {

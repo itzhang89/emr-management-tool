@@ -101,9 +101,10 @@ function tagValue(secret: SecretSummary, key: string): string | undefined {
   return secret.tags.find((tag) => tag.key === key)?.value;
 }
 
-function isOwnedBy(secret: SecretSummary, submitUser: string | undefined): boolean {
-  if (!submitUser) return false;
-  return tagValue(secret, "submitUser") === submitUser;
+/** Secrets are shared: anyone can edit or delete, `createdBy` only drives "Mine only". */
+export function isCreatedBy(secret: SecretSummary, localUser: string | undefined): boolean {
+  if (!localUser) return false;
+  return tagValue(secret, "createdBy") === localUser;
 }
 
 type FormMode = "create" | "edit" | "clone";
@@ -136,7 +137,7 @@ export function SecretsPage() {
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return secrets.filter((secret) => {
-      if (mineOnly && tagValue(secret, "submitUser") !== submitUser.data) {
+      if (mineOnly && !isCreatedBy(secret, submitUser.data)) {
         return false;
       }
       if (!needle) return true;
@@ -171,10 +172,6 @@ export function SecretsPage() {
 
   const openEdit = async (secret: SecretSummary, event: MouseEvent) => {
     event.stopPropagation();
-    if (!isOwnedBy(secret, submitUser.data)) {
-      toast.error(t("Only the owner can edit this secret."));
-      return;
-    }
     try {
       const { value } = await getSecretValue.mutateAsync(secret.arn);
       setFormMode("edit");
@@ -454,8 +451,8 @@ export function SecretsPage() {
               </tr>
             ) : (
               filtered.map((secret) => {
-                const owner = tagValue(secret, "submitUser");
-                const owned = isOwnedBy(secret, submitUser.data);
+                const creator = tagValue(secret, "createdBy");
+                const modifier = tagValue(secret, "lastModifiedBy");
                 const isExpanded = expandedArn === secret.arn;
                 return (
                   <Fragment key={secret.arn}>
@@ -477,18 +474,19 @@ export function SecretsPage() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
-                          {owner ? (
+                          {creator ? (
                             <Badge variant="outline" className="text-xs">
-                              submitUser={owner}
+                              createdBy={creator}
                             </Badge>
-                          ) : (
+                          ) : null}
+                          {modifier ? (
+                            <Badge variant="outline" className="text-xs">
+                              lastModifiedBy={modifier}
+                            </Badge>
+                          ) : null}
+                          {!creator && !modifier ? (
                             <Badge variant="secondary" className="text-xs">
                               {t("untagged")}
-                            </Badge>
-                          )}
-                          {tagValue(secret, "managedBy") ? (
-                            <Badge variant="outline" className="text-xs">
-                              managedBy
                             </Badge>
                           ) : null}
                         </div>
@@ -534,50 +532,38 @@ export function SecretsPage() {
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-8"
-                                  aria-label={t("Edit secret")}
-                                  disabled={!owned || getSecretValue.isPending}
-                                  onClick={(event) => void openEdit(secret, event)}
-                                >
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                              </span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                aria-label={t("Edit secret")}
+                                disabled={getSecretValue.isPending}
+                                onClick={(event) => void openEdit(secret, event)}
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
                             </TooltipTrigger>
-                            <TooltipContent>
-                              {owned
-                                ? t("Edit secret")
-                                : t("Only the owner (matching submitUser) can edit or delete.")}
-                            </TooltipContent>
+                            <TooltipContent>{t("Edit secret")}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-8 text-destructive hover:text-destructive"
-                                  aria-label={t("Delete secret")}
-                                  disabled={!owned || deleteSecret.isPending}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setPendingDelete(secret);
-                                  }}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                </Button>
-                              </span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 text-destructive hover:text-destructive"
+                                aria-label={t("Delete secret")}
+                                disabled={deleteSecret.isPending}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setPendingDelete(secret);
+                                }}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
                             </TooltipTrigger>
-                            <TooltipContent>
-                              {owned
-                                ? t("Delete secret")
-                                : t("Only the owner (matching submitUser) can edit or delete.")}
-                            </TooltipContent>
+                            <TooltipContent>{t("Delete secret")}</TooltipContent>
                           </Tooltip>
                         </div>
                       </td>
@@ -645,10 +631,10 @@ export function SecretsPage() {
               {formMode === "edit" ? (
                 <span className="break-all font-mono text-xs">{formSecret?.arn}</span>
               ) : formMode === "clone" ? (
-                t("Creates a new secret from a copy. Tags submitUser and managedBy are added automatically.")
+                t("Creates a new secret from a copy. The createdBy tag is added automatically.")
               ) : (
                 t(
-                  "Creates a secret in the active account region. Tags submitUser and managedBy are added automatically."
+                  "Creates a secret in the active account region. The createdBy tag is added automatically."
                 )
               )}
             </DialogDescription>
@@ -717,11 +703,10 @@ export function SecretsPage() {
                 {t("Fields are saved as a JSON object. Empty keys are skipped.")}
               </p>
             </div>
-            {formMode !== "edit" ? (
-              <p className="text-xs text-muted-foreground">
-                {t("Auto tags")}: submitUser={submitUser.data ?? "…"}, managedBy=emr-management-tool
-              </p>
-            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {t("Auto tags")}: {formMode === "edit" ? "lastModifiedBy" : "createdBy"}=
+              {submitUser.data ?? "…"}
+            </p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={resetForm}>
@@ -749,7 +734,7 @@ export function SecretsPage() {
             <DialogTitle>{t("Delete secret?")}</DialogTitle>
             <DialogDescription>
               {t(
-                '"{name}" will be scheduled for deletion with a {days}-day recovery window. Only secrets tagged with your submitUser can be deleted from this app.',
+                '"{name}" will be scheduled for deletion with a {days}-day recovery window. It can be restored from the AWS console until then.',
                 { name: pendingDelete?.name ?? "", days: DEFAULT_RECOVERY_DAYS }
               )}
             </DialogDescription>

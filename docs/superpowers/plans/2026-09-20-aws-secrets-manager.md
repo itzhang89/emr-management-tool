@@ -5,7 +5,8 @@ Implements `docs/superpowers/specs/2026-09-20-aws-secrets-manager-design.md`.
 Locked constraints:
 
 - AWS Secrets Manager only (not local keychain UI).
-- Create-only writes in P0; Update/Delete deferred to P2 with `submitUser` ownership.
+- Create-only writes in P0; Update/Delete deferred to P2, shared rather than owner-gated
+  (revised 2026-09-21 — see the design doc’s Attribution rule).
 - DBHub binds by **ARN**; JSON overlay at dial time; manual auth unchanged and unmigrated.
 - SecretString: list/describe never return it; Copy prefers clipboard; Reveal opt-in.
 
@@ -29,16 +30,16 @@ Locked constraints:
 - [ ] Add `aws-sdk-secretsmanager` to `src-tauri/Cargo.toml` (same features as other aws-sdk-* crates).
 - [ ] `src-tauri/src/aws/secrets_manager.rs`: client from active-account runtime; map SDK types →
       `SecretSummary` / `SecretDetail` (no SecretString).
-- [ ] Tag constants: `submitUser`, `managedBy=emr-management-tool`.
+- [ ] Tag constants: `createdBy`, `lastModifiedBy`.
 - [ ] `src-tauri/src/commands/secrets_manager.rs`:
   - `list_secrets`
   - `describe_secret`
-  - `create_secret` (force/merge ownership tags; reject forged `submitUser`)
+  - `create_secret` (force/merge the `createdBy` tag; reject a forged identity tag)
   - `get_secret_value_for_copy` (clipboard via Tauri plugin if available)
   - `get_secret_value_for_reveal` (explicit; document no React Query persistence)
 - [ ] Register commands in `lib.rs` / `generate_handler!`.
 - [ ] `tauriClient.ts` camelCase wrappers + domain types in `src/types/domain.ts`.
-- [ ] Unit tests: tag merge, ownership forge rejection, summary mapping without secret string.
+- [ ] Unit tests: tag merge, identity-tag forge rejection, summary mapping without secret string.
 - [ ] IAM / `AccessDenied` → `AppError` message listing required actions.
 
 **Done when:** `cargo test` passes for new module; invoke create/list against a real account in manual smoke.
@@ -49,7 +50,7 @@ Locked constraints:
 
 - [ ] `useSecrets` hooks (React Query keys scoped by `accountId` + region).
 - [ ] List table: name, description, tags chips, last changed, View / Copy actions.
-- [ ] Search box + optional **Mine only** checkbox (`submitUser == useSubmitUser()`).
+- [ ] Search box + optional **Mine only** checkbox (`createdBy == useSubmitUser()`).
 - [ ] `CreateSecretDialog`: name, description, JSON value (+ template insert), read-only auto tags.
 - [ ] Detail drawer: metadata; masked value; Copy; Reveal toggle; re-mask on close.
 - [ ] Empty / loading / no-active-account / IAM error states.
@@ -96,16 +97,22 @@ Locked constraints:
 
 **Done when:** P2 acceptance in the design doc is met.
 
+> Revised 2026-09-21: the `submitUser` ownership gate above was replaced by the
+> `createdBy` / `lastModifiedBy` attribution tags. Any listed secret can now be
+> edited or deleted; who wrote it is recorded on the tags instead of blocking the
+> write. `managedBy` is no longer written.
+
 ---
 
 ## Manual smoke checklist
 
 1. Switch account → Secrets list region matches Settings region.
-2. Create `mysql.demo_ro` JSON secret → tags show local submitUser + managedBy.
+2. Create `mysql.demo_ro` JSON secret → tags show `createdBy=<local user>`.
 3. Copy value → paste elsewhere matches; list network tab / IPC has no SecretString.
 4. DBHub: new MySQL connection → AWS Secrets Manager → bind that ARN → Test OK without local password.
 5. Rename connection → still connects via same ARN.
-6. Second OS user (or forged expectation): can bind; cannot Delete in P2.
+6. Second OS user: can bind, and can edit/delete a secret the first user created; the
+   edit refreshes `lastModifiedBy` while `createdBy` stays put.
 7. Manual connection still saves password to local keychain only.
 
 ---

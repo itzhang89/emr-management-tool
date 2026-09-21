@@ -43,15 +43,15 @@ const secrets: TranslationDictionary = {
   "Clone secret": "克隆密钥",
   Clone: "克隆",
   'Secret "{name}" cloned.': "密钥「{name}」已克隆。",
-  "Creates a new secret from a copy. Tags submitUser and managedBy are added automatically.":
-    "从副本创建新密钥。将自动添加 submitUser 与 managedBy 标签。",
+  "Creates a new secret from a copy. The createdBy tag is added automatically.":
+    "从副本创建新密钥。将自动添加 createdBy 标签。",
   "Insert template": "插入模板",
   "Auto tags": "自动标签",
   Cancel: "取消",
   Create: "创建",
   Save: "保存",
-  "Creates a secret in the active account region. Tags submitUser and managedBy are added automatically.":
-    "在当前活跃账号的区域创建密钥。将自动添加 submitUser 与 managedBy 标签。",
+  "Creates a secret in the active account region. The createdBy tag is added automatically.":
+    "在当前活跃账号的区域创建密钥。将自动添加 createdBy 标签。",
   "Auth mode": "认证方式",
   "Manual password": "手动密码",
   Secret: "密钥",
@@ -66,14 +66,11 @@ const secrets: TranslationDictionary = {
   "Edit secret": "编辑密钥",
   "Delete secret": "删除密钥",
   "Delete secret?": "删除密钥？",
-  "Only the owner can edit this secret.": "仅所有者可编辑此密钥。",
-  "Only the owner (matching submitUser) can edit or delete.":
-    "仅所有者（submitUser 匹配）可编辑或删除。",
   'Secret "{name}" updated.': "密钥「{name}」已更新。",
   'Secret "{name}" scheduled for deletion (recovery window {days} days).':
     "密钥「{name}」已安排删除（恢复窗口 {days} 天）。",
-  '"{name}" will be scheduled for deletion with a {days}-day recovery window. Only secrets tagged with your submitUser can be deleted from this app.':
-    "「{name}」将安排删除，恢复窗口为 {days} 天。仅带有你的 submitUser 标签的密钥可在本应用中删除。",
+  '"{name}" will be scheduled for deletion with a {days}-day recovery window. It can be restored from the AWS console until then.':
+    "「{name}」将安排删除，恢复窗口为 {days} 天；在此之前可在 AWS 控制台恢复。",
   Delete: "删除",
   "Save as AWS Secret": "保存为 AWS 密钥",
   "Create and bind AWS Secret": "创建并绑定 AWS 密钥",

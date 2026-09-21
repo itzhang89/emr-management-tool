@@ -6,8 +6,9 @@ Date: 2026-09-20
 
 1. Add a top-level **Secrets** sidebar page that lists / inspects / creates secrets in
    **AWS Secrets Manager** for the active AWS account (same region as Settings).
-2. Secrets created by this desktop tool are tagged with the local `submitUser` so
-   multi-user sharing of one AWS account stays attributable.
+2. Secrets written by this desktop tool carry the local user in `createdBy` /
+   `lastModifiedBy` tags, so multi-user sharing of one AWS account stays
+   attributable without restricting who may write.
 3. Let DBHub connections optionally **bind an SM secret by ARN** and pull
    `username` / `password` / `host` / `port` / `database` from a JSON value, instead
    of (or in addition to) typing credentials manually.
@@ -25,18 +26,23 @@ to hold AK/SK, LLM keys, SSH profile secrets, and DBHub **manual** passwords.
 | 4 | List defaults to **all secrets** in the account region |
 | 5 | Cross-user bind is **allowed** (A creates, B may bind) |
 | 6 | Region is **fixed** to the active account’s Settings region |
-| 7 | v1 write surface = **Create only**; later Update + Delete with ownership rules below |
+| 7 | v1 write surface = **Create only**; later Update + Delete, shared rather than owner-gated (see Attribution rule below) |
 | 8 | SecretString may be revealed in UI; **masked by default**; primary action is **Copy value** |
 | 9 | Manual password auth and SM binding **coexist**; **no migration** wizard |
 | 10 | Sidebar label follows locale: EN `Secrets` / ZH `密钥管理`; placed **above Settings** |
 
-### Ownership rule (Update / Delete, post-v1)
+### Attribution rule (Update / Delete, post-v1)
 
-> Update or Delete via this app is allowed **only when** the secret has tag
-> `submitUser` whose value **exactly equals** the current machine’s
-> `get_submit_user()`. Missing tag or mismatch → read-only in this app (still
-> listable and bindable). Console-created secrets without `submitUser` cannot be
-> deleted from the tool.
+> Secrets are **shared**: any secret the app can list may be updated or deleted,
+> whoever created it, including secrets created in the AWS console. Writes are
+> attributed instead of gated — Create stamps `createdBy`, Update refreshes
+> `lastModifiedBy`, both set to `get_submit_user()`. “Mine only” filters on
+> `createdBy`.
+>
+> *Revision (2026-09-21):* this replaces the earlier owner-only rule, which
+> required an exact `submitUser` match for Update/Delete and stamped
+> `managedBy=emr-management-tool`. Those tags are no longer written; existing
+> secrets keep them untouched, and they are simply displayed as ordinary tags.
 
 ## Out of scope (v1)
 
@@ -83,8 +89,9 @@ Touch points (same pattern as prior nav additions):
 └───────────────────────────────────────────────────────────────┘
 ```
 
-- **Mine only**: filter where tag `submitUser == get_submit_user()` (client-side or
-  ListSecrets filter if cheap; v1 may filter after list).
+- **Mine only**: filter where tag `createdBy == get_submit_user()` (client-side or
+  ListSecrets filter if cheap; v1 may filter after list). Editing someone else’s
+  secret does **not** make it “mine”.
 - Untagged secrets show a muted “untagged” chip; still bindable.
 - Empty / no-account / IAM-denied states use the same empty/error patterns as S3 / Glue.
 
@@ -95,7 +102,7 @@ Touch points (same pattern as prior nav additions):
 | Name | Required. Suggested pattern `{driver}.{connect_name}` (e.g. `mysql.sales_ro`); validated as SM name rules; **not** forced to match a DBHub connection name |
 | Description | Optional |
 | Value | JSON textarea (or structured form that serializes to JSON). Template button inserts the schema below |
-| Tags (auto, non-removable in UI) | `submitUser=<get_submit_user()>`, `managedBy=emr-management-tool` |
+| Tags (auto, non-removable in UI) | Create: `createdBy=<get_submit_user()>`; Update: `lastModifiedBy=<get_submit_user()>` |
 | Tags (optional) | e.g. `purpose=dbhub` |
 
 On success: invalidate list query; do **not** persist SecretString in SQLite or local keychain.
@@ -152,9 +159,14 @@ is always by **ARN**, never by requiring name equality with the connection `name
 
 | Key | Value | When |
 |---|---|---|
-| `submitUser` | OS user from `get_submit_user()` | Always on Create from this app |
-| `managedBy` | `emr-management-tool` | Always on Create from this app |
+| `createdBy` | OS user from `get_submit_user()` | Always on Create from this app; never rewritten |
+| `lastModifiedBy` | OS user from `get_submit_user()` | Refreshed on every Update from this app |
 | `purpose` | e.g. `dbhub` | Optional |
+
+`createdBy` / `lastModifiedBy` are identity tags: the app always writes the local
+user and rejects a caller-supplied value naming anyone else. They are attribution,
+not access control — see the Attribution rule above. Secrets carrying the legacy
+`submitUser` / `managedBy` tags keep them; nothing rewrites or strips them.
 
 Constants live in one Rust module (and mirrored TS constants for UI chips) so filters
 and ownership checks stay consistent.
@@ -196,8 +208,8 @@ get_secret_value_for_reveal(secretId) -> { value: string }
   // Explicit reveal path; frontend must not cache in React Query beyond the drawer.
 
 create_secret(input: { name, description?, secretString, tags? }) -> SecretSummary
-  // Merge required tags (submitUser, managedBy); reject if caller tries to omit/override
-  // submitUser to a different value than get_submit_user().
+  // Merge required tag createdBy=get_submit_user(); reject a caller-supplied
+  // createdBy/lastModifiedBy naming anyone else.
 ```
 
 All commands use the **active** AWS account unless an explicit `accountId` is passed
@@ -220,7 +232,8 @@ Map `AccessDenied` / missing region to actionable copy (which actions are needed
 - SecretString never appears in list responses, SQLite, MCP tool results, or audit
   payloads beyond “accessed secret arn=…”.
 - Prefer clipboard-only copy so the WebView does not retain the value in query cache.
-- Create always stamps local `submitUser`; cannot forge another user’s tag from the UI.
+- Create/Update always stamp the local user into `createdBy` / `lastModifiedBy`; the UI
+  cannot attribute a write to another user.
 
 ---
 
@@ -305,9 +318,9 @@ AWS module is `aws::secrets_manager` / commands `*_secrets_manager` to avoid con
 
 | Phase | Scope |
 |---|---|
-| **P0** | Nav + Secrets page List/Describe + Create (forced tags) + Copy (+ Reveal) + IAM errors + i18n |
+| **P0** | Nav + Secrets page List/Describe + Create (auto `createdBy`) + Copy (+ Reveal) + IAM errors + i18n |
 | **P1** | DBHub `auth_mode` / `secret_arn` columns + form picker + dial/test resolve from JSON |
-| **P2** | Mine filter polish, Update value, conditional Delete (ownership rule), optional Create-from-DBHub shortcut |
+| **P2** | Mine filter polish, Update value (+ `lastModifiedBy`), Delete for any listed secret, optional Create-from-DBHub shortcut |
 
 ---
 
@@ -317,7 +330,7 @@ AWS module is `aws::secrets_manager` / commands `*_secrets_manager` to avoid con
 
 - Sidebar shows Secrets (ZH: 密钥管理) above Settings; Mod+N order includes it.
 - With a valid account: list shows account-region secrets; Create writes SM secret with
-  `submitUser` + `managedBy` tags.
+  the `createdBy` tag.
 - List/Describe responses never contain plaintext values; Copy places value on clipboard;
   Reveal is opt-in and masked by default.
 - Denied IAM surfaces a clear message listing required actions.
@@ -327,12 +340,13 @@ AWS module is `aws::secrets_manager` / commands `*_secrets_manager` to avoid con
 - New/edit connection can select `AWS Secrets Manager`, bind an ARN, save without local password.
 - Test/connect overlays JSON fields; changing connection `name` leaves ARN binding intact.
 - Manual connections unchanged; both modes coexist on the same account.
-- User B can bind a secret created by user A (different `submitUser` tag).
+- User B can bind a secret created by user A (different `createdBy` tag).
 
 ### P2 (later)
 
-- Update / Delete only when `submitUser` tag matches local user; otherwise controls disabled
-  with explanation.
+- User B can update a secret created by user A; the write refreshes `lastModifiedBy`
+  to B and leaves `createdBy=A`. Edit/Delete are enabled on every listed secret.
+- If `TagResource` is denied, the value still saves and the error says so explicitly.
 
 ---
 

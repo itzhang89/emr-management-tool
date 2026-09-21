@@ -1,14 +1,13 @@
 //! AWS Secrets Manager commands (active-account scoped).
 //!
-//! List/describe never return SecretString. Create stamps local `submitUser` +
-//! `managedBy` tags. Update/Delete require an exact `submitUser` match.
+//! List/describe never return SecretString. Create stamps the local user as
+//! `createdBy`; Update refreshes `lastModifiedBy`. Secrets are shared: any
+//! secret in the account region can be updated or deleted, whoever created it.
 //! Reveal/copy return the value once for an explicit UI action; the WebView
 //! writes the clipboard (same pattern as the rest of the app).
 
 use crate::aws::runtime::runtime_for_context;
-use crate::aws::secrets_manager::{
-    self, list_all_secrets, merge_create_tags, require_owned_by_submit_user,
-};
+use crate::aws::secrets_manager::{self, list_all_secrets, merge_create_tags, modifier_tags};
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AwsCommandContext, CreateSecretInput, DeleteSecretInput, DeleteSecretResult, SecretIdRequest,
@@ -78,15 +77,30 @@ fn summary_from_describe(
     })
 }
 
-async fn ensure_owned(
+/// Record who wrote the secret last. Runs after the value is already saved, so a
+/// tagging failure is reported as a partial success rather than rolled back.
+async fn stamp_last_modified_by(
     client: &aws_sdk_secretsmanager::Client,
     account_id: &str,
     secret_id: &str,
-    submit_user: &str,
-) -> AppResult<aws_sdk_secretsmanager::operation::describe_secret::DescribeSecretOutput> {
-    let described = describe_output(client, account_id, secret_id).await?;
-    require_owned_by_submit_user(&tags_from_describe(&described), submit_user)?;
-    Ok(described)
+    modified_by: &str,
+) -> AppResult<()> {
+    client
+        .tag_resource()
+        .secret_id(secret_id)
+        .set_tags(Some(modifier_tags(modified_by)))
+        .send()
+        .await
+        .map_err(|error| {
+            let mut mapped = map_sm_error(account_id, error);
+            mapped.message = format!(
+                "The secret value was saved, but the lastModifiedBy tag could not be written. {}",
+                mapped.message
+            )
+            .into();
+            mapped
+        })?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -132,8 +146,8 @@ pub async fn create_secret(
     // Validate JSON early so we do not create an unusable DBHub secret.
     let _ = secrets_manager::parse_db_secret_json(&request.secret_string)?;
 
-    let submit_user = crate::commands::system::get_submit_user()?;
-    let tags = merge_create_tags(&submit_user, &request.tags)?;
+    let created_by = crate::commands::system::get_submit_user()?;
+    let tags = merge_create_tags(&created_by, &request.tags)?;
 
     let runtime = runtime_for_context(&app, AwsCommandContext { account_id: None }).await?;
     let client = sm_client(&runtime);
@@ -178,10 +192,9 @@ pub async fn update_secret(
     }
     let _ = secrets_manager::parse_db_secret_json(&request.secret_string)?;
 
-    let submit_user = crate::commands::system::get_submit_user()?;
+    let modified_by = crate::commands::system::get_submit_user()?;
     let runtime = runtime_for_context(&app, AwsCommandContext { account_id: None }).await?;
     let client = sm_client(&runtime);
-    ensure_owned(&client, &runtime.account.id, secret_id, &submit_user).await?;
 
     client
         .put_secret_value()
@@ -200,6 +213,8 @@ pub async fn update_secret(
             .await
             .map_err(|error| map_sm_error(&runtime.account.id, error))?;
     }
+
+    stamp_last_modified_by(&client, &runtime.account.id, secret_id, &modified_by).await?;
 
     describe_secret(
         app,
@@ -221,18 +236,8 @@ pub async fn delete_secret(
     }
     let recovery_window = request.recovery_window_in_days.unwrap_or(7).clamp(7, 30);
 
-    let submit_user = crate::commands::system::get_submit_user()?;
     let runtime = runtime_for_context(&app, AwsCommandContext { account_id: None }).await?;
     let client = sm_client(&runtime);
-    let described = ensure_owned(&client, &runtime.account.id, secret_id, &submit_user).await?;
-    let name = described
-        .name()
-        .map(str::to_string)
-        .unwrap_or_else(|| secret_id.to_string());
-    let arn = described
-        .arn()
-        .map(str::to_string)
-        .unwrap_or_else(|| secret_id.to_string());
 
     let response = client
         .delete_secret()
@@ -243,8 +248,14 @@ pub async fn delete_secret(
         .map_err(|error| map_sm_error(&runtime.account.id, error))?;
 
     Ok(DeleteSecretResult {
-        name: response.name().map(str::to_string).unwrap_or(name),
-        arn: response.arn().map(str::to_string).unwrap_or(arn),
+        name: response
+            .name()
+            .map(str::to_string)
+            .unwrap_or_else(|| secret_id.to_string()),
+        arn: response
+            .arn()
+            .map(str::to_string)
+            .unwrap_or_else(|| secret_id.to_string()),
         deletion_date: response.deletion_date().and_then(|value| {
             chrono::DateTime::<chrono::Utc>::from_timestamp(value.secs(), value.subsec_nanos())
                 .map(|dt| dt.to_rfc3339())
