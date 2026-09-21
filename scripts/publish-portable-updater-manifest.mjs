@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertReleaseVersion } from "./release-version.mjs";
-import { isPortableWindowsBundle } from "./updater-assets.mjs";
+import { isPortableWindowsBundle, selectProfileAssets } from "./updater-assets.mjs";
 
 const PORTABLE_TARGET = {
   platform: "windows-x86_64",
@@ -23,7 +23,9 @@ if (!version || !releaseTag || !repo) {
   throw new Error("RELEASE_VERSION, RELEASE_TAG, and GITHUB_REPOSITORY are required.");
 }
 
-const assets = JSON.parse(gh("release", "view", releaseTag, "--repo", repo, "--json", "assets")).assets;
+const assets = selectProfileAssets(
+  JSON.parse(gh("release", "view", releaseTag, "--repo", repo, "--json", "assets")).assets
+);
 const platforms = {};
 
 const bundle = assets.find((asset) => PORTABLE_TARGET.isBundle(asset.name));

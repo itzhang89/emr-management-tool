@@ -92,15 +92,17 @@ describe("release configuration", () => {
     expect(workflow).toContain("prepare-release:");
     expect(workflow).toContain("detect-updater:");
     expect(workflow).toContain("detect-signing:");
-    expect(workflow).toContain("dev-packages:");
+    expect(workflow).toContain("beta-packages:");
     expect(workflow).toContain("stable-packages:");
+    expect(workflow).toContain("publish-beta-updater:");
     expect(workflow).toContain("publish-stable-updater:");
     expect(workflow).toContain("stable-release:");
     expect(workflow).toContain("publish-tag-updater-manifest:");
     expect(workflow).toContain("resolve-tag-version:");
     expect(workflow).toContain("validate-release-tag.mjs");
+    expect(workflow).toContain("beta-version.mjs");
     expect(workflow).toContain("VITE_APP_VERSION:");
-    expect(workflow).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
+    // Manual stable builds still key off the run number; betas derive a version.
     expect(workflow).toContain("${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}");
     expect(workflow).toContain("includeUpdaterJson");
     expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY");
@@ -111,50 +113,66 @@ describe("release configuration", () => {
     expect(workflow).not.toContain("tauri.macos-test.conf.json");
   });
 
-  it("runs macOS and Windows development package jobs in parallel", () => {
+  it("runs macOS and Windows beta package jobs in parallel", () => {
     const workflow = readText(".github/workflows/release.yml");
     const prepareRelease = workflowJobBlock(workflow, "prepare-release");
-    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
+    const betaPackages = workflowJobBlock(workflow, "beta-packages");
 
-    expect(prepareRelease).toContain("dev_matrix=");
-    expect(developmentPackages).toContain("needs: [prepare-release, detect-signing]");
-    expect(developmentPackages).toContain("fromJson(needs.prepare-release.outputs.dev_matrix)");
-    expect(developmentPackages).toContain("fail-fast: false");
+    expect(prepareRelease).toContain("beta_matrix=");
+    expect(betaPackages).toContain("needs: [prepare-release, detect-signing, detect-updater]");
+    expect(betaPackages).toContain("fromJson(needs.prepare-release.outputs.beta_matrix)");
+    expect(betaPackages).toContain("fail-fast: false");
     expect(prepareRelease).toContain("macos-amd64");
     expect(prepareRelease).toContain("macos-arm64");
     expect(prepareRelease).toContain("windows-amd64");
   });
 
-  it("builds development packages in debug mode like local Tauri dev builds", () => {
+  it("derives the beta version from the newest stable tag", () => {
     const workflow = readText(".github/workflows/release.yml");
     const prepareRelease = workflowJobBlock(workflow, "prepare-release");
-    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
+    const betaPackages = workflowJobBlock(workflow, "beta-packages");
 
-    expect(developmentPackages).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'");
-    expect(developmentPackages).toContain("RELEASE_CHANNEL:         development");
-    expect(developmentPackages).toContain("EMR_CREDENTIAL_STORE:    ${{ matrix.distribution == 'portable' && 'local' || needs.detect-signing.outputs.credential_store }}");
-    expect(developmentPackages).not.toContain("RELEASE_VERSION:");
-    expect(developmentPackages).toContain('REQUIRE_UPDATER_PUBLIC_KEY: "false"');
-    expect(developmentPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
-    expect(prepareRelease).toContain("--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json");
-    expect(prepareRelease).toContain("--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json");
-    expect(prepareRelease).toContain("--debug --config src-tauri/tauri.development.conf.json");
+    expect(prepareRelease).toContain("node scripts/beta-version.mjs");
+    expect(prepareRelease).toContain("BETA_TAG:");
+    expect(prepareRelease).toContain("--prerelease");
+    // A beta must be published, never drafted: the updater fetches its assets
+    // over public URLs.
+    expect(prepareRelease).toContain('if [[ "$RELEASE_CHANNEL" == "beta" ]]');
+    expect(betaPackages).toContain("if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'beta'");
+    expect(betaPackages).toContain("RELEASE_CHANNEL:         beta");
   });
 
-  it("manually analyzes and uploads development artifacts instead of asking tauri-action for updater signatures", () => {
+  it("builds a release and a debug profile for the same beta version", () => {
     const workflow = readText(".github/workflows/release.yml");
-    const prepareDevelopmentRelease = workflowJobBlock(workflow, "prepare-release");
-    const developmentPackages = workflowJobBlock(workflow, "dev-packages");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
+    const betaPackages = workflowJobBlock(workflow, "beta-packages");
 
-    expect(prepareDevelopmentRelease).toContain("GH_REPO:");
-    expect(prepareDevelopmentRelease).toContain("${{ github.repository }}");
+    // The release profile is the stable-identity package the beta channel
+    // delivers; the debug profile keeps the Dev identity and never self-updates.
+    expect(prepareRelease).toContain("for (const profile of [\"release\", \"debug\"])");
+    expect(prepareRelease).toContain("suffix = isDebug ? \"-debug\" : \"\"");
+    expect(betaPackages).toContain("VITE_APP_CHANNEL:        ${{ matrix.profile == 'debug' && 'development' || 'beta' }}");
+    expect(betaPackages).toContain("RELEASE_VERSION:         ${{ needs.prepare-release.outputs.release_version }}");
+    expect(betaPackages).toContain("npm run tauri -- build ${{ matrix.build_args }}");
+    // Both profiles of one version must never stage under the same name.
+    expect(prepareRelease).toContain("label: `beta-${label}${suffix}`");
+  });
 
-    expect(developmentPackages).not.toContain("tauri-apps/tauri-action@v0");
-    expect(developmentPackages).toContain("uses: ./.github/actions/prepare-artifacts");
-    expect(developmentPackages).toContain("gh release upload");
-    expect(prepareDevelopmentRelease).toContain("macos-amd64");
-    expect(prepareDevelopmentRelease).toContain("macos-arm64");
-    expect(prepareDevelopmentRelease).toContain("windows-amd64");
+  it("signs beta artifacts and keeps them off tauri-action", () => {
+    const workflow = readText(".github/workflows/release.yml");
+    const prepareRelease = workflowJobBlock(workflow, "prepare-release");
+    const betaPackages = workflowJobBlock(workflow, "beta-packages");
+
+    expect(prepareRelease).toContain("GH_REPO:");
+    expect(prepareRelease).toContain("${{ github.repository }}");
+
+    expect(betaPackages).not.toContain("tauri-apps/tauri-action@v0");
+    expect(betaPackages).toContain("uses: ./.github/actions/prepare-artifacts");
+    expect(betaPackages).toContain("gh release upload");
+    // Without these the beta channel has no .sig to publish a manifest from.
+    expect(betaPackages).toContain("TAURI_SIGNING_PRIVATE_KEY");
+    expect(betaPackages).toContain("TAURI_UPDATER_PUBLIC_KEY");
+    expect(betaPackages).toContain("has_updater_keys == 'true' && 'true' || 'false'");
   });
 
   it("builds stable manual packages without requiring a version input", () => {
@@ -237,8 +255,9 @@ describe("release configuration", () => {
   it("configures portable matrix rows and split portable updater publication in release workflow", () => {
     const workflow = readText(".github/workflows/release.yml");
     const prepareRelease = workflowJobBlock(workflow, "prepare-release");
-    const devPackages = workflowJobBlock(workflow, "dev-packages");
+    const betaPackages = workflowJobBlock(workflow, "beta-packages");
     const stablePackages = workflowJobBlock(workflow, "stable-packages");
+    const publishBetaUpdater = workflowJobBlock(workflow, "publish-beta-updater");
     const publishStableUpdater = workflowJobBlock(workflow, "publish-stable-updater");
     const stableRelease = workflowJobBlock(workflow, "stable-release");
     const publishTagUpdater = workflowJobBlock(workflow, "publish-tag-updater-manifest");
@@ -248,8 +267,13 @@ describe("release configuration", () => {
     expect(prepareRelease).toContain("tauri.development.portable.conf.json");
     expect(prepareRelease).toContain("tauri.portable.conf.json");
 
-    expect(devPackages).toContain("VITE_APP_DISTRIBUTION:   ${{ matrix.distribution || 'installer' }}");
-    expect(devPackages).toContain("package-windows-portable.mjs");
+    expect(betaPackages).toContain("VITE_APP_DISTRIBUTION:   ${{ matrix.distribution || 'installer' }}");
+    expect(betaPackages).toContain("package-windows-portable.mjs");
+
+    // The beta manifest must read the release profile only.
+    expect(publishBetaUpdater).toContain("publish-portable-updater-manifest.mjs");
+    expect(publishBetaUpdater).toContain("beta-channel-portable");
+    expect(publishBetaUpdater).toContain("ASSET_PROFILE:     release");
 
     expect(stablePackages).toContain("VITE_APP_DISTRIBUTION:            ${{ matrix.distribution || 'installer' }}");
     expect(stablePackages).toContain("package-windows-portable.mjs");

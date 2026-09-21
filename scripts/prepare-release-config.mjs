@@ -44,6 +44,20 @@ if (updaterPublicKey?.trim() && updaterPrivateKey?.trim()) {
   }
 }
 
+// The WiX bundler rejects a non-numeric prerelease identifier
+// (`convert_version` in tauri-bundler bails unless `version.pre` parses as u64),
+// but it consults `bundle.windows.wix.version` first. Betas therefore pin an
+// explicit 4-part MSI version — the beta ordinal in the build field — while the
+// app version stays `0.2.2-beta1`. Stable releases leave it unset so the
+// bundler derives it from the version as before.
+const wixVersion = msiVersionFor(rawVersion ? normalizeReleaseVersion(rawVersion) : null);
+if (wixVersion) {
+  tauriConfig.bundle ??= {};
+  tauriConfig.bundle.windows ??= {};
+  tauriConfig.bundle.windows.wix ??= {};
+  tauriConfig.bundle.windows.wix.version = wixVersion;
+}
+
 if (windowsSignCommand) {
   tauriConfig.bundle ??= {};
   tauriConfig.bundle.windows ??= {};
@@ -88,6 +102,23 @@ function updateCargoVersion(version) {
   const cargoPath = "src-tauri/Cargo.toml";
   const cargoToml = readFileSync(cargoPath, "utf8");
   writeFileSync(cargoPath, cargoToml.replace(/^version = "[^"]+"/m, `version = "${version}"`));
+}
+
+/**
+ * MSI version for a prerelease, or `null` to let the bundler derive it.
+ *
+ * `0.2.2-beta7` → `0.2.2.7`. WiX allows at most 255/255/65535/65535, and the
+ * beta ordinal is what makes each beta outrank the previous one so MSI upgrades
+ * chain. A version whose ordinal is not a plain integer has no MSI form.
+ */
+function msiVersionFor(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)-beta(\d+)$/.exec(version ?? "");
+  if (!match) return null;
+  const [, major, minor, patch, beta] = match;
+  if (Number(major) > 255 || Number(minor) > 255 || Number(patch) > 65535 || Number(beta) > 65535) {
+    throw new Error(`Beta version ${version} cannot be expressed as an MSI version.`);
+  }
+  return `${major}.${minor}.${patch}.${beta}`;
 }
 
 function readJson(path) {

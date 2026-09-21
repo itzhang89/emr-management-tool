@@ -12,7 +12,7 @@ EMR Management Tool is a desktop GUI for submitting and managing Amazon EMR on E
 - Read EMR job logs and browse S3 log/output files.
 - Analyse job failures with an AI assistant, or expose the same read-only tools to external agents over MCP (see [AI Assistant](#ai-assistant)).
 - Query MySQL, PostgreSQL, and Yellowbrick databases directly — over SSH tunnels or SOCKS5 proxies — from the DBHub page (see [DBHub](#dbhub)).
-- Check for application updates on supported stable releases.
+- Check for application updates on supported stable releases, with an opt-in beta channel for previewing the next version.
 
 ## Install
 
@@ -45,14 +45,15 @@ Only install packages from a trusted GitHub Release source.
 
 GitHub Actions builds are ad-hoc signed and not notarized. Without an Apple Developer ID certificate, Gatekeeper may block each **newly downloaded** package until you click **Allow Anyway** again.
 
-This applies to both release channels:
+This applies to every package:
 
 | Channel | App name | Bundle ID |
 | --- | --- | --- |
 | Stable | EMR Management Tool | `com.example.emr-management-tool` |
-| Development | EMR Management Tool Dev | `com.example.emr-management-tool.development` |
+| Beta | EMR Management Tool | `com.example.emr-management-tool` |
+| Development / beta debug packages | EMR Management Tool Dev | `com.example.emr-management-tool.development` |
 
-Stable and development are separate apps. Allow each channel once on first launch.
+A beta release ships both: the release-profile package shares the stable identity, so it replaces your stable install and can be kept current from inside the app, while the debug-profile package uses the Dev identity and installs side by side. Allow each identity once on first launch.
 
 To avoid repeat Gatekeeper prompts on later upgrades, use **Settings → Check for Updates** in stable builds. In-app updates replace the app in place and usually do not trigger Gatekeeper again. Manual re-downloads from GitHub may still require **Allow Anyway**.
 
@@ -350,11 +351,12 @@ Known safe fixtures can be listed in `.secretsallowlist`. Bypass once with `git 
 
 ## Release Channels
 
-- `development`: debug build, local credential store, no automatic updates.
 - `stable`: release build. Stable Windows and macOS releases support automatic updates when signing keys are configured.
+- `beta`: release builds of the next version (`v0.2.2-beta1`, `beta2`, …), derived from the newest stable tag. Opt in with **Settings → Beta updates** to be offered them; leave it off to stay on stable releases. Each beta also publishes debug-profile packages for troubleshooting, which never self-update.
+- `development`: the value local `npm run tauri -- dev` builds carry — debug build, local credential store, no automatic updates.
 
 Credential storage is controlled at build time with `EMR_CREDENTIAL_STORE`:
 
-- `auto`: development uses local storage; stable uses the OS keychain.
+- `auto`: debug/development builds use local storage; stable and beta use the OS keychain.
 - `local`: store credentials in the local app store.
 - `keychain`: store credentials in the OS keychain.

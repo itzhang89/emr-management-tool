@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       release_channel:
-        description: "Release channel"
+        description: "Release channel. Beta derives the next version from the newest stable tag; no version input is needed."
         type: choice
-        options: [development, stable]
-        default: development
+        options: [beta, stable]
+        default: beta
       credential_store:
         description: "Credential store backend"
         type: choice
@@ -21,7 +21,7 @@ on:
         options: [all, macos, macos-arm64, macos-amd64, windows]
         default: all
       draft:
-        description: "Create draft release"
+        description: "Create draft release (beta releases are always published: the updater fetches their assets over public URLs)"
         type: boolean
         default: true
 
@@ -42,9 +42,19 @@ jobs:
       release_tag:     ${{ steps.rel.outputs.release_tag }}
       release_name:    ${{ steps.rel.outputs.release_name }}
       release_version: ${{ steps.rel.outputs.release_version }}
-      dev_matrix:      ${{ steps.rel.outputs.dev_matrix }}
+      beta_matrix:     ${{ steps.rel.outputs.beta_matrix }}
       stable_matrix:   ${{ steps.rel.outputs.stable_matrix }}
     steps:
+      # Betas are numbered after the newest *stable* release, so the version is
+      # derived rather than typed: v0.2.1 → v0.2.2-beta1, beta2, … → v0.2.2.
+      - name: Derive beta version
+        id: beta
+        if: inputs.release_channel == 'beta'
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/beta-version.mjs
+
       - name: Create or reset GitHub release
         id: rel
         env:
@@ -53,81 +63,103 @@ jobs:
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
           RELEASE_DRAFT:   ${{ inputs.draft }}
           PACKAGE_TARGET:  ${{ inputs.package_target }}
+          BETA_TAG:        ${{ steps.beta.outputs.release_tag }}
+          BETA_NAME:       ${{ steps.beta.outputs.release_name }}
+          BETA_VERSION:    ${{ steps.beta.outputs.release_version }}
         run: |
           set -euo pipefail
-          TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
-          NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
-
-          args=(--title "$NAME" --notes "Manual ${RELEASE_CHANNEL} packages.")
-          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
+          if [[ "$RELEASE_CHANNEL" == "beta" ]]; then
+            TAG="$BETA_TAG"
+            NAME="$BETA_NAME"
+            VERSION="$BETA_VERSION"
+            # A beta is always published: the updater fetches its assets from
+            # public URLs, which a draft release does not serve.
+            [[ "$RELEASE_DRAFT" == "true" ]] && echo "::warning::Beta releases are always published; ignoring draft=true."
+            args=(--title "$NAME" --notes "Beta build for $VERSION. Release-profile packages update in place; the -debug packages install side by side for troubleshooting." --prerelease)
+          else
+            TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
+            NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
+            VERSION="0.1.${GITHUB_RUN_NUMBER}"
             args=(--title "$NAME" --notes "Manual stable packages. When updater keys are configured, latest.json is published to stable-channel for in-app updates.")
+            [[ "$RELEASE_DRAFT" == "true" ]] && args+=(--draft)
           fi
-          [[ "$RELEASE_CHANNEL" == "development" ]] && args+=(--prerelease)
-          [[ "$RELEASE_DRAFT"   == "true"        ]] && args+=(--draft)
 
           gh release view "$TAG" >/dev/null 2>&1 \
-            || gh release create "$TAG" "${args[@]}"
+            || gh release create "$TAG" "${args[@]}" --target "${GITHUB_SHA}"
 
           # 删除旧制品，保持 release 干净
           gh release view "$TAG" --json assets --jq '.assets[].name' \
             | xargs -r -I{} gh release delete-asset "$TAG" {} -y
 
-          echo "release_tag=$TAG"   >> "$GITHUB_OUTPUT"
-          echo "release_name=$NAME" >> "$GITHUB_OUTPUT"
-          if [[ "$RELEASE_CHANNEL" == "stable" ]]; then
-            echo "release_version=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "release_tag=$TAG"        >> "$GITHUB_OUTPUT"
+          echo "release_name=$NAME"      >> "$GITHUB_OUTPUT"
+          echo "release_version=$VERSION" >> "$GITHUB_OUTPUT"
           node <<'JS' >> "$GITHUB_OUTPUT"
           const target = process.env.PACKAGE_TARGET || "all";
           const matches = (item) => target === "all" || item.package_target === target || item.package_group === target;
 
-          const devPackages = [
-            {
-              label: "macos-amd64",
-              os: "macos-latest",
-              rust_targets: "x86_64-apple-darwin",
-              platform: "darwin",
-              package_target: "macos-amd64",
-              package_group: "macos",
-              build_args: "--debug --target x86_64-apple-darwin --config src-tauri/tauri.development.conf.json",
-              bundle_dir: "src-tauri/target/x86_64-apple-darwin/debug/bundle",
-              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-            },
-            {
-              label: "macos-arm64",
-              os: "macos-latest",
-              rust_targets: "aarch64-apple-darwin",
-              platform: "darwin",
-              package_target: "macos-arm64",
-              package_group: "macos",
-              build_args: "--debug --target aarch64-apple-darwin --config src-tauri/tauri.development.conf.json",
-              bundle_dir: "src-tauri/target/aarch64-apple-darwin/debug/bundle",
-              artifact_patterns: "*.dmg;*.pkg;*.app.tar.gz"
-            },
-            {
-              label: "windows-amd64",
+          // Every beta ships two profiles under one version. The release profile
+          // is a stable-identity package and is what the beta channel delivers;
+          // the debug profile keeps the Dev identity, installs side by side and
+          // never self-updates. Labels carry a `-debug` segment because the
+          // updater manifest must be able to exclude those assets.
+          const macTargets = [
+            { label: "macos-amd64", target: "x86_64-apple-darwin", package_target: "macos-amd64" },
+            { label: "macos-arm64", target: "aarch64-apple-darwin", package_target: "macos-arm64" }
+          ];
+
+          const betaPackages = [];
+          for (const profile of ["release", "debug"]) {
+            const isDebug = profile === "debug";
+            const suffix = isDebug ? "-debug" : "";
+            const debugFlag = isDebug ? "--debug " : "";
+            const config = isDebug ? "src-tauri/tauri.development.conf.json" : "src-tauri/tauri.conf.json";
+            const portableConfig = isDebug
+              ? "src-tauri/tauri.development.portable.conf.json"
+              : "src-tauri/tauri.portable.conf.json";
+
+            for (const { label, target, package_target } of macTargets) {
+              betaPackages.push({
+                label: `beta-${label}${suffix}`,
+                os: "macos-latest",
+                rust_targets: target,
+                platform: "darwin",
+                profile,
+                package_target,
+                package_group: "macos",
+                build_args: `${debugFlag}--target ${target} --config ${config}`,
+                bundle_dir: `src-tauri/target/${target}/${profile}/bundle`,
+                artifact_patterns: "*.dmg;*.app.tar.gz;*.app.tar.gz.sig"
+              });
+            }
+
+            betaPackages.push({
+              label: `beta-windows-amd64${suffix}`,
               os: "windows-latest",
               rust_targets: "x86_64-pc-windows-msvc",
               platform: "windows",
+              profile,
               package_target: "windows",
               package_group: "windows",
-              build_args: "--debug --config src-tauri/tauri.development.conf.json",
-              bundle_dir: "src-tauri/target/debug/bundle",
-              artifact_patterns: "*.exe;*.msi;*.zip"
-            },
-            {
-              label: "windows-amd64-portable",
+              build_args: `${debugFlag}--config ${config}`,
+              bundle_dir: `src-tauri/target/${profile}/bundle`,
+              artifact_patterns: "*.exe;*.msi;*.sig"
+            });
+
+            betaPackages.push({
+              label: `beta-windows-amd64-portable${suffix}`,
               os: "windows-latest",
               rust_targets: "x86_64-pc-windows-msvc",
               platform: "windows",
               distribution: "portable",
+              profile,
               package_target: "windows-portable",
               package_group: "windows",
-              build_args: "--debug --no-bundle --config src-tauri/tauri.development.portable.conf.json",
-              bundle_dir: "src-tauri/target/debug",
-              artifact_patterns: "*-portable.zip"
-            }
-          ];
+              build_args: `${debugFlag}--no-bundle --config ${portableConfig}`,
+              bundle_dir: `src-tauri/target/${profile}`,
+              artifact_patterns: "*-portable.zip;*-portable.zip.sig"
+            });
+          }
 
           const stablePackages = [
             {
@@ -177,7 +209,7 @@ jobs:
             }
           ];
 
-          console.log(`dev_matrix=${JSON.stringify({ include: devPackages.filter(matches) })}`);
+          console.log(`beta_matrix=${JSON.stringify({ include: betaPackages.filter(matches) })}`);
           console.log(`stable_matrix=${JSON.stringify({ include: stablePackages.filter(matches) })}`);
           JS
 
@@ -229,22 +261,34 @@ jobs:
             echo "::warning::APPLE_CERTIFICATE not set — forcing EMR_CREDENTIAL_STORE=local"
           fi
 
-  # ── 手动触发 · 开发包（macOS amd64/arm64 + Windows）──
-  dev-packages:
-    name: Dev package (${{ matrix.label }})
-    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'development'
-    needs: [prepare-release, detect-signing]
+  # ── 手动触发 · Beta 包（release + debug 两档，macOS amd64/arm64 + Windows）──
+  beta-packages:
+    name: Beta package (${{ matrix.label }})
+    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'beta'
+    needs: [prepare-release, detect-signing, detect-updater]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare-release.outputs.dev_matrix) }}
+      matrix: ${{ fromJson(needs.prepare-release.outputs.beta_matrix) }}
 
     env:
-      RELEASE_CHANNEL:         development
+      RELEASE_CHANNEL:         beta
+      # The beta version reaches the build so the app reports it (and the
+      # updater can compare against it) rather than falling back to 0.1.0.
+      RELEASE_VERSION:         ${{ needs.prepare-release.outputs.release_version }}
+      VITE_APP_VERSION:        ${{ needs.prepare-release.outputs.release_version }}
+      # Release-profile betas are stable-identity packages that update in place;
+      # debug-profile betas keep the Dev identity and never self-update.
+      VITE_APP_CHANNEL:        ${{ matrix.profile == 'debug' && 'development' || 'beta' }}
       VITE_APP_DISTRIBUTION:   ${{ matrix.distribution || 'installer' }}
-      EMR_CREDENTIAL_STORE:    ${{ matrix.distribution == 'portable' && 'local' || needs.detect-signing.outputs.credential_store }}
-      REQUIRE_UPDATER_PUBLIC_KEY: "false"
-      VITE_APP_CHANNEL:        development
+      EMR_CREDENTIAL_STORE:    ${{ matrix.distribution == 'portable' && 'local' || (matrix.profile == 'debug' && 'local' || needs.detect-signing.outputs.credential_store) }}
+      # Signing is what makes the beta channel deliverable, so unlike the old
+      # dev channel these rows get the updater secrets. Without them the build
+      # still succeeds; artifacts are just unsigned and no manifest is published.
+      REQUIRE_UPDATER_PUBLIC_KEY: ${{ needs.detect-updater.outputs.has_updater_keys == 'true' && 'true' || 'false' }}
+      TAURI_UPDATER_PUBLIC_KEY:           ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       VITE_APP_PLATFORM:       ${{ matrix.platform }}
       ARTIFACT_LABEL:          ${{ matrix.label }}
       BUNDLE_DIR:              ${{ matrix.bundle_dir }}
@@ -285,12 +329,25 @@ jobs:
       - name: Package portable zip
         if: matrix.distribution == 'portable'
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          EXE_PATH="src-tauri/target/debug/EMR Management Tool Dev Portable.exe"
-          if [[ ! -f "$EXE_PATH" ]]; then
-            EXE_PATH="src-tauri/target/debug/emr-management-tool.exe"
+          ZIP_PATH="${{ matrix.bundle_dir }}/windows-amd64-portable.zip"
+          # A stale zip restored from the rust cache would be staged alongside
+          # the fresh one under the same name.
+          rm -f "$ZIP_PATH" "$ZIP_PATH.sig"
+          EXE_PATH=""
+          for candidate in \
+            "${{ matrix.bundle_dir }}/EMR Management Tool Portable.exe" \
+            "${{ matrix.bundle_dir }}/EMR Management Tool Dev Portable.exe" \
+            "${{ matrix.bundle_dir }}/emr-management-tool.exe"; do
+            if [[ -f "$candidate" ]]; then EXE_PATH="$candidate"; break; fi
+          done
+          if [[ -z "$EXE_PATH" ]]; then
+            echo "::error::No portable executable found under ${{ matrix.bundle_dir }}"
+            exit 1
           fi
-          ZIP_PATH="src-tauri/target/debug/windows-amd64-portable.zip"
           PORTABLE_EXE="$EXE_PATH" PORTABLE_OUT="$ZIP_PATH" node scripts/package-windows-portable.mjs
 
       - name: Stage artifacts
@@ -307,6 +364,71 @@ jobs:
           GH_REPO:     ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: gh release upload "$RELEASE_TAG" release-artifacts/* --clobber
+
+  # ── 手动触发 · beta 更新清单（latest.json + portable-latest.json）──
+  # Runs after every platform row so the parallel builds never race on one
+  # manifest file. Points at the release profile only: both profiles share the
+  # beta version, so a manifest that could pick the -debug asset would hand beta
+  # users a Dev-identity app.
+  publish-beta-updater:
+    name: Publish beta updater manifest
+    if: github.event_name == 'workflow_dispatch' && inputs.release_channel == 'beta' && needs.detect-updater.outputs.has_updater_keys == 'true'
+    needs: [prepare-release, beta-packages, detect-updater]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build latest.json
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION:   ${{ needs.prepare-release.outputs.release_version }}
+          RELEASE_TAG:       ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_NOTES:     Beta ${{ needs.prepare-release.outputs.release_version }}
+          ASSET_PROFILE:     release
+        run: node scripts/publish-updater-manifest.mjs
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ needs.prepare-release.outputs.release_tag }}" latest.json \
+            --repo "${{ github.repository }}" --clobber
+          if ! gh release view beta-channel --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create beta-channel \
+              --repo "${{ github.repository }}" \
+              --title "Beta channel" \
+              --notes "Rolling latest.json for in-app beta updates from CI beta builds." \
+              --prerelease
+          fi
+          gh release upload beta-channel latest.json \
+            --repo "${{ github.repository }}" --clobber
+      - name: Build portable-latest.json
+        env:
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION:   ${{ needs.prepare-release.outputs.release_version }}
+          RELEASE_TAG:       ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_NOTES:     Beta ${{ needs.prepare-release.outputs.release_version }}
+          ASSET_PROFILE:     release
+        run: node scripts/publish-portable-updater-manifest.mjs
+      - name: Upload portable-latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -f portable-latest.json ]]; then
+            gh release upload "${{ needs.prepare-release.outputs.release_tag }}" portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+            if ! gh release view beta-channel-portable --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release create beta-channel-portable \
+                --repo "${{ github.repository }}" \
+                --title "Beta portable channel" \
+                --notes "Rolling portable-latest.json for in-app portable beta updates from CI beta builds." \
+                --prerelease
+            fi
+            gh release upload beta-channel-portable portable-latest.json \
+              --repo "${{ github.repository }}" --clobber
+          fi
 
   # ── 手动触发 · 稳定包（macOS amd64/arm64 + Windows）──
   stable-packages:
@@ -474,9 +596,12 @@ jobs:
         run: node scripts/validate-release-tag.mjs
 
   # ── tag push · 正式发版（Windows + macOS，含 updater 清单）──
+  # Beta tags (`v0.2.2-beta1`) match the `v*.*.*` trigger too, and are cut by a
+  # workflow_dispatch instead. Without this guard a hand-pushed beta tag would
+  # build a second time here and, worse, publish its manifest to stable-channel.
   stable-release:
     name: Stable release (${{ matrix.label }})
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
     needs: [detect-updater, detect-signing, resolve-tag-version]
     runs-on: ${{ matrix.os }}
     strategy:
@@ -586,7 +711,7 @@ jobs:
 
   publish-tag-updater-manifest:
     name: Publish tag updater manifest
-    if: github.event_name == 'push' && needs.detect-updater.outputs.has_updater_keys == 'true'
+    if: github.event_name == 'push' && !contains(github.ref_name, '-') && needs.detect-updater.outputs.has_updater_keys == 'true'
     needs: [detect-updater, stable-release, resolve-tag-version]
     runs-on: ubuntu-latest
     steps:

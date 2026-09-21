@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertReleaseVersion } from "./release-version.mjs";
-import { isInstallerWindowsBundle } from "./updater-assets.mjs";
+import { isInstallerWindowsBundle, selectProfileAssets } from "./updater-assets.mjs";
 
 const UPDATER_TARGETS = [
   {
@@ -36,7 +36,9 @@ if (!version || !releaseTag || !repo) {
   throw new Error("RELEASE_VERSION, RELEASE_TAG, and GITHUB_REPOSITORY are required.");
 }
 
-const assets = JSON.parse(gh("release", "view", releaseTag, "--repo", repo, "--json", "assets")).assets;
+const assets = selectProfileAssets(
+  JSON.parse(gh("release", "view", releaseTag, "--repo", repo, "--json", "assets")).assets
+);
 const platforms = {};
 
 for (const target of UPDATER_TARGETS) {
