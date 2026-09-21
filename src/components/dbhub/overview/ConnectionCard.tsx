@@ -95,12 +95,21 @@ export function ConnectionCard({
           <Badge variant="outline" className="text-xs">
             {t(connection.enabledForAi ? "AI read-only" : "Manual")}
           </Badge>
-          <Badge variant="secondary" className="text-xs">
-            {connection.authMode === "aws_secret"
-              ? t("SM: {name}", {
-                  name: connection.secretName ?? connection.secretArn?.split(":").pop() ?? "…"
-                })
-              : t("Local password")}
+          {/*
+            Just "SM" — the secret's name is unbounded user text, and spelling
+            it out here pushes this row past the card's width. The full name
+            stays one hover away, and the form shows it in full.
+          */}
+          <Badge
+            variant="secondary"
+            className="shrink-0 text-xs"
+            title={
+              connection.authMode === "aws_secret"
+                ? connection.secretName ?? connection.secretArn?.split(":").pop()
+                : t("Local password")
+            }
+          >
+            {t(connection.authMode === "aws_secret" ? "SM" : "Local password")}
           </Badge>
           <Tooltip>
             <TooltipTrigger asChild>

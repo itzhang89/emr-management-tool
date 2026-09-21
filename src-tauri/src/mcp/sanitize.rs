@@ -477,6 +477,17 @@ fn keep_head_tail(matched: &str, (a, b): (usize, usize)) -> String {
 mod tests {
     use super::*;
 
+    /// The rule set is process-global (`CURRENT_RULES`), so a test that installs
+    /// its own and a test that asserts the defaults must not run at the same
+    /// time — `load_rules_controls_what_sanitize_applies` disables FQDN for the
+    /// length of its body. Any test asserting what a *default* rule redacts
+    /// takes this first. Poisoning is ignored: one failing test should not take
+    /// its neighbours down with it.
+    fn rules_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     // Default rules (all six built-ids on) must reproduce the original fixed
     // behaviour byte-for-byte.
 
@@ -524,6 +535,7 @@ mod tests {
 
     #[test]
     fn redacts_the_builtin_fqdn_hostnames() {
+        let _guard = rules_lock();
         let text = "Connecting to my-cluster.us-east-1.elb.amazonaws.com:8080";
         let result = sanitize(text);
         assert!(result.contains("[HOSTNAME]"));
@@ -698,6 +710,7 @@ mod tests {
 
     #[test]
     fn load_rules_controls_what_sanitize_applies() {
+        let _guard = rules_lock();
         // Starting state: all defaults.
         assert!(sanitize("my-cluster.us-east-1.elb.amazonaws.com").contains("[HOSTNAME]"));
 

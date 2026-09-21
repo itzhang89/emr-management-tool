@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { CircleAlert, Lock } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -67,14 +66,6 @@ const DEFAULT_PORTS: Record<DbConnectionKind, number> = {
   mysql: 3306,
   postgres: 5432,
   yellowbrick: 5432
-};
-
-const SECRET_FIELD_LABELS: Record<DbSecretField, string> = {
-  host: "Server Host",
-  port: "Port",
-  database: "Database",
-  username: "Username",
-  password: "Password"
 };
 
 /**
@@ -455,54 +446,25 @@ export function ConnectionFormDialog({
                         )}
                       </p>
                     ) : null}
-                  </div>
-
-                  {secretBound ? (
-                    <div className="col-span-2 min-w-0 rounded-md border bg-muted/30 p-3">
-                      <p className="mb-2 flex min-w-0 items-center gap-1.5 text-sm font-medium">
-                        <Lock className="size-3.5 shrink-0" />
-                        {t("Secret fields")}
-                        {selectedSecret ? (
-                          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-                            {selectedSecret.name}
-                          </span>
-                        ) : null}
+                    {/*
+                      No field-by-field listing: the locked fields below say
+                      which values the secret owns, and what a secret carries is
+                      its own business. Only the two states the form itself
+                      cannot show get a line — that it is still reading, and
+                      that it could not read at all.
+                    */}
+                    {secretBound && previewLoading ? (
+                      <p className="text-xs text-muted-foreground">{t("Reading secret…")}</p>
+                    ) : null}
+                    {secretBound && !previewLoading && preview?.status === "unreadable" ? (
+                      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                        <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                        {t(
+                          "Could not read this secret's fields — fill the values below. The secret still supplies them at connect time."
+                        )}
                       </p>
-                      {previewLoading ? (
-                        <p className="text-xs text-muted-foreground">{t("Reading secret…")}</p>
-                      ) : previewOk ? (
-                        <dl className="space-y-1 text-xs">
-                          {preview.rows.map((row) => (
-                            <div key={row.key} className="flex min-w-0 items-center gap-2">
-                              <dt className="w-24 shrink-0 text-muted-foreground">
-                                {t(SECRET_FIELD_LABELS[row.key])}
-                              </dt>
-                              <dd className="flex min-w-0 items-center gap-2">
-                                <Badge
-                                  variant={row.present ? "secondary" : "outline"}
-                                  className="shrink-0 text-xs"
-                                >
-                                  {t(row.present ? "Provided" : "Not provided")}
-                                </Badge>
-                                {!row.present && row.key !== "database" ? (
-                                  <span className="min-w-0 truncate text-muted-foreground">
-                                    {t("Enter it below")}
-                                  </span>
-                                ) : null}
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : (
-                        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-                          {t(
-                            "Could not read this secret's fields — fill the values below. The secret still supplies them at connect time."
-                          )}
-                        </p>
-                      )}
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </>
               ) : null}
             </div>

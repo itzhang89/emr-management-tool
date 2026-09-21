@@ -79,18 +79,14 @@ const dbhub: TranslationDictionary = {
   "Select a secret…": "选择密钥…",
   "No secrets in this account yet — create one on the Secrets page, then bind it here.":
     "此账户暂无密钥——请先在“密钥管理”页面创建，然后回到这里绑定。",
-  // The panel that shows what the bound secret carries, one dial field per row.
-  // Statuses only: the values live in Secrets Manager, not on this screen.
-  "Secret fields": "密钥字段",
-  Provided: "已提供",
-  "Not provided": "未提供",
-  "Enter it below": "请在下方填写",
+  // A locked field asks for nothing: the secret already carries it. The two
+  // lines below cover the states the locked fields cannot show on their own.
   "Not in the secret — enter it here": "密钥未提供——请在此填写",
   "Reading secret…": "正在读取密钥…",
   "Could not read this secret's fields — fill the values below. The secret still supplies them at connect time.":
     "无法读取此密钥的字段——请在下方填写。连接时仍以密钥中的值为准。",
   "Local password": "本地密码",
-  "SM: {name}": "SM: {name}",
+  SM: "SM",
   "•••••••• (saved — leave blank to keep)": "••••••••（已保存——留空则保持不变）",
   "Routing & AI": "路由与 AI",
   "Network Profile": "网络配置",

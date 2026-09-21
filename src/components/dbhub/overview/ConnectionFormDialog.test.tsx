@@ -250,14 +250,9 @@ describe("ConnectionFormDialog", () => {
     await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
     await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
 
-    // The panel reports each of the five fields by name, and only whether the
-    // secret carries it.
     await waitFor(() => {
-      expect(screen.getByText("Secret fields")).toBeInTheDocument();
+      expect(getSecretValue).toHaveBeenCalledWith(SALES_ARN);
     });
-    expect(getSecretValue).toHaveBeenCalledWith(SALES_ARN);
-    expect(screen.getAllByText("Provided")).toHaveLength(5);
-    expect(screen.queryByText("Not provided")).not.toBeInTheDocument();
 
     // The fields keep their place in the form, holding the secret's values and
     // refusing edits rather than disappearing.
@@ -299,15 +294,12 @@ describe("ConnectionFormDialog", () => {
     await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
     await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
 
+    // Only the password is locked — the other four are the user's to fill.
     await waitFor(() => {
-      expect(screen.getByText("Secret fields")).toBeInTheDocument();
+      expect(screen.getByLabelText("Password")).toBeDisabled();
     });
-    expect(screen.getAllByText("Not provided")).toHaveLength(4);
-    expect(screen.getAllByText("Provided")).toHaveLength(1);
-    // Not supplied → still a field the user can fill.
     expect(screen.getByLabelText("Server Host")).toBeEnabled();
     expect(screen.getByLabelText("Username")).toBeEnabled();
-    expect(screen.getByLabelText("Password")).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Save and Close" }));
     await waitFor(() => {
@@ -329,12 +321,11 @@ describe("ConnectionFormDialog", () => {
     await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
     await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
 
-    await waitFor(() => {
-      expect(screen.getByText("Secret fields")).toBeInTheDocument();
-    });
     // The password is the one field the secret cannot cover here, so the form
     // asks for it and the stored copy backs the secret up at dial time.
-    expect(screen.getAllByText("Not provided")).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getByLabelText("Server Host")).toBeDisabled();
+    });
     expect(screen.getByLabelText("Password")).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Save and Close" }));
