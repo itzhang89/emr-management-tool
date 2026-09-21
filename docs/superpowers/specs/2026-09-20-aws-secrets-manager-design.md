@@ -346,6 +346,9 @@ AWS module is `aws::secrets_manager` / commands `*_secrets_manager` to avoid con
 
 - User B can update a secret created by user A; the write refreshes `lastModifiedBy`
   to B and leaves `createdBy=A`. Edit/Delete are enabled on every listed secret.
+- Delete is **double-confirmed**: a dialog states the recovery window, and its red
+  button stays disabled until the exact secret name is typed back. Because deletion
+  is open to everyone, the dialog — not an ownership check — is the safeguard.
 - If `TagResource` is denied, the value still saves and the error says so explicitly.
 
 ---

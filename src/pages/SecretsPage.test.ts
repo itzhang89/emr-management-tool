@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultSecretKvPairs,
+  deleteConfirmationMatches,
   isCreatedBy,
   pairsFromSecretJson,
   pairsToSecretJson
@@ -28,6 +29,24 @@ describe("isCreatedBy", () => {
 
   it("ignores the legacy submitUser tag", () => {
     expect(isCreatedBy(summary([{ key: "submitUser", value: "alice" }]), "alice")).toBe(false);
+  });
+});
+
+describe("deleteConfirmationMatches", () => {
+  it("requires the exact secret name, ignoring surrounding whitespace", () => {
+    expect(deleteConfirmationMatches("mysql.sales_ro", "mysql.sales_ro")).toBe(true);
+    expect(deleteConfirmationMatches("  mysql.sales_ro  ", "mysql.sales_ro")).toBe(true);
+  });
+
+  it("rejects partial, differently cased, or empty input", () => {
+    expect(deleteConfirmationMatches("mysql", "mysql.sales_ro")).toBe(false);
+    expect(deleteConfirmationMatches("MySQL.Sales_RO", "mysql.sales_ro")).toBe(false);
+    expect(deleteConfirmationMatches("", "mysql.sales_ro")).toBe(false);
+  });
+
+  it("stays unarmed when there is no pending secret", () => {
+    expect(deleteConfirmationMatches("", undefined)).toBe(false);
+    expect(deleteConfirmationMatches("mysql.sales_ro", undefined)).toBe(false);
   });
 });
 

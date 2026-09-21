@@ -71,6 +71,9 @@ const secrets: TranslationDictionary = {
     "密钥「{name}」已安排删除（恢复窗口 {days} 天）。",
   '"{name}" will be scheduled for deletion with a {days}-day recovery window. It can be restored from the AWS console until then.':
     "「{name}」将安排删除，恢复窗口为 {days} 天；在此之前可在 AWS 控制台恢复。",
+  "This schedules the secret for deletion in AWS Secrets Manager.":
+    "该操作会将密钥标记为在 AWS Secrets Manager 中删除。",
+  "Type the secret name to confirm:": "输入密钥名称以确认：",
   Delete: "删除",
   "Save as AWS Secret": "保存为 AWS 密钥",
   "Create and bind AWS Secret": "创建并绑定 AWS 密钥",

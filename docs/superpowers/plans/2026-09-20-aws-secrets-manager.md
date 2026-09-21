@@ -92,6 +92,8 @@ Locked constraints:
 
 - [x] `update_secret` / `put_secret_value` gated by `submitUser` ownership.
 - [x] `delete_secret` gated the same way; 7-day recovery window; confirm dialog.
+      (2026-09-21: gate removed — the dialog now carries a warning plus a
+      type-the-secret-name second confirmation instead.)
 - [x] Disable Edit/Delete in UI when not owner; explain why.
 - [x] Create-from-connection shortcut (prefill `{kind}.{sanitizedName}` + JSON from form).
 

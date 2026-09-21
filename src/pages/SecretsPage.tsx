@@ -9,7 +9,8 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Trash2
+  Trash2,
+  TriangleAlert
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -107,6 +108,15 @@ export function isCreatedBy(secret: SecretSummary, localUser: string | undefined
   return tagValue(secret, "createdBy") === localUser;
 }
 
+/**
+ * Deleting is open to everyone, so the dialog asks for the exact secret name back
+ * before it arms the destructive button.
+ */
+export function deleteConfirmationMatches(typed: string, secretName: string | undefined): boolean {
+  if (!secretName) return false;
+  return typed.trim() === secretName;
+}
+
 type FormMode = "create" | "edit" | "clone";
 
 export function SecretsPage() {
@@ -124,6 +134,7 @@ export function SecretsPage() {
   const [formMode, setFormMode] = useState<FormMode | null>(null);
   const [formSecret, setFormSecret] = useState<SecretSummary | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SecretSummary | null>(null);
+  const [confirmName, setConfirmName] = useState("");
   const [expandedArn, setExpandedArn] = useState<string | null>(null);
   const [expandedRaw, setExpandedRaw] = useState<string | null>(null);
   const [expandLoading, setExpandLoading] = useState(false);
@@ -266,8 +277,19 @@ export function SecretsPage() {
     }
   };
 
+  const requestDelete = (secret: SecretSummary) => {
+    setConfirmName("");
+    setPendingDelete(secret);
+  };
+
+  const closeDelete = () => {
+    setConfirmName("");
+    setPendingDelete(null);
+  };
+
   const handleDelete = async () => {
     if (!pendingDelete) return;
+    if (!deleteConfirmationMatches(confirmName, pendingDelete.name)) return;
     try {
       const result = await deleteSecret.mutateAsync({
         secretId: pendingDelete.arn,
@@ -283,7 +305,7 @@ export function SecretsPage() {
         setExpandedArn(null);
         setExpandedRaw(null);
       }
-      setPendingDelete(null);
+      closeDelete();
     } catch (error) {
       toast.error(formatAppError(error, "Failed to delete secret."));
     }
@@ -557,7 +579,7 @@ export function SecretsPage() {
                                 disabled={deleteSecret.isPending}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setPendingDelete(secret);
+                                  requestDelete(secret);
                                 }}
                               >
                                 <Trash2 className="size-3.5" />
@@ -726,28 +748,49 @@ export function SecretsPage() {
       <Dialog
         open={Boolean(pendingDelete)}
         onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
+          if (!open) closeDelete();
         }}
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t("Delete secret?")}</DialogTitle>
             <DialogDescription>
+              {t("This schedules the secret for deletion in AWS Secrets Manager.")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <p className="min-w-0 break-words">
               {t(
                 '"{name}" will be scheduled for deletion with a {days}-day recovery window. It can be restored from the AWS console until then.',
                 { name: pendingDelete?.name ?? "", days: DEFAULT_RECOVERY_DAYS }
               )}
-            </DialogDescription>
-          </DialogHeader>
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="confirm-secret-name">{t("Type the secret name to confirm:")}</Label>
+            <Input
+              id="confirm-secret-name"
+              value={confirmName}
+              onChange={(event) => setConfirmName(event.target.value)}
+              placeholder={pendingDelete?.name}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono text-sm"
+            />
+          </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPendingDelete(null)}>
+            <Button type="button" variant="outline" onClick={closeDelete}>
               {t("Cancel")}
             </Button>
             <Button
               type="button"
               variant="destructive"
               onClick={handleDelete}
-              disabled={deleteSecret.isPending}
+              disabled={
+                deleteSecret.isPending ||
+                !deleteConfirmationMatches(confirmName, pendingDelete?.name)
+              }
             >
               {t("Delete")}
             </Button>
