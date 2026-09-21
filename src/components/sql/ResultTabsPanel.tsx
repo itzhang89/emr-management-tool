@@ -43,7 +43,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-1.5">
-      <div className="flex min-h-6 shrink-0 items-center gap-0.5 overflow-x-auto rounded-md border bg-muted/30 p-0.5">
+      <div className="flex min-h-5 shrink-0 items-center gap-px overflow-x-auto rounded-md border bg-muted/30 p-px">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const running = Boolean(tab.running);
@@ -51,7 +51,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
             <div
               key={tab.id}
               className={cn(
-                "flex max-w-[180px] shrink-0 items-center gap-0 rounded-sm border px-0.5 transition-colors",
+                "flex max-w-[150px] shrink-0 items-center gap-0 rounded-sm border px-0.5 transition-colors",
                 isActive
                   ? "border-primary/60 bg-primary/10 shadow-sm ring-1 ring-primary/20"
                   : "border-transparent hover:bg-muted/60"
@@ -60,7 +60,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
               <button
                 type="button"
                 className={cn(
-                  "min-w-0 overflow-hidden whitespace-nowrap px-1.5 py-0.5 text-left text-[10px] [text-overflow:clip]",
+                  "min-w-0 overflow-hidden whitespace-nowrap px-1 text-left text-[10px] [text-overflow:clip]",
                   isActive
                     ? "font-semibold text-primary"
                     : "text-muted-foreground hover:text-foreground",
@@ -77,11 +77,11 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-5 shrink-0"
+                  className="size-4 shrink-0"
                   aria-label={t("Close {title}", { title: tab.title })}
                   onClick={() => onCloseTab(tab.id)}
                 >
-                  <X className="size-2.5" />
+                  <X className="size-2" />
                 </Button>
               ) : null}
             </div>

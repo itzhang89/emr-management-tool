@@ -54,13 +54,16 @@ export interface ColumnSort {
 }
 
 /**
- * How a cell's value is compared. The five a right-click offers, in the order
- * the menu shows them: equal, not equal, greater, less, and a contains.
+ * How a cell's value is compared. The five the right-click menu offers, in the
+ * order it shows them: equal, not equal, greater, less, and a pattern match.
+ * The typed expression spells the same five — `=`, `<>`, `>`, `<`, `LIKE` — and
+ * `IS [NOT] NULL` for a missing value, which is `eq`/`ne` with `isNull` set.
  */
 export type FilterOperator = "eq" | "ne" | "gt" | "lt" | "like";
 
 /**
- * One condition on a column, made by right-clicking a cell.
+ * One condition on a column, however it was asked for — chosen from a cell's
+ * right-click menu, or typed into the filter box as SQL.
  *
  * The value is kept as the *text the grid showed*, because that is what the
  * menu offered (`time_zone = 'UTC'`) and what a reader comparing a chip against
@@ -95,6 +98,13 @@ export interface CachedResultTab {
   /** Open the record panel under the rows, showing `recordIndex` transposed. */
   singleRecord?: boolean;
   sort?: ColumnSort[];
+  /**
+   * What the filter box holds, as it was typed — which is not always what is
+   * applied: text that does not parse is kept so the user comes back to their
+   * own words rather than to a box that silently emptied itself, while
+   * `filters` below stays on the last conditions that did parse.
+   */
+  filterText?: string;
   /** Conditions every drawn row has to satisfy, in the order they were added. */
   filters?: CellFilter[];
   /** Which row the record panel is on, and the one the grid highlights. */

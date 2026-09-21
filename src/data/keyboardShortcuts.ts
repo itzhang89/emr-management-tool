@@ -12,6 +12,10 @@ export const SHORTCUT_IDS = {
   GLUE_RUN_NEW_TAB: "glue-run-new-tab",
   GLUE_CYCLE_RESULT_TAB_PREV: "glue-cycle-result-tab-prev",
   GLUE_CYCLE_RESULT_TAB_NEXT: "glue-cycle-result-tab-next",
+  DB_QUERY_TAB_NEW: "db-query-tab-new",
+  DB_QUERY_TAB_PREVIOUS: "db-query-tab-previous",
+  DB_QUERY_TAB_NEXT: "db-query-tab-next",
+  DB_QUERY_TAB_CLOSE: "db-query-tab-close",
   LOGS_TREE_TOGGLE: "logs-tree-toggle",
   LOGS_FIND: "logs-find",
   LOGS_FOCUS_JOB_ID: "logs-focus-job-id",
@@ -218,6 +222,37 @@ export const keyboardShortcuts: KeyboardShortcutEntry[] = [
     label: "Next result tab",
     description: "Switch to the next query result tab",
     keys: [formatModShortcut("→", { alt: true })]
+  },
+  {
+    id: SHORTCUT_IDS.DB_QUERY_TAB_NEW,
+    category: "glue",
+    label: "New query tab",
+    description: "Open another SQL editor in the query workspace",
+    keys: [formatModShortcut("N")]
+  },
+  {
+    id: SHORTCUT_IDS.DB_QUERY_TAB_PREVIOUS,
+    category: "glue",
+    label: "Previous workspace tab",
+    description:
+      "Step to the tab on the left — in the editor strip or the result strip, whichever you last used",
+    keys: [formatModShortcut("[", { shift: true })]
+  },
+  {
+    id: SHORTCUT_IDS.DB_QUERY_TAB_NEXT,
+    category: "glue",
+    label: "Next workspace tab",
+    description:
+      "Step to the tab on the right — in the editor strip or the result strip, whichever you last used",
+    keys: [formatModShortcut("]", { shift: true })]
+  },
+  {
+    id: SHORTCUT_IDS.DB_QUERY_TAB_CLOSE,
+    category: "glue",
+    label: "Close workspace tab",
+    description:
+      "Close the editor or result tab in front — the last tab of either strip stays open",
+    keys: [formatModShortcut("W")]
   },
   {
     id: SHORTCUT_IDS.S3_LIST_MOVE,

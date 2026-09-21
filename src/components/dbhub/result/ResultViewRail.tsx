@@ -44,8 +44,11 @@ export function ResultViewRail({
 }) {
   const t = useT();
 
+  // The top of this rail is the top of the table beside it — the SQL and the
+  // filter box are drawn above both now — so the first tab starts level with
+  // the header row rather than a gutter below it.
   return (
-    <div className="flex w-6 shrink-0 flex-col items-center gap-0.5 border-r bg-muted/20 py-1">
+    <div className="flex w-6 shrink-0 flex-col items-center gap-0.5 border-r bg-muted/20 pb-1">
       <div
         role="tablist"
         aria-orientation="vertical"

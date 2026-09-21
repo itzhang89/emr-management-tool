@@ -23,8 +23,9 @@ export function ResultFunctionRail({ analyzeButton }: { analyzeButton?: ReactNod
 
   return (
     <aside className="flex w-6 shrink-0 flex-col items-stretch border-l bg-muted/20">
-      {/* The same height as the object-name row beside it, so the two read as
-          one band across the top of the result rather than as two starts. */}
+      {/* The height of the header row beside it, and the same rule under it, so
+          the two read as one band across the top of the table rather than as
+          two things that happen to start at the same place. */}
       <div className="flex h-6 shrink-0 items-center justify-end border-b pr-0.5">
         {analyzeButton}
       </div>

@@ -11,26 +11,31 @@ import {
 import type { DbQueryResult } from "@/types/domain";
 import { ResultBottomBar } from "./ResultBottomBar";
 import { ResultFilterBar } from "./ResultFilterBar";
+import { ResultFilterChips } from "./ResultFilterChips";
 import { ResultFunctionRail } from "./ResultFunctionRail";
 import { ResultGrid } from "./ResultGrid";
 import { ResultRecordPanel } from "./ResultRecordPanel";
 import { ResultTextView } from "./ResultTextView";
 import { ResultViewRail } from "./ResultViewRail";
-import { addFilter, filterRows } from "./resultFilter";
+import { addFilter, expressionFor, filterRows } from "./resultFilter";
 import { sortRows, type IndexedRow, type Row } from "./resultGridModel";
-import { sourceName } from "./resultSource";
 
 /**
- * One result tab's body: the format rail down the left edge, the data in the
- * middle, the function rail down the right, and the strip that acts on the
- * result as a whole underneath.
+ * One result tab's body: the line naming what was asked and narrowing it, the
+ * format rail down the left edge, the data in the middle, the function rail
+ * down the right, and the strip that acts on the result as a whole underneath.
+ *
+ * The two rails begin at the table's own header row rather than at the top of
+ * the pane, which is what the line above them buys: the SQL and the filter box
+ * are facts about the result as a whole, so they span it, and what is left
+ * between them is the table and nothing else.
  *
  * The page is split across the middle by the record panel. Above the line: the
- * rows — grid or text — with the object name over them and the function rail
- * beside them. Below it, when Record is on: the selected row, transposed, with
- * its own way of stepping to the next one. The format rail is the only thing
- * that spans both halves, because it holds a switch for each of them — the two
- * formats at the top, Record at the foot.
+ * rows — grid or text — with the function rail beside them. Below it, when
+ * Record is on: the selected row, transposed, with its own way of stepping to
+ * the next one. The format rail is the only thing that spans both halves,
+ * because it holds a switch for each of them — the two formats at the top,
+ * Record at the foot.
  *
  * Record is a second pane rather than a third format. DBeaver opens it this way
  * and the reason is visible in the layout: a row is easier to read transposed
@@ -67,6 +72,7 @@ import { sourceName } from "./resultSource";
 const NO_SORT: ColumnSort[] = [];
 const NO_FILTERS: CellFilter[] = [];
 const NO_ROWS: Row[] = [];
+const NO_COLUMNS: string[] = [];
 
 export function ResultPane({
   meta,
@@ -148,7 +154,6 @@ export function ResultPane({
 
   const recordIndex = Math.min(meta?.recordIndex ?? 0, Math.max(visible.length - 1, 0));
 
-  const source = useMemo(() => sourceName(meta?.sql ?? ""), [meta?.sql]);
   // Record is a panel under the rows, so it needs rows to put under them. Its
   // own switch stays visible either way — a control that vanishes reads as a
   // layout change, not as "there is nothing to show".
@@ -168,9 +173,17 @@ export function ResultPane({
   if (!result) {
     const state = meta.runState;
     return (
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <SourceRow meta={meta} source={source} />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {/* The statement still heads the pane — it is what there is to show —
+            but with no rows in hand there is nothing for a filter to narrow, so
+            the box is left off rather than offered and ignored. */}
+        <ResultFilterBar
+          sql={meta.sql}
+          columns={NO_COLUMNS}
+          runState={meta.runState}
+          runError={meta.runError}
+        />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
             <p>
               {state === "cancelled"
@@ -190,17 +203,55 @@ export function ResultPane({
               {t("Rerun to load fresh results")}
             </Button>
           </div>
+          {/* No columns are known yet, so the rail is the AI action alone. */}
+          <ResultFunctionRail analyzeButton={analyzeButton} />
         </div>
-        {/* No columns are known yet, so the rail is the AI action alone. */}
-        <ResultFunctionRail analyzeButton={analyzeButton} />
       </div>
     );
   }
 
   const lastOffset = lastPageOffset(meta, fetchSize);
 
+  /**
+   * Take a set of conditions as the new state, text included.
+   *
+   * The text is rewritten from the conditions rather than the other way round,
+   * because a chip taken off is an edit to what is being filtered, and the box
+   * is only where that is written down. Writing it from the labels also
+   * normalises what the user typed — `!=` comes back as `<>` — which is what
+   * keeps the box and the chips from drifting apart.
+   */
+  const applyFilters = (next: CellFilter[]) =>
+    // Any change to the conditions changes which rows are on screen, so a
+    // record number from before them would point at a row that is no longer
+    // there: start at the first one that survived.
+    onPatch({ filters: next, filterText: expressionFor(next), recordIndex: 0 });
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ResultFilterBar
+        sql={meta.sql}
+        text={meta.filterText ?? ""}
+        columns={result.columns}
+        runState={meta.runState}
+        runError={meta.runError}
+        onCommit={(text, terms) =>
+          // Text that did not parse keeps the conditions in force — the box has
+          // already said why — and is stored all the same, so coming back to
+          // the tab lands on the user's own words.
+          onPatch(terms ? { filterText: text, filters: terms, recordIndex: 0 } : { filterText: text })
+        }
+      />
+      {filters.length > 0 ? (
+        <ResultFilterChips
+          filters={filters}
+          kept={visible.length}
+          total={rowCount}
+          onRemove={(at) => applyFilters(filters.filter((_, index) => index !== at))}
+          onClear={() => applyFilters([])}
+        />
+      ) : null}
+
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* The one element that spans both panes: the formats belong to the
             rows above the line, the Record switch to the panel below it. */}
@@ -215,53 +266,36 @@ export function ResultPane({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-[3] overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <SourceRow meta={meta} source={source} />
-              {/* Above both formats, because it is a fact about the result and
-                  not about how the result is drawn. */}
-              {filters.length > 0 ? (
-                <ResultFilterBar
-                  filters={filters}
-                  kept={visible.length}
-                  total={rowCount}
-                  onRemove={(at) =>
-                    // Any change to the conditions changes which rows are on
-                    // screen, so a record number from before them would point at
-                    // a row that is no longer there: start at the first one that
-                    // survived.
-                    onPatch({ filters: filters.filter((_, index) => index !== at), recordIndex: 0 })
-                  }
-                  onClear={() => onPatch({ filters: [], recordIndex: 0 })}
+              {view === "text" ? (
+                <ResultTextView
+                  columns={result.columns}
+                  rows={visible.map((entry) => entry.row)}
+                  pageCount={rowCount}
                 />
-              ) : null}
-
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {view === "text" ? (
-                  <ResultTextView
-                    columns={result.columns}
-                    rows={visible.map((entry) => entry.row)}
-                    pageCount={rowCount}
-                  />
-                ) : (
-                  <ResultGrid
-                    columns={result.columns}
-                    rows={visible}
-                    offset={offset}
-                    sort={sort}
-                    onSortChange={(sort) => onPatch({ sort })}
-                    filtered={filters.length > 0}
-                    onFilter={(filter) =>
-                      onPatch({ filters: addFilter(filters, filter), recordIndex: 0 })
-                    }
-                    // The grid marks the row the panel is showing, so the two
-                    // panes always agree about which record is on screen — and
-                    // marks nothing while the panel is shut, because then no
-                    // record is the selected one. The mark is the row's place on
-                    // the page, which is the number the grid draws beside it.
-                    selectedIndex={showRecord ? visible[recordIndex]?.index : undefined}
-                    onSelectRow={(index) => onPatch({ recordIndex: visiblePlaceOf.get(index) ?? 0 })}
-                  />
-                )}
-              </div>
+              ) : (
+                <ResultGrid
+                  columns={result.columns}
+                  rows={visible}
+                  offset={offset}
+                  sort={sort}
+                  onSortChange={(sort) => onPatch({ sort })}
+                  filtered={filters.length > 0}
+                  onFilter={(filter) => {
+                    // Asking one question twice is asking it once, so a
+                    // condition already in force changes nothing — see
+                    // `addFilter`.
+                    const next = addFilter(filters, filter);
+                    if (next !== filters) applyFilters(next);
+                  }}
+                  // The grid marks the row the panel is showing, so the two
+                  // panes always agree about which record is on screen — and
+                  // marks nothing while the panel is shut, because then no
+                  // record is the selected one. The mark is the row's place on
+                  // the page, which is the number the grid draws beside it.
+                  selectedIndex={showRecord ? visible[recordIndex]?.index : undefined}
+                  onSelectRow={(index) => onPatch({ recordIndex: visiblePlaceOf.get(index) ?? 0 })}
+                />
+              )}
             </div>
 
             <ResultFunctionRail analyzeButton={analyzeButton} />
@@ -303,37 +337,6 @@ export function ResultPane({
         counting={counting}
         onCount={onCount}
       />
-    </div>
-  );
-}
-
-/**
- * The band above the data: what the statement reads from, and how the last run
- * went.
- *
- * The tab strip already names the tab ("Result 2"), so a title here said the
- * same thing twice. What a reader wants at the top of a set of rows is what the
- * rows are *of* — and the name is cut from the left, because the tail of a long
- * name is the part that tells it apart from its neighbours while the schema in
- * front of it rarely does.
- */
-function SourceRow({ meta, source }: { meta: CachedResultTab; source?: string }) {
-  const t = useT();
-  return (
-    <div className="flex h-6 shrink-0 items-center gap-2 border-b px-2 text-[10px] text-muted-foreground">
-      {meta.runState === "cancelled" ? <span className="shrink-0">{t("Cancelled")}</span> : null}
-      {meta.runState === "failed" ? (
-        <span className="truncate text-destructive">
-          Failed{meta.runError ? `: ${meta.runError}` : ""}
-        </span>
-      ) : null}
-      {source ? (
-        // `direction: rtl` is what puts the ellipsis on the left; the inner LTR
-        // span is what keeps the name itself reading forwards.
-        <span title={source} className="ml-auto min-w-0 truncate text-right [direction:rtl]">
-          <span dir="ltr">{source}</span>
-        </span>
-      ) : null}
     </div>
   );
 }

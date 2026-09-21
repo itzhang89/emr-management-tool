@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { CellFilter } from "@/services/dbWorkspaceCache";
-import { addFilter, filterFor, filterLabel, filterRows, operatorsFor, orderedRows } from "./resultFilter";
+import {
+  addFilter,
+  expressionFor,
+  filterFor,
+  filterLabel,
+  filterRows,
+  operatorsFor,
+  orderedRows
+} from "./resultFilter";
+import { parseFilter } from "./resultFilterParse";
 import type { Row } from "./resultGridModel";
 
 function rows(...values: Array<Record<string, unknown>>): Row[] {
@@ -105,6 +114,25 @@ describe("filterRows", () => {
     expect(filterRows(page, [pick("tz", "like", "U")])).toEqual([{ tz: "UTC" }]);
   });
 
+  it("reads a typed LIKE as the pattern it is, wildcards and all", () => {
+    // The other half of the bargain `likePattern` describes: a value that came
+    // from a cell is a value, and a pattern that was typed is a pattern.
+    const page = rows({ tz: "UTC-1" }, { tz: "x-utc" }, { tz: "CST" });
+    const pattern = (value: string): CellFilter => ({
+      column: "tz",
+      operator: "like",
+      value,
+      isNull: false
+    });
+    expect(filterRows(page, [pattern("utc%")])).toEqual([{ tz: "UTC-1" }]);
+    expect(filterRows(page, [pattern("%utc")])).toEqual([{ tz: "x-utc" }]);
+    // One character, not any run of them.
+    expect(filterRows(page, [pattern("c_t")])).toEqual([{ tz: "CST" }]);
+    // And a backslash gets a wildcard out of the way, so the `%` is a percent
+    // sign — the same escape the menu's own patterns are written with.
+    expect(filterRows(rows({ tz: "50%" }), [pattern("%50\\%%")])).toEqual([{ tz: "50%" }]);
+  });
+
   it("reads several conditions as ANDs", () => {
     const page = rows(
       { tz: "UTC", n: 1 },
@@ -144,6 +172,32 @@ describe("addFilter", () => {
     // And the value is part of it: the same operator on another value is
     // another condition.
     expect(addFilter(both, pick("tz", "ne", "UTC"))).toHaveLength(3);
+  });
+
+  it("reads a typed IS NULL and a clicked one as one condition", () => {
+    // The two are spelled differently inside — the menu writes the cell's text
+    // as the value, an expression writes none — and mean the same thing. A
+    // right-click onto a filter the box already asks for has to be a no-op, or
+    // the same question would be asked twice and shown twice.
+    const typed: CellFilter = { column: "tz", operator: "eq", value: "", isNull: true };
+    const clicked = pick("tz", "eq", null);
+    expect(filterLabel(typed)).toBe(filterLabel(clicked));
+    expect(addFilter([typed], clicked)).toHaveLength(1);
+  });
+});
+
+describe("expressionFor", () => {
+  it("writes the conditions as the text that would ask for them again", () => {
+    const filters = [pick("tz", "eq", "UTC"), pick("note", "like", "50%")];
+    const text = "tz = 'UTC' AND note LIKE '%50\\%%'";
+    expect(expressionFor(filters)).toBe(text);
+    // Which is the point of it: what a chip removal writes back into the box is
+    // the same expression the box would have parsed into those chips.
+    expect(parseFilter(text, ["tz", "note"])).toEqual({ terms: filters });
+  });
+
+  it("is empty when nothing is filtered, which is how the box is cleared", () => {
+    expect(expressionFor([])).toBe("");
   });
 });
 

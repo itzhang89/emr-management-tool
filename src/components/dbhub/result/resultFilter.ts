@@ -39,9 +39,71 @@ export function operatorsFor(value: unknown): FilterOperator[] {
   return isNull(value) ? ["eq", "ne"] : [...OPERATOR_ORDER];
 }
 
+/** How SQL escapes a wildcard that is meant to stand for itself. */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+/**
+ * A cell's text as the pattern that contains it.
+ *
+ * The menu says "rows like this one", which is a *containment* — and the value
+ * it was asked about is a value, not a pattern: a `%` in the cell is a percent
+ * sign, and looking for it must not turn into looking for anything. Escaping it
+ * is what makes the two ideas one: `%50\%%` is SQL for "contains 50%", and it
+ * is also exactly the text the chip shows, so the expression a click writes
+ * into the filter box means what the click meant when it is read back.
+ */
+export function likePattern(text: string): string {
+  return `%${escapeLike(text)}%`;
+}
+
+/** One character, escaped so it stands for itself inside a regular expression. */
+function literal(character: string): string {
+  return character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A `LIKE` pattern as the regular expression it stands for.
+ *
+ * `%` for any run of characters and `_` for exactly one, with a backslash
+ * escaping either — the three rules SQL defines, and the reason this is not
+ * `String.includes`: a typed expression is SQL, so `name LIKE 'ab%'` has to
+ * mean "starts with ab" rather than "contains the characters ab%".
+ *
+ * Case-insensitive, like every other comparison here: `compareValues` reads
+ * `UTC` and `utc` as one value, and a `LIKE` that disagreed would be the same
+ * kind of contradiction the shared comparator exists to prevent.
+ */
+export function compileLike(pattern: string): RegExp {
+  let source = "";
+  for (let at = 0; at < pattern.length; at += 1) {
+    const character = pattern[at]!;
+    const next = pattern[at + 1];
+    if (character === "\\" && next !== undefined) {
+      source += literal(next);
+      at += 1;
+      continue;
+    }
+    if (character === "%") source += ".*";
+    else if (character === "_") source += ".";
+    else source += literal(character);
+  }
+  return new RegExp(`^${source}$`, "i");
+}
+
 /** The condition a menu choice means, built from the cell that was right-clicked. */
 export function filterFor(column: string, operator: FilterOperator, value: unknown): CellFilter {
-  return { column, operator, value: cellText(value), isNull: isNull(value) };
+  const text = cellText(value);
+  return {
+    column,
+    operator,
+    // A contains is written as the pattern that means it, so a condition made
+    // by clicking and one typed into the box are the same kind of thing — see
+    // `likePattern`.
+    value: operator === "like" ? likePattern(text) : text,
+    isNull: isNull(value)
+  };
 }
 
 /**
@@ -61,20 +123,9 @@ export function filterLabel(filter: CellFilter): string {
   if (operator === "ne") return `${column} <> ${literal}`;
   if (operator === "gt") return `${column} > ${literal}`;
   if (operator === "lt") return `${column} < ${literal}`;
-  return `${column} LIKE '%${value.replace(/'/g, "''")}%'`;
-}
-
-/**
- * A contains, not a pattern.
- *
- * The label says `LIKE '%UTC%'` because that is the question it answers, but
- * the value came out of a cell somebody clicked: a `%` or an `_` inside it is
- * part of the value, not a wildcard. Reading it as a pattern would make the
- * filter quietly wrong for exactly the values that most need narrowing — the
- * ones with punctuation in them.
- */
-function like(text: string, value: string): boolean {
-  return text.toLowerCase().includes(value.toLowerCase());
+  // Nothing wrapped around it: a `like` value is already the pattern — the
+  // menu writes `%value%` and a typed expression brings its own wildcards.
+  return `${column} LIKE ${literal}`;
 }
 
 /**
@@ -101,10 +152,10 @@ function matches(value: unknown, filter: CellFilter): boolean {
     return filter.isNull ? !missing : missing || compareValues(value, filter.value) !== 0;
   }
   if (missing) return false;
+  if (filter.operator === "like") return compileLike(filter.value).test(cellText(value));
   const order = compareValues(value, filter.value);
   if (filter.operator === "gt") return order > 0;
-  if (filter.operator === "lt") return order < 0;
-  return like(cellText(value), filter.value);
+  return order < 0;
 }
 
 /** Whether a row survives every condition. The list is read as ANDs. */
@@ -124,9 +175,14 @@ export function filterRows(rows: Row[], filters: CellFilter[]): Row[] {
  * and `= 'NULL'` are different conditions, and a bar holding both would be
  * right to. Serialised rather than joined by a separator, because a column
  * named `a eq 0 b` must not be able to spell another condition's key.
+ *
+ * A null condition's value is left out, because nothing reads it: the menu
+ * spells the value of a null cell as the text `NULL`, a typed expression leaves
+ * it empty, and a key that told those two apart would call one condition two.
  */
 function filterKey(filter: CellFilter): string {
-  return JSON.stringify([filter.column, filter.operator, filter.isNull, filter.value]);
+  const value = filter.isNull ? "" : filter.value;
+  return JSON.stringify([filter.column, filter.operator, filter.isNull, value]);
 }
 
 /**
@@ -141,6 +197,18 @@ function filterKey(filter: CellFilter): string {
 export function addFilter(filters: CellFilter[], filter: CellFilter): CellFilter[] {
   const key = filterKey(filter);
   return filters.some((entry) => filterKey(entry) === key) ? filters : [...filters, filter];
+}
+
+/**
+ * The conditions as the text that would ask for them again — what the filter
+ * box holds after one of its chips is taken off.
+ *
+ * The box is where conditions live, so removing one is an edit to that text
+ * rather than a second place the filter is kept. Written from the labels, which
+ * are already the spelling SQL uses, so what comes out is what went in.
+ */
+export function expressionFor(filters: CellFilter[]): string {
+  return filters.map(filterLabel).join(" AND ");
 }
 
 /**

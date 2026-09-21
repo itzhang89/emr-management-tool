@@ -137,10 +137,22 @@ function openFilterMenu(cell: HTMLElement) {
   fireEvent.keyDown(screen.getByRole("menuitem", { name: "Filter" }), { key: "ArrowRight" });
 }
 
-/** Right-click a cell and pick one of the comparisons its menu offers. */
-async function filterBy(cell: HTMLElement, label: string) {
+/**
+ * Right-click a cell and pick one of the comparisons its menu offers.
+ *
+ * The item is named and clicked in one turn of the loop, with nothing awaited
+ * between them, and that is deliberate. The submenu is opened by the line
+ * before, so the item is already on the page; asking for it again *after* an
+ * await is asking about a page that has since been drawn again, and a click on
+ * the node from the earlier drawing lands on something no longer in the
+ * document — which no handler ever sees, and which reads as a menu that ignored
+ * the click rather than as a stale node. A pointer in a browser has the same
+ * relationship to the page as this click does: it lands on whatever is there
+ * when it lands.
+ */
+function filterBy(cell: HTMLElement, label: string) {
   openFilterMenu(cell);
-  fireEvent.click(await screen.findByRole("menuitem", { name: label }));
+  fireEvent.click(screen.getByRole("menuitem", { name: label }));
 }
 
 vi.mock("@/services/tauriClient", () => ({
@@ -602,7 +614,7 @@ describe("ConnectionQueryTab", () => {
     // pointer, which is the question a person has when they right-click one:
     // not "what can I do to this column" — the header answers that — but "show
     // me the rows like this one".
-    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
 
     // The condition is drawn above the rows with the count of what survived it.
     // The footer still counts the page, because a page is what it is: a filter
@@ -610,6 +622,9 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByText("region <> 'us-east'")).toBeInTheDocument();
     expect(screen.getByText("2 of 3 rows match")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(3);
+    // And the choice is written into the box, which is where conditions live:
+    // the chip is a reading of that expression, not a second copy of it.
+    expect(screen.getByLabelText("Filter results")).toHaveValue("region <> 'us-east'");
 
     // The rows that are left keep the numbers they had on the page — 2 and 3,
     // not 1 and 2. A number says where a row came from, not how many are left,
@@ -657,7 +672,7 @@ describe("ConnectionQueryTab", () => {
     // "no rows came back" and "your conditions took them all" are different
     // answers to different problems, and only one of them is worth removing a
     // condition over.
-    await filterBy(screen.getByTitle("NULL"), "note IS NOT NULL");
+    filterBy(screen.getByTitle("NULL"), "note IS NOT NULL");
     expect(await screen.findByText("No rows on this page match the filter.")).toBeInTheDocument();
     expect(screen.getByText("0 of 3 rows match")).toBeInTheDocument();
 
@@ -679,8 +694,8 @@ describe("ConnectionQueryTab", () => {
     // `UTC` and `utc` are one value. It is gone because of the *first*
     // condition, which is what makes the pair an AND rather than a choice of
     // two ways to match one row.
-    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
-    await filterBy(screen.getByTitle("utc"), "time_zone = 'utc'");
+    filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    filterBy(screen.getByTitle("utc"), "time_zone = 'utc'");
     expect(await screen.findByText("1 of 3 rows match")).toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(2);
 
@@ -690,6 +705,9 @@ describe("ConnectionQueryTab", () => {
     expect(await screen.findByText("2 of 3 rows match")).toBeInTheDocument();
     expect(screen.queryByText("time_zone = 'utc'")).not.toBeInTheDocument();
     expect(screen.getByText("region <> 'us-east'")).toBeInTheDocument();
+    // And the box is rewritten to match: taking a condition off is an edit to
+    // the expression, not to a second list that shadows it.
+    expect(screen.getByLabelText("Filter results")).toHaveValue("region <> 'us-east'");
 
     // Clearing takes the conditions and the strip with them — a bar reading
     // "3 of 3 rows match" would be a control panel for nothing.
@@ -697,6 +715,7 @@ describe("ConnectionQueryTab", () => {
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
     expect(screen.queryByText("2 of 3 rows match")).not.toBeInTheDocument();
     expect(screen.queryByText("region <> 'us-east'")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Filter results")).toHaveValue("");
   });
 
   it("counts the record panel through the rows that survived the filter", async () => {
@@ -707,7 +726,7 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
 
-    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
     await screen.findByText("2 of 3 rows match");
 
     await user.click(screen.getByRole("button", { name: "Record" }));
@@ -734,7 +753,7 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("button", { name: "Run query" }));
     await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
 
-    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
     await screen.findByText("2 of 3 rows match");
 
     // The file follows the view. A dump that carried the rows the user had
@@ -748,6 +767,70 @@ describe("ConnectionQueryTab", () => {
       "Result 1.csv",
       "id,time_zone,region\n2,utc,eu-west\n3,Asia/Tokyo,ap-northeast"
     );
+  });
+
+  it("filters by an expression typed whole, and keeps what parsed when one does not", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    // The box is where the conditions are written, so an expression typed whole
+    // narrows the page the same way a menu choice does — and what is typed is
+    // what the box goes on holding, rather than a tidied-up version of it.
+    const box = screen.getByLabelText("Filter results");
+    await user.type(box, "time_zone = 'utc' AND id > 1{Enter}");
+    expect(await screen.findByText("1 of 3 rows match")).toBeInTheDocument();
+    expect(screen.getByText("time_zone = 'utc'")).toBeInTheDocument();
+    expect(screen.getByText("id > '1'")).toBeInTheDocument();
+    expect(box).toHaveValue("time_zone = 'utc' AND id > 1");
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+
+    // A half-written expression is not a filter: what was in force stays in
+    // force, and the box says what it stumbled on rather than going quiet. The
+    // alternative — reading `OR` as `AND` — would drop rows the user asked for
+    // out of a grid that looks perfectly fine.
+    await user.clear(box);
+    await user.type(box, "time_zone = 'utc' OR id = 1{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("OR is not supported");
+    expect(screen.getByText("1 of 3 rows match")).toBeInTheDocument();
+    expect(box).toHaveValue("time_zone = 'utc' OR id = 1");
+
+    // Editing the text takes the complaint away with it, and a question the
+    // parser can answer puts the grid back.
+    await user.clear(box);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.type(box, "region LIKE '%east%'{Enter}");
+    expect(await screen.findByText("2 of 3 rows match")).toBeInTheDocument();
+  });
+
+  it("offers the result's own column names while an expression is typed", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    const box = screen.getByLabelText("Filter results");
+    await user.click(box);
+
+    // Ctrl+Space is the ask, and the names come from the result in hand rather
+    // than from a list of SQL words.
+    await user.keyboard("{Control>} {/Control}");
+    expect(await screen.findByRole("button", { name: "time_zone" })).toBeInTheDocument();
+
+    // Typing narrows the list, and picking from it leaves the caret after the
+    // name so the comparison can be typed straight on.
+    await user.type(box, "reg");
+    await user.click(await screen.findByRole("button", { name: "region" }));
+    expect(box).toHaveValue("region");
+    expect(screen.queryByRole("button", { name: "time_zone" })).not.toBeInTheDocument();
+
+    await user.type(box, " = 'us-east'{Enter}");
+    expect(await screen.findByText("1 of 3 rows match")).toBeInTheDocument();
   });
 
   it("opens the record panel under the rows, whichever format they are in", async () => {
@@ -848,7 +931,7 @@ describe("ConnectionQueryTab", () => {
     expect(writeText).toHaveBeenLastCalledWith("id\t2\nname\tb");
   });
 
-  it("names the object the statement reads from rather than repeating the tab", async () => {
+  it("heads the pane with the statement that produced the rows, above both rails", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
@@ -858,11 +941,24 @@ describe("ConnectionQueryTab", () => {
     runDbQuery.mockResolvedValueOnce(page(1, 0, false));
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
-    // The strip already says "Result 1". What the pane adds is what these rows
-    // are rows *of*, read back out of the statement that produced them — and
-    // kept whole, qualifier and all, because the qualifier is what tells two
-    // same-named tables apart once the label is cut short.
-    expect(await screen.findByTitle("sales.orders")).toBeInTheDocument();
+    // The strip already says "Result 1". What the pane adds is the query these
+    // rows are the answer to, kept whole rather than guessed at from its FROM
+    // clause — a statement is the one thing that says what a result is.
+    //
+    // Found by its text rather than by its title: the tab buttons carry the
+    // same statement as their own title, and what is being asserted here is the
+    // line in the pane, not the tabs. The title is then checked on it, because
+    // the line is narrow enough to cut a long statement short and the whole of
+    // it has to be somewhere.
+    const sql = "SELECT * FROM `sales`.`orders` LIMIT 100;";
+    const line = await screen.findByText(sql);
+    expect(line).toHaveAttribute("title", sql);
+
+    // And it heads the pane rather than the grid: it comes before the format
+    // rail in the document, which is what puts the rail's first tab level with
+    // the table's header row instead of a band below it.
+    const rail = screen.getByRole("tab", { name: "Grid" }).parentElement?.parentElement;
+    expect(line.compareDocumentPosition(rail!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("answers the catalog shortcut only while it is the visible tab", async () => {
@@ -986,5 +1082,158 @@ describe("ConnectionQueryTab", () => {
     // Schemas → databases.
     await user.click(screen.getByRole("button", { name: "Back one level" }));
     expect(await screen.findByRole("button", { name: "reporting" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The two strips are one above the other and answer to the same keys, so which
+ * half the user is in is the whole question these tests ask. It is set by
+ * where the pointer and the keyboard have been — a click in the editor, on a
+ * query tab, in the grid or on a result tab — and these drive it the way a
+ * person does, by clicking.
+ */
+describe("ConnectionQueryTab keyboard and split", () => {
+  it("opens another editor on ⌘N", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.keyboard("{Meta>}n{/Meta}");
+
+    expect(await screen.findByRole("button", { name: "Query 2" })).toBeInTheDocument();
+  });
+
+  it("closes the editor in front on ⌘W, and refuses the last one", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.keyboard("{Meta>}n{/Meta}");
+    await screen.findByRole("button", { name: "Query 2" });
+
+    await user.keyboard("{Meta>}w{/Meta}");
+    expect(screen.queryByRole("button", { name: "Query 2" })).not.toBeInTheDocument();
+
+    // The last editor is not closable, and is not replaced by a blank one
+    // either: ⌘W simply does nothing rather than leaving the user with an
+    // empty document where their statement was.
+    await user.keyboard("{Meta>}w{/Meta}");
+    expect(screen.getAllByRole("button", { name: /^Query \d+$/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Query 1" })).toBeInTheDocument();
+  });
+
+  it("closes the result tab in front when the result half was last used", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 1" });
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 2" });
+
+    // Clicking a result tab is what puts the user in the result half.
+    await user.click(screen.getByRole("button", { name: "Result 1" }));
+    await user.keyboard("{Meta>}w{/Meta}");
+
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Result 2" })).toBeInTheDocument();
+    // The editor it belonged to is untouched — the key closed a result, not
+    // the statement that produced it.
+    expect(screen.getByRole("button", { name: "Query 1" })).toBeInTheDocument();
+  });
+
+  it("leaves a lone result tab alone on ⌘W", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await user.click(await screen.findByRole("button", { name: "Result 1" }));
+
+    await user.keyboard("{Meta>}w{/Meta}");
+
+    expect(screen.getByRole("button", { name: "Result 1" })).toBeInTheDocument();
+  });
+
+  it("walks the editor strip on ⌘⇧[ when the editor half was last used", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByRole("button", { name: "Result 1" });
+
+    // A second editor starts with no results of its own, which is how the test
+    // can tell which one is on screen without reading a CSS class.
+    await user.keyboard("{Meta>}n{/Meta}");
+    await screen.findByRole("button", { name: "Query 2" });
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Meta>}{Shift>}{[}{/Shift}{/Meta}");
+
+    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+  });
+
+  it("walks the result strip on ⌘⇧] when the result half was last used", async () => {
+    const user = userEvent.setup();
+    // Two runs of one statement, told apart by a column only the second has.
+    runDbQuery
+      .mockResolvedValueOnce(page(1, 0, false))
+      .mockResolvedValueOnce({
+        ...page(2, 0, false),
+        columns: ["order_id"],
+        rows: [{ order_id: 1 }, { order_id: 2 }]
+      });
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 1" });
+    await user.click(screen.getByRole("button", { name: "Run in new tab" }));
+    await screen.findByRole("button", { name: "Result 2" });
+    expect(screen.getByText("order_id")).toBeInTheDocument();
+
+    // Step back to the first result; the grid says which one is on screen.
+    await user.click(screen.getByRole("button", { name: "Result 1" }));
+    expect(screen.queryByText("order_id")).not.toBeInTheDocument();
+
+    await user.keyboard("{Meta>}{Shift>}]{/Shift}{/Meta}");
+
+    expect(await screen.findByText("order_id")).toBeInTheDocument();
+  });
+
+  it("resizes the editor against the grid", async () => {
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    const handle = screen.getByRole("separator", { name: "Resize the editor and result areas" });
+    expect(handle).toHaveAttribute("aria-valuenow", "220");
+
+    fireEvent.mouseDown(handle, { clientY: 100 });
+    fireEvent.mouseMove(document, { clientY: 180 });
+    fireEvent.mouseUp(document);
+
+    expect(handle).toHaveAttribute("aria-valuenow", "300");
+  });
+
+  it("will not drag the editor away entirely", async () => {
+    renderWorkspace();
+    await screen.findByRole("button", { name: "customers" });
+
+    const handle = screen.getByRole("separator", { name: "Resize the editor and result areas" });
+
+    // Up, past the editor's own floor of 140px.
+    fireEvent.mouseDown(handle, { clientY: 400 });
+    fireEvent.mouseMove(document, { clientY: 0 });
+    fireEvent.mouseUp(document);
+    expect(handle).toHaveAttribute("aria-valuenow", "140");
+
+    // And down, past the tallest it is allowed to get: the grid has to keep
+    // some of the column whichever way the handle is pulled.
+    fireEvent.mouseDown(handle, { clientY: 0 });
+    fireEvent.mouseMove(document, { clientY: 4000 });
+    fireEvent.mouseUp(document);
+    expect(handle).toHaveAttribute("aria-valuenow", "560");
   });
 });

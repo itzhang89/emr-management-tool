@@ -63,6 +63,19 @@ const help: TranslationDictionary = {
   "Switch to the previous query result tab": "切换到上一个查询结果标签页",
   "Next result tab": "下一个结果标签页",
   "Switch to the next query result tab": "切换到下一个查询结果标签页",
+  // The query workspace's own chord set. The same keys do the same thing in
+  // Job History's strip, and the copy says which strip each one walks.
+  "New query tab": "新建查询标签页",
+  "Open another SQL editor in the query workspace": "在查询工作区中再开一个 SQL 编辑器",
+  "Previous workspace tab": "上一个工作区标签页",
+  "Step to the tab on the left — in the editor strip or the result strip, whichever you last used":
+    "切到左侧标签页——编辑器标签栏或结果标签栏，取决于你最后操作的那一个",
+  "Next workspace tab": "下一个工作区标签页",
+  "Step to the tab on the right — in the editor strip or the result strip, whichever you last used":
+    "切到右侧标签页——编辑器标签栏或结果标签栏，取决于你最后操作的那一个",
+  "Close workspace tab": "关闭工作区标签页",
+  "Close the editor or result tab in front — the last tab of either strip stays open":
+    "关闭当前的编辑器或结果标签页——两种标签栏的最后一个都保留",
 
   // Shortcuts — Job History
   "Focus job search": "聚焦作业搜索",

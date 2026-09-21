@@ -238,8 +238,14 @@ const dbhub: TranslationDictionary = {
   "No rows on this page match the filter.": "本页没有符合筛选条件的行。",
 
   // --- ResultFilterBar -----------------------------------------------------
-  // ("Clear all" already lives in the AI shard, which this bar borrows word for
-  // word — the button means the same thing in both places.)
+  "Filter results": "筛选结果",
+  "Enter a SQL expression to filter results": "输入 SQL 表达式筛选结果",
+  "Conditions are joined with AND. Ctrl+Space lists the columns.":
+    "多个条件用 AND 连接；按 Ctrl+Space 显示可选的列名。",
+
+  // --- ResultFilterChips ---------------------------------------------------
+  // ("Clear all" already lives in the AI shard, which these chips borrow word
+  // for word — the button means the same thing in both places.)
   "{kept} of {total} rows match": "{total} 行中有 {kept} 行符合条件",
   "Remove filter": "移除筛选条件",
 
@@ -270,6 +276,9 @@ const dbhub: TranslationDictionary = {
 
   // --- QueryTabsPanel ------------------------------------------------------
   "New query tab": "新建查询标签页",
+  "Close a query tab first — {used} of {max} are open.":
+    "请先关闭一个查询标签页——当前已打开 {used}/{max} 个。",
+  "Resize the editor and result areas": "调整编辑器与结果区域的高度",
 
   // --- SqlEditor / AthenaSqlEditor -----------------------------------------
   "Write SQL here…": "在此编写 SQL…",

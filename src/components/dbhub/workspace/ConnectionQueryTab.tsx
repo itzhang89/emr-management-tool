@@ -35,6 +35,12 @@ import { orderedRows } from "@/components/dbhub/result/resultFilter";
 import { AiMark, ExecuteMark, ExecuteNewTabMark } from "@/components/dbhub/workspace/RunMarks";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
 import {
+  isCloseTabKey,
+  isNewTabKey,
+  isTabCycleNextKey,
+  isTabCyclePreviousKey
+} from "@/lib/keyboardShortcut";
+import {
   FavoriteNameDialog,
   FavoritesMenu,
   HistoryMenu,
@@ -139,6 +145,15 @@ export function ConnectionQueryTab({
   );
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
+  /** How much of the column the editor takes; the grid gets what is left. */
+  const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
+  /**
+   * Which of the two strips the shortcut keys act on: the editors or the
+   * results. Set by whichever half the pointer or the keyboard was last in,
+   * because on this page the same chord means two things and only the user
+   * knows which one they meant.
+   */
+  const [activeHalf, setActiveHalf] = useState<"query" | "result">("query");
 
   // Rehydrate once per mount+account: switching AWS accounts swaps the cache
   // key space, so each account's drafts are restored independently. The tree
@@ -478,26 +493,46 @@ export function ConnectionQueryTab({
     void execute(statement ?? activeQueryTab.sql, activeQueryTab.id, { mode: "new" });
   };
 
-  /** Open an editor of its own, and put the cursor in it. */
-  const openQueryTab = () => {
-    const fresh = blankQueryTab(nextQueryTitle(queryTabs));
-    setQueryTabs((tabs) => [...tabs, fresh].slice(-MAX_QUERY_TABS));
-    setActiveQueryTabId(fresh.id);
-  };
-
-  /** Closing an editor takes its results with it — that is what owning them means. */
-  const closeQueryTab = (tabId: string) => {
-    const kept = queryTabs.filter((tab) => tab.id !== tabId);
-    if (kept.length === 0) {
-      // Never leave nowhere to type: the last editor closes into a fresh one.
-      const fresh = blankQueryTab();
-      setQueryTabs([fresh]);
-      setActiveQueryTabId(fresh.id);
+  /**
+   * Open an editor of its own, and put the cursor in it.
+   *
+   * At the cap the button refuses rather than quietly dropping the oldest
+   * editor: that tab may hold a statement the user is still writing, and
+   * closing it for them would be losing work to make room.
+   */
+  const openQueryTab = useCallback(() => {
+    if (queryTabs.length >= MAX_QUERY_TABS) {
+      toast.error(
+        t("Close a query tab first — {used} of {max} are open.", {
+          used: queryTabs.length,
+          max: MAX_QUERY_TABS
+        })
+      );
       return;
     }
-    setQueryTabs(kept);
-    if (tabId === activeQueryTab?.id) setActiveQueryTabId(kept[kept.length - 1].id);
-  };
+    const fresh = blankQueryTab(nextQueryTitle(queryTabs));
+    setQueryTabs((tabs) => [...tabs, fresh]);
+    setActiveQueryTabId(fresh.id);
+    setActiveHalf("query");
+  }, [queryTabs, t]);
+
+  /**
+   * Closing an editor takes its results with it — that is what owning them
+   * means. The last editor is not closable at all: an empty strip has nowhere
+   * to type, and a fresh blank tab in place of the one that went is not what
+   * "close" means. The X is hidden for it, and ⌘W is refused; this is the rule
+   * both of them are the UI's word for.
+   */
+  const closeQueryTab = useCallback(
+    (tabId: string) => {
+      if (queryTabs.length <= 1) return;
+      const kept = queryTabs.filter((tab) => tab.id !== tabId);
+      if (kept.length === queryTabs.length) return;
+      setQueryTabs(kept);
+      if (tabId === activeQueryTab?.id) setActiveQueryTabId(kept[kept.length - 1].id);
+    },
+    [activeQueryTab, queryTabs]
+  );
 
   /** Closing the last result tab leaves the editor with none, not with a blank one. */
   const closeResultTab = (queryTabId: string, resultTabId: string) => {
@@ -515,19 +550,83 @@ export function ConnectionQueryTab({
     );
   };
 
+  /**
+   * ⌘⇧[ / ⌘⇧] walk the strip of the half the user was last in, wrapping at
+   * either end the way the page cycle does. The other half is left alone: an
+   * editor's tabs and its results are two different lists, and stepping
+   * through one while looking at the other would move something off screen.
+   */
+  const cycleTabs = useCallback(
+    (delta: 1 | -1) => {
+      if (activeHalf === "result") {
+        const tabs = activeQueryTab?.resultTabs ?? [];
+        if (!activeQueryTab || tabs.length < 2) return;
+        const index = tabs.findIndex((tab) => tab.id === activeQueryTab.activeResultTabId);
+        const next = tabs[(index + delta + tabs.length) % tabs.length];
+        if (!next) return;
+        patchQueryTab(activeQueryTab.id, { activeResultTabId: next.id });
+        return;
+      }
+      if (queryTabs.length < 2) return;
+      const index = queryTabs.findIndex((tab) => tab.id === activeQueryTab?.id);
+      const next = queryTabs[(index + delta + queryTabs.length) % queryTabs.length];
+      if (!next) return;
+      setActiveQueryTabId(next.id);
+    },
+    [activeHalf, activeQueryTab, patchQueryTab, queryTabs]
+  );
+
+  /** ⌘W closes the tab in front of the half the user was last in. */
+  const closeActiveTab = useCallback(() => {
+    if (activeHalf === "result") {
+      if (!activeQueryTab || activeQueryTab.resultTabs.length <= 1) return;
+      const activeResultTabId = activeQueryTab.activeResultTabId;
+      if (!activeResultTabId) return;
+      closeResultTab(activeQueryTab.id, activeResultTabId);
+      return;
+    }
+    if (!activeQueryTab || queryTabs.length <= 1) return;
+    closeQueryTab(activeQueryTab.id);
+  }, [activeHalf, activeQueryTab, closeQueryTab, queryTabs]);
+
   // Only the visible workspace answers. The Glue tab is mounted for the life
   // of the page once opened, so both listeners fire from any sub-tab unless
   // each checks that it is the one on screen.
+  //
+  // Every one of these chords is also a browser or window key — ⌘W closes the
+  // window — so each is prevented even when the workspace then declines to act
+  // on it: the key belongs to the page that is on screen.
   useEffect(() => {
     if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key !== "\\") return;
-      event.preventDefault();
-      setCatalogCollapsed((collapsed) => !collapsed);
+      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+        event.preventDefault();
+        setCatalogCollapsed((collapsed) => !collapsed);
+        return;
+      }
+      if (isTabCyclePreviousKey(event)) {
+        event.preventDefault();
+        cycleTabs(-1);
+        return;
+      }
+      if (isTabCycleNextKey(event)) {
+        event.preventDefault();
+        cycleTabs(1);
+        return;
+      }
+      if (isNewTabKey(event)) {
+        event.preventDefault();
+        openQueryTab();
+        return;
+      }
+      if (isCloseTabKey(event)) {
+        event.preventDefault();
+        closeActiveTab();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [active]);
+  }, [active, closeActiveTab, cycleTabs, openQueryTab]);
 
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -547,6 +646,35 @@ export function ConnectionQueryTab({
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
     document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  /**
+   * The same drag as the catalog's, turned on its side.
+   *
+   * The editor keeps its height and the grid takes the rest, rather than the
+   * two sharing what is left over: a split that only redistributes slack moves
+   * both edges when one is dragged, which is not what a splitter looks like it
+   * does.
+   */
+  const beginEditorResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = editorHeight;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      setEditorHeight(clampEditorHeight(startHeight + moveEvent.clientY - startY));
+    };
+    const handleUp = () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
   };
 
@@ -713,7 +841,16 @@ export function ConnectionQueryTab({
           </div>
         </>
       )}
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+      {/* The column is the "query" half by default and the result pane inside
+          it claims the other one; the capture handlers are on the two
+          containers rather than on the strips, so a click in the editor or on
+          a result button counts the same as one on a tab. Capture runs
+          outermost first, so the inner claim wins. */}
+      <section
+        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
+        onMouseDownCapture={() => setActiveHalf("query")}
+        onFocusCapture={() => setActiveHalf("query")}
+      >
         <div className="flex shrink-0 items-center gap-2">
           <span className="flex items-center gap-1.5 text-sm font-medium">
             <DbKindIcon kind={connection.kind} className="size-3.5" />
@@ -822,25 +959,56 @@ export function ConnectionQueryTab({
           <QueryTabsPanel
             tabs={queryTabs}
             activeTabId={activeQueryTab.id}
-            onSelectTab={setActiveQueryTabId}
+            onSelectTab={(tabId) => {
+              setActiveQueryTabId(tabId);
+              setActiveHalf("query");
+            }}
             onCloseTab={closeQueryTab}
             onNewTab={openQueryTab}
+            newTabShortcut={NEW_QUERY_TAB_SHORTCUT}
           >
             {(queryTab) => (
-              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-                {/* Keyed by editor: each tab is its own CodeMirror document, so
-                    undo in one never reaches into another's text. */}
-                <SqlEditor
-                  key={queryTab.id}
-                  value={queryTab.sql}
-                  onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
-                  dialect={dialectFor(connection.kind)}
-                  placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
-                  onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
-                  onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
-                />
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {/* The editor's height is the user's to set and the grid takes
+                    the rest — see `beginEditorResize`. Capped in CSS as well as
+                    in the drag, so a short window cannot let the editor push
+                    the grid out of the column entirely. */}
+                <div
+                  className="max-h-[75%] shrink-0"
+                  style={{ height: editorHeight }}
+                >
+                  {/* Keyed by editor: each tab is its own CodeMirror document, so
+                      undo in one never reaches into another's text. */}
+                  <SqlEditor
+                    key={queryTab.id}
+                    className="h-full"
+                    value={queryTab.sql}
+                    onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
+                    dialect={dialectFor(connection.kind)}
+                    placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
+                    onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
+                    onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
+                  />
+                </div>
 
-                <div className="min-h-0 flex-1 overflow-hidden">
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={t("Resize the editor and result areas")}
+                  aria-valuemin={MIN_EDITOR_HEIGHT}
+                  aria-valuemax={MAX_EDITOR_HEIGHT}
+                  aria-valuenow={editorHeight}
+                  className="group relative h-2 shrink-0 cursor-row-resize touch-none"
+                  onMouseDown={beginEditorResize}
+                >
+                  <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border group-hover:bg-primary/50" />
+                </div>
+
+                <div
+                  className="min-h-0 flex-1 overflow-hidden"
+                  onMouseDownCapture={() => setActiveHalf("result")}
+                  onFocusCapture={() => setActiveHalf("result")}
+                >
                   <ResultTabsPanel
                     tabs={queryTab.resultTabs.map((tab) => ({
                       ...tab,
@@ -848,9 +1016,10 @@ export function ConnectionQueryTab({
                       running: running && tab.id === runningTabId
                     }))}
                     activeTabId={queryTab.activeResultTabId ?? ""}
-                    onSelectTab={(resultTabId) =>
-                      patchQueryTab(queryTab.id, { activeResultTabId: resultTabId })
-                    }
+                    onSelectTab={(resultTabId) => {
+                      patchQueryTab(queryTab.id, { activeResultTabId: resultTabId });
+                      setActiveHalf("result");
+                    }}
                     onCloseTab={(resultTabId) => closeResultTab(queryTab.id, resultTabId)}
                     emptyLabel={t("Run a query to see results here.")}
                   >
@@ -938,11 +1107,25 @@ function dialectFor(kind: DbConnection["kind"]) {
 /** The chord that shows and hides the catalog, shared with the Glue tab. */
 const CATALOG_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_CATALOG_TOGGLE);
 
+/** Named in the strip's `+` tooltip, so the button teaches its own key. */
+const NEW_QUERY_TAB_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.DB_QUERY_TAB_NEW);
+
 /** How narrow and how wide the catalog pane may be dragged. */
 const MIN_CATALOG_WIDTH = 220;
 const MAX_CATALOG_WIDTH = 720;
 const clampPaneWidth = (width: number) =>
   Math.min(MAX_CATALOG_WIDTH, Math.max(MIN_CATALOG_WIDTH, width));
+
+/**
+ * How short and how tall the editor may be dragged. The floor is the editor's
+ * own: CodeMirror's theme refuses to render shorter than 140px, so a smaller
+ * number would just be a height the pane silently exceeds.
+ */
+const DEFAULT_EDITOR_HEIGHT = 220;
+const MIN_EDITOR_HEIGHT = 140;
+const MAX_EDITOR_HEIGHT = 560;
+const clampEditorHeight = (height: number) =>
+  Math.min(MAX_EDITOR_HEIGHT, Math.max(MIN_EDITOR_HEIGHT, height));
 
 /**
  * What the next editor tab is called. Numbered from the highest one in use
