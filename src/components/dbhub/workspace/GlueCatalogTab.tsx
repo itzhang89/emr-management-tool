@@ -998,39 +998,39 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
               header={(tab) =>
                 tab.id === METADATA_TAB_ID ? null : (
                   <div className="flex shrink-0 items-center gap-1">
-                    <SqlQueryToolbar
-                      history={history}
-                      favoriteSqlSet={favoriteSqlSet}
-                      favorites={favorites}
-                      onSelectSql={setEditorSql}
-                      onFavorite={beginFavoriteFromHistory}
-                      onRemoveFavorite={(favoriteId) => {
-                        if (accountId) setFavorites(removeSqlFavorite(accountId, favoriteId));
-                      }}
-                      running={running}
-                      runPending={startQuery.isPending}
-                      onStop={() => void handleStopQuery(activeResultTab)}
-                      onRunNewTab={() => handleRunQueryInNewTab()}
-                      onRun={() => handleRunQuery()}
-                      runNewTabHint={RUN_NEW_TAB_SHORTCUT}
-                      runHint={RUN_SHORTCUT}
-                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <AthenaQuerySettingsButton
+                            setupRequired={outputPathRequired}
+                            onClick={() => openQuerySettings()}
+                          />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {outputPathRequired
+                          ? `${t("Query settings")} · ${t("S3 path required")}`
+                          : t("Query settings")}
+                      </TooltipContent>
+                    </Tooltip>
                     <div className="ml-auto">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span>
-                            <AthenaQuerySettingsButton
-                              setupRequired={outputPathRequired}
-                              onClick={() => openQuerySettings()}
-                            />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {outputPathRequired
-                            ? `${t("Query settings")} · ${t("S3 path required")}`
-                            : t("Query settings")}
-                        </TooltipContent>
-                      </Tooltip>
+                      <SqlQueryToolbar
+                        history={history}
+                        favoriteSqlSet={favoriteSqlSet}
+                        favorites={favorites}
+                        onSelectSql={setEditorSql}
+                        onFavorite={beginFavoriteFromHistory}
+                        onRemoveFavorite={(favoriteId) => {
+                          if (accountId) setFavorites(removeSqlFavorite(accountId, favoriteId));
+                        }}
+                        running={running}
+                        runPending={startQuery.isPending}
+                        onStop={() => void handleStopQuery(activeResultTab)}
+                        onRunNewTab={() => handleRunQueryInNewTab()}
+                        onRun={() => handleRunQuery()}
+                        runNewTabHint={RUN_NEW_TAB_SHORTCUT}
+                        runHint={RUN_SHORTCUT}
+                      />
                     </div>
                   </div>
                 )
