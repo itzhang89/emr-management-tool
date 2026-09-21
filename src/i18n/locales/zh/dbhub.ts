@@ -38,6 +38,7 @@ const dbhub: TranslationDictionary = {
   Manual: "手动",
   "Delete {name}": "删除 {name}",
   "Delete connection": "删除连接",
+  "Test {name}": "测试 {name}",
   "Edit {name}": "编辑 {name}",
   "Edit connection": "编辑连接",
   "Network:": "网络：",
@@ -57,31 +58,39 @@ const dbhub: TranslationDictionary = {
   Driver: "驱动",
   "My MySQL Prod": "我的 MySQL 生产库",
   Server: "服务器",
-  "Connect by": "连接方式",
+  // Still used by the network-profile editor's host field.
   Host: "主机",
   "Server Host": "服务器主机",
   Port: "端口",
   Database: "数据库",
+  // The one dial field that may be left empty.
+  "(optional)": "（可选）",
   Authentication: "认证",
   Username: "用户名",
   Password: "密码",
+  // The group that decides where the five dial fields come from — a manual
+  // password, or a Secrets Manager secret that overrides them all.
+  "Authentication source": "认证来源",
   "Auth mode": "认证方式",
   "Manual password": "手动密码",
   Secret: "密钥",
   // Product name: it stays as AWS spells it.
   "AWS Secrets Manager": "AWS Secrets Manager",
   "Select a secret…": "选择密钥…",
-  "Optional fallback — secret may override": "可选回退 — 密钥可能覆盖",
-  "Password and optional host/user/database come from the bound secret JSON at connect time.":
-    "连接时从绑定的密钥 JSON 读取密码及可选的 host/user/database。",
+  "No secrets in this account yet — create one on the Secrets page, then bind it here.":
+    "此账户暂无密钥——请先在“密钥管理”页面创建，然后回到这里绑定。",
+  // The panel that shows what the bound secret carries, one dial field per row.
+  // Statuses only: the values live in Secrets Manager, not on this screen.
+  "Secret fields": "密钥字段",
+  Provided: "已提供",
+  "Not provided": "未提供",
+  "Enter it below": "请在下方填写",
+  "Not in the secret — enter it here": "密钥未提供——请在此填写",
+  "Reading secret…": "正在读取密钥…",
+  "Could not read this secret's fields — fill the values below. The secret still supplies them at connect time.":
+    "无法读取此密钥的字段——请在下方填写。连接时仍以密钥中的值为准。",
   "Local password": "本地密码",
   "SM: {name}": "SM: {name}",
-  "Save as AWS Secret": "保存为 AWS 密钥",
-  "Create and bind AWS Secret": "创建并绑定 AWS 密钥",
-  "Secret created and bound.": "密钥已创建并绑定。",
-  "Password is required to create a secret.": "创建密钥需要填写密码。",
-  "Needed only to create a new secret": "仅在创建新密钥时需要",
-  "Connection name is required.": "连接名称必填。",
   "•••••••• (saved — leave blank to keep)": "••••••••（已保存——留空则保持不变）",
   "Routing & AI": "路由与 AI",
   "Network Profile": "网络配置",

@@ -35,6 +35,20 @@ const testDraftConnection = vi.fn().mockResolvedValue({
   message: "Connected. Server: 8.0.36",
   latencyMs: 12
 });
+// Hoisted: the tauriClient mock below is hoisted above these declarations, so
+// anything its factory reads at call time has to be created with it.
+const { SALES_ARN } = vi.hoisted(() => ({
+  SALES_ARN: "arn:aws:secretsmanager:us-east-1:123:secret:mysql.sales"
+}));
+const getSecretValue = vi.fn().mockResolvedValue({
+  value: JSON.stringify({
+    username: "bi",
+    password: "s3cret",
+    host: "db.internal",
+    port: 3307,
+    database: "sales"
+  })
+});
 
 vi.mock("@/services/tauriClient", () => ({
   tauriClient: {
@@ -60,7 +74,10 @@ vi.mock("@/services/tauriClient", () => ({
     createDbConnection: (...args: unknown[]) => createConnection(...args),
     updateDbConnection: (...args: unknown[]) => updateConnection(...args),
     testDbConnectionDraft: (...args: unknown[]) => testDraftConnection(...args),
-    listSecrets: vi.fn().mockResolvedValue([]),
+    listSecrets: vi.fn().mockResolvedValue([
+      { name: "mysql.sales", arn: SALES_ARN, description: undefined, tags: [] }
+    ]),
+    getSecretValue: (...args: unknown[]) => getSecretValue(...args),
     createSecret: vi.fn().mockResolvedValue({
       name: "mysql.sales",
       arn: "arn:aws:secretsmanager:us-east-1:123:secret:mysql.sales",
@@ -94,11 +111,13 @@ function renderDialog(props: Partial<Parameters<typeof ConnectionFormDialog>[0]>
   return { onOpenChange, onSaved };
 }
 
+/** Every dial field but the database — a new connection requires all four. */
 function fillRequiredFields() {
   return userEvent
     .type(screen.getByLabelText("Name"), "Sales MySQL")
     .then(() => userEvent.type(screen.getByLabelText("Server Host"), "10.0.0.1"))
-    .then(() => userEvent.type(screen.getByLabelText("Username"), "bi_reader"));
+    .then(() => userEvent.type(screen.getByLabelText("Username"), "bi_reader"))
+    .then(() => userEvent.type(screen.getByLabelText("Password"), "s3cret"));
 }
 
 beforeEach(() => {
@@ -221,6 +240,146 @@ describe("ConnectionFormDialog", () => {
     });
     // Editing and testing still writes nothing.
     expect(updateConnection).not.toHaveBeenCalled();
+  });
+
+  it("locks the fields the secret owns and saves what it supplies", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await fillRequiredFields();
+    await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
+    await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
+
+    // The panel reports each of the five fields by name, and only whether the
+    // secret carries it.
+    await waitFor(() => {
+      expect(screen.getByText("Secret fields")).toBeInTheDocument();
+    });
+    expect(getSecretValue).toHaveBeenCalledWith(SALES_ARN);
+    expect(screen.getAllByText("Provided")).toHaveLength(5);
+    expect(screen.queryByText("Not provided")).not.toBeInTheDocument();
+
+    // The fields keep their place in the form, holding the secret's values and
+    // refusing edits rather than disappearing.
+    await waitFor(() => {
+      expect(screen.getByLabelText("Server Host")).toBeDisabled();
+    });
+    expect(screen.getByLabelText("Server Host")).toHaveValue("db.internal");
+    expect(screen.getByLabelText("Port")).toHaveValue(3307);
+    expect(screen.getByLabelText(/^Database/)).toHaveValue("sales");
+    expect(screen.getByLabelText("Username")).toHaveValue("bi");
+    // The password's value stays in Secrets Manager: the field is locked empty.
+    expect(screen.getByLabelText("Password")).toBeDisabled();
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+
+    // What the secret holds is what gets saved, so the card describes the real
+    // server rather than whatever was typed before the secret was chosen.
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    await waitFor(() => {
+      expect(createConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authMode: "aws_secret",
+          secretArn: SALES_ARN,
+          host: "db.internal",
+          port: 3307,
+          username: "bi",
+          database: "sales"
+        })
+      );
+    });
+    expect(createConnection.mock.calls[0][0].password).toBeUndefined();
+  });
+
+  it("leaves a field the secret omits editable, and requires it", async () => {
+    const user = userEvent.setup();
+    getSecretValue.mockResolvedValueOnce({ value: JSON.stringify({ password: "only" }) });
+    renderDialog();
+
+    await user.type(screen.getByLabelText("Name"), "Secret only");
+    await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
+    await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
+
+    await waitFor(() => {
+      expect(screen.getByText("Secret fields")).toBeInTheDocument();
+    });
+    expect(screen.getAllByText("Not provided")).toHaveLength(4);
+    expect(screen.getAllByText("Provided")).toHaveLength(1);
+    // Not supplied → still a field the user can fill.
+    expect(screen.getByLabelText("Server Host")).toBeEnabled();
+    expect(screen.getByLabelText("Username")).toBeEnabled();
+    expect(screen.getByLabelText("Password")).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Server host is required — the bound secret does not provide one."
+      );
+    });
+    expect(createConnection).not.toHaveBeenCalled();
+  });
+
+  it("takes a password the secret does not carry, and keeps it locally", async () => {
+    const user = userEvent.setup();
+    getSecretValue.mockResolvedValueOnce({
+      value: JSON.stringify({ host: "db.internal", port: 3306, username: "bi" })
+    });
+    renderDialog();
+
+    await user.type(screen.getByLabelText("Name"), "No password");
+    await user.click(screen.getByRole("radio", { name: "AWS Secrets Manager" }));
+    await user.selectOptions(await screen.findByLabelText("Secret"), SALES_ARN);
+
+    await waitFor(() => {
+      expect(screen.getByText("Secret fields")).toBeInTheDocument();
+    });
+    // The password is the one field the secret cannot cover here, so the form
+    // asks for it and the stored copy backs the secret up at dial time.
+    expect(screen.getAllByText("Not provided")).toHaveLength(2);
+    expect(screen.getByLabelText("Password")).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Password is required — the bound secret does not provide one."
+      );
+    });
+
+    await user.type(screen.getByLabelText("Password"), "s3cret");
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    await waitFor(() => {
+      expect(createConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authMode: "aws_secret",
+          secretArn: SALES_ARN,
+          host: "db.internal",
+          password: "s3cret"
+        })
+      );
+    });
+  });
+
+  it("requires the four dial fields of a manual connection, database aside", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.type(screen.getByLabelText("Name"), "No password");
+    await user.type(screen.getByLabelText("Server Host"), "10.0.0.1");
+    await user.type(screen.getByLabelText("Username"), "bi_reader");
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Password is required.");
+    });
+    expect(createConnection).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Password"), "s3cret");
+    await user.click(screen.getByRole("button", { name: "Save and Close" }));
+    // No database typed, and none is asked for.
+    await waitFor(() => {
+      expect(createConnection).toHaveBeenCalledWith(
+        expect.objectContaining({ host: "10.0.0.1", username: "bi_reader", password: "s3cret" })
+      );
+    });
   });
 
   it("lists network profiles in the routing picker", async () => {

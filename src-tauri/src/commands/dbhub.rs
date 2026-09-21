@@ -177,10 +177,12 @@ pub async fn create_db_connection(
 
     dbhub::insert_connection(&pool, &connection).await?;
 
-    if connection.auth_mode == crate::models::DbAuthMode::Manual {
-        if let Some(password) = request.password.filter(|value| !value.is_empty()) {
-            crate::secrets::write_secret(&app, &connection_secret_key(&connection.id), &password)?;
-        }
+    // Stored whichever auth mode this is: an aws_secret connection falls back to
+    // it when its secret carries no password of its own (see
+    // `credentials::resolve_for_dial`), which is also where the form's password
+    // field comes from.
+    if let Some(password) = request.password.filter(|value| !value.is_empty()) {
+        crate::secrets::write_secret(&app, &connection_secret_key(&connection.id), &password)?;
     }
 
     Ok(connection)
@@ -293,14 +295,14 @@ pub async fn update_db_connection(
         .ok_or_else(|| AppError::validation("Connection was not found."))?;
     validate_auth_mode(&updated)?;
 
-    if updated.auth_mode == crate::models::DbAuthMode::Manual {
-        if let Some(password) = password {
-            crate::secrets::write_optional_secret(
-                &app,
-                &connection_secret_key(&request.id),
-                Some(password.as_str()).filter(|value| !value.is_empty()),
-            )?;
-        }
+    // Any auth mode: the secret wins at dial time, and what is stored here is
+    // what it falls back to when the secret has no password.
+    if let Some(password) = password {
+        crate::secrets::write_optional_secret(
+            &app,
+            &connection_secret_key(&request.id),
+            Some(password.as_str()).filter(|value| !value.is_empty()),
+        )?;
     }
 
     Ok(updated)

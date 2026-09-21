@@ -12,6 +12,11 @@ vi.mock("sonner", () => ({
 
 const setConnectionFlags = vi.fn().mockResolvedValue({ id: "c1", name: "Sales MySQL" });
 const deleteConnection = vi.fn().mockResolvedValue([]);
+const testConnection = vi.fn().mockResolvedValue({
+  ok: true,
+  message: "Connected. Server: 8.0.36",
+  latencyMs: 12
+});
 const saveProfile = vi.fn().mockResolvedValue({ id: "p1", name: "Office tunnel" });
 const deleteProfile = vi.fn().mockResolvedValue(undefined);
 const testProfile = vi.fn().mockResolvedValue({ ok: true, message: "ok", latencyMs: 3 });
@@ -76,6 +81,7 @@ vi.mock("@/services/tauriClient", () => ({
     ]),
     setDbConnectionFlags: (...args: unknown[]) => setConnectionFlags(...args),
     deleteDbConnection: (...args: unknown[]) => deleteConnection(...args),
+    testDbConnection: (...args: unknown[]) => testConnection(...args),
     saveNetworkProfile: (...args: unknown[]) => saveProfile(...args),
     deleteNetworkProfile: (...args: unknown[]) => deleteProfile(...args),
     testNetworkProfile: (...args: unknown[]) => testProfile(...args)
@@ -151,6 +157,22 @@ describe("OverviewPanel", () => {
     await waitFor(() => {
       expect(setConnectionFlags).toHaveBeenCalledWith("c1", { allowWrites: true });
     });
+  });
+
+  it("tests a connection from its card and keeps the answer there", async () => {
+    const user = userEvent.setup();
+    renderOverview();
+
+    await user.click(await screen.findByRole("button", { name: "Test Sales MySQL" }));
+
+    await waitFor(() => expect(testConnection).toHaveBeenCalledWith("c1"));
+    // The toast is the notification; the line on the card is what outlives it.
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("Connected"));
+    });
+    expect(
+      await screen.findByText(/Connected\. Server: 8\.0\.36 \(12 ms\)/)
+    ).toBeInTheDocument();
   });
 
   it("opens the network profiles master-detail board from the toolbar icon", async () => {

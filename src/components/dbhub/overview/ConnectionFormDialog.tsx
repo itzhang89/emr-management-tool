@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CircleAlert, Lock } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -20,16 +22,39 @@ import {
   useUpdateDbConnection
 } from "@/hooks/useDbHub";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { formatAppError } from "@/services/appErrorMessage";
+import {
+  providedSecretFields,
+  readDbSecretPreview,
+  secretFieldValue,
+  type DbSecretField,
+  type DbSecretPreview
+} from "@/services/dbSecretPreview";
 import type { DbAuthMode, DbConnection, DbConnectionKind, DbConnectionTestInput } from "@/types/domain";
-import { useCreateSecret, useSecrets } from "@/hooks/useSecrets";
+import { useGetSecretValue, useSecrets } from "@/hooks/useSecrets";
 
 /**
- * The "Connect to a database" form (design section 5): Server and
- * Authentication groups, Host/URL dual mode, the network profile picker, the
- * read-only AI toggle and the Show-as-tab switch — committed with Save, or
- * probed immediately with Test Connection. Passwords are write-only: a saved
- * one shows as a filled placeholder and can be replaced but never read back.
+ * The "Connect to a database" form (design section 5): Authentication source
+ * first — which is where a bound Secrets Manager secret is chosen and where the
+ * form says, field by field, whether the secret supplies it — then Server,
+ * Authentication and the routing/AI group. Committed with Save, or probed
+ * immediately with Test Connection.
+ *
+ * A bound secret overrides host, port, database, username and password at dial
+ * time (Rust applies the overlay, see `credentials::resolve_for_dial`). The form
+ * reads the secret's JSON keys so that override is visible: every field the
+ * secret supplies is listed as provided and taken out of the form below, and
+ * only what it leaves out is asked for. The password is the one value with no
+ * fallback here — a typed password is only ever stored to the keychain for a
+ * manual connection, so an aws_secret connection whose secret has no password
+ * cannot dial, and the form says so rather than offering a field that would not
+ * be kept.
+ *
+ * The dialog clamps itself to the viewport and scrolls its body: the fields are
+ * laid out on a two-column grid whose value column is `minmax(0,1fr)`, because a
+ * `1fr` track refuses to shrink below its content's min-content width — which is
+ * how a long secret name used to push the whole panel off the screen.
  */
 
 const KIND_LABELS: Record<DbConnectionKind, string> = {
@@ -44,14 +69,21 @@ const DEFAULT_PORTS: Record<DbConnectionKind, number> = {
   yellowbrick: 5432
 };
 
-function sanitizeSecretConnectName(value: string): string {
-  const sanitized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return sanitized || "connection";
-}
+const SECRET_FIELD_LABELS: Record<DbSecretField, string> = {
+  host: "Server Host",
+  port: "Port",
+  database: "Database",
+  username: "Username",
+  password: "Password"
+};
+
+/**
+ * A field the bound secret owns. It keeps its place in the form — so the shape
+ * of the connection stays legible — and is greyed out rather than editable. The
+ * base Input fades a disabled field to half opacity; these keep full contrast so
+ * the value the secret supplies stays readable behind the lock.
+ */
+const LOCKED_FIELD = "disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100";
 
 export function ConnectionFormDialog({
   open,
@@ -73,12 +105,10 @@ export function ConnectionFormDialog({
   const profiles = profilesQuery.data ?? [];
   const secretsQuery = useSecrets();
   const secrets = secretsQuery.data ?? [];
-  const createSecret = useCreateSecret();
+  const getSecretValue = useGetSecretValue();
 
   const [kind, setKind] = useState<DbConnectionKind>(connection?.kind ?? "mysql");
   const [name, setName] = useState(connection?.name ?? "");
-  const [connectBy, setConnectBy] = useState<"host" | "url">("host");
-  const [url, setUrl] = useState("");
   const [host, setHost] = useState(connection?.host ?? "");
   const [port, setPort] = useState(String(connection?.port ?? DEFAULT_PORTS.mysql));
   const [database, setDatabase] = useState(connection?.database ?? "");
@@ -89,13 +119,19 @@ export function ConnectionFormDialog({
   const [networkProfileId, setNetworkProfileId] = useState(connection?.networkProfileId ?? "");
   const [showAsTab, setShowAsTab] = useState(connection?.showAsTab ?? false);
   const [enabledForAi, setEnabledForAi] = useState(connection?.enabledForAi ?? true);
+  const [preview, setPreview] = useState<DbSecretPreview>();
+  const [previewLoading, setPreviewLoading] = useState(false);
+  /**
+   * One GetSecretValue per ARN per dialog session: toggling back to a secret
+   * shows the same panel without asking AWS again. Cleared on open so a secret
+   * edited elsewhere is re-read the next time the form is.
+   */
+  const previewCache = useRef(new Map<string, DbSecretPreview>());
 
   useEffect(() => {
     if (!open) return;
     setKind(connection?.kind ?? "mysql");
     setName(connection?.name ?? "");
-    setConnectBy("host");
-    setUrl("");
     setHost(connection?.host ?? "");
     setPort(String(connection?.port ?? DEFAULT_PORTS[connection?.kind ?? "mysql"]));
     setDatabase(connection?.database ?? "");
@@ -106,30 +142,120 @@ export function ConnectionFormDialog({
     setNetworkProfileId(connection?.networkProfileId ?? "");
     setShowAsTab(connection?.showAsTab ?? false);
     setEnabledForAi(connection?.enabledForAi ?? true);
+    setPreview(undefined);
+    setPreviewLoading(false);
+    previewCache.current.clear();
   }, [open, connection]);
 
-  const transportTypeOf = (profileId: string): string | undefined =>
-    profiles.find((profile) => profile.id === profileId)?.transport.type;
+  /** Carry the secret's own values into the fallback fields, so what is saved
+   *  (and what the card shows) is what the dial will really use. The password
+   *  never takes this path — it stays in Secrets Manager. */
+  const applySecretFields = (next: DbSecretPreview) => {
+    if (next.status !== "ok") return;
+    const secretHost = secretFieldValue(next, "host");
+    const secretPort = secretFieldValue(next, "port");
+    const secretDatabase = secretFieldValue(next, "database");
+    const secretUsername = secretFieldValue(next, "username");
+    if (secretHost) setHost(secretHost);
+    if (secretPort) setPort(secretPort);
+    if (secretDatabase !== undefined) setDatabase(secretDatabase);
+    if (secretUsername) setUsername(secretUsername);
+    // A locked field holds nothing. Whatever was typed before the secret was
+    // bound is dropped, so the greyed-out password field is not sitting on a
+    // value that would still be sent — and still stored — as a fallback.
+    if (providedSecretFields(next).has("password")) setPassword("");
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const arn = secretArn.trim();
+    if (authMode !== "aws_secret" || !arn) {
+      setPreview(undefined);
+      setPreviewLoading(false);
+      return;
+    }
+    const cached = previewCache.current.get(arn);
+    if (cached) {
+      setPreview(cached);
+      setPreviewLoading(false);
+      applySecretFields(cached);
+      return;
+    }
+
+    let cancelled = false;
+    setPreview(undefined);
+    setPreviewLoading(true);
+    void getSecretValue
+      .mutateAsync(arn)
+      .then(({ value }) => {
+        if (cancelled) return;
+        const next = readDbSecretPreview(value);
+        if (next.status === "ok") previewCache.current.set(arn, next);
+        setPreview(next);
+        applySecretFields(next);
+      })
+      .catch(() => {
+        // No GetSecretValue permission, a deleted secret, a secret that is not
+        // JSON: the form falls back to its own values rather than refusing to
+        // go on. The dial still applies whatever the secret holds.
+        if (!cancelled) setPreview({ status: "unreadable" });
+      })
+      .finally(() => {
+        if (!cancelled) setPreviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // `getSecretValue` is a mutation object; its mutateAsync is stable, and
+    // re-running on every render would re-dial AWS for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, authMode, secretArn]);
 
   const handleKindChange = (next: DbConnectionKind) => {
     setKind(next);
     if (!connection) setPort(String(DEFAULT_PORTS[next]));
   };
 
+  const provided = providedSecretFields(preview);
+  const previewOk = preview?.status === "ok";
+  /** True when the bound secret supplies this field, so the form does not ask. */
+  const fromSecret = (key: DbSecretField) => previewOk && provided.has(key);
+  const secretBound = authMode === "aws_secret" && secretArn.trim() !== "";
+
+  const portIsValid = () => /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535;
+
+  /**
+   * Every dial field is required except the database. A secret-backed
+   * connection satisfies them from the secret; whatever it leaves out has to be
+   * filled in below, and the form says which is which.
+   */
   const validate = (): string | undefined => {
     if (!name.trim()) return "Connection name is required.";
-    if (connectBy === "url") {
-      if (!url.trim()) return "URL is required.";
+    if (authMode === "manual") {
+      if (!host.trim()) return "Server host is required.";
+      if (!portIsValid()) return "Port must be 1-65535.";
+      if (!username.trim()) return "Username is required.";
+      // Editing an existing connection may leave this blank to keep the stored
+      // password — the only place a blank field still means a password exists.
+      if (!connection && !password.trim()) return "Password is required.";
       return undefined;
     }
-    if (authMode === "manual" && !host.trim()) return "Server host is required.";
-    if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
-      return "Port must be 1-65535.";
+    if (!secretArn.trim()) return "Select an AWS Secrets Manager secret.";
+    // Only a secret we could read can be held to what it does and does not
+    // provide; an unreadable one leaves the question to the dialer.
+    if (previewOk) {
+      if (!fromSecret("host") && !host.trim()) {
+        return "Server host is required — the bound secret does not provide one.";
+      }
+      if (!fromSecret("username") && !username.trim()) {
+        return "Username is required — the bound secret does not provide one.";
+      }
+      if (!fromSecret("password") && !password.trim()) {
+        return "Password is required — the bound secret does not provide one.";
+      }
     }
-    if (authMode === "manual" && !username.trim()) return "Username is required.";
-    if (authMode === "aws_secret" && !secretArn.trim()) {
-      return "Select an AWS Secrets Manager secret.";
-    }
+    if (!fromSecret("port") && !portIsValid()) return "Port must be 1-65535.";
     return undefined;
   };
 
@@ -158,7 +284,7 @@ export function ConnectionFormDialog({
         : connection
           ? ""
           : undefined,
-    password: authMode === "manual" ? password || undefined : undefined
+    password: password || undefined
   });
 
   /** The form as a probe request. `id` is carried only so editing can reuse
@@ -171,7 +297,7 @@ export function ConnectionFormDialog({
     database: database.trim() || undefined,
     username: username.trim(),
     networkProfileId: networkProfileId || undefined,
-    password: authMode === "manual" ? password || undefined : undefined,
+    password: password || undefined,
     authMode,
     secretArn: authMode === "aws_secret" ? secretArn.trim() : undefined
   });
@@ -216,49 +342,23 @@ export function ConnectionFormDialog({
     }
   };
 
-  const handleCreateAndBindSecret = async () => {
-    if (!name.trim()) {
-      toast.error(t("Connection name is required."));
-      return;
-    }
-    if (!password.trim()) {
-      toast.error(t("Password is required to create a secret."));
-      return;
-    }
-    const secretName = `${kind}.${sanitizeSecretConnectName(name)}`;
-    const payload = {
-      username: username.trim() || undefined,
-      password: password.trim(),
-      host: host.trim() || undefined,
-      port: Number(port) || undefined,
-      database: database.trim() || undefined
-    };
-    try {
-      const created = await createSecret.mutateAsync({
-        name: secretName,
-        description: `DBHub connection ${name.trim()}`,
-        secretString: JSON.stringify(payload, null, 2),
-        tags: [{ key: "purpose", value: "dbhub" }]
-      });
-      setAuthMode("aws_secret");
-      setSecretArn(created.arn);
-      setPassword("");
-      toast.success(t("Secret created and bound."));
-      await secretsQuery.refetch();
-    } catch (error) {
-      toast.error(formatAppError(error, "Failed to create secret."));
-    }
-  };
-
   const busy =
     createConnection.isPending ||
     updateConnection.isPending ||
     testDraftConnection.isPending ||
-    createSecret.isPending;
+    previewLoading;
+
+  /** A locked field shows dots rather than a value it does not hold. */
+  const passwordPlaceholder = () => {
+    if (fromSecret("password")) return "••••••••";
+    if (authMode === "aws_secret") return t("Not in the secret — enter it here");
+    if (connection) return t("•••••••• (saved — leave blank to keep)");
+    return "";
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-xl flex-col">
         <DialogHeader>
           <DialogTitle>
             {t(connection ? "Edit connection" : "Connect to a database")}
@@ -270,8 +370,8 @@ export function ConnectionFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5">
-          <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
+        <div className="min-h-0 min-w-0 flex-1 space-y-5 overflow-x-hidden overflow-y-auto">
+          <div className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
             <Label htmlFor="conn-driver" className="text-right text-sm">{t("Driver")}</Label>
             <select
               id="conn-driver"
@@ -281,7 +381,7 @@ export function ConnectionFormDialog({
               // and port meaning something else.
               disabled={Boolean(connection)}
               onChange={(event) => handleKindChange(event.target.value as DbConnectionKind)}
-              className="h-9 max-w-xs rounded-md border bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-9 w-full min-w-0 max-w-xs rounded-md border bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
             >
               {(Object.keys(KIND_LABELS) as DbConnectionKind[]).map((value) => (
                 <option key={value} value={value}>
@@ -296,75 +396,18 @@ export function ConnectionFormDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder={t("My MySQL Prod")}
-              className="max-w-xs"
+              className="w-full min-w-0 max-w-xs"
             />
           </div>
 
+          {/*
+            Authentication source sits above Server because it decides what
+            Server and Authentication are even asking for: a bound secret
+            overrides those five fields at dial time.
+          */}
           <fieldset className="space-y-3 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">{t("Server")}</legend>
-            <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
-              <Label className="text-right text-sm">{t("Connect by")}</Label>
-              <RadioGroup
-                value={connectBy}
-                onValueChange={(value) => setConnectBy(value as "host" | "url")}
-                className="flex gap-4"
-              >
-                <div className="flex items-center gap-1.5">
-                  <RadioGroupItem value="host" id="connect-host" />
-                  <Label htmlFor="connect-host" className="text-sm font-normal">{t("Host")}</Label>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <RadioGroupItem value="url" id="connect-url" />
-                  <Label htmlFor="connect-url" className="text-sm font-normal">URL</Label>
-                </div>
-              </RadioGroup>
-
-              <Label htmlFor="conn-url" className="text-right text-sm">URL</Label>
-              <Input
-                id="conn-url"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                disabled={connectBy !== "url"}
-                placeholder="jdbc:mysql://localhost:3306/sales"
-                className="max-w-sm font-mono text-xs"
-              />
-
-              <Label htmlFor="conn-host" className="text-right text-sm">{t("Server Host")}</Label>
-              <div className="flex max-w-sm items-center gap-2">
-                <Input
-                  id="conn-host"
-                  value={host}
-                  onChange={(event) => setHost(event.target.value)}
-                  disabled={connectBy !== "host"}
-                  placeholder="10.xx.xx.50"
-                  className="flex-1"
-                />
-                <Label htmlFor="conn-port" className="sr-only">{t("Port")}</Label>
-                <Input
-                  id="conn-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={port}
-                  onChange={(event) => setPort(event.target.value)}
-                  disabled={connectBy !== "host"}
-                  className="w-24"
-                />
-              </div>
-
-              <Label htmlFor="conn-database" className="text-right text-sm">{t("Database")}</Label>
-              <Input
-                id="conn-database"
-                value={database}
-                onChange={(event) => setDatabase(event.target.value)}
-                className="max-w-xs"
-              />
-            </div>
-          </fieldset>
-
-          <fieldset className="space-y-3 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">{t("Authentication")}</legend>
-            <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
+            <legend className="px-1 text-sm font-medium">{t("Authentication source")}</legend>
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
               <Label className="text-right text-sm">{t("Auth mode")}</Label>
               <RadioGroup
                 value={authMode}
@@ -390,12 +433,12 @@ export function ConnectionFormDialog({
                   <Label htmlFor="conn-secret" className="text-right text-sm">
                     {t("Secret")}
                   </Label>
-                  <div className="flex max-w-sm flex-col gap-2">
+                  <div className="flex w-full min-w-0 max-w-sm flex-col gap-2">
                     <select
                       id="conn-secret"
                       value={secretArn}
                       onChange={(event) => setSecretArn(event.target.value)}
-                      className="h-9 rounded-md border bg-background px-3 text-sm"
+                      className="h-9 w-full min-w-0 max-w-full rounded-md border bg-background px-3 text-sm"
                     >
                       <option value="">{t("Select a secret…")}</option>
                       {preferredSecrets.map((secret) => (
@@ -405,80 +448,148 @@ export function ConnectionFormDialog({
                         </option>
                       ))}
                     </select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="self-start"
-                      disabled={busy}
-                      onClick={() => void handleCreateAndBindSecret()}
-                    >
-                      {t("Create and bind AWS Secret")}
-                    </Button>
+                    {secrets.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {t(
+                          "No secrets in this account yet — create one on the Secrets page, then bind it here."
+                        )}
+                      </p>
+                    ) : null}
                   </div>
-                </>
-              ) : (
-                <>
-                  <div />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="max-w-sm self-start"
-                    disabled={busy}
-                    onClick={() => void handleCreateAndBindSecret()}
-                  >
-                    {t("Save as AWS Secret")}
-                  </Button>
-                </>
-              )}
 
+                  {secretBound ? (
+                    <div className="col-span-2 min-w-0 rounded-md border bg-muted/30 p-3">
+                      <p className="mb-2 flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                        <Lock className="size-3.5 shrink-0" />
+                        {t("Secret fields")}
+                        {selectedSecret ? (
+                          <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                            {selectedSecret.name}
+                          </span>
+                        ) : null}
+                      </p>
+                      {previewLoading ? (
+                        <p className="text-xs text-muted-foreground">{t("Reading secret…")}</p>
+                      ) : previewOk ? (
+                        <dl className="space-y-1 text-xs">
+                          {preview.rows.map((row) => (
+                            <div key={row.key} className="flex min-w-0 items-center gap-2">
+                              <dt className="w-24 shrink-0 text-muted-foreground">
+                                {t(SECRET_FIELD_LABELS[row.key])}
+                              </dt>
+                              <dd className="flex min-w-0 items-center gap-2">
+                                <Badge
+                                  variant={row.present ? "secondary" : "outline"}
+                                  className="shrink-0 text-xs"
+                                >
+                                  {t(row.present ? "Provided" : "Not provided")}
+                                </Badge>
+                                {!row.present && row.key !== "database" ? (
+                                  <span className="min-w-0 truncate text-muted-foreground">
+                                    {t("Enter it below")}
+                                  </span>
+                                ) : null}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+                          {t(
+                            "Could not read this secret's fields — fill the values below. The secret still supplies them at connect time."
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3 rounded-lg border p-3">
+            <legend className="px-1 text-sm font-medium">{t("Server")}</legend>
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
+              <Label htmlFor="conn-host" className="text-right text-sm">{t("Server Host")}</Label>
+              <div className="flex w-full min-w-0 max-w-sm items-center gap-2">
+                <Input
+                  id="conn-host"
+                  value={host}
+                  onChange={(event) => setHost(event.target.value)}
+                  disabled={fromSecret("host")}
+                  placeholder="10.xx.xx.50"
+                  className={cn("min-w-0 flex-1", fromSecret("host") && LOCKED_FIELD)}
+                />
+                <Label htmlFor="conn-port" className="sr-only">{t("Port")}</Label>
+                <Input
+                  id="conn-port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={port}
+                  onChange={(event) => setPort(event.target.value)}
+                  disabled={fromSecret("port")}
+                  className={cn("w-24 shrink-0", fromSecret("port") && LOCKED_FIELD)}
+                />
+              </div>
+
+              <Label htmlFor="conn-database" className="text-right text-sm">
+                {t("Database")}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  {t("(optional)")}
+                </span>
+              </Label>
+              <Input
+                id="conn-database"
+                value={database}
+                onChange={(event) => setDatabase(event.target.value)}
+                disabled={fromSecret("database")}
+                className={cn("w-full min-w-0 max-w-xs", fromSecret("database") && LOCKED_FIELD)}
+              />
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3 rounded-lg border p-3">
+            <legend className="px-1 text-sm font-medium">{t("Authentication")}</legend>
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
               <Label htmlFor="conn-username" className="text-right text-sm">{t("Username")}</Label>
               <Input
                 id="conn-username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
-                className="max-w-xs"
+                disabled={fromSecret("username")}
+                className={cn("w-full min-w-0 max-w-xs", fromSecret("username") && LOCKED_FIELD)}
                 placeholder={
-                  authMode === "aws_secret" ? t("Optional fallback — secret may override") : undefined
+                  authMode === "aws_secret" && !fromSecret("username")
+                    ? t("Not in the secret — enter it here")
+                    : undefined
                 }
               />
+
               <Label htmlFor="conn-password" className="text-right text-sm">{t("Password")}</Label>
-              <div className="flex max-w-xs flex-col gap-1">
-                <Input
-                  id="conn-password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={
-                    authMode === "manual" && connection
-                      ? t("•••••••• (saved — leave blank to keep)")
-                      : authMode === "aws_secret"
-                        ? t("Needed only to create a new secret")
-                        : ""
-                  }
-                />
-                {authMode === "aws_secret" ? (
-                  <p className="text-xs text-muted-foreground">
-                    {t(
-                      "Password and optional host/user/database come from the bound secret JSON at connect time."
-                    )}
-                  </p>
-                ) : null}
-              </div>
+              <Input
+                id="conn-password"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={fromSecret("password")}
+                className={cn("w-full min-w-0 max-w-xs", fromSecret("password") && LOCKED_FIELD)}
+                placeholder={passwordPlaceholder()}
+              />
             </div>
           </fieldset>
 
           <fieldset className="space-y-3 rounded-lg border p-3">
             <legend className="px-1 text-sm font-medium">{t("Routing & AI")}</legend>
-            <div className="grid grid-cols-[9rem_1fr] items-center gap-x-3 gap-y-3">
+            <div className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
               <Label htmlFor="conn-profile" className="text-right text-sm">{t("Network Profile")}</Label>
-              <div className="flex max-w-sm items-center gap-2">
+              <div className="flex w-full min-w-0 max-w-sm items-center gap-2">
                 <select
                   id="conn-profile"
                   value={networkProfileId}
                   onChange={(event) => setNetworkProfileId(event.target.value)}
-                  className="h-9 flex-1 rounded-md border bg-background px-3 text-sm"
+                  className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
                 >
                   <option value="">{t("(None — direct connection)")}</option>
                   {profiles.map((profile) => (

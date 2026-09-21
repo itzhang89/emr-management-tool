@@ -1,22 +1,25 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CircleCheck, CircleX, LoaderCircle, Pencil, Plug, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DbKindIcon, dbKindLabel } from "@/components/dbhub/DbKindIcon";
-import { useSetDbConnectionFlags } from "@/hooks/useDbHub";
+import { useSetDbConnectionFlags, useTestDbConnection } from "@/hooks/useDbHub";
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { DbConnection, DbConnectionFlags, NetworkProfile } from "@/types/domain";
+import type { DbConnection, DbConnectionFlags, DbTestResult, NetworkProfile } from "@/types/domain";
 
 /**
  * One connection on the Overview board: identity + routing info plus the three
  * switches the DBHub design gives every connection — Show as tab (dynamic
  * second-level tab next to Glue Catalog), Enabled for AI (the read-only SQL
  * tool registration) and the read-only policy label. Edit opens the connection
- * form (batch 3).
+ * form (batch 3). Test dials the saved connection in place, so checking that a
+ * connection still works never means opening the form and closing it again.
  */
 export function ConnectionCard({
   connection,
@@ -31,6 +34,27 @@ export function ConnectionCard({
 }) {
   const t = useT();
   const setFlags = useSetDbConnectionFlags();
+  const testConnection = useTestDbConnection();
+  const [testResult, setTestResult] = useState<DbTestResult>();
+
+  /**
+   * Probe the saved connection and keep the answer on the card. The toast is
+   * the notification; the line below is what is still there when it has faded.
+   */
+  const test = () => {
+    setTestResult(undefined);
+    testConnection.mutate(connection.id, {
+      onSuccess: (result) => {
+        setTestResult(result);
+        if (result.ok) {
+          toast.success(`${result.message} (${result.latencyMs}ms)`);
+        } else {
+          toast.error(result.message);
+        }
+      },
+      onError: (error) => toast.error(formatAppError(error, "Test failed."))
+    });
+  };
 
   const update = (flags: DbConnectionFlags) => {
     setFlags.mutate(
@@ -78,6 +102,26 @@ export function ConnectionCard({
                 })
               : t("Local password")}
           </Badge>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={t("Test {name}", { name: connection.name })}
+                disabled={testConnection.isPending}
+                onClick={test}
+              >
+                {testConnection.isPending ? (
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                ) : (
+                  <Plug className="size-3.5" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("Test connection")}</TooltipContent>
+          </Tooltip>
           {onDelete ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -125,6 +169,25 @@ export function ConnectionCard({
           <dd>{connection.username}</dd>
         </div>
       </dl>
+
+      {testResult ? (
+        <p
+          className={cn(
+            "mt-2 flex items-start gap-1.5 text-xs",
+            testResult.ok ? "text-green-600 dark:text-green-500" : "text-destructive"
+          )}
+        >
+          {testResult.ok ? (
+            <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+          ) : (
+            <CircleX className="mt-0.5 size-3.5 shrink-0" />
+          )}
+          <span className="min-w-0 break-words">
+            {testResult.message}
+            {testResult.ok ? ` (${testResult.latencyMs} ms)` : ""}
+          </span>
+        </p>
+      ) : null}
 
       <div className="mt-4 space-y-3 border-t pt-3">
         <div className="flex items-center justify-between gap-2">

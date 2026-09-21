@@ -129,7 +129,9 @@ export function OverviewPanel() {
       </section>
 
       <Dialog open={profilesOpen} onOpenChange={setProfilesOpen}>
-        <DialogContent className="max-w-3xl">
+        {/* Same clamp as the connection form: the board is tall enough to run
+            off a laptop screen, and it must not touch the window edges. */}
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("Network Profiles")}</DialogTitle>
             <DialogDescription>
