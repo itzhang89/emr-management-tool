@@ -362,6 +362,39 @@ describe("SettingsPage updates", () => {
       expect(screen.getByRole("switch", { name: "Automatic updates" })).toBeDisabled();
     });
   });
+
+  describe("beta updates toggle", () => {
+    beforeEach(() => {
+      release.canUseAutoUpdater = true;
+    });
+
+    it("defaults beta updates to off and persists toggling it on", async () => {
+      const user = userEvent.setup();
+      renderSettingsPage();
+
+      const toggle = screen.getByRole("switch", { name: "Beta updates" });
+      expect(toggle).not.toBeChecked();
+
+      await user.click(toggle);
+
+      expect(toggle).toBeChecked();
+      expect(window.localStorage.getItem("emr-eks:beta-updates")).toBe("true");
+    });
+
+    it("reflects a previously enabled preference on mount", () => {
+      window.localStorage.setItem("emr-eks:beta-updates", "true");
+      renderSettingsPage();
+
+      expect(screen.getByRole("switch", { name: "Beta updates" })).toBeChecked();
+    });
+
+    it("disables the toggle when the current build cannot auto-update", () => {
+      release.canUseAutoUpdater = false;
+      renderSettingsPage();
+
+      expect(screen.getByRole("switch", { name: "Beta updates" })).toBeDisabled();
+    });
+  });
 });
 
 async function openImportDialog(user: ReturnType<typeof userEvent.setup>) {

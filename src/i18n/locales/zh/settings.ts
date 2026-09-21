@@ -38,6 +38,14 @@ const settings: TranslationDictionary = {
     "这将从此应用中永久移除该账户及其保存的凭证。此操作无法撤销。",
   "Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key. To replace the full key pair, delete the account and add a new one.":
     "更新显示名称和区域。访问密钥无法在此更改；仅在为同一密钥轮换私有密钥时才解锁「私有访问密钥」。若要更换整个密钥对，请删除该账户并添加新账户。",
+  "Automatic updates": "自动更新",
+  "Automatically check for and install updates.": "自动检查并安装更新。",
+  "Automatic updates are unavailable for this build.": "此构建不支持自动更新。",
+  "Beta updates": "Beta 版本更新",
+  "On: prereleases of the next version are offered as soon as they are published.":
+    "已开启：下一个版本的预发布版一经发布即会提示更新。",
+  "Off: only stable releases are offered. Turn on to preview the next version early.":
+    "已关闭：仅提供正式版本。开启后可提前体验下一个版本。",
   "and its stored credentials from this app. This cannot be undone.":
     "以及它保存在此应用中的凭证。此操作无法撤销。"
 };

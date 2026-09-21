@@ -48,7 +48,9 @@ import type {
   AthenaQueryResults,
   AthenaQueryResultsRequest,
   ExportAthenaQueryCsvRequest,
+  AppUpdateInfo,
   PortableUpdateInfo,
+  UpdateChannel,
   McpStatus,
   McpAuditEntry,
   McpToolInfo,
@@ -214,7 +216,10 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     stopAthenaQuery: (request: AthenaQueryExecutionRequest) => call<AthenaQueryExecution>("stop_athena_query", request),
     exportAthenaQueryCsv: (request: ExportAthenaQueryCsvRequest) =>
       call<string | undefined>("export_athena_query_csv", request),
-    checkPortableUpdate: () => call<PortableUpdateInfo | null>("check_portable_update"),
+    checkAppUpdate: (channel: UpdateChannel) => call<AppUpdateInfo | null>("check_app_update", { channel }),
+    installAppUpdate: (channel: UpdateChannel) => call<void>("install_app_update", { channel }),
+    checkPortableUpdate: (channel: UpdateChannel) =>
+      call<PortableUpdateInfo | null>("check_portable_update", { channel }),
     installPortableUpdate: (request: PortableUpdateInfo) => call<void>("install_portable_update", request),
     mcpStart: (request?: { port?: number }) => call<McpStatus>("mcp_start", request),
     mcpStop: () => call<boolean>("mcp_stop"),

@@ -1,12 +1,10 @@
 use crate::error::AppError;
+use crate::update_channel::{build_can_update, UpdateChannel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Cursor;
 use std::path::{Component, Path};
-
-pub const PORTABLE_UPDATER_ENDPOINT: &str =
-    "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json";
 
 pub fn app_version() -> &'static str {
     option_env!("EMR_APP_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
@@ -197,15 +195,17 @@ pub fn cleanup_old_executables(exe_dir: &Path) {
     }
 }
 
-pub async fn check_portable_update() -> Result<Option<PortableUpdateInfo>, AppError> {
+pub async fn check_portable_update(
+    channel: UpdateChannel,
+) -> Result<Option<PortableUpdateInfo>, AppError> {
     if !crate::distribution::is_portable() {
         return Err(AppError::validation(
             "Portable updates are only supported on portable builds.",
         ));
     }
 
-    let channel = option_env!("EMR_APP_CHANNEL").unwrap_or("stable");
-    if channel != "stable" {
+    // Development builds carry the Dev identity and never replace themselves.
+    if !build_can_update() {
         return Ok(None);
     }
 
@@ -215,7 +215,7 @@ pub async fn check_portable_update() -> Result<Option<PortableUpdateInfo>, AppEr
         .map_err(|e| AppError::internal(format!("Failed to build HTTP client: {e}")))?;
 
     let response = client
-        .get(PORTABLE_UPDATER_ENDPOINT)
+        .get(channel.portable_manifest())
         .header("User-Agent", "emr-management-tool-portable-updater")
         .send()
         .await

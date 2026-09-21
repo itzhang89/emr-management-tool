@@ -15,9 +15,55 @@ describe("createAppUpdater", () => {
 
     await expect(updater.checkForUpdate()).resolves.toEqual({
       status: "unavailable",
-      reason: "Automatic updates are available only for stable Windows and macOS builds."
+      reason: "Automatic updates are available only for packaged Windows and macOS builds."
     });
     expect(check).not.toHaveBeenCalled();
+  });
+
+  it("checks the stable channel by default", async () => {
+    const check = vi.fn().mockResolvedValue(null);
+    const updater = createAppUpdater({ canUseAutoUpdater: true, check });
+
+    await updater.checkForUpdate();
+
+    expect(check).toHaveBeenCalledWith("stable");
+  });
+
+  it("checks the beta channel once the user opts in", async () => {
+    const check = vi.fn().mockResolvedValue(null);
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check,
+      isBetaChannelEnabled: () => true
+    });
+
+    await updater.checkForUpdate();
+
+    expect(check).toHaveBeenCalledWith("beta");
+  });
+
+  it("re-reads the beta preference on every silent check", async () => {
+    let beta = false;
+    const check = vi.fn().mockResolvedValue(null);
+    const updater = createAppUpdater({
+      canUseAutoUpdater: true,
+      check,
+      isBetaChannelEnabled: () => beta
+    });
+
+    await updater.checkAndInstallSilently();
+    beta = true;
+
+    // The opt-in is read live, so it takes effect without rebuilding the updater.
+    const second = createAppUpdater({
+      canUseAutoUpdater: true,
+      check,
+      isBetaChannelEnabled: () => beta
+    });
+    await second.checkAndInstallSilently();
+
+    expect(check).toHaveBeenNthCalledWith(1, "stable");
+    expect(check).toHaveBeenNthCalledWith(2, "beta");
   });
 
   it("reports no-update when the Tauri updater returns null", async () => {
@@ -149,7 +195,7 @@ describe("createAppUpdater", () => {
         checkPortableUpdate: vi.fn().mockResolvedValue(null),
         installPortableUpdate: vi.fn()
       };
-      const result = await checkPortableUpdate(client as any);
+      const result = await checkPortableUpdate("stable", client as any);
       expect(result).toBeNull();
     });
 
@@ -166,10 +212,11 @@ describe("createAppUpdater", () => {
         checkPortableUpdate: vi.fn().mockResolvedValue(mockUpdate),
         installPortableUpdate: vi.fn().mockResolvedValue(undefined)
       };
-      const handle = await checkPortableUpdate(client as any);
+      const handle = await checkPortableUpdate("beta", client as any);
       expect(handle).not.toBeNull();
       expect(handle?.version).toBe("0.2.0");
       expect(handle?.body).toBe("Portable update notes");
+      expect(client.checkPortableUpdate).toHaveBeenCalledWith("beta");
 
       await handle?.downloadAndInstall();
       expect(client.installPortableUpdate).toHaveBeenCalledWith(mockUpdate);
@@ -177,9 +224,9 @@ describe("createAppUpdater", () => {
   });
 
   describe("resolveUpdateChecker", () => {
-    it("routes portable distribution to portable update check", async () => {
+    it("routes portable distribution to the portable channel check", async () => {
       const { resolveUpdateChecker } = await import("./appUpdater");
-      const checker = resolveUpdateChecker({
+      const checker = resolveUpdateChecker("beta", {
         appChannel: "stable",
         platform: "windows",
         version: "0.1.0",

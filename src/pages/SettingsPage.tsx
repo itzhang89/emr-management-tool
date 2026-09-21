@@ -19,8 +19,10 @@ import {
   useLoadAwsCliProfile,
   useSetActiveAwsAccount
 } from "@/hooks/useAwsSettings";
+import { useT } from "@/i18n";
 import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { readAutoUpdatePreference, writeAutoUpdatePreference } from "@/services/autoUpdatePreferences";
+import { readBetaUpdatePreference, writeBetaUpdatePreference } from "@/services/updateChannelPreferences";
 import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
 import type { CredentialFormValues } from "@/services/credentialValidation";
 import { getReleaseInfo } from "@/services/releaseInfo";
@@ -38,16 +40,22 @@ type AccountDialogState =
   | { mode: "edit"; account: AwsAccountSummary };
 
 export function SettingsPage() {
+  const t = useT();
   const releaseInfo = getReleaseInfo();
   const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(() => readAutoUpdatePreference());
+  const [betaUpdatesEnabled, setBetaUpdatesEnabled] = useState(() => readBetaUpdatePreference());
   const autoUpdateAvailable = releaseInfo.canUseAutoUpdater;
 
   useEffect(() => {
     writeAutoUpdatePreference(autoUpdateEnabled);
   }, [autoUpdateEnabled]);
+
+  useEffect(() => {
+    writeBetaUpdatePreference(betaUpdatesEnabled);
+  }, [betaUpdatesEnabled]);
 
   const [accountDialog, setAccountDialog] = useState<AccountDialogState | null>(null);
   const [accountPendingDelete, setAccountPendingDelete] = useState<AwsAccountSummary | null>(null);
@@ -200,20 +208,46 @@ export function SettingsPage() {
                       : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
                   }
                 >
-                  <span>Automatic updates</span>
+                  <span>{t("Automatic updates")}</span>
                   <Switch
                     id="auto-update-toggle"
                     checked={autoUpdateEnabled}
                     onCheckedChange={setAutoUpdateEnabled}
                     disabled={!autoUpdateAvailable}
-                    aria-label="Automatic updates"
+                    aria-label={t("Automatic updates")}
                   />
                 </label>
               </TooltipTrigger>
               <TooltipContent>
                 {autoUpdateAvailable
-                  ? "Automatically check for and install updates."
-                  : "Automatic updates are unavailable for this build."}
+                  ? t("Automatically check for and install updates.")
+                  : t("Automatic updates are unavailable for this build.")}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label
+                  htmlFor="beta-update-toggle"
+                  className={
+                    autoUpdateAvailable
+                      ? "flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+                      : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
+                  }
+                >
+                  <span>{t("Beta updates")}</span>
+                  <Switch
+                    id="beta-update-toggle"
+                    checked={betaUpdatesEnabled}
+                    onCheckedChange={setBetaUpdatesEnabled}
+                    disabled={!autoUpdateAvailable}
+                    aria-label={t("Beta updates")}
+                  />
+                </label>
+              </TooltipTrigger>
+              <TooltipContent>
+                {betaUpdatesEnabled
+                  ? t("On: prereleases of the next version are offered as soon as they are published.")
+                  : t("Off: only stable releases are offered. Turn on to preview the next version early.")}
               </TooltipContent>
             </Tooltip>
           </div>

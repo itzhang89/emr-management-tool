@@ -1,4 +1,4 @@
-export type AppChannel = "stable" | "development";
+export type AppChannel = "stable" | "beta" | "development";
 export type AppPlatform = "windows" | "darwin" | "linux" | "unknown";
 export type AppDistribution = "installer" | "portable";
 
@@ -15,7 +15,7 @@ export interface ReleaseInfo {
   version: string;
   distribution: AppDistribution;
   isPortable: boolean;
-  channelLabel: "Stable" | "Development";
+  channelLabel: "Stable" | "Beta" | "Development";
   isDevelopment: boolean;
   canUseAutoUpdater: boolean;
 }
@@ -26,6 +26,7 @@ export function createReleaseInfo(input: ReleaseInfoInput = {}): ReleaseInfo {
   const distribution = normalizeDistribution(input.distribution);
   const isPortable = distribution === "portable";
   const isDevelopment = appChannel === "development";
+  const channelLabel = appChannel === "beta" ? "Beta" : isDevelopment ? "Development" : "Stable";
 
   return {
     appChannel,
@@ -33,10 +34,14 @@ export function createReleaseInfo(input: ReleaseInfoInput = {}): ReleaseInfo {
     version: normalizeVersion(input.version),
     distribution,
     isPortable,
-    channelLabel: isDevelopment ? "Development" : "Stable",
+    channelLabel,
     isDevelopment,
+    // Development builds carry the Dev identity and a local credential store,
+    // so a downloaded package (always the stable identity) must never replace
+    // them. Stable and beta builds are both stable-identity packages and may
+    // update; which channel they read is the user's preference, not this flag.
     canUseAutoUpdater:
-      appChannel === "stable" &&
+      appChannel !== "development" &&
       (isPortable ? platform === "windows" : platform === "windows" || platform === "darwin")
   };
 }
@@ -56,7 +61,7 @@ function normalizeVersion(version?: string) {
 }
 
 function normalizeChannel(channel?: string): AppChannel {
-  if (channel === "development") return "development";
+  if (channel === "development" || channel === "beta") return channel;
   return "stable";
 }
 

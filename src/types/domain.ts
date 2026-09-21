@@ -630,6 +630,16 @@ export interface PortableUpdateInfo {
   signature: string;
 }
 
+/** Release channel an update check reads. The Rust side allow-lists this. */
+export type UpdateChannel = "stable" | "beta";
+
+/** Metadata for an installer-channel update, minus the download details. */
+export interface AppUpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes?: string;
+}
+
 export interface McpStatus {
   running: boolean;
   mcpPort?: number;

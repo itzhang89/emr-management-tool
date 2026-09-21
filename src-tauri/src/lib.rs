@@ -1,3 +1,4 @@
+pub mod app_updater;
 pub mod aws;
 pub mod chat;
 pub mod commands;
@@ -12,6 +13,7 @@ pub mod models;
 pub mod portable_updater;
 pub mod secrets;
 pub mod state;
+pub mod update_channel;
 
 use state::AppState;
 
@@ -111,8 +113,10 @@ pub fn run() {
             commands::files::open_text_file,
             commands::diagnostics::get_app_log_path,
             commands::diagnostics::open_app_log,
-            commands::portable_updater::check_portable_update,
-            commands::portable_updater::install_portable_update,
+            commands::updater::check_app_update,
+            commands::updater::install_app_update,
+            commands::updater::check_portable_update,
+            commands::updater::install_portable_update,
             commands::mcp::mcp_start,
             commands::mcp::mcp_stop,
             commands::mcp::mcp_status,

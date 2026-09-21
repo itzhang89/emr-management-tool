@@ -1,15 +1,19 @@
-import { check as checkTauriUpdate } from "@tauri-apps/plugin-updater";
 import { readAutoUpdatePreference } from "./autoUpdatePreferences";
+import { readBetaUpdatePreference } from "./updateChannelPreferences";
 import { getReleaseInfo } from "./releaseInfo";
 import { tauriClient } from "./tauriClient";
+import type { UpdateChannel } from "@/types/domain";
 
 export const UPDATE_CHECK_TIMEOUT_MS = 60_000;
 
 export interface UpdaterDependency {
   canUseAutoUpdater: boolean;
-  check: () => Promise<UpdateHandle | null>;
+  /** Live check of the channel to read, so opting in takes effect on the next check. */
+  check: (channel: UpdateChannel) => Promise<UpdateHandle | null>;
   /** Live check of the user preference to install updates automatically. Defaults to enabled. */
   isAutoUpdateEnabled?: () => boolean;
+  /** Live check of the beta opt-in. Defaults to off. */
+  isBetaChannelEnabled?: () => boolean;
 }
 
 export interface UpdateHandle {
@@ -25,14 +29,37 @@ export type UpdateCheckResult =
 
 export type SilentUpdateResult = "skipped" | "no-update" | "installed" | "failed";
 
-export async function checkPortableUpdate(client = tauriClient): Promise<UpdateHandle | null> {
-  const update = await client.checkPortableUpdate();
+export async function checkPortableUpdate(
+  channel: UpdateChannel,
+  client = tauriClient
+): Promise<UpdateHandle | null> {
+  const update = await client.checkPortableUpdate(channel);
   if (!update) return null;
   return {
     version: update.version,
     body: update.notes,
     downloadAndInstall: async () => {
       await client.installPortableUpdate(update);
+    }
+  };
+}
+
+/**
+ * Installer-channel check. Goes through Rust rather than the plugin's JS
+ * `check()` because only the Rust builder can override the update endpoints,
+ * which is what selecting a channel means.
+ */
+export async function checkAppUpdate(
+  channel: UpdateChannel,
+  client = tauriClient
+): Promise<UpdateHandle | null> {
+  const update = await client.checkAppUpdate(channel);
+  if (!update) return null;
+  return {
+    version: update.version,
+    body: update.notes,
+    downloadAndInstall: async () => {
+      await client.installAppUpdate(channel);
     }
   };
 }
@@ -51,20 +78,27 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-export function createAppUpdater({ canUseAutoUpdater, check, isAutoUpdateEnabled = () => true }: UpdaterDependency) {
+export function createAppUpdater({
+  canUseAutoUpdater,
+  check,
+  isAutoUpdateEnabled = () => true,
+  isBetaChannelEnabled = () => false
+}: UpdaterDependency) {
   let silentUpdateAttempted = false;
   let silentUpdateInFlight = false;
+
+  const resolveChannel = (): UpdateChannel => (isBetaChannelEnabled() ? "beta" : "stable");
 
   return {
     async checkForUpdate(): Promise<UpdateCheckResult> {
       if (!canUseAutoUpdater) {
         return {
           status: "unavailable",
-          reason: "Automatic updates are available only for stable Windows and macOS builds."
+          reason: "Automatic updates are available only for packaged Windows and macOS builds."
         };
       }
 
-      const update = await check();
+      const update = await check(resolveChannel());
       if (!update) return { status: "no-update" };
 
       return {
@@ -84,7 +118,7 @@ export function createAppUpdater({ canUseAutoUpdater, check, isAutoUpdateEnabled
       silentUpdateAttempted = true;
       silentUpdateInFlight = true;
       try {
-        const update = await withTimeout(check(), UPDATE_CHECK_TIMEOUT_MS);
+        const update = await withTimeout(check(resolveChannel()), UPDATE_CHECK_TIMEOUT_MS);
         if (!update) return "no-update";
         await update.downloadAndInstall();
         options?.onInstalled?.(update.version);
@@ -98,12 +132,15 @@ export function createAppUpdater({ canUseAutoUpdater, check, isAutoUpdateEnabled
   };
 }
 
-export function resolveUpdateChecker(releaseInfo = getReleaseInfo()) {
-  return releaseInfo.isPortable ? () => checkPortableUpdate() : checkTauriUpdate;
+export function resolveUpdateChecker(channel: UpdateChannel, releaseInfo = getReleaseInfo()) {
+  return releaseInfo.isPortable
+    ? () => checkPortableUpdate(channel)
+    : () => checkAppUpdate(channel);
 }
 
 export const appUpdater = createAppUpdater({
   canUseAutoUpdater: getReleaseInfo().canUseAutoUpdater,
-  check: resolveUpdateChecker(),
-  isAutoUpdateEnabled: readAutoUpdatePreference
+  check: (channel) => resolveUpdateChecker(channel)(),
+  isAutoUpdateEnabled: readAutoUpdatePreference,
+  isBetaChannelEnabled: readBetaUpdatePreference
 });

@@ -20,6 +20,17 @@ describe("createReleaseInfo", () => {
     expect(createReleaseInfo({ appChannel: "stable", platform: "linux" }).canUseAutoUpdater).toBe(false);
   });
 
+  it("labels beta builds and lets them update in place", () => {
+    const info = createReleaseInfo({ appChannel: "beta", platform: "darwin", version: "0.2.2-beta1" });
+
+    expect(info.appChannel).toBe("beta");
+    expect(info.channelLabel).toBe("Beta");
+    expect(info.isDevelopment).toBe(false);
+    // A beta package carries the stable identity, so it updates like stable does.
+    expect(info.canUseAutoUpdater).toBe(true);
+    expect(info.version).toBe("0.2.2-beta1");
+  });
+
   it("normalizes unknown channel names to stable", () => {
     expect(createReleaseInfo({ appChannel: "test" }).appChannel).toBe("stable");
   });
