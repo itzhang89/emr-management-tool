@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CellFilter } from "@/services/dbWorkspaceCache";
+import type { CellFilter } from "@/services/resultView";
 import {
   addFilter,
   expressionFor,

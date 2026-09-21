@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Code, Search } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import type { CellFilter } from "@/services/dbWorkspaceCache";
+import type { CellFilter } from "@/services/resultView";
 import {
   completionAt,
   parseFilter,
@@ -183,7 +183,8 @@ export function ResultFilterBar({
       ) : null}
       {runState === "failed" ? (
         <span className="shrink-0 text-destructive">
-          Failed{runError ? `: ${runError}` : ""}
+          {t("Failed")}
+          {runError ? `: ${runError}` : ""}
         </span>
       ) : null}
       {/* The whole statement, cut off at the end: its beginning is what says

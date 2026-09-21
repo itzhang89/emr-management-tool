@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
-import type { CellFilter } from "@/services/dbWorkspaceCache";
+import type { CellFilter } from "@/services/resultView";
 import { filterLabel } from "./resultFilter";
 
 /**

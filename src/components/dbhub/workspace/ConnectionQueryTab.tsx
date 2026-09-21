@@ -30,8 +30,9 @@ import { nextQueryTitle } from "@/components/sql/QueryTabsPanel";
 import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
-import { ResultPane, lastPageOffset, previousPageOffset } from "@/components/dbhub/result/ResultPane";
-import { orderedRows } from "@/components/dbhub/result/resultFilter";
+import { ResultPane } from "@/components/sql/result/ResultPane";
+import { lastPageOffset, previousPageOffset } from "@/components/sql/result/resultPaging";
+import { orderedRows } from "@/components/sql/result/resultFilter";
 import { AiMark } from "@/components/sql/RunMarks";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
 import { FavoriteNameDialog } from "@/components/glue/SqlQueryMenus";
@@ -53,6 +54,7 @@ import { formatAppError } from "@/services/appErrorMessage";
 import { toCsv } from "@/services/dbCsv";
 import { saveTextFile } from "@/services/fileDownload";
 import {
+  MAX_FETCH_SIZE,
   MAX_QUERY_TABS,
   MAX_RESULT_TABS,
   blankQueryTab,
@@ -860,40 +862,73 @@ export function ConnectionQueryTab({
                   onCloseTab={(resultTabId) => closeResultTab(queryTab.id, resultTabId)}
                   emptyLabel={t("Run a query to see results here.")}
                 >
-                  {(tab) => (
-                    <ResultPane
-                      key={tab.id}
-                      meta={tab}
-                      result={tab.result}
-                      running={running && tab.id === runningTabId}
-                      counting={countingTabId === tab.id}
-                      offset={tab.result?.offset ?? 0}
-                      fetchSize={queryTab.fetchSize}
-                      onPatch={(patch) => patchResultTab(queryTab.id, tab.id, patch)}
-                      onFetchSizeChange={(size) => patchQueryTab(queryTab.id, { fetchSize: size })}
-                      onRefresh={() => handlePage(queryTab.id, tab, 0)}
-                      onFirst={() => handlePage(queryTab.id, tab, 0)}
-                      onPrev={() =>
-                        handlePage(
-                          queryTab.id,
-                          tab,
-                          previousPageOffset(tab.result?.offset ?? 0, queryTab.fetchSize)
-                        )
-                      }
-                      onNext={() => {
-                        const next = tab.result?.nextOffset;
-                        if (next != null) handlePage(queryTab.id, tab, next);
-                      }}
-                      onLast={() => {
-                        const last = lastPageOffset(tab, queryTab.fetchSize);
-                        if (last !== undefined) handlePage(queryTab.id, tab, last);
-                      }}
-                      onExport={(format) => void handleExport(tab, format)}
-                      onStop={handleStop}
-                      onCount={() => void handleCount(queryTab.id, tab)}
-                      analyzeButton={analyzeButton}
-                    />
-                  )}
+                  {(tab) => {
+                    // Worked out here rather than inside the pane because these
+                    // are the offsets the *requests* will use: the button and
+                    // the fetch have to agree, and only this side sends them.
+                    const offset = tab.result?.offset ?? 0;
+                    const lastOffset = lastPageOffset(
+                      tab.totalCount,
+                      queryTab.fetchSize,
+                      MAX_FETCH_SIZE
+                    );
+                    return (
+                      <ResultPane
+                        key={tab.id}
+                        meta={tab}
+                        result={tab.result}
+                        running={running && tab.id === runningTabId}
+                        paging={{
+                          mode: "offset",
+                          offset,
+                          fetchSize: queryTab.fetchSize,
+                          maxFetchSize: MAX_FETCH_SIZE,
+                          onFetchSizeChange: (size) => patchQueryTab(queryTab.id, { fetchSize: size }),
+                          pageable: tab.result?.pageable ?? false,
+                          hasPrev: offset > 0,
+                          hasNext: tab.result?.nextOffset != null,
+                          hasLast: lastOffset !== undefined && lastOffset !== offset,
+                          onFirst: () => handlePage(queryTab.id, tab, 0),
+                          onPrev: () =>
+                            handlePage(
+                              queryTab.id,
+                              tab,
+                              previousPageOffset(offset, queryTab.fetchSize, MAX_FETCH_SIZE)
+                            ),
+                          onNext: () => {
+                            const next = tab.result?.nextOffset;
+                            if (next != null) handlePage(queryTab.id, tab, next);
+                          },
+                          onLast: () => {
+                            if (lastOffset !== undefined) handlePage(queryTab.id, tab, lastOffset);
+                          },
+                          counting: countingTabId === tab.id,
+                          onCount: () => void handleCount(queryTab.id, tab),
+                          totalCount: tab.totalCount,
+                          countError: tab.countError
+                        }}
+                        // Each format says what it will and will not hold: a
+                        // JDBC export writes the page on screen, because the
+                        // rows beyond it were never fetched.
+                        exportOptions={[
+                          {
+                            label: t("CSV"),
+                            hint: t("the rows loaded here, not the whole result"),
+                            onSelect: () => void handleExport(tab, "csv")
+                          },
+                          {
+                            label: t("JSON"),
+                            hint: t("one object per row, as the driver sent it"),
+                            onSelect: () => void handleExport(tab, "json")
+                          }
+                        ]}
+                        onPatch={(patch) => patchResultTab(queryTab.id, tab.id, patch)}
+                        onRefresh={() => handlePage(queryTab.id, tab, 0)}
+                        onStop={handleStop}
+                        analyzeButton={analyzeButton}
+                      />
+                    );
+                  }}
                 </ResultTabsPanel>
               )
             })}

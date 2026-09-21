@@ -211,6 +211,10 @@ const dbhub: TranslationDictionary = {
   "The result set exceeded the local cache budget, so only this tab's metadata was kept.":
     "结果集超出本地缓存配额，因此仅保留了此标签页的元数据。",
   "Rerun to load fresh results": "重新运行以加载最新结果",
+  // Athena's half of the pane: a page that failed to arrive, and the export
+  // hint that says the opposite of DBHub's about what the file will hold.
+  "Failed to load query results.": "加载查询结果失败。",
+  "the whole result, as Athena wrote it to S3": "整个结果集，与 Athena 写入 S3 的内容一致",
 
   // --- ResultPane / ResultViewRail -----------------------------------------
   // The rail's two format labels reach `t()` through a variable, so they are
@@ -372,11 +376,10 @@ const dbhub: TranslationDictionary = {
   column: "列",
   "partition key": "分区键",
 
-  // --- QueryResultsPanel ---------------------------------------------------
-  "Status:": "状态：",
+  // --- Athena result area --------------------------------------------------
+  // Scanned is the one fact only Athena has; the rest of what the old panel
+  // said above the table is now the shared pane's, and says itself there.
   "Scanned:": "已扫描：",
-  "Engine time:": "引擎耗时：",
-  "Rows:": "行数：",
   "Loading results...": "正在加载结果...",
 
   // --- SqlQueryMenus -------------------------------------------------------

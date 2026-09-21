@@ -1,3 +1,4 @@
+import type { CellFilter, ColumnSort, ResultView } from "@/services/resultView";
 import type { AthenaQueryExecution, AthenaQueryResults } from "@/types/domain";
 
 export interface QueryResultTab {
@@ -9,6 +10,22 @@ export interface QueryResultTab {
   resultsLoading?: boolean;
   resultsError?: unknown;
   execution?: AthenaQueryExecution;
+
+  // --- How the result is arranged, shared with the pane that draws it. In
+  // --- memory only, unlike DBHub's: these tabs are not persisted, so closing
+  // --- one loses the sort and the filters along with the rows. Absent means
+  // --- the defaults — grid view, no sort, no filters.
+
+  view?: ResultView;
+  /** Open the record panel under the rows, showing `recordIndex` transposed. */
+  singleRecord?: boolean;
+  sort?: ColumnSort[];
+  /** What the filter box holds, as it was typed; see `ResultPaneMeta`. */
+  filterText?: string;
+  /** Conditions every drawn row has to satisfy, in the order they were added. */
+  filters?: CellFilter[];
+  /** Which row the record panel is on, and the one the grid highlights. */
+  recordIndex?: number;
 }
 
 function unquoteIdentifier(value: string): string {

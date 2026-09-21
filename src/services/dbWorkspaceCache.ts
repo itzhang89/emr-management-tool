@@ -37,47 +37,13 @@ export const MAX_QUERY_TABS = 8;
 export const MAX_RESULT_TABS = 10;
 
 /**
- * The two formats a result can be read in.
- *
- * It used to be three, with `"record"` among them — a field-per-row form. But
- * "one record at a time" was never a third format: it is one row of the page
- * read the other way round, alongside the page rather than instead of it. So the
- * format is a pair, and the record is `singleRecord`, which opens a panel under
- * whichever of the two is showing.
+ * How a result is arranged — the formats, the sort order and the conditions on
+ * a column — is not a DBHub fact, so it is declared in `./resultView` and
+ * re-exported here, where this module's own readers have always found it.
  */
-export type ResultView = "grid" | "text";
+import type { CellFilter, ColumnSort, ResultView } from "./resultView";
 
-/** One column's place in the sort order; the array's order is the priority. */
-export interface ColumnSort {
-  column: string;
-  desc: boolean;
-}
-
-/**
- * How a cell's value is compared. The five the right-click menu offers, in the
- * order it shows them: equal, not equal, greater, less, and a pattern match.
- * The typed expression spells the same five — `=`, `<>`, `>`, `<`, `LIKE` — and
- * `IS [NOT] NULL` for a missing value, which is `eq`/`ne` with `isNull` set.
- */
-export type FilterOperator = "eq" | "ne" | "gt" | "lt" | "like";
-
-/**
- * One condition on a column, however it was asked for — chosen from a cell's
- * right-click menu, or typed into the filter box as SQL.
- *
- * The value is kept as the *text the grid showed*, because that is what the
- * menu offered (`time_zone = 'UTC'`) and what a reader comparing a chip against
- * the cell needs to see. `isNull` rides alongside it for the reason
- * `formatCell` keeps a kind: NULL and the four letters that spell it are two
- * different values that render the same way, and a filter has to mean one of
- * them.
- */
-export interface CellFilter {
-  column: string;
-  operator: FilterOperator;
-  value: string;
-  isNull: boolean;
-}
+export type * from "./resultView";
 
 export interface CachedResultTab {
   id: string;

@@ -1,15 +1,8 @@
 import { useMemo, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
-import {
-  MAX_FETCH_SIZE,
-  type CachedResultTab,
-  type CellFilter,
-  type ColumnSort,
-  type ResultView
-} from "@/services/dbWorkspaceCache";
-import type { DbQueryResult } from "@/types/domain";
-import { ResultBottomBar } from "./ResultBottomBar";
+import type { CellFilter, ColumnSort, ResultPaneMeta, ResultRows, ResultView } from "@/services/resultView";
+import { ResultBottomBar, type ResultExportOption, type ResultPaging } from "./ResultBottomBar";
 import { ResultFilterBar } from "./ResultFilterBar";
 import { ResultFilterChips } from "./ResultFilterChips";
 import { ResultFunctionRail } from "./ResultFunctionRail";
@@ -47,9 +40,10 @@ import { sortRows, type IndexedRow, type Row } from "./resultGridModel";
  *
  * The arrangement — which format, whether the record panel is open, what is
  * sorted, what is filtered out, which row is selected — is *tab state*, not
- * component state, so it is handed back up through `onPatch` and persisted with
- * the tab. Coming back to a result should land in the grid the user built, not
- * a fresh one.
+ * component state, so it is handed back up through `onPatch`. Whether that
+ * patch is then written to a cache or held in memory is the workspace's
+ * business: coming back to a result should land in the grid the user built, and
+ * a pane that kept the arrangement to itself could not promise that.
  *
  * The order the grid draws is worked out here rather than inside the grid, so
  * that the numbers down its side and the record panel's own count come from one
@@ -59,9 +53,16 @@ import { sortRows, type IndexedRow, type Row } from "./resultGridModel";
  * page numbered them — the numbers say where a row came from, not how many rows
  * are left.
  *
- * Paging, counting and exporting are different in kind: each one re-runs or
- * reaches past the page, so they stay as explicit callbacks rather than
- * something this component could do to itself.
+ * What the pane cannot do to itself it is handed: paging, counting and
+ * exporting each re-run the statement or reach past the page, so they arrive as
+ * a `paging` union and a list of export options — see `ResultBottomBar` for why
+ * those are shaped the way they are. The two workspaces behind this pane page
+ * in different ways entirely, and the union is what lets one component draw
+ * both without either being offered the other's controls.
+ *
+ * Nothing here reads `dbWorkspaceCache`: the types come from `services/
+ * resultView`, which is the vocabulary the two workspaces share. `dbWorkspaceCache`
+ * re-exports them, so DBHub's own readers are unaffected by the move.
  */
 
 /**
@@ -78,38 +79,26 @@ export function ResultPane({
   meta,
   result,
   running,
-  counting,
-  offset,
-  fetchSize,
+  paging,
+  exportOptions,
+  exporting,
+  status,
   onPatch,
-  onFetchSizeChange,
   onRefresh,
-  onFirst,
-  onPrev,
-  onNext,
-  onLast,
-  onExport,
   onStop,
-  onCount,
   analyzeButton
 }: {
-  meta?: CachedResultTab;
-  result?: DbQueryResult;
+  meta?: ResultPaneMeta;
+  result?: ResultRows;
   running: boolean;
-  counting: boolean;
-  offset: number;
-  fetchSize: number;
-  onPatch: (patch: Partial<CachedResultTab>) => void;
-  /** Stored, not applied: the size takes effect on the next run of the tab. */
-  onFetchSizeChange: (size: number) => void;
+  paging: ResultPaging;
+  exportOptions: ResultExportOption[];
+  exporting?: boolean;
+  /** Engine-specific facts for the strip's status cluster; DBHub has none. */
+  status?: ReactNode;
+  onPatch: (patch: Partial<ResultPaneMeta>) => void;
   onRefresh: () => void;
-  onFirst: () => void;
-  onPrev: () => void;
-  onNext: () => void;
-  onLast: () => void;
-  onExport: (format: "csv" | "json") => void;
   onStop: () => void;
-  onCount: () => void;
   analyzeButton?: ReactNode;
 }) {
   const t = useT();
@@ -120,6 +109,13 @@ export function ResultPane({
   const filters = meta?.filters ?? NO_FILTERS;
   const view: ResultView = meta?.view ?? "grid";
   const single = meta?.singleRecord === true;
+
+  // Where this page starts, which is the only thing the grid's row numbers need
+  // and the only thing an offset pager knows. A cursor has no offset and
+  // appends instead, so its rows begin at zero — and zero is the truth: the
+  // rows on screen are the ones the tab has collected from the start, in order,
+  // so their positions really are 1, 2, 3 among what is here.
+  const offset = paging.mode === "offset" ? paging.offset : 0;
 
   /** A row's place on the page, looked up rather than searched for each time. */
   const pageIndexOf = useMemo(() => {
@@ -167,9 +163,11 @@ export function ResultPane({
     );
   }
 
-  // No rows cached, for one of three reasons — and saying which matters: the
-  // budget message is about a result that exists but was not kept, while the
-  // other two are runs that never produced one.
+  // No rows in hand, for one of four reasons — and saying which matters. The
+  // cache message is about a result that exists but was not kept; the two run
+  // states are runs that never produced one; and `emptyReason` is wherever the
+  // workspace has something of its own to say — rows still on their way, or a
+  // fetch that failed — rather than borrowing a budget it may not even have.
   if (!result) {
     const state = meta.runState;
     return (
@@ -190,7 +188,11 @@ export function ResultPane({
                 ? t("Stopped before it returned any rows.")
                 : state === "failed"
                   ? t("The run failed, so there are no rows to show.")
-                  : t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}
+                  : meta.emptyReason === "pending"
+                    ? t("Loading results...")
+                    : meta.emptyReason === "unavailable"
+                      ? t("Failed to load query results.")
+                      : t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}
             </p>
             <Button
               type="button"
@@ -209,8 +211,6 @@ export function ResultPane({
       </div>
     );
   }
-
-  const lastOffset = lastPageOffset(meta, fetchSize);
 
   /**
    * Take a set of conditions as the new state, text included.
@@ -314,65 +314,17 @@ export function ResultPane({
       </div>
 
       <ResultBottomBar
-        offset={offset}
         rowCount={rowCount}
-        fetchSize={fetchSize}
-        onFetchSizeChange={onFetchSizeChange}
-        pageable={result.pageable}
-        hasPrev={offset > 0}
-        hasNext={result.nextOffset != null}
-        hasLast={lastOffset !== undefined && lastOffset !== offset}
-        onFirst={onFirst}
-        onPrev={onPrev}
-        onNext={onNext}
-        onLast={onLast}
-        onRefresh={onRefresh}
-        onExport={onExport}
-        onStop={onStop}
         running={running}
+        paging={paging}
+        exportOptions={exportOptions}
+        exporting={exporting}
+        status={status}
+        onRefresh={onRefresh}
+        onStop={onStop}
         durationMs={meta.durationMs}
         fetchedAt={meta.ranAt}
-        totalCount={meta.totalCount}
-        countError={meta.countError}
-        counting={counting}
-        onCount={onCount}
       />
     </div>
   );
-}
-
-/**
- * Where the final page starts, once a count has said how many rows there are.
- * Undefined until then — "last" is not somewhere you can go without knowing
- * how many rows the statement returns. Shared with the workspace, which has to
- * send the offset the button promises.
- */
-export function lastPageOffset(
-  meta: Pick<CachedResultTab, "totalCount">,
-  fetchSize: number
-): number | undefined {
-  if (meta.totalCount === undefined) return undefined;
-  const size = pageSize(fetchSize);
-  return Math.floor(Math.max(meta.totalCount - 1, 0) / size) * size;
-}
-
-/**
- * Where the page before this one starts.
- *
- * A whole page back, not a page's worth of rows: the page on screen may be the
- * last one, and a last page is short. Stepping back by its own row count would
- * land *inside* the page before it — the rows between would be skipped and the
- * user would never know. Every page except the last was full, so the size is
- * what separates two of them.
- *
- * Shared with the workspace for the same reason as `lastPageOffset`: the
- * button on screen must promise the offset the request will actually use.
- */
-export function previousPageOffset(offset: number, fetchSize: number): number {
-  return Math.max(0, offset - pageSize(fetchSize));
-}
-
-/** The size the backend will really page by — it clamps to `MAX_PAGE_ROWS`. */
-function pageSize(fetchSize: number): number {
-  return Math.min(Math.max(fetchSize, 1), MAX_FETCH_SIZE);
 }

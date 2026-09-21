@@ -1,7 +1,7 @@
 import { AlignLeft, Rows3, Table2 } from "lucide-react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import type { ResultView } from "@/services/dbWorkspaceCache";
+import type { ResultView } from "@/services/resultView";
 
 /**
  * The two ways one result can be read at the top of the rail, and the switch

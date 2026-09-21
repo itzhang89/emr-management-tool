@@ -4,12 +4,13 @@ import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
 import { AthenaQuerySettingsButton, AthenaQuerySettingsDialog, type AthenaQuerySettingsMode } from "@/components/glue/AthenaQuerySettingsDialog";
 import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
+import { AthenaResultPane, isRunning } from "@/components/glue/AthenaResultPane";
 import { DatabaseMetadataPanel } from "@/components/glue/DatabaseMetadataPanel";
-import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
 import { FavoriteNameDialog } from "@/components/glue/SqlQueryMenus";
 import { TableMetadataPanel } from "@/components/glue/TableMetadataPanel";
 import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
 import { nextQueryTitle, type QueryTabStripItem } from "@/components/sql/QueryTabsPanel";
+import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
 import {
   Dialog,
@@ -50,6 +51,7 @@ import {
   resolveAthenaQueryOutputLocation
 } from "@/services/athenaOutputPath";
 import { isAthenaOutputPathError } from "@/services/athenaOutputPathErrors";
+import { mergeResultPages, withoutHeaderRow } from "@/services/athenaResultRows";
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
 // Both workspaces cap their editors with the same number, so the ceiling is
@@ -75,7 +77,7 @@ import {
   createQueryResultTab,
   type QueryResultTab
 } from "@/services/queryResultTabs";
-import type { AthenaQueryResults, SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
+import type { SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
@@ -199,6 +201,16 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const patchQueryTab = useCallback((tabId: string, patch: Partial<AthenaQueryTab>) => {
     setQueryTabs((tabs) => tabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
   }, []);
+
+  /**
+   * One result tab, named by both its editor and itself.
+   *
+   * Export goes through this rather than reading the tab the strip handed it,
+   * because export acts on a *click*: it wants the tab as it stands when the
+   * button is pressed, not as it stood when the button was drawn.
+   */
+  const findResultTab = (queryTabId: string, tabId: string) =>
+    queryTabs.find((editor) => editor.id === queryTabId)?.resultTabs.find((entry) => entry.id === tabId);
 
   /** Where a template, a favourite or a table click lands: the editor in front. */
   const setEditorSql = useCallback(
@@ -453,8 +465,13 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
           nextToken,
           maxResults: 1000
         });
+        // Stripped here, where the page is still its own page: Athena repeats
+        // the column names at the top of every page, and once a page has been
+        // merged into the ones before it there is no way to say which of its
+        // rows was its header.
+        const body = withoutHeaderRow(page);
         patchResultTab(queryTabId, tabId, (tab) => ({
-          results: mergeResultPages(tab.results, page, Boolean(nextToken)),
+          results: mergeResultPages(tab.results, body, Boolean(nextToken)),
           resultsLoading: false
         }));
       } catch (error) {
@@ -719,8 +736,17 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     void runInEditor(pending.queryTabId, pending.sql, pending.mode);
   };
 
-  const handleStopQuery = async () => {
-    const executionId = activeResultTab?.queryExecutionId;
+  /**
+   * Stop the run behind one result tab.
+   *
+   * It takes the tab rather than looking one up, because the two callers mean
+   * different tabs by "this one": the strip's Stop is drawn under the tab it
+   * belongs to, while the toolbar's is about the run in front. Reading the tab
+   * off the active id would make the strip's button stop a different run from
+   * the one it is showing.
+   */
+  const handleStopQuery = async (tab?: QueryResultTab) => {
+    const executionId = tab?.queryExecutionId;
     if (!executionId) return;
     try {
       await stopQuery.mutateAsync({ queryExecutionId: executionId });
@@ -731,9 +757,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   };
 
   const handleExport = async (queryTabId: string, tabId: string) => {
-    const tab = queryTabs
-      .find((editor) => editor.id === queryTabId)
-      ?.resultTabs.find((entry) => entry.id === tabId);
+    const tab = findResultTab(queryTabId, tabId);
     if (!tab?.queryExecutionId) return;
     try {
       const savedPath = await exportCsv.mutateAsync({
@@ -985,7 +1009,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                       }}
                       running={running}
                       runPending={startQuery.isPending}
-                      onStop={() => void handleStopQuery()}
+                      onStop={() => void handleStopQuery(activeResultTab)}
                       onRunNewTab={() => handleRunQueryInNewTab()}
                       onRun={() => handleRunQuery()}
                       runNewTabHint={RUN_NEW_TAB_SHORTCUT}
@@ -1065,28 +1089,50 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                         closeResultTab(tab.id, tab.activeResultTabId);
                       },
                       node: (
-                        <QueryResultTabsPanel
-                          tabs={tab.resultTabs}
+                        <ResultTabsPanel
+                          tabs={tab.resultTabs.map((entry) => ({
+                            ...entry,
+                            tooltip: entry.sqlSnapshot,
+                            running: entry.execution ? isRunning(entry.execution.state) : false
+                          }))}
                           activeTabId={tab.activeResultTabId ?? ""}
                           onSelectTab={(resultTabId) =>
                             patchQueryTab(tab.id, { activeResultTabId: resultTabId })
                           }
                           onCloseTab={(resultTabId) => closeResultTab(tab.id, resultTabId)}
-                          onLoadMore={(resultTabId) => {
-                            const entry = tab.resultTabs.find((item) => item.id === resultTabId);
-                            if (entry?.queryExecutionId) {
-                              void loadResultsForTab(
-                                tab.id,
-                                resultTabId,
-                                entry.queryExecutionId,
-                                entry.results?.nextToken
-                              );
-                            }
-                          }}
-                          onExport={(resultTabId) => void handleExport(tab.id, resultTabId)}
-                          exporting={exportCsv.isPending}
                           emptyLabel={t("Run a query to see results here.")}
-                        />
+                        >
+                          {(entry) => (
+                            <AthenaResultPane
+                              key={entry.id}
+                              tab={entry}
+                              exporting={exportCsv.isPending}
+                              onPatch={(patch) => patchResultTab(tab.id, entry.id, patch)}
+                              // Athena has already written this execution's
+                              // results to S3, so refreshing them asks S3 again
+                              // rather than running the statement — and re-running
+                              // it would spend money to answer a question that has
+                              // already been answered.
+                              onRefresh={() => {
+                                if (entry.queryExecutionId) {
+                                  void loadResultsForTab(tab.id, entry.id, entry.queryExecutionId);
+                                }
+                              }}
+                              onStop={() => void handleStopQuery(entry)}
+                              onLoadMore={() => {
+                                if (entry.queryExecutionId) {
+                                  void loadResultsForTab(
+                                    tab.id,
+                                    entry.id,
+                                    entry.queryExecutionId,
+                                    entry.results?.nextToken
+                                  );
+                                }
+                              }}
+                              onExport={() => void handleExport(tab.id, entry.id)}
+                            />
+                          )}
+                        </ResultTabsPanel>
                       )
                     }
               }
@@ -1193,17 +1239,6 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
       </Dialog>
     </div>
   );
-}
-
-function mergeResultPages(current: AthenaQueryResults | undefined, page: AthenaQueryResults, append: boolean) {
-  if (!append || !current) {
-    return page;
-  }
-  return {
-    columnNames: page.columnNames.length ? page.columnNames : current.columnNames,
-    rows: [...current.rows, ...page.rows],
-    nextToken: page.nextToken
-  };
 }
 
 function clampPaneWidth(width: number) {

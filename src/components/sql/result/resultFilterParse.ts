@@ -1,4 +1,4 @@
-import type { CellFilter, FilterOperator } from "@/services/dbWorkspaceCache";
+import type { CellFilter, FilterOperator } from "@/services/resultView";
 
 /**
  * Reading the filter box as SQL.

@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GlueCatalogTab } from "./GlueCatalogTab";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { AthenaQueryExecution } from "@/types/domain";
 
 /**
  * The Glue workspace's own behaviour: editors that hold their SQL and their
@@ -54,15 +55,27 @@ vi.mock("@/hooks/useAthenaAccountPreferences", () => ({
 }));
 
 const startQuery = vi.fn();
+const stopQuery = vi.fn();
+const exportCsv = vi.fn();
+/**
+ * The execution the workspace is polling, per query-execution id.
+ *
+ * Left undefined by default so an editor that has run nothing stays that way;
+ * a test that wants results gives the id an execution, which is also what lets
+ * the results-loading effect fire at all — it waits for `SUCCEEDED`.
+ */
+const executionById = new Map<string, AthenaQueryExecution>();
 vi.mock("@/hooks/useAthena", () => ({
   useStartAthenaQuery: () => ({ mutateAsync: startQuery, isPending: false }),
-  useStopAthenaQuery: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useExportAthenaQueryCsv: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useStopAthenaQuery: () => ({ mutateAsync: stopQuery, isPending: false }),
+  useExportAthenaQueryCsv: () => ({ mutateAsync: exportCsv, isPending: false }),
   useAthenaWorkgroups: () => ({
     data: [{ name: "primary", outputLocation: "s3://example-results/athena" }],
     isLoading: false
   }),
-  useAthenaQueryExecution: () => ({ data: undefined })
+  useAthenaQueryExecution: (queryExecutionId?: string) => ({
+    data: queryExecutionId ? executionById.get(queryExecutionId) : undefined
+  })
 }));
 
 vi.mock("@/hooks/useGlue", () => ({
@@ -84,8 +97,9 @@ vi.mock("@/hooks/useGlue", () => ({
   cloneGlueTableDetail: (value: unknown) => value
 }));
 
+const getQueryResults = vi.fn();
 vi.mock("@/services/athenaService", () => ({
-  athenaService: { getQueryResults: vi.fn() }
+  athenaService: { getQueryResults: (...args: unknown[]) => getQueryResults(...args) }
 }));
 
 vi.mock("@/services/glueService", () => ({
@@ -119,11 +133,35 @@ function editorTab(title: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` drops calls but keeps implementations, so anything a test
+  // relies on being unset has to be unset here rather than left to the default.
+  executionById.clear();
+  getQueryResults.mockReset();
   // A finished run, not one in flight: the strip marks a running tab with a
   // "● " in front of its name, which is not what these names are about.
   startQuery.mockResolvedValue({ queryExecutionId: "exec-1", state: "SUCCEEDED" });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
+
+/** A finished run whose results are ready to be fetched. */
+function givenAFailedExecution(reason: string) {
+  executionById.set("exec-1", {
+    queryExecutionId: "exec-1",
+    state: "FAILED",
+    stateChangeReason: reason
+  } as AthenaQueryExecution);
+}
+
+function givenASucceededExecution(overrides: Partial<AthenaQueryExecution> = {}) {
+  executionById.set("exec-1", {
+    queryExecutionId: "exec-1",
+    state: "SUCCEEDED",
+    dataScannedBytes: 2048,
+    engineExecutionTimeMs: 1500,
+    completionDateTime: "2026-09-20T10:00:00Z",
+    ...overrides
+  } as AthenaQueryExecution);
+}
 
 describe("GlueCatalogTab editors", () => {
   it("opens a second editor on ⌘N, and it starts with no results of its own", async () => {
@@ -297,5 +335,183 @@ describe("GlueCatalogTab split", () => {
     expect(
       screen.queryByRole("separator", { name: "Resize the editor and result areas" })
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The result area, which Athena now shares with the JDBC workspace: the same
+ * grid, the same rail, the same strip. What is checked here is the part that is
+ * Athena's own — that its rows reach a `Record<string, unknown>` grid with the
+ * header taken off, that the strip offers a cursor rather than a pager, and
+ * that a run that failed says so instead of drawing a table.
+ */
+describe("GlueCatalogTab results", () => {
+  /** Run the default statement and wait for its result tab to be drawn. */
+  async function runAndShowResults(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    return screen.findByRole("button", { name: "Result 1" });
+  }
+
+  /** The text of each drawn data cell, in the order the grid draws them. */
+  function drawnColumns(): string[] {
+    return screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => within(row).getAllByRole("cell")[1]?.textContent ?? "");
+  }
+
+  it("draws the rows under their column names, with the header row taken off", async () => {
+    const user = userEvent.setup();
+    givenASucceededExecution();
+    // Athena repeats the column names in the first row of every page, so a page
+    // arrives with one row more than it has data.
+    getQueryResults.mockResolvedValue({
+      columnNames: ["id", "name"],
+      rows: [
+        ["id", "name"],
+        ["1", "ada"],
+        ["2", "grace"]
+      ]
+    });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+
+    expect(await screen.findByText("ada")).toBeInTheDocument();
+    expect(screen.getByText("grace")).toBeInTheDocument();
+    // A header left in would have drawn as a fourth row, and as a second "id"
+    // cell beside the column heading of the same name.
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(screen.getAllByText("id")).toHaveLength(1);
+    expect(screen.getAllByText("name")).toHaveLength(1);
+  });
+
+  it("offers the three formats, and switching to Text redraws as text", async () => {
+    const user = userEvent.setup();
+    givenASucceededExecution();
+    getQueryResults.mockResolvedValue({
+      columnNames: ["name"],
+      rows: [["name"], ["ada"]]
+    });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+    await screen.findByText("ada");
+
+    // The rail's tabs are words set sideways, so they are found by `title`.
+    await user.click(screen.getByTitle("Text"));
+
+    // The text view is a dump rather than a layout: the column names head a
+    // tab-separated body, and the table's own headings went with the grid.
+    expect(await screen.findByText(/^name ada$/)).toBeInTheDocument();
+    expect(screen.queryByRole("row")).not.toBeInTheDocument();
+
+    // Record is the third switch, and it opens a panel under the rows.
+    const record = screen.getByTitle("Record");
+    await user.click(record);
+    expect(record).toHaveAttribute("aria-pressed", "true");
+    // …which reads the row the grid has selected, transposed.
+    expect(await screen.findByText("Record 1 of 1")).toBeInTheDocument();
+  });
+
+  it("sorts on a header click and narrows on a filter", async () => {
+    const user = userEvent.setup();
+    givenASucceededExecution();
+    getQueryResults.mockResolvedValue({
+      columnNames: ["name"],
+      rows: [["name"], ["grace"], ["ada"]]
+    });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+    await screen.findByText("grace");
+
+    // As loaded, the page is in the order Athena sent it.
+    expect(drawnColumns()).toEqual(["grace", "ada"]);
+
+    // First click sorts ascending; the header is the sort control.
+    await user.click(screen.getByRole("button", { name: "Sort by name" }));
+    expect(drawnColumns()).toEqual(["ada", "grace"]);
+
+    const box = screen.getByLabelText("Filter results");
+    await user.type(box, "name = 'grace'{Enter}");
+    expect(await screen.findByText("1 of 2 rows match")).toBeInTheDocument();
+    expect(drawnColumns()).toEqual(["grace"]);
+  });
+
+  it("puts the status and the export in the strip, and nothing above the grid", async () => {
+    const user = userEvent.setup();
+    givenASucceededExecution();
+    getQueryResults.mockResolvedValue({ columnNames: ["name"], rows: [["name"], ["ada"]] });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+    await screen.findByText("ada");
+
+    // Scanned is Athena's own fact, and the strip has a place for it; the engine
+    // time and the row count are the shared cluster's.
+    expect(screen.getByText(/Scanned:/)).toBeInTheDocument();
+    expect(screen.getByText(/2\.0 KB/)).toBeInTheDocument();
+    expect(screen.getByText("1.500s")).toBeInTheDocument();
+    expect(screen.getByText("1 row")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export CSV" })).toBeInTheDocument();
+
+    // Nothing paged by offset is offered, because Athena cannot page by offset.
+    expect(screen.queryByRole("button", { name: "Next page · re-runs the query" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Rows per page")).not.toBeInTheDocument();
+    // And the old panel's status line is gone rather than duplicated.
+    expect(screen.queryByText(/Engine time:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Rows:/)).not.toBeInTheDocument();
+  });
+
+  it("asks for the next page with the token the last one left, and appends it", async () => {
+    const user = userEvent.setup();
+    givenASucceededExecution();
+    getQueryResults
+      .mockResolvedValueOnce({
+        columnNames: ["name"],
+        rows: [["name"], ["ada"]],
+        nextToken: "tok-2"
+      })
+      .mockResolvedValueOnce({
+        columnNames: ["name"],
+        rows: [["name"], ["grace"]]
+      });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+    await screen.findByText("ada");
+
+    await user.click(screen.getByRole("button", { name: "Load more rows" }));
+
+    await waitFor(() => expect(drawnColumns()).toEqual(["ada", "grace"]));
+    // The first page's rows are still there: a cursor appends rather than
+    // replaces, which is the whole difference from the JDBC pager.
+    expect(getQueryResults).toHaveBeenLastCalledWith({
+      accountId: "acct-a",
+      queryExecutionId: "exec-1",
+      nextToken: "tok-2",
+      maxResults: 1000
+    });
+    // Nothing left to ask for, so the button is not offered at all.
+    expect(screen.queryByRole("button", { name: "Load more rows" })).not.toBeInTheDocument();
+  });
+
+  it("says why a failed run has no rows rather than drawing an empty grid", async () => {
+    const user = userEvent.setup();
+    givenAFailedExecution("Table 'default.missing' does not exist");
+    startQuery.mockResolvedValue({ queryExecutionId: "exec-1", state: "FAILED" });
+    renderWorkspace();
+    await openCatalog();
+    await runAndShowResults(user);
+
+    expect(await screen.findByText(/Table 'default\.missing' does not exist/)).toBeInTheDocument();
+    expect(
+      screen.getByText("The run failed, so there are no rows to show.")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("row")).not.toBeInTheDocument();
+    // A failed run fetched nothing, so it has nothing to export.
+    expect(screen.queryByRole("button", { name: "Export CSV" })).not.toBeInTheDocument();
+    expect(getQueryResults).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import type { CellFilter, ColumnSort, FilterOperator } from "@/services/dbWorkspaceCache";
+import type { CellFilter, ColumnSort, FilterOperator } from "@/services/resultView";
 import { cellText, compareValues, sortRows, type Row } from "./resultGridModel";
 
 /**

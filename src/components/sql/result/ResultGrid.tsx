@@ -14,7 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import type { CellFilter, ColumnSort } from "@/services/dbWorkspaceCache";
+import type { CellFilter, ColumnSort } from "@/services/resultView";
 import {
   cellClass,
   cellText,

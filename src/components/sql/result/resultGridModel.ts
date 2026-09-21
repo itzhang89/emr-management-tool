@@ -1,4 +1,4 @@
-import type { ColumnSort } from "@/services/dbWorkspaceCache";
+import type { ColumnSort } from "@/services/resultView";
 
 /**
  * The arithmetic behind the result grid, kept out of the component so it can
