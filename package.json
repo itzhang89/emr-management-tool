@@ -2,6 +2,7 @@
   "name": "emr-management-tool",
   "version": "0.1.0",
   "description": "Desktop GUI for submitting and managing EMR on EKS jobs.",
+  "repository": "https://github.com/itzhang89/emr-management-tool",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

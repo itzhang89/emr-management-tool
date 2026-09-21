@@ -73,22 +73,27 @@ Tauri's WiX bundler rejects a non-numeric prerelease identifier (`0.2.2-beta1` c
 
 ## Updater Endpoints
 
+Every URL below is `<owner>/<repo>/releases/...` for whichever repository built the
+app: `build.rs` composes them from a slug it takes from `GITHUB_REPOSITORY` in CI and
+from `package.json`'s `repository` field for local builds. No update URL is stored in a
+config file, so a fork or a rename is a build-time input rather than a source edit.
+
 ### Installer Channel
 Stable installer builds check these endpoints in order:
 
-1. `https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel/latest.json`
-2. `https://github.com/itzhang89/emr-management-tool/releases/latest/download/latest.json`
+1. `https://github.com/<owner>/<repo>/releases/download/stable-channel/latest.json`
+2. `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`
 
 ### Beta Channel
 A stable or beta install whose user enables **Beta updates** in Settings checks this endpoint instead:
 
-1. `https://github.com/itzhang89/emr-management-tool/releases/download/beta-channel/latest.json`
+1. `https://github.com/<owner>/<repo>/releases/download/beta-channel/latest.json`
 
-The beta channel is opt-in and off by default. Turning it off points the app back at the stable endpoints, so the next stable release is offered normally. The installer path goes through the Rust commands in `src-tauri/src/app_updater.rs` rather than the updater plugin's JS `check()`: only the Rust builder can override endpoints, and selecting a channel is exactly that.
+The beta channel is opt-in and off by default. Turning it off points the app back at the stable endpoints, so the next stable release is offered normally. Beta lists only this one endpoint: `latest/download` resolves to the newest published release, so listing it there would let a beta check fall through to a stable manifest. The installer path goes through the Rust commands in `src-tauri/src/app_updater.rs` rather than the updater plugin's JS `check()`: only the Rust builder can override endpoints, and selecting a channel is exactly that.
 
 ### Portable Channel
 Stable portable builds check this endpoint:
 
-1. `https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json`
+1. `https://github.com/<owner>/<repo>/releases/download/stable-channel-portable/portable-latest.json`
 
 Beta portable builds check `beta-channel-portable/portable-latest.json` instead. Both rolling channels are updated by CI when updater keys are configured, and each manifest lists only release-profile artifacts — the debug profile shares the version, so a manifest that could pick it would hand beta users a Dev-identity app.

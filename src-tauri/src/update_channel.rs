@@ -8,23 +8,24 @@
 
 use crate::error::{AppError, AppResult};
 
-/// Rolling release holding the installer manifest for betas. The stable
-/// installer endpoints live in `tauri.conf.json` instead, so a beta URL is the
-/// only one this module has to own.
-pub const BETA_INSTALLER_MANIFEST: &str =
-    "https://github.com/itzhang89/emr-management-tool/releases/download/beta-channel/latest.json";
+/// `owner/name` of the publishing repository, injected by `build.rs` from
+/// `GITHUB_REPOSITORY` in CI and from `package.json`'s `repository` field for
+/// local builds. Composing the update URLs from it keeps the repository address
+/// out of the source entirely.
+pub const REPO_SLUG: &str = env!("EMR_REPO_SLUG");
 
-/// Portable manifests. Stable keeps the URL the portable updater has always
-/// embedded; beta mirrors it on its own rolling release.
-pub const STABLE_PORTABLE_MANIFEST: &str =
-    "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json";
-pub const BETA_PORTABLE_MANIFEST: &str =
-    "https://github.com/itzhang89/emr-management-tool/releases/download/beta-channel-portable/portable-latest.json";
+/// Rolling release holding each channel's installer manifest.
+const STABLE_INSTALLER_RELEASE: &str = "stable-channel";
+const BETA_INSTALLER_RELEASE: &str = "beta-channel";
+/// Portable builds have their own rolling releases: they must never download an
+/// installer package.
+const STABLE_PORTABLE_RELEASE: &str = "stable-channel-portable";
+const BETA_PORTABLE_RELEASE: &str = "beta-channel-portable";
 
-/// Every manifest above must stay under this base: the portable updater's
-/// `is_allowed_portable_asset_url` only accepts downloads from it.
-#[cfg(test)]
-const RELEASES_BASE: &str = "https://github.com/itzhang89/emr-management-tool/releases/";
+/// URL of a manifest published as an asset of a rolling release.
+pub fn release_asset(release: &str, file: &str) -> String {
+    format!("https://github.com/{REPO_SLUG}/releases/download/{release}/{file}")
+}
 
 /// A channel an update check may read. Parsed through an allow-list because it
 /// selects a URL that the app will then download and execute.
@@ -54,19 +55,28 @@ impl UpdateChannel {
         }
     }
 
-    /// Manifest the installer updater must be pointed at, or `None` to keep the
-    /// endpoints declared in `tauri.conf.json` (stable, including its fallback).
-    pub fn installer_manifest(self) -> Option<&'static str> {
+    /// Installer endpoints to hand the updater, in preference order.
+    ///
+    /// Stable keeps a second endpoint pointing at the newest release, where a
+    /// tag build's manifest also lands. Beta deliberately has one: `latest/`
+    /// resolves to the newest *published* release, so listing it there would let
+    /// a beta check fall through to a stable manifest.
+    pub fn installer_manifests(self) -> Vec<String> {
         match self {
-            Self::Stable => None,
-            Self::Beta => Some(BETA_INSTALLER_MANIFEST),
+            Self::Stable => vec![
+                release_asset(STABLE_INSTALLER_RELEASE, "latest.json"),
+                format!("https://github.com/{REPO_SLUG}/releases/latest/download/latest.json"),
+            ],
+            Self::Beta => vec![release_asset(BETA_INSTALLER_RELEASE, "latest.json")],
         }
     }
 
-    pub fn portable_manifest(self) -> &'static str {
+    /// Portable builds read their own releases so they can never download an
+    /// installer package.
+    pub fn portable_manifest(self) -> String {
         match self {
-            Self::Stable => STABLE_PORTABLE_MANIFEST,
-            Self::Beta => BETA_PORTABLE_MANIFEST,
+            Self::Stable => release_asset(STABLE_PORTABLE_RELEASE, "portable-latest.json"),
+            Self::Beta => release_asset(BETA_PORTABLE_RELEASE, "portable-latest.json"),
         }
     }
 }
@@ -103,32 +113,55 @@ mod tests {
         assert!(error.message.contains("Unknown update channel"));
     }
 
+    /// Every URL must be built from the injected slug, so a fork or a rename is
+    /// a build-time input rather than a source edit.
     #[test]
-    fn stable_keeps_configured_installer_endpoints() {
-        assert!(UpdateChannel::Stable.installer_manifest().is_none());
-        assert_eq!(
-            UpdateChannel::Beta.installer_manifest(),
-            Some(BETA_INSTALLER_MANIFEST)
-        );
+    fn manifests_are_built_from_the_injected_repo_slug() {
+        let base = format!("https://github.com/{REPO_SLUG}/releases/");
+        for manifest in [
+            UpdateChannel::Stable.installer_manifests(),
+            UpdateChannel::Beta.installer_manifests(),
+        ]
+        .concat()
+        {
+            assert!(manifest.starts_with(&base), "{manifest}");
+        }
+        for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
+            assert!(channel.portable_manifest().starts_with(&base));
+        }
+    }
+
+    #[test]
+    fn stable_offers_a_fallback_endpoint_and_beta_does_not() {
+        let stable = UpdateChannel::Stable.installer_manifests();
+        assert_eq!(stable.len(), 2);
+        assert!(stable[0].ends_with("/stable-channel/latest.json"));
+        assert!(stable[1].ends_with("/releases/latest/download/latest.json"));
+
+        // `latest/` resolves to the newest published release, so a beta must not
+        // list it: the check would fall through to a stable manifest.
+        let beta = UpdateChannel::Beta.installer_manifests();
+        assert_eq!(beta.len(), 1);
+        assert!(beta[0].ends_with("/beta-channel/latest.json"));
     }
 
     #[test]
     fn channels_point_at_separate_portable_manifests() {
-        assert_ne!(
-            UpdateChannel::Stable.portable_manifest(),
-            UpdateChannel::Beta.portable_manifest()
-        );
-        assert!(UpdateChannel::Beta.portable_manifest().contains("beta-channel-portable"));
+        assert!(UpdateChannel::Stable
+            .portable_manifest()
+            .ends_with("/stable-channel-portable/portable-latest.json"));
+        assert!(UpdateChannel::Beta
+            .portable_manifest()
+            .ends_with("/beta-channel-portable/portable-latest.json"));
     }
 
+    /// `build.rs` resolves the slug from `GITHUB_REPOSITORY` in CI and from
+    /// `package.json` locally. Either way it must be a usable `owner/name`: an
+    /// empty value would silently produce a `github.com//releases/...` URL.
     #[test]
-    fn manifests_stay_under_the_releases_base() {
-        for manifest in [
-            BETA_INSTALLER_MANIFEST,
-            STABLE_PORTABLE_MANIFEST,
-            BETA_PORTABLE_MANIFEST,
-        ] {
-            assert!(manifest.starts_with(RELEASES_BASE), "{manifest}");
-        }
+    fn slug_has_owner_and_name() {
+        let parts: Vec<&str> = REPO_SLUG.split('/').collect();
+        assert_eq!(parts.len(), 2, "unexpected slug {REPO_SLUG}");
+        assert!(parts.iter().all(|part| !part.trim().is_empty()), "{REPO_SLUG}");
     }
 }

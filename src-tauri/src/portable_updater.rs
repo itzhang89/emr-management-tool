@@ -70,7 +70,10 @@ pub fn is_allowed_portable_asset_url(url: &str) -> bool {
     if !(lower.ends_with(".zip") && lower.contains("portable")) {
         return false;
     }
-    if lower.starts_with("https://github.com/itzhang89/emr-management-tool/releases/")
+    // Only this project's own releases, plus the two hosts GitHub redirects
+    // release downloads to. The slug is injected at build time.
+    let own_releases = format!("https://github.com/{}/releases/", crate::update_channel::REPO_SLUG);
+    if lower.starts_with(&own_releases.to_ascii_lowercase())
         || lower.starts_with("https://github-production-release-asset-")
         || lower.starts_with("https://objects.githubusercontent.com/")
     {
@@ -333,20 +336,34 @@ mod tests {
 
     #[test]
     fn allowed_portable_asset_url_validation() {
-        assert!(is_allowed_portable_asset_url(
-            "https://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/windows-amd64-portable.zip"
-        ));
+        // Built from the injected slug, so these stay valid on a fork.
+        let own_release = |file: &str| {
+            format!(
+                "https://github.com/{}/releases/download/v0.2.0/{file}",
+                crate::update_channel::REPO_SLUG
+            )
+        };
+
+        assert!(is_allowed_portable_asset_url(&own_release(
+            "windows-amd64-portable.zip"
+        )));
         assert!(is_allowed_portable_asset_url(
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/123/windows-amd64-portable.zip"
         ));
         assert!(!is_allowed_portable_asset_url(
             "https://evil.example.com/portable.zip"
         ));
+        // Our releases, but not a portable package: an installer must never be
+        // applied by the portable updater.
+        assert!(!is_allowed_portable_asset_url(&own_release(
+            "installer-setup.exe"
+        )));
         assert!(!is_allowed_portable_asset_url(
-            "https://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/installer-setup.exe"
+            &own_release("windows-amd64-portable.zip").replace("https://", "http://")
         ));
+        // Someone else's repository.
         assert!(!is_allowed_portable_asset_url(
-            "http://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/windows-amd64-portable.zip"
+            "https://github.com/someone-else/other-tool/releases/download/v0.2.0/windows-amd64-portable.zip"
         ));
     }
 

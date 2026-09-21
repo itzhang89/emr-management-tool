@@ -32,25 +32,24 @@ fn build_updater<R: Runtime>(
     app: &AppHandle<R>,
     channel: UpdateChannel,
 ) -> AppResult<tauri_plugin_updater::Updater> {
-    match channel.installer_manifest() {
-        None => app.updater().map_err(|error| {
-            AppError::internal(format!("Failed to prepare the updater: {error}"))
-        }),
-        Some(manifest) => {
-            let endpoint = Url::parse(manifest).map_err(|error| {
+    // Endpoints always come from here rather than `tauri.conf.json`: the URLs
+    // are composed from the build-time repository slug, so no repository address
+    // lives in a config file.
+    let endpoints = channel
+        .installer_manifests()
+        .into_iter()
+        .map(|manifest| {
+            Url::parse(&manifest).map_err(|error| {
                 AppError::internal(format!("Invalid update endpoint {manifest}: {error}"))
-            })?;
-            app.updater_builder()
-                .endpoints(vec![endpoint])
-                .map_err(|error| {
-                    AppError::internal(format!("Failed to configure the updater: {error}"))
-                })?
-                .build()
-                .map_err(|error| {
-                    AppError::internal(format!("Failed to build the updater: {error}"))
-                })
-        }
-    }
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    app.updater_builder()
+        .endpoints(endpoints)
+        .map_err(|error| AppError::internal(format!("Failed to configure the updater: {error}")))?
+        .build()
+        .map_err(|error| AppError::internal(format!("Failed to build the updater: {error}")))
 }
 
 pub async fn check_update<R: Runtime>(

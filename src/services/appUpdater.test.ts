@@ -205,7 +205,9 @@ describe("createAppUpdater", () => {
         version: "0.2.0",
         currentVersion: "0.1.0",
         notes: "Portable update notes",
-        url: "https://github.com/itzhang89/emr-management-tool/releases/download/v0.2.0/windows-amd64-portable.zip",
+        // A fixture: this layer passes the URL through untouched, so the host is
+        // irrelevant here (the Rust updater validates it before download).
+        url: "https://example.test/releases/download/v0.2.0/windows-amd64-portable.zip",
         signature: "sig-123"
       };
       const client = {

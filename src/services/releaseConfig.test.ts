@@ -25,11 +25,29 @@ describe("release configuration", () => {
 
     expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(true);
     expect(tauriConfig.plugins?.updater?.pubkey).toMatch(/^[A-Za-z0-9+/=]+$/);
-    expect(tauriConfig.plugins?.updater?.endpoints).toEqual([
-      "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel/latest.json",
-      "https://github.com/itzhang89/emr-management-tool/releases/latest/download/latest.json"
-    ]);
     expect(tauriConfig.plugins?.updater?.windows?.installMode).toBe("passive");
+  });
+
+  it("keeps the repository address out of build config", () => {
+    // Update URLs are composed at build time from the repository slug that
+    // build.rs injects (GITHUB_REPOSITORY in CI, package.json's `repository`
+    // field locally). A URL baked into a config would have to be edited by hand
+    // on every fork or rename, so fail if one ever reappears.
+    const configs = [
+      "src-tauri/tauri.conf.json",
+      "src-tauri/tauri.portable.conf.json",
+      "src-tauri/tauri.development.conf.json",
+      "src-tauri/tauri.development.portable.conf.json"
+    ];
+
+    for (const path of configs) {
+      expect(readText(path), path).not.toMatch(/github\.com\/[^"]+\/releases/);
+    }
+
+    // The single declaration, used for local builds.
+    const packageJson = readJson<{ repository?: string }>("package.json");
+    expect(packageJson.repository).toMatch(/^https:\/\/github\.com\/[^/]+\/[^/]+$/);
+    expect(readText("src-tauri/build.rs")).toContain("GITHUB_REPOSITORY");
   });
 
   it("defines a development app identity without updater artifacts", () => {
@@ -56,9 +74,6 @@ describe("release configuration", () => {
     expect(portableConfig.productName).toBe("EMR Management Tool Portable");
     expect(portableConfig.identifier).toBe("com.example.emr-management-tool.portable");
     expect(portableConfig.bundle.createUpdaterArtifacts).toBe(false);
-    expect(portableConfig.plugins?.updater?.endpoints).toEqual([
-      "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json"
-    ]);
     expect(portableConfig.plugins?.updater?.windows?.installMode).toBe("passive");
   });
 

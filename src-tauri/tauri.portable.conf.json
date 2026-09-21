@@ -7,9 +7,6 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [
-        "https://github.com/itzhang89/emr-management-tool/releases/download/stable-channel-portable/portable-latest.json"
-      ],
       "windows": {
         "installMode": "passive"
       }
