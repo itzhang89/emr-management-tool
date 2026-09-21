@@ -369,6 +369,23 @@ pub(crate) fn catalog_entries(page: &QueryPage) -> Vec<DbCatalogEntry> {
         .collect()
 }
 
+/// A byte string as the `0x…` literal a database client shows for it.
+///
+/// Shared by the two drivers that have a binary column type, because both need
+/// the same answer to the same problem: sqlx hands the column back as raw
+/// bytes, and those bytes rendered as JSON would be an array of several hundred
+/// numbers in one grid cell. Hex is what a person can read, and what a `bytea`
+/// or `blob` value is pasted back into SQL as.
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

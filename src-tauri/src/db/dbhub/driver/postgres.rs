@@ -9,6 +9,7 @@
 //! [`super::yellowbrick`], which speaks this wire protocol.
 
 use async_trait::async_trait;
+use bigdecimal::BigDecimal;
 use sqlx::{PgPool, Row};
 
 use crate::error::{AppError, AppResult};
@@ -16,8 +17,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
-    MAX_PAGE_ROWS,
+    catalog_entries, hex_encode, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject,
+    ServerInfo, MAX_PAGE_ROWS,
 };
 
 /// The engine behind a Postgres connection.
@@ -263,15 +264,89 @@ pub(crate) async fn read_page(
 
 /// Decode one Postgres cell into a JSON value.
 ///
-/// Everything goes through the driver's canonical string rendering: numbers
-/// the driver renders plainly still read fine in the grid, and a type this
-/// does not know stays visible as text instead of vanishing. Typed decoding
-/// per engine type is a grid-polish follow-up.
+/// By column type, because Postgres will not render a date or a number as text:
+/// asking for a `TIMESTAMP` or an `int4` as a `String` is not a decode that
+/// happens to be lossy, it is a decode that fails — and swallowing that failure
+/// is how every date, timestamp and integer in a result used to arrive in the
+/// grid as `NULL`, with nothing anywhere to say so.
+///
+/// The chain is a search for the one type that fits. `try_get` refuses a column
+/// whose SQL type does not match the Rust type being asked for — see
+/// `Row::try_get`, which checks `T::compatible` before it decodes — so a
+/// `text` column cannot be read as a number by accident, it fails to be read as
+/// one. That check is exact for the numeric types, which is why there is an arm
+/// per width: `i64` takes an `int8` and turns an `int4` down.
+///
+/// Temporal values become strings rather than numbers. A timestamp is a point
+/// in time, not a quantity, and the grid already sorts an ISO rendering
+/// correctly as text. `timestamptz` keeps its offset in that rendering, because
+/// one without it names a different instant to every reader in a different
+/// place. `numeric` keeps its digits, because that is the only thing that makes
+/// it `numeric` rather than `float8`.
 fn cell_to_json(row: &sqlx::postgres::PgRow, index: usize) -> serde_json::Value {
-    match row.try_get::<Option<String>, _>(index) {
-        Ok(Some(text)) => serde_json::Value::String(text),
-        Ok(None) | Err(_) => serde_json::Value::Null,
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
+    if let Ok(Some(text)) = row.try_get::<Option<String>, _>(index) {
+        return serde_json::Value::String(text);
     }
+    // timestamp
+    if let Ok(Some(at)) = row.try_get::<Option<NaiveDateTime>, _>(index) {
+        return serde_json::Value::String(at.to_string());
+    }
+    // timestamptz
+    if let Ok(Some(at)) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
+        return serde_json::Value::String(at.to_rfc3339());
+    }
+    // date
+    if let Ok(Some(day)) = row.try_get::<Option<NaiveDate>, _>(index) {
+        return serde_json::Value::String(day.to_string());
+    }
+    // time
+    if let Ok(Some(at)) = row.try_get::<Option<NaiveTime>, _>(index) {
+        return serde_json::Value::String(at.to_string());
+    }
+    // json / jsonb — handed over as JSON rather than as its text, so the grid
+    // can colour it as a structure instead of quoting it as one long string
+    if let Ok(Some(document)) = row.try_get::<Option<serde_json::Value>, _>(index) {
+        return document;
+    }
+    // uuid, spelled the way it is written everywhere else
+    if let Ok(Some(id)) = row.try_get::<Option<uuid::Uuid>, _>(index) {
+        return serde_json::Value::String(id.to_string());
+    }
+    // numeric
+    if let Ok(Some(number)) = row.try_get::<Option<BigDecimal>, _>(index) {
+        return serde_json::Value::String(number.to_string());
+    }
+    // int2 / int4 / int8
+    if let Ok(Some(number)) = row.try_get::<Option<i16>, _>(index) {
+        return serde_json::Value::Number(number.into());
+    }
+    if let Ok(Some(number)) = row.try_get::<Option<i32>, _>(index) {
+        return serde_json::Value::Number(number.into());
+    }
+    if let Ok(Some(number)) = row.try_get::<Option<i64>, _>(index) {
+        return serde_json::Value::Number(number.into());
+    }
+    // float4 / float8
+    if let Ok(Some(number)) = row.try_get::<Option<f32>, _>(index) {
+        if let Some(number) = serde_json::Number::from_f64(f64::from(number)) {
+            return serde_json::Value::Number(number);
+        }
+    }
+    if let Ok(Some(number)) = row.try_get::<Option<f64>, _>(index) {
+        if let Some(number) = serde_json::Number::from_f64(number) {
+            return serde_json::Value::Number(number);
+        }
+    }
+    if let Ok(Some(flag)) = row.try_get::<Option<bool>, _>(index) {
+        return serde_json::Value::Bool(flag);
+    }
+    // bytea
+    if let Ok(Some(bytes)) = row.try_get::<Option<Vec<u8>>, _>(index) {
+        return serde_json::Value::String(format!("0x{}", hex_encode(&bytes)));
+    }
+    serde_json::Value::Null
 }
 
 #[cfg(test)]
@@ -279,6 +354,80 @@ mod tests {
     use super::*;
     use crate::db::dbhub::driver::DialTarget;
     use crate::models::{DbConnection, DbReadOnlyPolicy};
+
+    /// The Rust types `cell_to_json` asks a column to be, in the order it asks.
+    ///
+    /// Listed here as predicates rather than decoded as values, because what
+    /// goes wrong is never a value — it is a *type* with no arm. `try_get`
+    /// refuses a column whose SQL type does not match the Rust type being asked
+    /// for, so a type nothing in the chain accepts falls out of the bottom as
+    /// `NULL`, silently and looking exactly like a genuine null. That is how
+    /// every `timestamp` and every `int4` in a result used to read as empty.
+    ///
+    /// Note how specific some of these are: `i64` is *not* compatible with
+    /// `int4`, so the integer arms are one per width and dropping one drops a
+    /// column type with it. The test below is what says so.
+    fn arms() -> Vec<(&'static str, fn(&sqlx::postgres::PgTypeInfo) -> bool)> {
+        use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+        use sqlx::{Postgres, Type};
+
+        vec![
+            ("text", <String as Type<Postgres>>::compatible),
+            ("timestamp", <NaiveDateTime as Type<Postgres>>::compatible),
+            ("timestamptz", <DateTime<Utc> as Type<Postgres>>::compatible),
+            ("date", <NaiveDate as Type<Postgres>>::compatible),
+            ("time", <NaiveTime as Type<Postgres>>::compatible),
+            ("json", <serde_json::Value as Type<Postgres>>::compatible),
+            ("uuid", <uuid::Uuid as Type<Postgres>>::compatible),
+            ("numeric", <BigDecimal as Type<Postgres>>::compatible),
+            ("int2", <i16 as Type<Postgres>>::compatible),
+            ("int4", <i32 as Type<Postgres>>::compatible),
+            ("int8", <i64 as Type<Postgres>>::compatible),
+            ("float4", <f32 as Type<Postgres>>::compatible),
+            ("float8", <f64 as Type<Postgres>>::compatible),
+            ("bool", <bool as Type<Postgres>>::compatible),
+            ("bytea", <Vec<u8> as Type<Postgres>>::compatible),
+        ]
+    }
+
+    /// A column the grid is expected to be able to show. Add to this list when
+    /// the decoder learns a type; this is what fails when it has not.
+    const SHOWN: &[&str] = &[
+        "text",
+        "varchar",
+        "bpchar",
+        "name",
+        "int2",
+        "int4",
+        "int8",
+        "float4",
+        "float8",
+        "numeric",
+        "bool",
+        "bytea",
+        "timestamp",
+        "timestamptz",
+        "date",
+        "time",
+        "json",
+        "jsonb",
+        "uuid",
+    ];
+
+    #[test]
+    fn every_type_a_result_carries_has_an_arm_that_takes_it() {
+        use sqlx::postgres::PgTypeInfo;
+
+        let arms = arms();
+        for name in SHOWN {
+            let ty = PgTypeInfo::with_name(name);
+            let taken = arms.iter().find(|(_, fits)| fits(&ty));
+            assert!(
+                taken.is_some(),
+                "a {name} column would read as NULL — no arm in `cell_to_json` takes it"
+            );
+        }
+    }
 
     fn connection() -> DbConnection {
         DbConnection {

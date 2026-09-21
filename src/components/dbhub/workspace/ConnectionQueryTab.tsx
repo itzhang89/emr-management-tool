@@ -618,11 +618,15 @@ export function ConnectionQueryTab({
           type="button"
           variant="outline"
           size="icon"
-          className="size-7"
+          // The rail's width, not the toolbar's: this button sits in the same
+          // gutter as the format switches opposite it, so it is the size they
+          // are rather than the size the Run button is. The mark drops a point
+          // to keep the two letters off the border.
+          className="size-4"
           aria-label={t("Analyze with AI")}
           onClick={openAnalyzeDialog}
         >
-          <AiMark />
+          <AiMark className="text-[10px]" />
         </Button>
       </TooltipTrigger>
       <TooltipContent>{t("Analyze with AI · opens Chat with this connection's context")}</TooltipContent>

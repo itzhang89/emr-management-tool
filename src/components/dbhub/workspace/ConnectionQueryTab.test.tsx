@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -142,12 +142,22 @@ function connection(overrides: Partial<{ database?: string; kind: string; allowW
   };
 }
 
-function renderWorkspace(conn = connection(), active = true) {
+function renderWorkspace(
+  conn = connection(),
+  active = true,
+  // A tab with nowhere to send the request draws no AI action at all, so a
+  // test that wants to see one has to say where it goes.
+  onOpenAiAssistant?: () => void
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ConnectionQueryTab connection={conn as never} active={active} />
+        <ConnectionQueryTab
+          connection={conn as never}
+          active={active}
+          onOpenAiAssistant={onOpenAiAssistant}
+        />
       </TooltipProvider>
     </QueryClientProvider>
   );
@@ -521,9 +531,9 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
     // The grid is where a result lands: header row plus both rows of the page,
-    // and no panel under them yet.
-    expect(await screen.findByRole("button", { name: "Analyze with AI" })).toBeInTheDocument();
-    expect(screen.getAllByRole("row")).toHaveLength(3);
+    // and no panel under them yet. The rows themselves are the thing to wait
+    // on — nothing else in the pane marks the moment the run was drawn.
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
     expect(screen.queryByText(/Record 1 of/)).not.toBeInTheDocument();
 
     // Record is not a third format: it opens a pane *below* the rows and leaves
@@ -545,6 +555,40 @@ describe("ConnectionQueryTab", () => {
     await user.click(screen.getByRole("tab", { name: "Text" }));
     expect(await screen.findByText(/Tab-separated · 2 rows on this page/)).toBeInTheDocument();
     expect(screen.getByText("Record 2 of 2")).toBeInTheDocument();
+  });
+
+  it("keeps the AI action in the rail at the right edge, as narrow as the one opposite it", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection(), true, vi.fn());
+
+    runDbQuery.mockResolvedValueOnce(page(2, 0, false));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
+
+    // Two rails frame the rows: the formats at the left end, the actions at the
+    // right. They are one width on purpose. A wider rail reads as the more
+    // important one, and the switch between Grid and Text is not worth less
+    // than the single button that acts on the result — while the border on each
+    // says which edge its own rail belongs to.
+    //
+    // Two steps up from the Grid tab: the tab, its tablist, the rail itself.
+    expect(screen.getByRole("tab", { name: "Grid" }).parentElement?.parentElement).toHaveClass(
+      "w-6",
+      "border-r"
+    );
+
+    // The catalog is an `<aside>` as well, so the action's rail is the one
+    // holding the action rather than simply the one on the page.
+    const aiRail = screen
+      .getAllByRole("complementary")
+      .find((rail) => within(rail).queryByRole("button", { name: "Analyze with AI" }));
+    expect(aiRail).toHaveClass("w-6", "border-l");
+
+    // And it hugs that edge, in the same top band the source name sits in on
+    // the other side of the grid, rather than floating in the gutter.
+    expect(
+      within(aiRail!).getByRole("button", { name: "Analyze with AI" }).parentElement
+    ).toHaveClass("h-6", "justify-end");
   });
 
   it("copies the record the panel is showing, field names and all", async () => {

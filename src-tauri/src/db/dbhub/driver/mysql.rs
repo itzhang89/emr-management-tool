@@ -9,6 +9,8 @@
 //! this is the second line of defence that actually runs on the server.
 
 use async_trait::async_trait;
+use bigdecimal::BigDecimal;
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::{MySqlPool, Row};
 
 use crate::error::{AppError, AppResult};
@@ -16,8 +18,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
-    MAX_PAGE_ROWS,
+    catalog_entries, hex_encode, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject,
+    ServerInfo, MAX_PAGE_ROWS,
 };
 
 /// The engine behind a MySQL connection.
@@ -225,17 +227,68 @@ async fn read_page(
 /// their JSON shapes, text and temporal values become strings, NULL stays
 /// null, and anything that cannot be decoded as one of those (a binary blob)
 /// renders as its `0x…` marker rather than silently vanishing.
+///
+/// The chain is a search for the type that fits, because `try_get` refuses a
+/// column whose SQL type does not match the Rust type being asked for — see
+/// `Row::try_get`, which checks `T::compatible` before it decodes. Two of those
+/// checks are narrower than they look, and both cost a column its value:
+/// `i64` turns down an *unsigned* integer, and `f64` turns down a `decimal`,
+/// which is a deliberate refusal to round somebody's money.
+///
+/// The temporal arms are the ones that were missing. `DATETIME`, `TIMESTAMP`,
+/// `DATE` and `TIME` are none of them text as far as sqlx is concerned, so a
+/// date column failed every arm above and fell out of the bottom as `NULL` —
+/// silently, and looking exactly like a real null. `DATETIME` and `TIMESTAMP`
+/// are separate types here, which is why they have an arm each.
 fn cell_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> serde_json::Value {
-    // Text first covers VARCHAR/TEXT/CHAR/ENUM/SET plus how temporal and float
-    // values surface through sqlx's string decode.
+    // Text first covers VARCHAR/TEXT/CHAR/ENUM/SET.
     if let Ok(Some(text)) = row.try_get::<Option<String>, _>(index) {
         return serde_json::Value::String(text);
     }
     if let Ok(Some(text)) = row.try_get::<Option<&str>, _>(index) {
         return serde_json::Value::String(text.to_string());
     }
+    // datetime
+    if let Ok(Some(at)) = row.try_get::<Option<NaiveDateTime>, _>(index) {
+        return serde_json::Value::String(at.to_string());
+    }
+    // timestamp
+    if let Ok(Some(at)) = row.try_get::<Option<DateTime<Utc>>, _>(index) {
+        return serde_json::Value::String(at.to_rfc3339());
+    }
+    // date
+    if let Ok(Some(day)) = row.try_get::<Option<NaiveDate>, _>(index) {
+        return serde_json::Value::String(day.to_string());
+    }
+    // time, as long as it is a time of day
+    if let Ok(Some(at)) = row.try_get::<Option<NaiveTime>, _>(index) {
+        return serde_json::Value::String(at.to_string());
+    }
+    // …and once it is not: MySQL's `TIME` is also an interval, and runs from
+    // -838:59:59 to 838:59:59, which no clock reading can hold.
+    if let Ok(Some(span)) = row.try_get::<Option<Duration>, _>(index) {
+        return serde_json::Value::String(clock_text(span));
+    }
+    // json
+    if let Ok(Some(document)) = row.try_get::<Option<serde_json::Value>, _>(index) {
+        return document;
+    }
+    // decimal — as the digits the column holds rather than as a float
+    if let Ok(Some(number)) = row.try_get::<Option<BigDecimal>, _>(index) {
+        return serde_json::Value::String(number.to_string());
+    }
+    // unsigned ints, which the signed arm below will not take
+    if let Ok(Some(number)) = row.try_get::<Option<u64>, _>(index) {
+        return serde_json::Value::Number(number.into());
+    }
     if let Ok(Some(number)) = row.try_get::<Option<i64>, _>(index) {
         return serde_json::Value::Number(number.into());
+    }
+    // float / double
+    if let Ok(Some(number)) = row.try_get::<Option<f32>, _>(index) {
+        if let Some(number) = serde_json::Number::from_f64(f64::from(number)) {
+            return serde_json::Value::Number(number);
+        }
     }
     if let Ok(Some(number)) = row.try_get::<Option<f64>, _>(index) {
         if let Some(number) = serde_json::Number::from_f64(number) {
@@ -251,14 +304,18 @@ fn cell_to_json(row: &sqlx::mysql::MySqlRow, index: usize) -> serde_json::Value 
     serde_json::Value::Null
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+/// An interval as `hh:mm:ss`, signed — the shape MySQL itself prints a `time`
+/// column in, so a value read out of the grid looks like the value in the
+/// table.
+fn clock_text(span: Duration) -> String {
+    let sign = if span < Duration::zero() { "-" } else { "" };
+    let seconds = span.num_seconds().abs();
+    format!(
+        "{sign}{:02}:{:02}:{:02}",
+        seconds / 3600,
+        (seconds / 60) % 60,
+        seconds % 60
+    )
 }
 
 #[cfg(test)]
@@ -266,6 +323,17 @@ mod tests {
     use super::*;
     use crate::db::dbhub::driver::DialTarget;
     use crate::models::{DbConnection, DbReadOnlyPolicy};
+
+    #[test]
+    fn a_time_past_a_day_is_written_the_way_mysql_wrote_it() {
+        // MySQL's `time` is not a clock reading — it is a signed interval that
+        // runs well past 24 hours, and the grid should show the column the way
+        // the table does rather than refusing it or wrapping it round.
+        assert_eq!(clock_text(Duration::hours(25)), "25:00:00");
+        assert_eq!(clock_text(Duration::seconds(-3661)), "-01:01:01");
+        assert_eq!(clock_text(Duration::zero()), "00:00:00");
+        assert_eq!(clock_text(Duration::seconds(838 * 3600 + 59 * 60 + 59)), "838:59:59");
+    }
 
     fn connection() -> DbConnection {
         DbConnection {
