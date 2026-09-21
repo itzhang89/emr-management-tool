@@ -6,9 +6,7 @@ import {
   Eye,
   Folder,
   ListFilter,
-  Loader2,
   PanelLeftOpen,
-  Square,
   Table2
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,25 +25,16 @@ import {
   useRunDbQuery
 } from "@/hooks/useDbHub";
 import { SqlEditor } from "@/components/sql/SqlEditor";
+import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
+import { nextQueryTitle } from "@/components/sql/QueryTabsPanel";
+import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
-import { QueryTabsPanel } from "@/components/dbhub/workspace/QueryTabsPanel";
 import { ResultPane, lastPageOffset, previousPageOffset } from "@/components/dbhub/result/ResultPane";
 import { orderedRows } from "@/components/dbhub/result/resultFilter";
-import { AiMark, ExecuteMark, ExecuteNewTabMark } from "@/components/dbhub/workspace/RunMarks";
+import { AiMark } from "@/components/sql/RunMarks";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
-import {
-  isCloseTabKey,
-  isNewTabKey,
-  isTabCycleNextKey,
-  isTabCyclePreviousKey
-} from "@/lib/keyboardShortcut";
-import {
-  FavoriteNameDialog,
-  FavoritesMenu,
-  HistoryMenu,
-  SqlTemplatesButton
-} from "@/components/glue/SqlQueryMenus";
+import { FavoriteNameDialog } from "@/components/glue/SqlQueryMenus";
 import { dbSqlScope, dbSqlStore } from "@/services/dbSqlStorage";
 import { dbSqlTemplates } from "@/services/dbSqlTemplates";
 import {
@@ -145,15 +134,6 @@ export function ConnectionQueryTab({
   );
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
-  /** How much of the column the editor takes; the grid gets what is left. */
-  const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
-  /**
-   * Which of the two strips the shortcut keys act on: the editors or the
-   * results. Set by whichever half the pointer or the keyboard was last in,
-   * because on this page the same chord means two things and only the user
-   * knows which one they meant.
-   */
-  const [activeHalf, setActiveHalf] = useState<"query" | "result">("query");
 
   // Rehydrate once per mount+account: switching AWS accounts swaps the cache
   // key space, so each account's drafts are restored independently. The tree
@@ -513,7 +493,6 @@ export function ConnectionQueryTab({
     const fresh = blankQueryTab(nextQueryTitle(queryTabs));
     setQueryTabs((tabs) => [...tabs, fresh]);
     setActiveQueryTabId(fresh.id);
-    setActiveHalf("query");
   }, [queryTabs, t]);
 
   /**
@@ -551,82 +530,50 @@ export function ConnectionQueryTab({
   };
 
   /**
-   * ⌘⇧[ / ⌘⇧] walk the strip of the half the user was last in, wrapping at
-   * either end the way the page cycle does. The other half is left alone: an
-   * editor's tabs and its results are two different lists, and stepping
-   * through one while looking at the other would move something off screen.
+   * ⌘⇧[ / ⌘⇧] walk the editor strip, wrapping at either end the way the page
+   * cycle does. The results are a list of their own — the column asks for the
+   * half the user was last in — and stepping through one while looking at the
+   * other would move something off screen.
    */
-  const cycleTabs = useCallback(
+  const cycleQueryTabs = useCallback(
     (delta: 1 | -1) => {
-      if (activeHalf === "result") {
-        const tabs = activeQueryTab?.resultTabs ?? [];
-        if (!activeQueryTab || tabs.length < 2) return;
-        const index = tabs.findIndex((tab) => tab.id === activeQueryTab.activeResultTabId);
-        const next = tabs[(index + delta + tabs.length) % tabs.length];
-        if (!next) return;
-        patchQueryTab(activeQueryTab.id, { activeResultTabId: next.id });
-        return;
-      }
       if (queryTabs.length < 2) return;
       const index = queryTabs.findIndex((tab) => tab.id === activeQueryTab?.id);
       const next = queryTabs[(index + delta + queryTabs.length) % queryTabs.length];
       if (!next) return;
       setActiveQueryTabId(next.id);
     },
-    [activeHalf, activeQueryTab, patchQueryTab, queryTabs]
+    [activeQueryTab, queryTabs]
   );
 
-  /** ⌘W closes the tab in front of the half the user was last in. */
-  const closeActiveTab = useCallback(() => {
-    if (activeHalf === "result") {
-      if (!activeQueryTab || activeQueryTab.resultTabs.length <= 1) return;
-      const activeResultTabId = activeQueryTab.activeResultTabId;
-      if (!activeResultTabId) return;
-      closeResultTab(activeQueryTab.id, activeResultTabId);
-      return;
-    }
-    if (!activeQueryTab || queryTabs.length <= 1) return;
-    closeQueryTab(activeQueryTab.id);
-  }, [activeHalf, activeQueryTab, closeQueryTab, queryTabs]);
+  /** The same walk through one editor's results. */
+  const cycleResultTabs = useCallback(
+    (queryTab: CachedQueryTab, delta: 1 | -1) => {
+      const tabs = queryTab.resultTabs;
+      if (tabs.length < 2) return;
+      const index = tabs.findIndex((tab) => tab.id === queryTab.activeResultTabId);
+      const next = tabs[(index + delta + tabs.length) % tabs.length];
+      if (!next) return;
+      patchQueryTab(queryTab.id, { activeResultTabId: next.id });
+    },
+    [patchQueryTab]
+  );
 
   // Only the visible workspace answers. The Glue tab is mounted for the life
   // of the page once opened, so both listeners fire from any sub-tab unless
-  // each checks that it is the one on screen.
-  //
-  // Every one of these chords is also a browser or window key — ⌘W closes the
-  // window — so each is prevented even when the workspace then declines to act
-  // on it: the key belongs to the page that is on screen.
+  // each checks that it is the one on screen. The tab chords are the shared
+  // column's job — this one is the catalog's own.
   useEffect(() => {
     if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
         event.preventDefault();
         setCatalogCollapsed((collapsed) => !collapsed);
-        return;
-      }
-      if (isTabCyclePreviousKey(event)) {
-        event.preventDefault();
-        cycleTabs(-1);
-        return;
-      }
-      if (isTabCycleNextKey(event)) {
-        event.preventDefault();
-        cycleTabs(1);
-        return;
-      }
-      if (isNewTabKey(event)) {
-        event.preventDefault();
-        openQueryTab();
-        return;
-      }
-      if (isCloseTabKey(event)) {
-        event.preventDefault();
-        closeActiveTab();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [active, closeActiveTab, cycleTabs, openQueryTab]);
+  }, [active]);
 
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -646,35 +593,6 @@ export function ConnectionQueryTab({
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
     document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  };
-
-  /**
-   * The same drag as the catalog's, turned on its side.
-   *
-   * The editor keeps its height and the grid takes the rest, rather than the
-   * two sharing what is left over: a split that only redistributes slack moves
-   * both edges when one is dragged, which is not what a splitter looks like it
-   * does.
-   */
-  const beginEditorResize = (event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = editorHeight;
-
-    const handleMove = (moveEvent: MouseEvent) => {
-      setEditorHeight(clampEditorHeight(startHeight + moveEvent.clientY - startY));
-    };
-    const handleUp = () => {
-      document.removeEventListener("mousemove", handleMove);
-      document.removeEventListener("mouseup", handleUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    document.addEventListener("mousemove", handleMove);
-    document.addEventListener("mouseup", handleUp);
-    document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
   };
 
@@ -764,6 +682,55 @@ export function ConnectionQueryTab({
     </Tooltip>
   ) : null;
 
+  /** The connection line and the SQL toolbar: the same row on every tab. */
+  const connectionHeader = (
+    <div className="flex shrink-0 items-center gap-2">
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <DbKindIcon kind={connection.kind} className="size-3.5" />
+        {connection.name}
+      </span>
+      <Badge
+        variant={connection.allowWrites ? "destructive" : "outline"}
+        className="text-[10px]"
+      >
+        {t(connection.allowWrites ? "Write" : "Read-only")}
+      </Badge>
+      <span className="text-xs text-muted-foreground">
+        {connection.kind} ·{" "}
+        {t(connection.allowWrites ? "writes allowed here" : "the AI reads this one")} ·{" "}
+        {t(connection.enabledForAi ? "enabled for AI" : "manual")}
+      </span>
+      {/* Pushed to the right of the connection line; the toolbar itself carries
+          no alignment, so a workspace that wants it on the left can have that. */}
+      <div className="ml-auto">
+        <SqlQueryToolbar
+            leading={analyzeButton}
+          templates={dbSqlTemplates(connection.kind)}
+          history={history}
+          favoriteSqlSet={new Set(favorites.map((entry) => entry.sql.trim()))}
+          favorites={favorites}
+          onSelectSql={setEditorSql}
+          onFavorite={setFavoritePrompt}
+          onRemoveFavorite={(favoriteId) => {
+            if (accountId) {
+              setFavorites(
+                dbSqlStore.removeFavorite(dbSqlScope(accountId, connection.id), favoriteId)
+              );
+            }
+          }}
+          running={running}
+          runPending={runQuery.isPending}
+          onStop={handleStop}
+          onRunNewTab={() => void handleRunNewTab()}
+          onRun={() => void handleRun()}
+          stopHint={t("stops reading; the server notices when the connection closes")}
+          runNewTabHint={t("the result opens as its own tab beside this one")}
+            runHint={t("the read-only gate blocks every non-SELECT statement")}
+        />
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 gap-2 overflow-hidden">
       {catalogCollapsed ? (
@@ -841,227 +808,96 @@ export function ConnectionQueryTab({
           </div>
         </>
       )}
-      {/* The column is the "query" half by default and the result pane inside
-          it claims the other one; the capture handlers are on the two
-          containers rather than on the strips, so a click in the editor or on
-          a result button counts the same as one on a tab. Capture runs
-          outermost first, so the inner claim wins. */}
-      <section
-        className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden"
-        onMouseDownCapture={() => setActiveHalf("query")}
-        onFocusCapture={() => setActiveHalf("query")}
-      >
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="flex items-center gap-1.5 text-sm font-medium">
-            <DbKindIcon kind={connection.kind} className="size-3.5" />
-            {connection.name}
-          </span>
-          <Badge
-            variant={connection.allowWrites ? "destructive" : "outline"}
-            className="text-[10px]"
-          >
-            {t(connection.allowWrites ? "Write" : "Read-only")}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            {connection.kind} ·{" "}
-            {t(connection.allowWrites ? "writes allowed here" : "the AI reads this one")} ·{" "}
-            {t(connection.enabledForAi ? "enabled for AI" : "manual")}
-          </span>
-          <div className="ml-auto flex items-center gap-1">
-            {analyzeButton}
-            <SqlTemplatesButton
-              templates={dbSqlTemplates(connection.kind)}
-              onSelect={setEditorSql}
-            />
-            <HistoryMenu
-              history={history}
-              favoriteSqlSet={new Set(favorites.map((entry) => entry.sql.trim()))}
-              onSelect={(entry) => setEditorSql(entry.sql)}
-              onFavorite={setFavoritePrompt}
-            />
-            <FavoritesMenu
-              favorites={favorites}
-              onSelect={(entry) => setEditorSql(entry.sql)}
-              onRemove={(favoriteId) => {
-                if (accountId) {
-                  setFavorites(
-                    dbSqlStore.removeFavorite(dbSqlScope(accountId, connection.id), favoriteId)
-                  );
-                }
-              }}
-            />
-            {/* Stays in the toolbar as well as the result strip: a first run
-                has no result tab yet, so the strip's Stop is not on screen
-                when a query is slow enough to want stopping. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="size-7"
-                  disabled={!running}
-                  aria-label={t("Stop query")}
-                  onClick={handleStop}
-                >
-                  <Square className="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("Stop query")}{" · "}{t("stops reading; the server notices when the connection closes")}
-              </TooltipContent>
-            </Tooltip>
-            {/* The two marks below are the whole point of the toolbar, so they
-                are drawn rather than borrowed from the icon set — see RunMarks. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="size-7"
-                  disabled={running || runQuery.isPending}
-                  aria-label={t("Run in new tab")}
-                  onClick={() => void handleRunNewTab()}
-                >
-                  <ExecuteNewTabMark />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("Run in new tab")}{" · "}{t("the result opens as its own tab beside this one")}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  className="size-7"
-                  disabled={running || runQuery.isPending}
-                  aria-label={t("Run query")}
-                  onClick={() => void handleRun()}
-                >
-                  {running ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <ExecuteMark />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t("Run query")}{" · "}{t("the read-only gate blocks every non-SELECT statement")}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
+      {/* The connection's own header rides in the column's `header` slot so
+          that a click anywhere in it — the Run button included — claims the
+          query half the way a click in the editor does. */}
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 
         {activeQueryTab ? (
-          <QueryTabsPanel
+          <QueryWorkspaceColumn
+            active={active}
+            header={() => connectionHeader}
             tabs={queryTabs}
             activeTabId={activeQueryTab.id}
-            onSelectTab={(tabId) => {
-              setActiveQueryTabId(tabId);
-              setActiveHalf("query");
-            }}
+            onSelectTab={setActiveQueryTabId}
             onCloseTab={closeQueryTab}
             onNewTab={openQueryTab}
             newTabShortcut={NEW_QUERY_TAB_SHORTCUT}
-          >
-            {(queryTab) => (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {/* The editor's height is the user's to set and the grid takes
-                    the rest — see `beginEditorResize`. Capped in CSS as well as
-                    in the drag, so a short window cannot let the editor push
-                    the grid out of the column entirely. */}
-                <div
-                  className="max-h-[75%] shrink-0"
-                  style={{ height: editorHeight }}
-                >
-                  {/* Keyed by editor: each tab is its own CodeMirror document, so
-                      undo in one never reaches into another's text. */}
-                  <SqlEditor
-                    key={queryTab.id}
-                    className="h-full"
-                    value={queryTab.sql}
-                    onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
-                    dialect={dialectFor(connection.kind)}
-                    placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
-                    onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
-                    onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
-                  />
-                </div>
-
-                <div
-                  role="separator"
-                  aria-orientation="horizontal"
-                  aria-label={t("Resize the editor and result areas")}
-                  aria-valuemin={MIN_EDITOR_HEIGHT}
-                  aria-valuemax={MAX_EDITOR_HEIGHT}
-                  aria-valuenow={editorHeight}
-                  className="group relative h-2 shrink-0 cursor-row-resize touch-none"
-                  onMouseDown={beginEditorResize}
-                >
-                  <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border group-hover:bg-primary/50" />
-                </div>
-
-                <div
-                  className="min-h-0 flex-1 overflow-hidden"
-                  onMouseDownCapture={() => setActiveHalf("result")}
-                  onFocusCapture={() => setActiveHalf("result")}
-                >
-                  <ResultTabsPanel
-                    tabs={queryTab.resultTabs.map((tab) => ({
-                      ...tab,
-                      tooltip: tab.sql || tab.title,
-                      running: running && tab.id === runningTabId
-                    }))}
-                    activeTabId={queryTab.activeResultTabId ?? ""}
-                    onSelectTab={(resultTabId) => {
-                      patchQueryTab(queryTab.id, { activeResultTabId: resultTabId });
-                      setActiveHalf("result");
-                    }}
-                    onCloseTab={(resultTabId) => closeResultTab(queryTab.id, resultTabId)}
-                    emptyLabel={t("Run a query to see results here.")}
-                  >
-                    {(tab) => (
-                      <ResultPane
-                        key={tab.id}
-                        meta={tab}
-                        result={tab.result}
-                        running={running && tab.id === runningTabId}
-                        counting={countingTabId === tab.id}
-                        offset={tab.result?.offset ?? 0}
-                        fetchSize={queryTab.fetchSize}
-                        onPatch={(patch) => patchResultTab(queryTab.id, tab.id, patch)}
-                        onFetchSizeChange={(size) => patchQueryTab(queryTab.id, { fetchSize: size })}
-                        onRefresh={() => handlePage(queryTab.id, tab, 0)}
-                        onFirst={() => handlePage(queryTab.id, tab, 0)}
-                        onPrev={() =>
-                          handlePage(
-                            queryTab.id,
-                            tab,
-                            previousPageOffset(tab.result?.offset ?? 0, queryTab.fetchSize)
-                          )
-                        }
-                        onNext={() => {
-                          const next = tab.result?.nextOffset;
-                          if (next != null) handlePage(queryTab.id, tab, next);
-                        }}
-                        onLast={() => {
-                          const last = lastPageOffset(tab, queryTab.fetchSize);
-                          if (last !== undefined) handlePage(queryTab.id, tab, last);
-                        }}
-                        onExport={(format) => void handleExport(tab, format)}
-                        onStop={handleStop}
-                        onCount={() => void handleCount(queryTab.id, tab)}
-                        analyzeButton={analyzeButton}
-                      />
-                    )}
-                  </ResultTabsPanel>
-                </div>
-              </div>
+            onCycleTabs={cycleQueryTabs}
+            onCloseActiveTab={() => closeQueryTab(activeQueryTab.id)}
+            editor={(queryTab) => (
+              /* Keyed by editor: each tab is its own CodeMirror document, so
+                 undo in one never reaches into another's text. */
+              <SqlEditor
+                key={queryTab.id}
+                className="h-full"
+                value={queryTab.sql}
+                onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
+                dialect={dialectFor(connection.kind)}
+                placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
+                onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
+                onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
+              />
             )}
-          </QueryTabsPanel>
+            result={(queryTab) => ({
+              onCycle: (delta) => cycleResultTabs(queryTab, delta),
+              onCloseActive: () => {
+                if (queryTab.resultTabs.length <= 1) return;
+                if (!queryTab.activeResultTabId) return;
+                closeResultTab(queryTab.id, queryTab.activeResultTabId);
+              },
+              node: (
+                <ResultTabsPanel
+                  tabs={queryTab.resultTabs.map((tab) => ({
+                    ...tab,
+                    tooltip: tab.sql || tab.title,
+                    running: running && tab.id === runningTabId
+                  }))}
+                  activeTabId={queryTab.activeResultTabId ?? ""}
+                  onSelectTab={(resultTabId) =>
+                    patchQueryTab(queryTab.id, { activeResultTabId: resultTabId })
+                  }
+                  onCloseTab={(resultTabId) => closeResultTab(queryTab.id, resultTabId)}
+                  emptyLabel={t("Run a query to see results here.")}
+                >
+                  {(tab) => (
+                    <ResultPane
+                      key={tab.id}
+                      meta={tab}
+                      result={tab.result}
+                      running={running && tab.id === runningTabId}
+                      counting={countingTabId === tab.id}
+                      offset={tab.result?.offset ?? 0}
+                      fetchSize={queryTab.fetchSize}
+                      onPatch={(patch) => patchResultTab(queryTab.id, tab.id, patch)}
+                      onFetchSizeChange={(size) => patchQueryTab(queryTab.id, { fetchSize: size })}
+                      onRefresh={() => handlePage(queryTab.id, tab, 0)}
+                      onFirst={() => handlePage(queryTab.id, tab, 0)}
+                      onPrev={() =>
+                        handlePage(
+                          queryTab.id,
+                          tab,
+                          previousPageOffset(tab.result?.offset ?? 0, queryTab.fetchSize)
+                        )
+                      }
+                      onNext={() => {
+                        const next = tab.result?.nextOffset;
+                        if (next != null) handlePage(queryTab.id, tab, next);
+                      }}
+                      onLast={() => {
+                        const last = lastPageOffset(tab, queryTab.fetchSize);
+                        if (last !== undefined) handlePage(queryTab.id, tab, last);
+                      }}
+                      onExport={(format) => void handleExport(tab, format)}
+                      onStop={handleStop}
+                      onCount={() => void handleCount(queryTab.id, tab)}
+                      analyzeButton={analyzeButton}
+                    />
+                  )}
+                </ResultTabsPanel>
+              )
+            })}
+          />
         ) : null}
       </section>
 
@@ -1115,30 +951,6 @@ const MIN_CATALOG_WIDTH = 220;
 const MAX_CATALOG_WIDTH = 720;
 const clampPaneWidth = (width: number) =>
   Math.min(MAX_CATALOG_WIDTH, Math.max(MIN_CATALOG_WIDTH, width));
-
-/**
- * How short and how tall the editor may be dragged. The floor is the editor's
- * own: CodeMirror's theme refuses to render shorter than 140px, so a smaller
- * number would just be a height the pane silently exceeds.
- */
-const DEFAULT_EDITOR_HEIGHT = 220;
-const MIN_EDITOR_HEIGHT = 140;
-const MAX_EDITOR_HEIGHT = 560;
-const clampEditorHeight = (height: number) =>
-  Math.min(MAX_EDITOR_HEIGHT, Math.max(MIN_EDITOR_HEIGHT, height));
-
-/**
- * What the next editor tab is called. Numbered from the highest one in use
- * rather than from the count, so closing "Query 2" does not hand its name to
- * the next tab while a "Query 3" is still open beside it.
- */
-function nextQueryTitle(tabs: CachedQueryTab[]): string {
-  const used = tabs
-    .map((tab) => /^Query (\d+)$/.exec(tab.title)?.[1])
-    .filter((index): index is string => index !== undefined)
-    .map(Number);
-  return `Query ${(used.length ? Math.max(...used) : 0) + 1}`;
-}
 
 function CatalogPane({
   databases,

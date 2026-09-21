@@ -33,8 +33,13 @@ export function QueryResultsPanel({
 }) {
   const t = useT();
 
+  // The same sentence the strip uses when an editor has no result tabs at all,
+  // at the same size: both mean "nothing has run yet", and which of the two you
+  // are looking at is an accident of how far along the run got.
   if (!execution) {
-    return <p className="text-[10px] text-muted-foreground">{t("Run a query to see results.")}</p>;
+    return (
+      <p className="text-xs text-muted-foreground">{t("Run a query to see results here.")}</p>
+    );
   }
 
   const dataRows = skipHeaderRow(results);

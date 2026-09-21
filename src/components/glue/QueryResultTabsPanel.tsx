@@ -14,7 +14,8 @@ export function QueryResultTabsPanel({
   onCloseTab,
   onLoadMore,
   onExport,
-  exporting
+  exporting,
+  emptyLabel
 }: {
   tabs: QueryResultTab[];
   activeTabId: string;
@@ -23,6 +24,8 @@ export function QueryResultTabsPanel({
   onLoadMore: (tabId: string) => void;
   onExport: (tabId: string) => void;
   exporting: boolean;
+  /** Shown when the editor has no result tab yet — a freshly opened one has none. */
+  emptyLabel?: string;
 }) {
   const stripTabs: Array<QueryResultTab & ResultTabStripItem> = tabs.map((tab) => ({
     ...tab,
@@ -36,6 +39,7 @@ export function QueryResultTabsPanel({
       activeTabId={activeTabId}
       onSelectTab={onSelectTab}
       onCloseTab={onCloseTab}
+      emptyLabel={emptyLabel}
     >
       {(activeTab) => (
         <QueryResultsPanel

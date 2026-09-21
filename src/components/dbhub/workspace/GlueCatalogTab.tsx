@@ -1,10 +1,4 @@
-import {
-  PanelLeftOpen,
-  Play,
-  Plus,
-  Square,
-  Trash2
-} from "lucide-react";
+import { PanelLeftOpen } from "lucide-react";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
@@ -12,13 +6,11 @@ import { AthenaQuerySettingsButton, AthenaQuerySettingsDialog, type AthenaQueryS
 import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
 import { DatabaseMetadataPanel } from "@/components/glue/DatabaseMetadataPanel";
 import { QueryResultTabsPanel } from "@/components/glue/QueryResultTabsPanel";
-import {
-  FavoriteNameDialog,
-  FavoritesMenu,
-  HistoryMenu,
-  SqlTemplatesButton
-} from "@/components/glue/SqlQueryMenus";
+import { FavoriteNameDialog } from "@/components/glue/SqlQueryMenus";
 import { TableMetadataPanel } from "@/components/glue/TableMetadataPanel";
+import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
+import { nextQueryTitle, type QueryTabStripItem } from "@/components/sql/QueryTabsPanel";
+import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +22,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useAthenaQueryExecution,
@@ -61,6 +52,9 @@ import {
 import { isAthenaOutputPathError } from "@/services/athenaOutputPathErrors";
 import { formatAppError } from "@/services/appErrorMessage";
 import { athenaService } from "@/services/athenaService";
+// Both workspaces cap their editors with the same number, so the ceiling is
+// read from where it already lives rather than written a second time.
+import { MAX_QUERY_TABS } from "@/services/dbWorkspaceCache";
 import { glueService } from "@/services/glueService";
 import { buildDropTableSql, buildSelectSql } from "@/services/glueSqlTemplates";
 import {
@@ -96,10 +90,47 @@ const CATALOG_TOGGLE_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_CATALOG_
 const RUN_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_QUERY);
 const RUN_NEW_TAB_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.GLUE_RUN_NEW_TAB);
 
-type TopTab = "query" | "metadata";
+const NEW_QUERY_TAB_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.DB_QUERY_TAB_NEW);
+
 type MetadataKind = "table" | "database";
 
-const initialResultTab = createQueryResultTab(1);
+/**
+ * One editor, with the result tabs that belong to it.
+ *
+ * Shaped like DBHub's `CachedQueryTab` minus everything Athena has no notion of
+ * — no sort, no filter, no page offset — and held in component state rather than
+ * in that workspace's cache: this workspace is not per-connection, and its
+ * drafts have never outlived the session either.
+ */
+interface AthenaQueryTab {
+  id: string;
+  title: string;
+  sql: string;
+  resultTabs: QueryResultTab[];
+  activeResultTabId?: string;
+  /** The number the next result tab takes; see `buildResultTabTitle`. */
+  nextResultIndex: number;
+}
+
+/**
+ * The metadata pane rides in the editor strip as a tab of its own, but it is
+ * not an editor: it holds no SQL, owns no results, and is deliberately not in
+ * `queryTabs`. This id names it to the strip and to nothing else.
+ */
+const METADATA_TAB_ID = "glue-metadata";
+
+function blankQueryTab(title: string, sql = "SELECT 1;"): AthenaQueryTab {
+  return { id: crypto.randomUUID(), title, sql, resultTabs: [], nextResultIndex: 1 };
+}
+
+/**
+ * The metadata pane dressed as a strip tab: an editor-shaped entry with nothing
+ * in it, which is also why the column's `result()` refuses it and no run can
+ * land in it.
+ */
+function metadataStripTab(title: string): AthenaQueryTab & QueryTabStripItem {
+  return { id: METADATA_TAB_ID, title, sql: "", resultTabs: [], nextResultIndex: 1 };
+}
 
 export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const t = useT();
@@ -109,20 +140,25 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const submitUserQuery = useSubmitUser();
   const submitUser = submitUserQuery.data ?? "user";
 
-  const [topTab, setTopTab] = useState<TopTab>("query");
+  const [queryTabs, setQueryTabs] = useState<AthenaQueryTab[]>(() => [blankQueryTab("Query 1")]);
+  const [activeQueryTabId, setActiveQueryTabId] = useState<string>();
+  /**
+   * Whether the metadata tab is in the strip at all. It is kept apart from the
+   * selection because it is not a tab that can be left open in the background:
+   * it is there because a table or a database was just asked about, and it is
+   * gone the moment anything else is selected.
+   */
+  const [metadataTabOpen, setMetadataTabOpen] = useState(false);
   const [metadataKind, setMetadataKind] = useState<MetadataKind>("table");
   const [catalogViewDatabase, setCatalogViewDatabase] = useState<string | undefined>();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
-  const [sql, setSql] = useState("SELECT 1;");
   const athenaPrefs = useAthenaAccountPreferences(accountId);
   const outputBasePath = athenaPrefs.outputBasePath;
   const appendSubmitUser = athenaPrefs.appendSubmitUser;
   const workgroup = athenaPrefs.workgroup;
   const catalogCollapsed = athenaPrefs.catalogCollapsed;
   const skipCreateLocationReminder = athenaPrefs.skipCreateLocationReminder;
-  const [resultTabs, setResultTabs] = useState<QueryResultTab[]>([initialResultTab]);
-  const [activeResultTabId, setActiveResultTabId] = useState(initialResultTab.id);
   const [metadataEditMode, setMetadataEditMode] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(WORKSPACE_PANE_DEFAULT_WIDTH);
   const [history, setHistory] = useState<SqlHistoryEntry[]>([]);
@@ -131,7 +167,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const [locationReminderOpen, setLocationReminderOpen] = useState(false);
   const [locationReminderDontAsk, setLocationReminderDontAsk] = useState(false);
   const [pendingLocationRun, setPendingLocationRun] = useState<
-    { sql: string; mode: "active" | "new-tab" } | null
+    { sql: string; mode: "active" | "new-tab"; queryTabId: string } | null
   >(null);
   const [favoriteDialogOpen, setFavoriteDialogOpen] = useState(false);
   const [pendingFavoriteEntry, setPendingFavoriteEntry] = useState<SqlHistoryEntry | null>(null);
@@ -143,13 +179,79 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const restoredCatalogAccountRef = useRef<string | undefined>(undefined);
   const shownOutputErrorRef = useRef<string | undefined>(undefined);
 
-  const activeResultTab = useMemo(
-    () => resultTabs.find((tab) => tab.id === activeResultTabId) ?? resultTabs[0],
-    [activeResultTabId, resultTabs]
+  /**
+   * The editor in front. Falling back to the first one is what lets the
+   * metadata tab be a plain flag rather than a sentinel id in the selection:
+   * a sentinel would poison this lookup, and every writer that goes through it
+   * would then edit the first editor while a different tab is on screen.
+   */
+  const activeQueryTab = useMemo(
+    () => queryTabs.find((tab) => tab.id === activeQueryTabId) ?? queryTabs[0],
+    [activeQueryTabId, queryTabs]
   );
 
-  const updateResultTab = useCallback((tabId: string, patch: Partial<QueryResultTab>) => {
-    setResultTabs((tabs) => tabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
+  const activeResultTab = useMemo(() => {
+    const tabs = activeQueryTab?.resultTabs ?? [];
+    return tabs.find((tab) => tab.id === activeQueryTab?.activeResultTabId) ?? tabs[0];
+  }, [activeQueryTab]);
+
+  /** Write into one editor without disturbing its neighbours. */
+  const patchQueryTab = useCallback((tabId: string, patch: Partial<AthenaQueryTab>) => {
+    setQueryTabs((tabs) => tabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
+  }, []);
+
+  /** Where a template, a favourite or a table click lands: the editor in front. */
+  const setEditorSql = useCallback(
+    (next: string) => {
+      if (!activeQueryTab) return;
+      patchQueryTab(activeQueryTab.id, { sql: next });
+    },
+    [activeQueryTab, patchQueryTab]
+  );
+
+  /**
+   * Patch one of an editor's result tabs. Takes a value or a function of the
+   * current one, since a merged page needs to read what is already there.
+   */
+  const patchResultTab = useCallback(
+    (
+      queryTabId: string,
+      resultTabId: string,
+      patch: Partial<QueryResultTab> | ((tab: QueryResultTab) => Partial<QueryResultTab>)
+    ) => {
+      const resolve = typeof patch === "function" ? patch : () => patch;
+      setQueryTabs((tabs) =>
+        tabs.map((editor) =>
+          editor.id === queryTabId
+            ? {
+                ...editor,
+                resultTabs: editor.resultTabs.map((tab) =>
+                  tab.id === resultTabId ? { ...tab, ...resolve(tab) } : tab
+                )
+              }
+            : editor
+        )
+      );
+    },
+    []
+  );
+
+  /** Add a result tab to an editor, or replace the one already carrying its id. */
+  const putResultTab = useCallback((queryTabId: string, tab: QueryResultTab) => {
+    setQueryTabs((tabs) =>
+      tabs.map((editor) => {
+        if (editor.id !== queryTabId) return editor;
+        const known = editor.resultTabs.some((entry) => entry.id === tab.id);
+        return {
+          ...editor,
+          resultTabs: known
+            ? editor.resultTabs.map((entry) => (entry.id === tab.id ? tab : entry))
+            : [...editor.resultTabs, tab],
+          activeResultTabId: tab.id,
+          nextResultIndex: known ? editor.nextResultIndex : editor.nextResultIndex + 1
+        };
+      })
+    );
   }, []);
 
   const tableDetail = useGlueTable(
@@ -342,8 +444,8 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   ]);
 
   const loadResultsForTab = useCallback(
-    async (tabId: string, executionId: string, nextToken?: string) => {
-      updateResultTab(tabId, { resultsLoading: true, resultsError: undefined });
+    async (queryTabId: string, tabId: string, executionId: string, nextToken?: string) => {
+      patchResultTab(queryTabId, tabId, { resultsLoading: true, resultsError: undefined });
       try {
         const page = await athenaService.getQueryResults({
           accountId,
@@ -351,42 +453,40 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
           nextToken,
           maxResults: 1000
         });
-        setResultTabs((tabs) =>
-          tabs.map((tab) => {
-            if (tab.id !== tabId) return tab;
-            return {
-              ...tab,
-              results: mergeResultPages(tab.results, page, Boolean(nextToken)),
-              resultsLoading: false
-            };
-          })
-        );
+        patchResultTab(queryTabId, tabId, (tab) => ({
+          results: mergeResultPages(tab.results, page, Boolean(nextToken)),
+          resultsLoading: false
+        }));
       } catch (error) {
-        updateResultTab(tabId, { resultsLoading: false, resultsError: error });
+        patchResultTab(queryTabId, tabId, { resultsLoading: false, resultsError: error });
       }
     },
-    [accountId, updateResultTab]
+    [accountId, patchResultTab]
   );
 
+  // Both of these depend on the *ids* of what is on screen and not on the tabs
+  // themselves: a patch produces new tab objects, and an effect that watched
+  // them would re-run on its own write.
   useEffect(() => {
-    if (!activeResultTabId || !execution.data) return;
-    updateResultTab(activeResultTabId, { execution: execution.data });
-  }, [activeResultTabId, execution.data, updateResultTab]);
+    if (!activeQueryTab?.id || !activeResultTab?.id || !execution.data) return;
+    patchResultTab(activeQueryTab.id, activeResultTab.id, { execution: execution.data });
+  }, [activeQueryTab?.id, activeResultTab?.id, execution.data, patchResultTab]);
 
   useEffect(() => {
-    if (!activeResultTabId || execution.data?.state !== "SUCCEEDED") return;
-    const executionId = activeResultTab?.queryExecutionId;
+    if (!activeQueryTab?.id || !activeResultTab?.id || execution.data?.state !== "SUCCEEDED") return;
+    const executionId = activeResultTab.queryExecutionId;
     if (!executionId) return;
     if (loadedResultsRef.current.has(executionId)) return;
     loadedResultsRef.current.add(executionId);
-    void loadResultsForTab(activeResultTabId, executionId);
-    if (isCatalogMutatingSql(activeResultTab?.sqlSnapshot ?? "")) {
+    void loadResultsForTab(activeQueryTab.id, activeResultTab.id, executionId);
+    if (isCatalogMutatingSql(activeResultTab.sqlSnapshot)) {
       handleRefreshCatalog();
     }
   }, [
+    activeQueryTab?.id,
+    activeResultTab?.id,
     activeResultTab?.queryExecutionId,
     activeResultTab?.sqlSnapshot,
-    activeResultTabId,
     execution.data?.state,
     loadResultsForTab,
     handleRefreshCatalog
@@ -403,10 +503,12 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     setMetadataKind("table");
     setMetadataEditMode(false);
     athenaPrefs.setLastDatabase(databaseName);
-    if (topTab === "query") {
-      setSql(buildSelectSql(databaseName, tableName));
-    } else {
-      setTopTab("metadata");
+    // Clicking a table means "write me a query for this", so it lands in the
+    // editor it was clicked from — unless the metadata pane is the tab in
+    // front, where there is no editor on screen to write into and the click
+    // only re-points the pane.
+    if (!metadataTabOpen) {
+      setEditorSql(buildSelectSql(databaseName, tableName));
     }
   };
 
@@ -422,7 +524,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     setSelectedTable(undefined);
     setMetadataKind("database");
     setMetadataEditMode(false);
-    setTopTab("metadata");
+    setMetadataTabOpen(true);
     athenaPrefs.setLastDatabase(databaseName);
   };
 
@@ -432,7 +534,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     setSelectedTable(tableName);
     setMetadataKind("table");
     setMetadataEditMode(false);
-    setTopTab("metadata");
+    setMetadataTabOpen(true);
     athenaPrefs.setLastDatabase(databaseName);
   };
 
@@ -442,7 +544,86 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     setSelectedTable(undefined);
   };
 
-  const executeQueryOnTab = async (tabId: string, sqlToRun: string) => {
+  /** The id the strip highlights, and the one the close/cycle chords act on. */
+  const activeTabId = metadataTabOpen ? METADATA_TAB_ID : (activeQueryTab?.id ?? "");
+
+  const stripTabs: Array<AthenaQueryTab & QueryTabStripItem> = [
+    ...queryTabs.map((tab) => ({
+      ...tab,
+      // With a single editor open there is nothing to fall back to, so the last
+      // one is pinned. The strip's own "hide the × when there is one tab" rule
+      // cannot say this once a metadata tab is in the strip beside it: that is
+      // a second tab, but not a second editor.
+      closable: queryTabs.length > 1
+    })),
+    ...(metadataTabOpen
+      ? [metadataStripTab(t(metadataKind === "database" ? "Database Metadata" : "Table Metadata"))]
+      : [])
+  ];
+
+  /**
+   * The one way a tab gets selected. Every path goes through here — the strip,
+   * the `+`, ⌘N, the cycle chords — which is what makes the metadata tab's rule
+   * hold: it is on screen because a table or a database was just asked about,
+   * and moving to any other tab is moving away from that.
+   */
+  const selectTab = (tabId: string) => {
+    if (tabId === METADATA_TAB_ID) {
+      setMetadataTabOpen(true);
+      return;
+    }
+    setMetadataTabOpen(false);
+    setActiveQueryTabId(tabId);
+  };
+
+  const openQueryTab = () => {
+    if (queryTabs.length >= MAX_QUERY_TABS) {
+      toast.error(
+        t("Close a query tab first — {used} of {max} are open.", {
+          used: queryTabs.length,
+          max: MAX_QUERY_TABS
+        })
+      );
+      return;
+    }
+    const fresh = blankQueryTab(nextQueryTitle(queryTabs));
+    setMetadataTabOpen(false);
+    setQueryTabs((tabs) => [...tabs, fresh]);
+    setActiveQueryTabId(fresh.id);
+  };
+
+  const closeQueryTab = (tabId: string) => {
+    if (tabId === METADATA_TAB_ID) {
+      setMetadataTabOpen(false);
+      return;
+    }
+    if (queryTabs.length <= 1) return;
+    const kept = queryTabs.filter((tab) => tab.id !== tabId);
+    setQueryTabs(kept);
+    if (tabId === activeQueryTab?.id) {
+      setActiveQueryTabId(kept[kept.length - 1]?.id);
+    }
+  };
+
+  const cycleQueryTabs = (delta: 1 | -1) => {
+    const ids = [...queryTabs.map((tab) => tab.id), ...(metadataTabOpen ? [METADATA_TAB_ID] : [])];
+    if (ids.length < 2) return;
+    const current = metadataTabOpen ? METADATA_TAB_ID : activeQueryTab?.id;
+    const index = Math.max(ids.indexOf(current ?? ""), 0);
+    const next = ids[(index + delta + ids.length) % ids.length];
+    // Through `selectTab`, not around it: stepping off the metadata tab with
+    // the keyboard has to close it exactly as clicking away does.
+    if (next) selectTab(next);
+  };
+
+  /**
+   * Start a statement and put it in one of an editor's result tabs: the tab
+   * already in front for a plain run, a fresh one for "run in new tab". The
+   * editor is named rather than assumed, because by the time the server answers
+   * the user may be looking at a different one — and the result belongs to the
+   * editor the statement came from, not to whatever is on screen.
+   */
+  const runInEditor = async (queryTabId: string, sqlToRun: string, mode: "active" | "new-tab") => {
     if (!accountId) return;
     if (selectedWorkgroup?.sparkEnabled) {
       toast.error(
@@ -456,15 +637,25 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
       return;
     }
 
-    updateResultTab(tabId, {
+    const editor = queryTabs.find((tab) => tab.id === queryTabId);
+    if (!editor) return;
+
+    // A rerun writes over the tab in front of that editor. Keeping its name is
+    // deliberate: the name was the table the tab was opened for, and a rerun of
+    // the same query should not rename it — nor should an edited one quietly
+    // relearn it while the user watches.
+    const reuse =
+      mode === "new-tab"
+        ? undefined
+        : editor.resultTabs.find((tab) => tab.id === editor.activeResultTabId);
+    const resultTab: QueryResultTab = reuse ?? {
+      ...createQueryResultTab(editor.nextResultIndex),
+      title: buildResultTabTitle(sqlToRun, editor.nextResultIndex)
+    };
+
+    putResultTab(queryTabId, {
+      ...resultTab,
       sqlSnapshot: sqlToRun,
-      title: buildResultTabTitle(
-        sqlToRun,
-        Math.max(
-          resultTabs.findIndex((tab) => tab.id === tabId) + 1,
-          1
-        )
-      ),
       results: undefined,
       resultsError: undefined,
       resultsLoading: false,
@@ -479,7 +670,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         outputLocation: queryOutputLocation,
         database: selectedDatabase
       });
-      updateResultTab(tabId, {
+      patchResultTab(queryTabId, resultTab.id, {
         queryExecutionId: started.queryExecutionId,
         execution: started
       });
@@ -495,30 +686,26 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   };
 
   const beginQueryRun = (sqlToRun: string, mode: "active" | "new-tab") => {
+    if (!activeQueryTab) return;
     if (!assertSqlRunnable(sqlToRun)) return;
+    const queryTabId = activeQueryTab.id;
     if (!skipCreateLocationReminder && createStatementMissingLocation(sqlToRun)) {
-      setPendingLocationRun({ sql: sqlToRun, mode });
+      // The reminder outlives the click that raised it, so the editor it was
+      // raised from travels with it.
+      setPendingLocationRun({ sql: sqlToRun, mode, queryTabId });
       setLocationReminderDontAsk(false);
       setLocationReminderOpen(true);
       return;
     }
-    if (mode === "new-tab") {
-      const newTab = createQueryResultTab(resultTabs.length + 1);
-      setResultTabs((tabs) => [...tabs, newTab]);
-      setActiveResultTabId(newTab.id);
-      void executeQueryOnTab(newTab.id, sqlToRun);
-      return;
-    }
-    if (!activeResultTabId) return;
-    void executeQueryOnTab(activeResultTabId, sqlToRun);
+    void runInEditor(queryTabId, sqlToRun, mode);
   };
 
   const handleRunQuery = (sqlOverride?: string) => {
-    beginQueryRun(sqlOverride ?? sql, "active");
+    beginQueryRun(sqlOverride ?? activeQueryTab?.sql ?? "", "active");
   };
 
   const handleRunQueryInNewTab = (sqlOverride?: string) => {
-    beginQueryRun(sqlOverride ?? sql, "new-tab");
+    beginQueryRun(sqlOverride ?? activeQueryTab?.sql ?? "", "new-tab");
   };
 
   const confirmLocationReminder = () => {
@@ -529,15 +716,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     setLocationReminderOpen(false);
     setPendingLocationRun(null);
     if (!pending) return;
-    if (pending.mode === "new-tab") {
-      const newTab = createQueryResultTab(resultTabs.length + 1);
-      setResultTabs((tabs) => [...tabs, newTab]);
-      setActiveResultTabId(newTab.id);
-      void executeQueryOnTab(newTab.id, pending.sql);
-      return;
-    }
-    if (!activeResultTabId) return;
-    void executeQueryOnTab(activeResultTabId, pending.sql);
+    void runInEditor(pending.queryTabId, pending.sql, pending.mode);
   };
 
   const handleStopQuery = async () => {
@@ -551,8 +730,10 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     }
   };
 
-  const handleExport = async (tabId: string) => {
-    const tab = resultTabs.find((entry) => entry.id === tabId);
+  const handleExport = async (queryTabId: string, tabId: string) => {
+    const tab = queryTabs
+      .find((editor) => editor.id === queryTabId)
+      ?.resultTabs.find((entry) => entry.id === tabId);
     if (!tab?.queryExecutionId) return;
     try {
       const savedPath = await exportCsv.mutateAsync({
@@ -567,26 +748,39 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     }
   };
 
-  const closeResultTab = (tabId: string) => {
-    if (resultTabs.length <= 1) {
-      const fresh = createQueryResultTab(1);
-      setResultTabs([fresh]);
-      setActiveResultTabId(fresh.id);
-      return;
-    }
-    const nextTabs = resultTabs.filter((tab) => tab.id !== tabId);
-    setResultTabs(nextTabs);
-    if (activeResultTabId === tabId) {
-      setActiveResultTabId(nextTabs[0]?.id ?? "");
-    }
+  /**
+   * An editor's last result tab is not closable — the strip hides its × then,
+   * too. It used to close into a fresh blank tab instead, which meant the ×
+   * did two different things and that the run it was pressed on could still be
+   * on screen afterwards, unnamed and empty.
+   */
+  const closeResultTab = (queryTabId: string, tabId: string) => {
+    setQueryTabs((tabs) =>
+      tabs.map((editor) => {
+        if (editor.id !== queryTabId || editor.resultTabs.length <= 1) return editor;
+        const kept = editor.resultTabs.filter((tab) => tab.id !== tabId);
+        return {
+          ...editor,
+          resultTabs: kept,
+          activeResultTabId:
+            editor.activeResultTabId === tabId ? kept[0]?.id : editor.activeResultTabId
+        };
+      })
+    );
   };
 
-  const cycleResultTab = (delta: number) => {
-    if (resultTabs.length <= 1) return;
-    const index = resultTabs.findIndex((tab) => tab.id === activeResultTabId);
-    if (index < 0) return;
-    const nextIndex = (index + delta + resultTabs.length) % resultTabs.length;
-    setActiveResultTabId(resultTabs[nextIndex].id);
+  const cycleResultTab = (queryTabId: string, delta: number) => {
+    setQueryTabs((tabs) =>
+      tabs.map((editor) => {
+        if (editor.id !== queryTabId || editor.resultTabs.length <= 1) return editor;
+        const index = editor.resultTabs.findIndex((tab) => tab.id === editor.activeResultTabId);
+        const next =
+          editor.resultTabs[
+            (Math.max(index, 0) + delta + editor.resultTabs.length) % editor.resultTabs.length
+          ];
+        return next ? { ...editor, activeResultTabId: next.id } : editor;
+      })
+    );
   };
 
   const handleSaveMetadata = async (table: NonNullable<typeof tableDetail.data>) => {
@@ -610,44 +804,15 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   };
 
   const handleDropTable = async () => {
-    if (!selectedDatabase || !selectedTable) return;
+    if (!selectedDatabase || !selectedTable || !activeQueryTab) return;
     const dropSql = buildDropTableSql(selectedDatabase, selectedTable);
-    setSql(dropSql);
+    const queryTabId = activeQueryTab.id;
     setDropDialogOpen(false);
-    setTopTab("query");
-    try {
-      const started = await startQuery.mutateAsync({
-        sql: dropSql,
-        workgroup,
-        outputLocation: queryOutputLocation,
-        database: selectedDatabase
-      });
-      updateResultTab(activeResultTabId, {
-        queryExecutionId: started.queryExecutionId,
-        sqlSnapshot: dropSql,
-        title: buildResultTabTitle(dropSql),
-        execution: started,
-        results: undefined,
-        resultsError: undefined
-      });
-      if (accountId) {
-        setHistory(addSqlHistory(accountId, dropSql));
-      }
-      setSelectedTable(undefined);
-      toast.success(t("Drop table query started."));
-      handleRefreshCatalog();
-    } catch (error) {
-      toast.error(formatAppError(error, "Failed to drop table."));
-    }
-  };
-
-  const loadFavorite = (entry: SqlFavoriteEntry) => {
-    setSql(entry.sql);
-    setTopTab("query");
-  };
-  const loadHistoryEntry = (entry: SqlHistoryEntry) => {
-    setSql(entry.sql);
-    setTopTab("query");
+    setMetadataTabOpen(false);
+    patchQueryTab(queryTabId, { sql: dropSql });
+    setSelectedTable(undefined);
+    handleRefreshCatalog();
+    await runInEditor(queryTabId, dropSql, "active");
   };
 
   const beginCatalogPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -710,15 +875,17 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
 
       if (!mod) return;
 
+      if (!activeQueryTab?.id) return;
+
       if (event.altKey && event.key === "ArrowRight") {
         event.preventDefault();
-        cycleResultTab(1);
+        cycleResultTab(activeQueryTab.id, 1);
         return;
       }
 
       if (event.altKey && event.key === "ArrowLeft") {
         event.preventDefault();
-        cycleResultTab(-1);
+        cycleResultTab(activeQueryTab.id, -1);
       }
     };
 
@@ -788,153 +955,143 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         )}
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <Tabs
-            value={topTab}
-            onValueChange={(value) => setTopTab(value as TopTab)}
-            className="flex min-h-0 flex-1 flex-col gap-3"
-          >
-            <div className="flex shrink-0 items-center justify-between gap-2">
-              <TabsList className="self-start">
-                <TabsTrigger value="query">{t("Query")}</TabsTrigger>
-                <TabsTrigger value="metadata">
-                  {t(metadataKind === "database" ? "Database Metadata" : "Table Metadata")}
-                </TabsTrigger>
-              </TabsList>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <AthenaQuerySettingsButton
-                      setupRequired={outputPathRequired}
-                      onClick={() => openQuerySettings()}
+          {activeQueryTab ? (
+            <QueryWorkspaceColumn
+              active={active}
+              tabs={stripTabs}
+              activeTabId={activeTabId}
+              onSelectTab={selectTab}
+              onCloseTab={closeQueryTab}
+              onNewTab={openQueryTab}
+              newTabShortcut={NEW_QUERY_TAB_SHORTCUT}
+              onCycleTabs={cycleQueryTabs}
+              onCloseActiveTab={() => closeQueryTab(activeTabId)}
+              /*
+               * No toolbar over the metadata pane: it holds no SQL, so every
+               * button on that row would be pointed at an editor that is not
+               * on screen.
+               */
+              header={(tab) =>
+                tab.id === METADATA_TAB_ID ? null : (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <SqlQueryToolbar
+                      history={history}
+                      favoriteSqlSet={favoriteSqlSet}
+                      favorites={favorites}
+                      onSelectSql={setEditorSql}
+                      onFavorite={beginFavoriteFromHistory}
+                      onRemoveFavorite={(favoriteId) => {
+                        if (accountId) setFavorites(removeSqlFavorite(accountId, favoriteId));
+                      }}
+                      running={running}
+                      runPending={startQuery.isPending}
+                      onStop={() => void handleStopQuery()}
+                      onRunNewTab={() => handleRunQueryInNewTab()}
+                      onRun={() => handleRunQuery()}
+                      runNewTabHint={RUN_NEW_TAB_SHORTCUT}
+                      runHint={RUN_SHORTCUT}
                     />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {outputPathRequired
-                    ? `${t("Query settings")} · ${t("S3 path required")}`
-                    : t("Query settings")}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-
-            <TabsContent value="query" className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-              <div className="flex shrink-0 items-center gap-1">
-                <SqlTemplatesButton onSelect={setSql} />
-                <HistoryMenu
-                  history={history}
-                  favoriteSqlSet={favoriteSqlSet}
-                  onSelect={loadHistoryEntry}
-                  onFavorite={beginFavoriteFromHistory}
-                />
-                <FavoritesMenu
-                  favorites={favorites}
-                  onSelect={loadFavorite}
-                  onRemove={(favoriteId) => accountId && setFavorites(removeSqlFavorite(accountId, favoriteId))}
-                />
-
-                <div className="ml-auto flex items-center gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="size-7"
-                        disabled={!running}
-                        aria-label={t("Stop query")}
-                        onClick={handleStopQuery}
-                      >
-                        <Square className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("Stop query")}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="size-7"
-                        disabled={startQuery.isPending || running}
-                        aria-label={t("Run in new tab")}
-                        onClick={() => handleRunQueryInNewTab()}
-                      >
-                        <Plus className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("Run in new tab")} · {RUN_NEW_TAB_SHORTCUT}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        size="icon"
-                        className="size-7"
-                        disabled={startQuery.isPending || running}
-                        aria-label={t("Run query")}
-                        onClick={() => handleRunQuery()}
-                      >
-                        <Play className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{t("Run query")} · {RUN_SHORTCUT}</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-
-                <AthenaSqlEditor
-                  value={sql}
-                  onChange={setSql}
-                  onRun={handleRunQuery}
-                  onRunNewTab={handleRunQueryInNewTab}
-                  selectedDatabase={selectedDatabase}
-                  catalogContext={sqlCatalogContext}
-                  executionError={sqlExecutionError}
-                />
-
-              <div className="min-h-0 flex-1 overflow-hidden">
-                <QueryResultTabsPanel
-                  tabs={resultTabs}
-                  activeTabId={activeResultTabId}
-                  onSelectTab={setActiveResultTabId}
-                  onCloseTab={closeResultTab}
-                  onLoadMore={(tabId) => {
-                    const tab = resultTabs.find((entry) => entry.id === tabId);
-                    if (tab?.queryExecutionId) {
-                      void loadResultsForTab(tabId, tab.queryExecutionId, tab.results?.nextToken);
+                    <div className="ml-auto">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span>
+                            <AthenaQuerySettingsButton
+                              setupRequired={outputPathRequired}
+                              onClick={() => openQuerySettings()}
+                            />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {outputPathRequired
+                            ? `${t("Query settings")} · ${t("S3 path required")}`
+                            : t("Query settings")}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                )
+              }
+              editor={(tab) =>
+                tab.id === METADATA_TAB_ID ? (
+                  <div className="h-full min-h-0 overflow-auto rounded-lg border p-3">
+                    {metadataKind === "database" ? (
+                      <DatabaseMetadataPanel
+                        database={databaseDetail.data}
+                        loading={databaseDetail.isLoading}
+                        error={databaseDetail.error}
+                        editMode={metadataEditMode}
+                        onEditModeChange={setMetadataEditMode}
+                        onSave={handleSaveDatabaseMetadata}
+                        saving={updateDatabase.isPending}
+                      />
+                    ) : (
+                      <TableMetadataPanel
+                        table={tableDetail.data}
+                        loading={tableDetail.isLoading}
+                        error={tableDetail.error}
+                        editMode={metadataEditMode}
+                        onEditModeChange={setMetadataEditMode}
+                        onSave={handleSaveMetadata}
+                        saving={updateTable.isPending}
+                      />
+                    )}
+                  </div>
+                ) : (
+                  /* Keyed by editor: each tab is its own CodeMirror document, so
+                     undo in one never reaches into another's text. */
+                  <AthenaSqlEditor
+                    key={tab.id}
+                    className="h-full"
+                    value={tab.sql}
+                    onChange={(next) => patchQueryTab(tab.id, { sql: next })}
+                    onRun={handleRunQuery}
+                    onRunNewTab={handleRunQueryInNewTab}
+                    selectedDatabase={selectedDatabase}
+                    catalogContext={sqlCatalogContext}
+                    executionError={sqlExecutionError}
+                  />
+                )
+              }
+              /* Null for the metadata tab: it has no results, so it takes the
+                 whole column — no result strip and no splitter. */
+              result={(tab) =>
+                tab.id === METADATA_TAB_ID
+                  ? null
+                  : {
+                      onCycle: (delta) => cycleResultTab(tab.id, delta),
+                      onCloseActive: () => {
+                        if (tab.resultTabs.length <= 1) return;
+                        if (!tab.activeResultTabId) return;
+                        closeResultTab(tab.id, tab.activeResultTabId);
+                      },
+                      node: (
+                        <QueryResultTabsPanel
+                          tabs={tab.resultTabs}
+                          activeTabId={tab.activeResultTabId ?? ""}
+                          onSelectTab={(resultTabId) =>
+                            patchQueryTab(tab.id, { activeResultTabId: resultTabId })
+                          }
+                          onCloseTab={(resultTabId) => closeResultTab(tab.id, resultTabId)}
+                          onLoadMore={(resultTabId) => {
+                            const entry = tab.resultTabs.find((item) => item.id === resultTabId);
+                            if (entry?.queryExecutionId) {
+                              void loadResultsForTab(
+                                tab.id,
+                                resultTabId,
+                                entry.queryExecutionId,
+                                entry.results?.nextToken
+                              );
+                            }
+                          }}
+                          onExport={(resultTabId) => void handleExport(tab.id, resultTabId)}
+                          exporting={exportCsv.isPending}
+                          emptyLabel={t("Run a query to see results here.")}
+                        />
+                      )
                     }
-                  }}
-                  onExport={(tabId) => void handleExport(tabId)}
-                  exporting={exportCsv.isPending}
-                />
-              </div>
-            </TabsContent>
-
-            <TabsContent value="metadata" className="mt-0 min-h-0 flex-1 overflow-auto rounded-lg border p-3">
-              {metadataKind === "database" ? (
-                <DatabaseMetadataPanel
-                  database={databaseDetail.data}
-                  loading={databaseDetail.isLoading}
-                  error={databaseDetail.error}
-                  editMode={metadataEditMode}
-                  onEditModeChange={setMetadataEditMode}
-                  onSave={handleSaveDatabaseMetadata}
-                  saving={updateDatabase.isPending}
-                />
-              ) : (
-                <TableMetadataPanel
-                  table={tableDetail.data}
-                  loading={tableDetail.isLoading}
-                  error={tableDetail.error}
-                  editMode={metadataEditMode}
-                  onEditModeChange={setMetadataEditMode}
-                  onSave={handleSaveMetadata}
-                  saving={updateTable.isPending}
-                />
-              )}
-            </TabsContent>
-          </Tabs>
+              }
+            />
+          ) : null}
         </section>
       </div>
 

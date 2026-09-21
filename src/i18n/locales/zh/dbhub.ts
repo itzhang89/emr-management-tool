@@ -373,7 +373,6 @@ const dbhub: TranslationDictionary = {
   "partition key": "分区键",
 
   // --- QueryResultsPanel ---------------------------------------------------
-  "Run a query to see results.": "运行查询以查看结果。",
   "Status:": "状态：",
   "Scanned:": "已扫描：",
   "Engine time:": "引擎耗时：",

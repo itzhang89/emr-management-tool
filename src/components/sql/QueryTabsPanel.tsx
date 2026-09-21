@@ -11,6 +11,11 @@ import { cn } from "@/lib/utils";
  * the other, and a result tab and an editor tab that looked different would
  * read as different kinds of thing when they are the same gesture.
  *
+ * It lives beside `ResultTabsPanel` rather than inside either workspace because
+ * both of them keep editors this way: the JDBC connections and the Glue
+ * catalog. Which is also why nothing here knows what an editor *is* — the tabs
+ * arrive as a title and a tooltip, and the body arrives as `children`.
+ *
  * The `+` is part of the strip rather than the toolbar because that is where
  * the tabs are — a new editor is a new tab, and nothing else on the page is.
  */
@@ -20,6 +25,30 @@ export interface QueryTabStripItem {
   title: string;
   /** Revealed on hover — enough of the statement to tell two apart. */
   sql?: string;
+  /**
+   * False pins the tab open. The strip already hides the X when it holds a
+   * single tab, but a workspace can also mix in tabs of another kind — Glue's
+   * metadata pane sits in the same strip — and then "the last editor" is not
+   * "the last tab", which only the workspace knows.
+   */
+  closable?: boolean;
+}
+
+/**
+ * What the next editor tab is called. Numbered from the highest one in use
+ * rather than from the count, so closing "Query 2" does not hand its name to
+ * the next tab while a "Query 3" is still open beside it.
+ *
+ * It is here rather than in a workspace because the name is the strip's to
+ * give: both workspaces open editors into the same strip, and two of them
+ * numbering tabs differently would show.
+ */
+export function nextQueryTitle(tabs: ReadonlyArray<{ title: string }>): string {
+  const used = tabs
+    .map((tab) => /^Query (\d+)$/.exec(tab.title)?.[1])
+    .filter((index): index is string => index !== undefined)
+    .map(Number);
+  return `Query ${(used.length ? Math.max(...used) : 0) + 1}`;
 }
 
 export function QueryTabsPanel<T extends QueryTabStripItem>({
@@ -28,7 +57,6 @@ export function QueryTabsPanel<T extends QueryTabStripItem>({
   onSelectTab,
   onCloseTab,
   onNewTab,
-  canClose = true,
   newTabShortcut,
   children
 }: {
@@ -37,8 +65,6 @@ export function QueryTabsPanel<T extends QueryTabStripItem>({
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onNewTab: () => void;
-  /** False when closing the last one would leave nowhere to type. */
-  canClose?: boolean;
   /** Named in the `+` tooltip, so the button teaches the key that does it. */
   newTabShortcut?: string;
   /** The active tab's body. The strip owns the lookup, so callers needn't. */
@@ -73,7 +99,7 @@ export function QueryTabsPanel<T extends QueryTabStripItem>({
               >
                 {tab.title}
               </button>
-              {canClose && tabs.length > 1 ? (
+              {tab.closable !== false && tabs.length > 1 ? (
                 <Button
                   type="button"
                   variant="ghost"
