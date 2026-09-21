@@ -27,6 +27,7 @@ import type { LogTabIntent } from "@/pages/JobHistoryPage";
 import { DbHubSubNav } from "@/components/layout/DbHubSubNav";
 import { PageLoader } from "@/components/layout/PageLoader";
 import { appUpdater } from "@/services/appUpdater";
+import { getReleaseInfo } from "@/services/releaseInfo";
 import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
 import { getAdjacentPageId, getNavigationIndex, getPageIdByNavigationIndex } from "@/services/pageNavigation";
 
@@ -50,6 +51,7 @@ const AiAssistantPage = lazy(() =>
 
 export function AppShell() {
   const t = useT();
+  const releaseInfo = getReleaseInfo();
   const [activePage, setActivePage] = useState<PageId>("submit");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
@@ -395,6 +397,19 @@ export function AppShell() {
               t
             })
           )}
+          {/* Which build is on screen matters most when it is not a stable one,
+              so the channel is named whenever it differs. The title carries it
+              either way. */}
+          {!sidebarCollapsed ? (
+            <p
+              className="px-3 pt-2 text-[11px] leading-4 text-muted-foreground"
+              title={`${t("Version:")} ${releaseInfo.version} · ${t(releaseInfo.channelLabel)}`}
+              data-testid="sidebar-version"
+            >
+              {t("Version:")} {releaseInfo.version}
+              {releaseInfo.channelLabel === "Stable" ? null : ` · ${t(releaseInfo.channelLabel)}`}
+            </p>
+          ) : null}
         </div>
       </aside>
 

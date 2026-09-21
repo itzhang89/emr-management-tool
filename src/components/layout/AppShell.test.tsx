@@ -466,6 +466,15 @@ describe("AppShell", () => {
     expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
   });
 
+  it("shows the running version beside the pinned Settings entry", () => {
+    renderAppShell(new QueryClient());
+
+    // The sidebar reads the build's own version, which the About dialog also
+    // reports — showing it here means a tester can tell which build they are on
+    // without leaving the page they are on.
+    expect(screen.getByTestId("sidebar-version")).toHaveTextContent(/Version:/);
+  });
+
   it("cycles pages with bracket shortcuts", async () => {
     const queryClient = new QueryClient();
     renderAppShell(queryClient);

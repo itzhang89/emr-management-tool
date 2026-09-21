@@ -48,7 +48,10 @@ const navigation: TranslationDictionary = {
   Active: "活跃",
   Use: "使用",
   "{name} is now active.": "{name} 已设为活跃账户。",
-  "Update installed. Restart the app to use the new version.": "更新已安装，重启应用即可使用新版本。"
+  "Update installed. Restart the app to use the new version.": "更新已安装，重启应用即可使用新版本。",
+  // Sidebar version line. "Stable", "Development" and "Version:" already live in
+  // the help shard (About dialog), so only "Beta" is added here.
+  Beta: "Beta 版"
 };
 
 export default navigation;
