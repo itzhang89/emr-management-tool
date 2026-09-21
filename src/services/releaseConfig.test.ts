@@ -133,6 +133,9 @@ describe("release configuration", () => {
     const betaPackages = workflowJobBlock(workflow, "beta-packages");
 
     expect(prepareRelease).toContain("node scripts/beta-version.mjs");
+    // The script lives in the repo, and this job previously only used `gh`, so
+    // without a checkout it fails with MODULE_NOT_FOUND.
+    expect(prepareRelease).toContain("uses: actions/checkout@v5");
     expect(prepareRelease).toContain("BETA_TAG:");
     expect(prepareRelease).toContain("--prerelease");
     // A beta must be published, never drafted: the updater fetches its assets

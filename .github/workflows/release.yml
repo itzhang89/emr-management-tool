@@ -45,6 +45,10 @@ jobs:
       beta_matrix:     ${{ steps.rel.outputs.beta_matrix }}
       stable_matrix:   ${{ steps.rel.outputs.stable_matrix }}
     steps:
+      # Needed by the beta version script below; everything else in this job
+      # talks to the API through `gh`.
+      - uses: actions/checkout@v5
+
       # Betas are numbered after the newest *stable* release, so the version is
       # derived rather than typed: v0.2.1 → v0.2.2-beta1, beta2, … → v0.2.2.
       - name: Derive beta version
