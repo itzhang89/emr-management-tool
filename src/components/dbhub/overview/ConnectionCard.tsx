@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CircleCheck, CircleX, LoaderCircle, Pencil, Plug, Trash2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -92,9 +92,31 @@ export function ConnectionCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Badge variant="outline" className="text-xs">
-            {t(connection.enabledForAi ? "AI read-only" : "Manual")}
-          </Badge>
+          {/*
+            "Read-only" is a promise this app can only partly keep, so the badge
+            says how it is kept: statements are classified, not sandboxed. The
+            tooltip is the one place that caveat has room, and it ends on the
+            thing that actually holds — the account's own permissions.
+          */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(badgeVariants({ variant: "outline" }), "cursor-help")}
+                tabIndex={0}
+              >
+                {t(connection.enabledForAi ? "AI read-only" : "Manual")}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              {connection.enabledForAi
+                ? t(
+                    "Read-only by rule, not by guarantee: each statement is classified as a read or refused, and the session opens in read-only mode. The check judges a statement's shape, so a statement that slips through still runs — grant the database account read-only permissions for protection that holds."
+                  )
+                : t(
+                    "No read-only SQL tool is registered for the AI on this connection: only you can run queries on it."
+                  )}
+            </TooltipContent>
+          </Tooltip>
           {/*
             Just "SM" — the secret's name is unbounded user text, and spelling
             it out here pushes this row past the card's width. The full name

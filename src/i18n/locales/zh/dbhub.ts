@@ -35,6 +35,12 @@ const dbhub: TranslationDictionary = {
   "disabled for AI": "已为 AI 禁用",
   "{name}: {items}.": "{name}：{items}。",
   "AI read-only": "AI 只读",
+  // The badge reads as an absolute promise, and this app can only partly keep
+  // it — so the hover text says how it is kept, and what to do instead.
+  "Read-only by rule, not by guarantee: each statement is classified as a read or refused, and the session opens in read-only mode. The check judges a statement's shape, so a statement that slips through still runs — grant the database account read-only permissions for protection that holds.":
+    "“只读”是按规则判断，而非绝对保证：每条语句会被归类为读操作或被拒绝，会话也以只读模式打开。但判断依据是语句的形态，因此仍可能有语句绕过——真正可靠的做法是给数据库账号本身只授予只读权限。",
+  "No read-only SQL tool is registered for the AI on this connection: only you can run queries on it.":
+    "此连接未向 AI 注册只读 SQL 工具：只有你可以对它执行查询。",
   Manual: "手动",
   "Delete {name}": "删除 {name}",
   "Delete connection": "删除连接",
