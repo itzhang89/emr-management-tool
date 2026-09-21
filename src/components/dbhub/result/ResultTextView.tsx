@@ -14,7 +14,8 @@ import { toTsv, type Row } from "./resultGridModel";
  *
  * It shows the page as it arrived — sorting and grouping are the grid's, and
  * applying them here would make the text disagree with the row count in the
- * footer without saying so.
+ * footer without saying so. One record at a time is the record panel's, which
+ * opens *under* this rather than narrowing it, for the same reason.
  */
 export function ResultTextView({ columns, rows }: { columns: string[]; rows: Row[] }) {
   const t = useT();

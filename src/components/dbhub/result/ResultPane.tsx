@@ -1,31 +1,65 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import {
   MAX_FETCH_SIZE,
   type CachedResultTab,
+  type ColumnSort,
   type ResultView
 } from "@/services/dbWorkspaceCache";
 import type { DbQueryResult } from "@/types/domain";
 import { ResultBottomBar } from "./ResultBottomBar";
+import { ResultFunctionRail } from "./ResultFunctionRail";
 import { ResultGrid } from "./ResultGrid";
-import { ResultRecordView } from "./ResultRecordView";
+import { ResultRecordPanel } from "./ResultRecordPanel";
 import { ResultTextView } from "./ResultTextView";
 import { ResultViewRail } from "./ResultViewRail";
+import { sortRows, type IndexedRow, type Row } from "./resultGridModel";
+import { sourceName } from "./resultSource";
 
 /**
- * One result tab's body: the view rail, whichever of the three views is
- * showing, and the strip that acts on the result as a whole.
+ * One result tab's body: the format rail down the left edge, the data in the
+ * middle, the function rail down the right, and the strip that acts on the
+ * result as a whole underneath.
  *
- * The arrangement — which view, what is sorted, what is grouped, which row is
- * selected — is *tab state*, not component state, so it is handed back up
- * through `onPatch` and persisted with the tab. Coming back to a result should
- * land in the grid the user built, not a fresh one.
+ * The page is split across the middle by the record panel. Above the line: the
+ * rows — grid or text — with the object name over them and the function rail
+ * beside them. Below it, when Record is on: the selected row, transposed, with
+ * its own way of stepping to the next one. The format rail is the only thing
+ * that spans both halves, because it holds a switch for each of them — the two
+ * formats at the top, Record at the foot.
+ *
+ * Record is a second pane rather than a third format. DBeaver opens it this way
+ * and the reason is visible in the layout: a row is easier to read transposed
+ * for its long columns, but only while the row it came from is still on screen
+ * above it, in its place on the page. Narrowing the grid to one row would take
+ * that away, and would also take the page away from whoever wanted to compare
+ * the record against its neighbours. So the grid keeps drawing the whole page
+ * and the panel mirrors one row of it.
+ *
+ * The arrangement — which format, whether the record panel is open, what is
+ * sorted, which row is selected — is *tab state*, not component state, so it is
+ * handed back up through `onPatch` and persisted with the tab. Coming back to a
+ * result should land in the grid the user built, not a fresh one.
+ *
+ * The order the grid draws is worked out here rather than inside the grid, so
+ * that the numbers down its side and the record panel's own count come from one
+ * place: a row's place on the page is decided once, by this component, and both
+ * panes read it off the same pairing.
  *
  * Paging, counting and exporting are different in kind: each one re-runs or
  * reaches past the page, so they stay as explicit callbacks rather than
  * something this component could do to itself.
  */
+
+/**
+ * Shared empties. `meta.sort ?? []` would hand the memos a fresh array on every
+ * render and recompute the order each time, so the absent case gets one array
+ * for the life of the module.
+ */
+const NO_SORT: ColumnSort[] = [];
+const NO_ROWS: Row[] = [];
+
 export function ResultPane({
   meta,
   result,
@@ -66,6 +100,40 @@ export function ResultPane({
 }) {
   const t = useT();
 
+  const pageRows = result?.rows ?? NO_ROWS;
+  const rowCount = pageRows.length;
+  const sort = meta?.sort ?? NO_SORT;
+  const view: ResultView = meta?.view ?? "grid";
+  const single = meta?.singleRecord === true;
+  const recordIndex = Math.min(meta?.recordIndex ?? 0, Math.max(rowCount - 1, 0));
+
+  /** A row's place on the page, looked up rather than searched for each time. */
+  const pageIndexOf = useMemo(() => {
+    const places = new Map<Row, number>();
+    pageRows.forEach((row, index) => places.set(row, index));
+    return places;
+  }, [pageRows]);
+
+  const sorted = useMemo(() => sortRows(pageRows, sort), [pageRows, sort]);
+
+  // The page in draw order, each row still carrying the number it had before
+  // the sort — see `IndexedRow`. Sorting with nothing to sort by returns the
+  // page itself, so the pairing is only rebuilt when there is an order to
+  // apply.
+  const rows = useMemo<IndexedRow[]>(
+    () =>
+      sorted === pageRows
+        ? pageRows.map((row, index) => ({ row, index }))
+        : sorted.map((row) => ({ row, index: pageIndexOf.get(row) ?? 0 })),
+    [sorted, pageRows, pageIndexOf]
+  );
+
+  const source = useMemo(() => sourceName(meta?.sql ?? ""), [meta?.sql]);
+  // Record is a panel under the rows, so it needs rows to put under them. Its
+  // own switch stays visible either way — a control that vanishes reads as a
+  // layout change, not as "there is nothing to show".
+  const showRecord = single && rowCount > 0;
+
   if (!meta) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
@@ -80,74 +148,89 @@ export function ResultPane({
   if (!result) {
     const state = meta.runState;
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ResultHeader meta={meta} analyzeButton={analyzeButton} />
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
-          <p>
-            {state === "cancelled"
-              ? t("Stopped before it returned any rows.")
-              : state === "failed"
-                ? t("The run failed, so there are no rows to show.")
-                : t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7"
-            disabled={running}
-            onClick={onRefresh}
-          >
-            {t("Rerun to load fresh results")}
-          </Button>
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <SourceRow meta={meta} source={source} />
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-3 text-center text-xs text-muted-foreground">
+            <p>
+              {state === "cancelled"
+                ? t("Stopped before it returned any rows.")
+                : state === "failed"
+                  ? t("The run failed, so there are no rows to show.")
+                  : t("The result set exceeded the local cache budget, so only this tab's metadata was kept.")}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={running}
+              onClick={onRefresh}
+            >
+              {t("Rerun to load fresh results")}
+            </Button>
+          </div>
         </div>
+        {/* No columns are known yet, so the rail is the AI action alone. */}
+        <ResultFunctionRail analyzeButton={analyzeButton} />
       </div>
     );
   }
 
-  const view: ResultView = meta.view ?? "grid";
-  const rowCount = result.rows.length;
-  const recordIndex = Math.min(meta.recordIndex ?? 0, Math.max(rowCount - 1, 0));
   const lastOffset = lastPageOffset(meta, fetchSize);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <ResultHeader meta={meta} analyzeButton={analyzeButton} />
-
       <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* The one element that spans both panes: the formats belong to the
+            rows above the line, the Record switch to the panel below it. */}
         <ResultViewRail
           view={view}
-          recordDisabled={rowCount === 0}
+          single={single}
           onChange={(next) => onPatch({ view: next })}
+          onSingleChange={(next) => onPatch({ singleRecord: next })}
+          recordDisabled={rowCount === 0}
         />
 
-        {view === "grid" ? (
-          <ResultGrid
-            columns={result.columns}
-            rows={result.rows}
-            offset={offset}
-            sort={meta.sort ?? []}
-            onSortChange={(sort) => onPatch({ sort })}
-            groupBy={meta.groupBy ?? []}
-            onGroupByChange={(groupBy) => onPatch({ groupBy })}
-            // Folding is keyed by group path, and a different grouping has
-            // different paths — so changing what is grouped starts unfolded
-            // rather than inheriting folds that no longer mean anything.
-            collapsed={new Set(meta.collapsedGroups ?? [])}
-            onCollapsedChange={(collapsed) => onPatch({ collapsedGroups: [...collapsed] })}
-            selectedIndex={meta.recordIndex}
-            onSelectRow={(recordIndex) => onPatch({ recordIndex })}
-          />
-        ) : view === "text" ? (
-          <ResultTextView columns={result.columns} rows={result.rows} />
-        ) : (
-          <ResultRecordView
-            columns={result.columns}
-            rows={result.rows}
-            index={recordIndex}
-            onIndexChange={(recordIndex) => onPatch({ recordIndex })}
-          />
-        )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-[3] overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <SourceRow meta={meta} source={source} />
+
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {view === "text" ? (
+                  <ResultTextView columns={result.columns} rows={pageRows} />
+                ) : (
+                  <ResultGrid
+                    columns={result.columns}
+                    rows={rows}
+                    offset={offset}
+                    sort={sort}
+                    onSortChange={(sort) => onPatch({ sort })}
+                    // The grid marks the row the panel is showing, so the two
+                    // panes always agree about which record is on screen — and
+                    // marks nothing while the panel is shut, because then no
+                    // record is the selected one.
+                    selectedIndex={showRecord ? recordIndex : undefined}
+                    onSelectRow={(recordIndex) => onPatch({ recordIndex })}
+                  />
+                )}
+              </div>
+            </div>
+
+            <ResultFunctionRail analyzeButton={analyzeButton} />
+          </div>
+
+          {showRecord ? (
+            <ResultRecordPanel
+              columns={result.columns}
+              row={pageRows[recordIndex]}
+              index={recordIndex}
+              total={rowCount}
+              onIndexChange={(recordIndex) => onPatch({ recordIndex })}
+            />
+          ) : null}
+        </div>
       </div>
 
       <ResultBottomBar
@@ -174,6 +257,37 @@ export function ResultPane({
         counting={counting}
         onCount={onCount}
       />
+    </div>
+  );
+}
+
+/**
+ * The band above the data: what the statement reads from, and how the last run
+ * went.
+ *
+ * The tab strip already names the tab ("Result 2"), so a title here said the
+ * same thing twice. What a reader wants at the top of a set of rows is what the
+ * rows are *of* — and the name is cut from the left, because the tail of a long
+ * name is the part that tells it apart from its neighbours while the schema in
+ * front of it rarely does.
+ */
+function SourceRow({ meta, source }: { meta: CachedResultTab; source?: string }) {
+  const t = useT();
+  return (
+    <div className="flex h-6 shrink-0 items-center gap-2 border-b px-2 text-[10px] text-muted-foreground">
+      {meta.runState === "cancelled" ? <span className="shrink-0">{t("Cancelled")}</span> : null}
+      {meta.runState === "failed" ? (
+        <span className="truncate text-destructive">
+          Failed{meta.runError ? `: ${meta.runError}` : ""}
+        </span>
+      ) : null}
+      {source ? (
+        // `direction: rtl` is what puts the ellipsis on the left; the inner LTR
+        // span is what keeps the name itself reading forwards.
+        <span title={source} className="ml-auto min-w-0 truncate text-right [direction:rtl]">
+          <span dir="ltr">{source}</span>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -212,25 +326,4 @@ export function previousPageOffset(offset: number, fetchSize: number): number {
 /** The size the backend will really page by — it clamps to `MAX_PAGE_ROWS`. */
 function pageSize(fetchSize: number): number {
   return Math.min(Math.max(fetchSize, 1), MAX_FETCH_SIZE);
-}
-
-/** Title, run outcome, and the AI action — the tab's identity, not its data. */
-function ResultHeader({
-  meta,
-  analyzeButton
-}: {
-  meta: CachedResultTab;
-  analyzeButton?: ReactNode;
-}) {
-  const t = useT();
-  return (
-    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-2 py-1 text-[10px] text-muted-foreground">
-      <span className="truncate font-medium text-foreground">{meta.title}</span>
-      {meta.runState === "cancelled" ? <span>{t("Cancelled")}</span> : null}
-      {meta.runState === "failed" ? (
-        <span className="text-destructive">Failed{meta.runError ? `: ${meta.runError}` : ""}</span>
-      ) : null}
-      {analyzeButton ? <div className="ml-auto flex items-center gap-1">{analyzeButton}</div> : null}
-    </div>
-  );
 }

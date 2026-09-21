@@ -345,13 +345,14 @@ export function ConnectionQueryTab({
               durationMs: result.durationMs,
               result,
               // A rerun is a new result set: keep how the grid was arranged,
-              // because sort and grouping are the user's reading of the data,
-              // but drop the row count and the selected record — both describe
-              // rows that are no longer here.
+              // because the sort is the user's reading of the data, but drop
+              // the row count and the selected record — both describe rows that
+              // are no longer here. The record panel is arrangement, not a row:
+              // the new page keeps it open, it just starts again from the top
+              // of it.
               view: existing?.view,
+              singleRecord: existing?.singleRecord,
               sort: existing?.sort,
-              groupBy: existing?.groupBy,
-              collapsedGroups: existing?.collapsedGroups,
               runState: undefined,
               runError: undefined
             },

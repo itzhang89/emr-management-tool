@@ -36,8 +36,16 @@ export const MAX_FETCH_SIZE = 500;
 export const MAX_QUERY_TABS = 8;
 export const MAX_RESULT_TABS = 10;
 
-/** Which of the three ways the result pane is showing one result. */
-export type ResultView = "grid" | "text" | "record";
+/**
+ * The two formats a result can be read in.
+ *
+ * It used to be three, with `"record"` among them — a field-per-row form. But
+ * "one record at a time" was never a third format: it is one row of the page
+ * read the other way round, alongside the page rather than instead of it. So the
+ * format is a pair, and the record is `singleRecord`, which opens a panel under
+ * whichever of the two is showing.
+ */
+export type ResultView = "grid" | "text";
 
 /** One column's place in the sort order; the array's order is the priority. */
 export interface ColumnSort {
@@ -61,12 +69,10 @@ export interface CachedResultTab {
   // --- (grid view, no sort, no grouping), so an old cache stays readable.
 
   view?: ResultView;
+  /** Open the record panel under the rows, showing `recordIndex` transposed. */
+  singleRecord?: boolean;
   sort?: ColumnSort[];
-  /** Columns dragged into the group area, outermost first. */
-  groupBy?: string[];
-  /** Keys of the groups the user folded shut. */
-  collapsedGroups?: string[];
-  /** The row the record view is on, as an index into the loaded page. */
+  /** Which row the record panel is on, and the one the grid highlights. */
   recordIndex?: number;
 
   // --- Counting is explicit: a count re-runs the whole statement, so the
@@ -210,13 +216,36 @@ function fitResultTab(tab: CachedResultTab): CachedResultTab {
   return { ...tab, result: undefined };
 }
 
+/**
+ * Read a stored result tab the way the current pane means it.
+ *
+ * `view` once had `"record"` as one of its three values. A stored `"record"` was
+ * a grid read one row at a time, which is the pair `"grid"` + `singleRecord`
+ * means now — so it comes back as that, rather than falling through to the grid
+ * with the record panel shut and quietly losing what the user had opened.
+ */
+function normalizeResultTab(tab: CachedResultTab): CachedResultTab {
+  if ((tab.view as string | undefined) !== "record") return tab;
+  return { ...tab, view: "grid", singleRecord: true };
+}
+
+function normalizeState(state: DbWorkspaceState): DbWorkspaceState {
+  return {
+    ...state,
+    queryTabs: state.queryTabs.map((queryTab) => ({
+      ...queryTab,
+      resultTabs: (queryTab.resultTabs ?? []).map(normalizeResultTab)
+    }))
+  };
+}
+
 export function readDbWorkspace(accountId: string, connectionId: string): DbWorkspaceState {
   const stored = readJson<DbWorkspaceState | LegacyWorkspaceState>(
     storageKey(accountId, connectionId)
   );
   if (!stored) return { queryTabs: [] };
-  if (isLegacy(stored)) return migrateLegacy(stored);
-  return stored;
+  if (isLegacy(stored)) return normalizeState(migrateLegacy(stored));
+  return normalizeState(stored);
 }
 
 export function writeDbWorkspace(accountId: string, connectionId: string, state: DbWorkspaceState) {

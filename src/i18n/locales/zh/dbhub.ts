@@ -213,38 +213,31 @@ const dbhub: TranslationDictionary = {
   "Rerun to load fresh results": "重新运行以加载最新结果",
 
   // --- ResultPane / ResultViewRail -----------------------------------------
-  // The rail's three labels reach `t()` through a variable, so they are absent
-  // from the literal-key scanner and are listed here for the runtime lookup.
-  // ("Text" already lives in the AI shard; this sidebar and that one agree on it.)
+  // The rail's two format labels reach `t()` through a variable, so they are
+  // absent from the literal-key scanner and are listed here for the runtime
+  // lookup. ("Text" already lives in the AI shard; this rail and that shard
+  // agree on it word for word.)
   Grid: "网格",
   Record: "单条记录",
   "Stopped before it returned any rows.": "在返回任何行之前已停止。",
   "The run failed, so there are no rows to show.": "运行失败，因此没有可显示的行。",
 
+  // --- ResultRecordPanel ---------------------------------------------------
+  "Record {position} of {total}": "第 {position} 条记录，共 {total} 条",
+  "Previous record": "上一条记录",
+  "Next record": "下一条记录",
+  "Copy this record": "复制这条记录",
+
   // --- ResultGrid ----------------------------------------------------------
-  "Drag a column header here to group rows": "将列标题拖到此处即可按该列分组",
-  "Drop to group by this column": "松开即可按此列分组",
-  "Remove {column} from grouping": "将 {column} 移出分组",
-  "Drag to group · click the arrow to sort": "拖动可分组 · 点击箭头可排序",
   "Sort by {column}": "按 {column} 排序",
   "Column actions for {column}": "{column} 的列操作",
   "Sort ascending": "升序排列",
   "Sort descending": "降序排列",
   "Clear sort": "清除排序",
-  "Group by this column": "按此列分组",
-  "Remove from grouping": "移出分组",
-  "Expand all groups": "展开所有分组",
-  "Collapse all groups": "折叠所有分组",
 
   // --- ResultTextView ------------------------------------------------------
   "Tab-separated · {count} rows on this page": "制表符分隔 · 本页 {count} 行",
   "Copy as text": "复制为文本",
-
-  // --- ResultRecordView ----------------------------------------------------
-  "Select a row in the grid to read it here.": "在网格中选择一行即可在此查看。",
-  "Previous record": "上一条记录",
-  "Next record": "下一条记录",
-  "Record {position} of {total}": "第 {position} 条记录，共 {total} 条",
 
   // --- ResultBottomBar -----------------------------------------------------
   "First page": "第一页",

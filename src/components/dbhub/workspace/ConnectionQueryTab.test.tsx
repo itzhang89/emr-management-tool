@@ -513,46 +513,85 @@ describe("ConnectionQueryTab", () => {
     expect(saveTextFile).toHaveBeenCalledWith("Result 1.csv", "id\n0\n1");
   });
 
-  it("switches the result between the grid, the text dump and one record", async () => {
+  it("opens the record panel under the rows, whichever format they are in", async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
     runDbQuery.mockResolvedValueOnce(page(2, 0, false));
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
-    // The grid is where a result lands — and it says how to group, always.
-    expect(await screen.findByText("Drag a column header here to group rows")).toBeInTheDocument();
+    // The grid is where a result lands: header row plus both rows of the page,
+    // and no panel under them yet.
+    expect(await screen.findByRole("button", { name: "Analyze with AI" })).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+    expect(screen.queryByText(/Record 1 of/)).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole("tab", { name: "Text" }));
+    // Record is not a third format: it opens a pane *below* the rows and leaves
+    // them alone, so the grid still draws the whole page.
+    const record = screen.getByRole("button", { name: "Record" });
+    expect(record).toHaveAttribute("aria-pressed", "false");
+    await user.click(record);
+
+    expect(await screen.findByText("Record 1 of 2")).toBeInTheDocument();
+    // The page above is untouched — header, both rows — and the panel adds one
+    // line for the one column this result has.
+    expect(screen.getAllByRole("row")).toHaveLength(4);
+
+    await user.click(screen.getByRole("button", { name: "Next record" }));
+    expect(await screen.findByText("Record 2 of 2")).toBeInTheDocument();
+
+    // And it survives a change of format: the text dump shows every row on the
+    // page, because the panel narrows nothing.
+    await user.click(screen.getByRole("tab", { name: "Text" }));
     expect(await screen.findByText(/Tab-separated · 2 rows on this page/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Record" }));
-    // One record at a time, with a way to reach the next.
-    expect(await screen.findByRole("button", { name: "Next record" })).toBeInTheDocument();
-    expect(screen.getByText("Record 1 of 2")).toBeInTheDocument();
+    expect(screen.getByText("Record 2 of 2")).toBeInTheDocument();
   });
 
-  it("groups the loaded rows by a column and folds what it found", async () => {
+  it("copies the record the panel is showing, field names and all", async () => {
     const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+
     renderWorkspace();
 
     runDbQuery.mockResolvedValueOnce({
       ...page(2, 0, false),
-      columns: ["region"],
-      rows: [{ region: "eu" }, { region: "eu" }]
+      columns: ["id", "name"],
+      rows: [
+        { id: 1, name: "a" },
+        { id: 2, name: "b" }
+      ]
     });
     await user.click(screen.getByRole("button", { name: "Run query" }));
+    await user.click(await screen.findByRole("button", { name: "Record" }));
 
-    await user.click(await screen.findByRole("button", { name: "Column actions for region" }));
-    await user.click(await screen.findByRole("button", { name: "Group by this column" }));
+    await user.click(await screen.findByRole("button", { name: "Copy this record" }));
+    // A record copied on its own has no header row, so the names travel with
+    // it; a tab between the two so it lands in a spreadsheet as two columns.
+    expect(writeText).toHaveBeenCalledWith("id\t1\nname\ta");
 
-    // The header carries the value its rows share, and how many that is —
-    // the only place a folded group can be counted from.
-    const header = await screen.findByRole("button", { name: /region: eu/ });
-    expect(header).toHaveTextContent("2 rows");
+    // And it follows the panel rather than the page: stepping on copies the
+    // record now on screen.
+    await user.click(screen.getByRole("button", { name: "Next record" }));
+    await user.click(screen.getByRole("button", { name: "Copy this record" }));
+    expect(writeText).toHaveBeenLastCalledWith("id\t2\nname\tb");
+  });
 
-    await user.click(header);
-    expect(header).toHaveAttribute("aria-expanded", "false");
+  it("names the object the statement reads from rather than repeating the tab", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "orders" }));
+
+    runDbQuery.mockResolvedValueOnce(page(1, 0, false));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    // The strip already says "Result 1". What the pane adds is what these rows
+    // are rows *of*, read back out of the statement that produced them — and
+    // kept whole, qualifier and all, because the qualifier is what tells two
+    // same-named tables apart once the label is cut short.
+    expect(await screen.findByTitle("sales.orders")).toBeInTheDocument();
   });
 
   it("answers the catalog shortcut only while it is the visible tab", async () => {

@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  allGroupKeys,
-  buildGroupTree,
   cellText,
   cycleSort,
-  flattenGroups,
   formatCell,
-  groupLabel,
+  recordText,
   sortRows,
   setSortDirection,
   toTsv,
@@ -170,112 +167,6 @@ describe("setSortDirection", () => {
   });
 });
 
-describe("buildGroupTree", () => {
-  const sample = rows(
-    { status: "running", age: "2m", name: "a" },
-    { status: "running", age: "7m", name: "b" },
-    { status: "failed", age: "2m", name: "c" }
-  );
-
-  it("returns nothing when nothing is grouped", () => {
-    expect(buildGroupTree(sample, [])).toEqual([]);
-  });
-
-  it("buckets rows by the grouped column, keeping first-seen order", () => {
-    const tree = buildGroupTree(sample, ["status"]);
-
-    expect(tree.map((node) => node.value)).toEqual(["running", "failed"]);
-    expect(tree.map((node) => node.count)).toEqual([2, 1]);
-    // Rows hang off the deepest level only.
-    expect(tree[0]?.rows.map((row) => row.name)).toEqual(["a", "b"]);
-  });
-
-  it("nests a second level under the first", () => {
-    const tree = buildGroupTree(sample, ["status", "age"]);
-
-    const running = tree[0];
-    expect(running?.children.map((node) => node.value)).toEqual(["2m", "7m"]);
-    expect(running?.rows).toEqual([]);
-    expect(running?.count).toBe(2);
-    expect(running?.children[0]?.depth).toBe(1);
-  });
-
-  it("counts everything beneath an interior node", () => {
-    const tree = buildGroupTree(sample, ["status", "age"]);
-    expect(tree[0]?.count).toBe(2);
-    expect(tree[1]?.count).toBe(1);
-  });
-
-  it("keeps a null group rather than dropping those rows", () => {
-    const tree = buildGroupTree(rows({ v: 1 }, { v: null }), ["v"]);
-
-    expect(tree).toHaveLength(2);
-    expect(groupLabel(tree[1]?.value)).toBe("(NULL)");
-  });
-
-  it("does not merge two distinct values that stringify alike", () => {
-    const tree = buildGroupTree(rows({ v: 1 }, { v: "1" }), ["v"]);
-
-    expect(tree).toHaveLength(2);
-  });
-});
-
-describe("flattenGroups", () => {
-  const sample = rows(
-    { status: "running", name: "a" },
-    { status: "running", name: "b" },
-    { status: "failed", name: "c" }
-  );
-  const indexOf = (row: Row) => sample.indexOf(row);
-
-  it("emits a header per group, then its rows", () => {
-    const tree = buildGroupTree(sample, ["status"]);
-    const lines = flattenGroups(tree, new Set(), indexOf);
-
-    expect(lines.map((line) => line.kind)).toEqual(["group", "row", "row", "group", "row"]);
-  });
-
-  it("hides a folded group's rows but keeps its header", () => {
-    const tree = buildGroupTree(sample, ["status"]);
-    const collapsed = new Set([tree[0]!.key]);
-    const lines = flattenGroups(tree, collapsed, indexOf);
-
-    expect(lines.map((line) => line.kind)).toEqual(["group", "group", "row"]);
-    expect(lines[0]).toMatchObject({ collapsed: true });
-  });
-
-  it("indents a row one step in from its group", () => {
-    const tree = buildGroupTree(sample, ["status"]);
-    const lines = flattenGroups(tree, new Set(), indexOf);
-    const row = lines.find((line) => line.kind === "row");
-
-    expect(row).toMatchObject({ depth: 1 });
-  });
-
-  it("carries the page index through, so a row survives sorting", () => {
-    const tree = buildGroupTree(sample, ["status"]);
-    const lines = flattenGroups(tree, new Set(), indexOf);
-    const indexes = lines
-      .filter((line) => line.kind === "row")
-      .map((line) => (line as { index: number }).index);
-
-    expect(indexes).toEqual([0, 1, 2]);
-  });
-});
-
-describe("allGroupKeys", () => {
-  it("collects every key so collapse-all can reach the nested ones", () => {
-    const tree = buildGroupTree(
-      rows({ a: "x", b: "1" }, { a: "x", b: "2" }),
-      ["a", "b"]
-    );
-    const keys = allGroupKeys(tree);
-
-    expect(keys).toHaveLength(3);
-    expect(new Set(keys).size).toBe(3);
-  });
-});
-
 describe("toTsv", () => {
   it("writes a header line then one line per row", () => {
     const text = toTsv(["id", "name"], rows({ id: 1, name: "a" }));
@@ -301,9 +192,22 @@ describe("cellText", () => {
   });
 });
 
-describe("groupLabel", () => {
-  it("names a null group rather than showing an empty header", () => {
-    expect(groupLabel(null)).toBe("(NULL)");
-    expect(groupLabel("running")).toBe("running");
+describe("recordText", () => {
+  it("puts the field name beside its value, one per line", () => {
+    // The pair, not just the value: a record copied on its own has no header
+    // row, so the names are what make it readable away from the grid.
+    const text = recordText(["id", "name"], { id: 1, name: "a" });
+
+    expect(text).toBe("id\t1\nname\ta");
+  });
+
+  it("spells a null the way the panel draws it", () => {
+    expect(recordText(["v"], { v: null })).toBe("v\tNULL");
+  });
+
+  it("keeps every column when the row is missing them", () => {
+    // No row at all still lists the fields, so the empty panel copies the
+    // shape of the record rather than an empty string.
+    expect(recordText(["id", "name"])).toBe("id\tNULL\nname\tNULL");
   });
 });

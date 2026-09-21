@@ -100,6 +100,37 @@ describe("dbWorkspaceCache", () => {
     expect(readDbWorkspace("acct-a", "c1").queryTabs[0]?.resultTabs[0]?.result?.rowCount).toBe(5);
   });
 
+  it("reads a result stored in the old one-record view as the grid, narrowed", () => {
+    window.localStorage.setItem(
+      "emr-eks:dbhub-ws:acct-a:c1",
+      JSON.stringify({
+        queryTabs: [
+          {
+            ...queryTab("SELECT * FROM orders;"),
+            resultTabs: [
+              {
+                id: "t1",
+                title: "Result 1",
+                sql: "SELECT * FROM orders;",
+                ranAt: "2026-09-08T00:00:00Z",
+                result: fakeResult(2),
+                view: "record"
+              }
+            ]
+          }
+        ]
+      })
+    );
+
+    const tab = readDbWorkspace("acct-a", "c1").queryTabs[0]?.resultTabs[0];
+    // `view` used to be three mutually exclusive choices with "record" among
+    // them. A stored "record" was the grid narrowed to one row, which is
+    // exactly the pair the fields mean now — so it comes back as that, rather
+    // than falling through to the grid and quietly widening it.
+    expect(tab?.view).toBe("grid");
+    expect(tab?.singleRecord).toBe(true);
+  });
+
   it("rolls the oldest editors and results off past the caps", () => {
     const many: CachedQueryTab = {
       ...queryTab("SELECT 1;"),
