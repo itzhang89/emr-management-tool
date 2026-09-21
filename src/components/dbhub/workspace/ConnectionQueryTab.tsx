@@ -31,6 +31,7 @@ import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
 import { QueryTabsPanel } from "@/components/dbhub/workspace/QueryTabsPanel";
 import { ResultPane, lastPageOffset, previousPageOffset } from "@/components/dbhub/result/ResultPane";
+import { orderedRows } from "@/components/dbhub/result/resultFilter";
 import { AiMark, ExecuteMark, ExecuteNewTabMark } from "@/components/dbhub/workspace/RunMarks";
 import { SHORTCUT_IDS, getShortcutPrimaryKey } from "@/data/keyboardShortcuts";
 import {
@@ -425,10 +426,12 @@ export function ConnectionQueryTab({
     if (!tab.result) return;
     try {
       const name = tab.title || "result";
-      const body =
-        format === "csv"
-          ? toCsv(tab.result.columns, tab.result.rows)
-          : JSON.stringify(tab.result.rows, null, 2);
+      // What is on screen, not what the page arrived with. The sort and the
+      // filters are the user's reading of the result, and a file that carried
+      // the rows they had sorted away — or filtered away — would be a different
+      // result from the one they were looking at when they asked for it.
+      const rows = orderedRows(tab.result.rows, tab.sort ?? [], tab.filters ?? []);
+      const body = format === "csv" ? toCsv(tab.result.columns, rows) : JSON.stringify(rows, null, 2);
       await saveTextFile(`${name}.${format}`, body);
     } catch (error) {
       toast.error(formatAppError(error, "Failed to export the result."));

@@ -83,8 +83,16 @@ function compareNulls(a: unknown, b: unknown): number | undefined {
   return aNull ? 1 : -1;
 }
 
-/** Order two cells that are both present. */
-function compareValues(a: unknown, b: unknown): number {
+/**
+ * Order two cells that are both present.
+ *
+ * Shared with the filter, which is why it is exported: "is this value greater
+ * than that one" is one question, and a filter answering it differently from
+ * the sort would put a row on the wrong side of the line the user drew. The
+ * same goes for equality — `compareValues(a, b) === 0` is what "the same value"
+ * means here, so `100` matches `100.0` and `UTC` matches `utc`.
+ */
+export function compareValues(a: unknown, b: unknown): number {
   if (typeof a === "number" && typeof b === "number") return a - b;
   if (typeof a === "boolean" && typeof b === "boolean") return Number(a) - Number(b);
 

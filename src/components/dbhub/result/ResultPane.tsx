@@ -4,16 +4,19 @@ import { useT } from "@/i18n";
 import {
   MAX_FETCH_SIZE,
   type CachedResultTab,
+  type CellFilter,
   type ColumnSort,
   type ResultView
 } from "@/services/dbWorkspaceCache";
 import type { DbQueryResult } from "@/types/domain";
 import { ResultBottomBar } from "./ResultBottomBar";
+import { ResultFilterBar } from "./ResultFilterBar";
 import { ResultFunctionRail } from "./ResultFunctionRail";
 import { ResultGrid } from "./ResultGrid";
 import { ResultRecordPanel } from "./ResultRecordPanel";
 import { ResultTextView } from "./ResultTextView";
 import { ResultViewRail } from "./ResultViewRail";
+import { addFilter, filterRows } from "./resultFilter";
 import { sortRows, type IndexedRow, type Row } from "./resultGridModel";
 import { sourceName } from "./resultSource";
 
@@ -38,14 +41,18 @@ import { sourceName } from "./resultSource";
  * and the panel mirrors one row of it.
  *
  * The arrangement — which format, whether the record panel is open, what is
- * sorted, which row is selected — is *tab state*, not component state, so it is
- * handed back up through `onPatch` and persisted with the tab. Coming back to a
- * result should land in the grid the user built, not a fresh one.
+ * sorted, what is filtered out, which row is selected — is *tab state*, not
+ * component state, so it is handed back up through `onPatch` and persisted with
+ * the tab. Coming back to a result should land in the grid the user built, not
+ * a fresh one.
  *
  * The order the grid draws is worked out here rather than inside the grid, so
  * that the numbers down its side and the record panel's own count come from one
  * place: a row's place on the page is decided once, by this component, and both
- * panes read it off the same pairing.
+ * panes read it off the same pairing. The filter narrows that pairing rather
+ * than the page, which is why a filtered grid still numbers its rows the way the
+ * page numbered them — the numbers say where a row came from, not how many rows
+ * are left.
  *
  * Paging, counting and exporting are different in kind: each one re-runs or
  * reaches past the page, so they stay as explicit callbacks rather than
@@ -58,6 +65,7 @@ import { sourceName } from "./resultSource";
  * for the life of the module.
  */
 const NO_SORT: ColumnSort[] = [];
+const NO_FILTERS: CellFilter[] = [];
 const NO_ROWS: Row[] = [];
 
 export function ResultPane({
@@ -103,9 +111,9 @@ export function ResultPane({
   const pageRows = result?.rows ?? NO_ROWS;
   const rowCount = pageRows.length;
   const sort = meta?.sort ?? NO_SORT;
+  const filters = meta?.filters ?? NO_FILTERS;
   const view: ResultView = meta?.view ?? "grid";
   const single = meta?.singleRecord === true;
-  const recordIndex = Math.min(meta?.recordIndex ?? 0, Math.max(rowCount - 1, 0));
 
   /** A row's place on the page, looked up rather than searched for each time. */
   const pageIndexOf = useMemo(() => {
@@ -116,23 +124,35 @@ export function ResultPane({
 
   const sorted = useMemo(() => sortRows(pageRows, sort), [pageRows, sort]);
 
-  // The page in draw order, each row still carrying the number it had before
-  // the sort — see `IndexedRow`. Sorting with nothing to sort by returns the
-  // page itself, so the pairing is only rebuilt when there is an order to
-  // apply.
-  const rows = useMemo<IndexedRow[]>(
+  // The page in draw order, narrowed to the rows the filters kept — each still
+  // carrying the number it had before either happened, so the grid's own column
+  // goes on saying where a row came from rather than renumbering what is left.
+  // See `IndexedRow`.
+  const visible = useMemo<IndexedRow[]>(
     () =>
-      sorted === pageRows
-        ? pageRows.map((row, index) => ({ row, index }))
-        : sorted.map((row) => ({ row, index: pageIndexOf.get(row) ?? 0 })),
-    [sorted, pageRows, pageIndexOf]
+      filterRows(sorted, filters).map((row) => ({ row, index: pageIndexOf.get(row) ?? 0 })),
+    [sorted, filters, pageIndexOf]
   );
+
+  /**
+   * Where a page row sits in what is drawn, which is the direction the record
+   * panel counts in: it steps through the rows on screen, not through the rows
+   * the page arrived with. Without a filter the two are the same order, so the
+   * stored `recordIndex` keeps meaning what it always did.
+   */
+  const visiblePlaceOf = useMemo(() => {
+    const places = new Map<number, number>();
+    visible.forEach((entry, place) => places.set(entry.index, place));
+    return places;
+  }, [visible]);
+
+  const recordIndex = Math.min(meta?.recordIndex ?? 0, Math.max(visible.length - 1, 0));
 
   const source = useMemo(() => sourceName(meta?.sql ?? ""), [meta?.sql]);
   // Record is a panel under the rows, so it needs rows to put under them. Its
   // own switch stays visible either way — a control that vanishes reads as a
   // layout change, not as "there is nothing to show".
-  const showRecord = single && rowCount > 0;
+  const showRecord = single && visible.length > 0;
 
   if (!meta) {
     return (
@@ -189,30 +209,56 @@ export function ResultPane({
           single={single}
           onChange={(next) => onPatch({ view: next })}
           onSingleChange={(next) => onPatch({ singleRecord: next })}
-          recordDisabled={rowCount === 0}
+          recordDisabled={visible.length === 0}
         />
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-[3] overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <SourceRow meta={meta} source={source} />
+              {/* Above both formats, because it is a fact about the result and
+                  not about how the result is drawn. */}
+              {filters.length > 0 ? (
+                <ResultFilterBar
+                  filters={filters}
+                  kept={visible.length}
+                  total={rowCount}
+                  onRemove={(at) =>
+                    // Any change to the conditions changes which rows are on
+                    // screen, so a record number from before them would point at
+                    // a row that is no longer there: start at the first one that
+                    // survived.
+                    onPatch({ filters: filters.filter((_, index) => index !== at), recordIndex: 0 })
+                  }
+                  onClear={() => onPatch({ filters: [], recordIndex: 0 })}
+                />
+              ) : null}
 
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {view === "text" ? (
-                  <ResultTextView columns={result.columns} rows={pageRows} />
+                  <ResultTextView
+                    columns={result.columns}
+                    rows={visible.map((entry) => entry.row)}
+                    pageCount={rowCount}
+                  />
                 ) : (
                   <ResultGrid
                     columns={result.columns}
-                    rows={rows}
+                    rows={visible}
                     offset={offset}
                     sort={sort}
                     onSortChange={(sort) => onPatch({ sort })}
+                    filtered={filters.length > 0}
+                    onFilter={(filter) =>
+                      onPatch({ filters: addFilter(filters, filter), recordIndex: 0 })
+                    }
                     // The grid marks the row the panel is showing, so the two
                     // panes always agree about which record is on screen — and
                     // marks nothing while the panel is shut, because then no
-                    // record is the selected one.
-                    selectedIndex={showRecord ? recordIndex : undefined}
-                    onSelectRow={(recordIndex) => onPatch({ recordIndex })}
+                    // record is the selected one. The mark is the row's place on
+                    // the page, which is the number the grid draws beside it.
+                    selectedIndex={showRecord ? visible[recordIndex]?.index : undefined}
+                    onSelectRow={(index) => onPatch({ recordIndex: visiblePlaceOf.get(index) ?? 0 })}
                   />
                 )}
               </div>
@@ -224,9 +270,9 @@ export function ResultPane({
           {showRecord ? (
             <ResultRecordPanel
               columns={result.columns}
-              row={pageRows[recordIndex]}
+              row={visible[recordIndex]?.row}
               index={recordIndex}
-              total={rowCount}
+              total={visible.length}
               onIndexChange={(recordIndex) => onPatch({ recordIndex })}
             />
           ) : null}

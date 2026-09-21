@@ -12,15 +12,30 @@ import { toTsv, type Row } from "./resultGridModel";
  * selected, copied and pasted somewhere else, and alignment that survives one
  * paste into a proportional font is not worth the padding it costs here.
  *
- * It shows the page as it arrived — sorting and grouping are the grid's, and
- * applying them here would make the text disagree with the row count in the
- * footer without saying so. One record at a time is the record panel's, which
- * opens *under* this rather than narrowing it, for the same reason.
+ * It shows the page as it arrived — sorting is the grid's, and applying it here
+ * would make the text disagree with the row count in the footer without saying
+ * so. One record at a time is the record panel's, which opens *under* this
+ * rather than narrowing it, for the same reason.
+ *
+ * Filtering is the exception, because it is not an arrangement of the rows but
+ * a choice of which ones: the text is what gets copied away, and a dump that
+ * carried rows the user had filtered off screen would leave with them. `pageCount`
+ * is how it says so — the rows drawn against the rows the page holds.
  */
-export function ResultTextView({ columns, rows }: { columns: string[]; rows: Row[] }) {
+export function ResultTextView({
+  columns,
+  rows,
+  pageCount
+}: {
+  columns: string[];
+  rows: Row[];
+  /** Rows on the page, when the filters took some of them away. */
+  pageCount?: number;
+}) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const text = toTsv(columns, rows);
+  const narrowed = pageCount !== undefined && pageCount !== rows.length;
 
   const copy = async () => {
     try {
@@ -38,7 +53,12 @@ export function ResultTextView({ columns, rows }: { columns: string[]; rows: Row
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between border-b px-2 py-1">
         <span className="text-[10px] text-muted-foreground">
-          {t("Tab-separated · {count} rows on this page", { count: rows.length })}
+          {narrowed
+            ? t("Tab-separated · {count} of {total} rows on this page", {
+                count: rows.length,
+                total: pageCount
+              })
+            : t("Tab-separated · {count} rows on this page", { count: rows.length })}
         </span>
         <Tooltip>
           <TooltipTrigger asChild>

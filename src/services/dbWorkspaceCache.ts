@@ -53,6 +53,29 @@ export interface ColumnSort {
   desc: boolean;
 }
 
+/**
+ * How a cell's value is compared. The five a right-click offers, in the order
+ * the menu shows them: equal, not equal, greater, less, and a contains.
+ */
+export type FilterOperator = "eq" | "ne" | "gt" | "lt" | "like";
+
+/**
+ * One condition on a column, made by right-clicking a cell.
+ *
+ * The value is kept as the *text the grid showed*, because that is what the
+ * menu offered (`time_zone = 'UTC'`) and what a reader comparing a chip against
+ * the cell needs to see. `isNull` rides alongside it for the reason
+ * `formatCell` keeps a kind: NULL and the four letters that spell it are two
+ * different values that render the same way, and a filter has to mean one of
+ * them.
+ */
+export interface CellFilter {
+  column: string;
+  operator: FilterOperator;
+  value: string;
+  isNull: boolean;
+}
+
 export interface CachedResultTab {
   id: string;
   title: string;
@@ -66,12 +89,14 @@ export interface CachedResultTab {
   runError?: string;
 
   // --- How the grid is arranged. All optional: absent means the defaults
-  // --- (grid view, no sort, no grouping), so an old cache stays readable.
+  // --- (grid view, no sort, no filters), so an old cache stays readable.
 
   view?: ResultView;
   /** Open the record panel under the rows, showing `recordIndex` transposed. */
   singleRecord?: boolean;
   sort?: ColumnSort[];
+  /** Conditions every drawn row has to satisfy, in the order they were added. */
+  filters?: CellFilter[];
   /** Which row the record panel is on, and the one the grid highlights. */
   recordIndex?: number;
 

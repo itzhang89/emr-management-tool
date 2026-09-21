@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,6 +74,73 @@ function page(rows: number, offset: number, truncated: boolean) {
     pageable: true,
     catalogChanged: false
   };
+}
+
+/**
+ * A page with columns worth filtering on.
+ *
+ * Every value is distinct apart from `time_zone`, where two rows differ only in
+ * case — which is what makes it useful: the grid's own comparator says those
+ * two are the same value, and a filter that disagreed with the sort about that
+ * would put a row on the wrong side of a line the user drew.
+ */
+function zonePage() {
+  const rows = [
+    { id: 1, time_zone: "UTC", region: "us-east" },
+    { id: 2, time_zone: "utc", region: "eu-west" },
+    { id: 3, time_zone: "Asia/Tokyo", region: "ap-northeast" }
+  ];
+  return {
+    columns: ["id", "time_zone", "region"],
+    rows,
+    rowCount: rows.length,
+    truncated: false,
+    durationMs: 3,
+    offset: 0,
+    nextOffset: null,
+    pageable: true,
+    catalogChanged: false
+  };
+}
+
+/** A page with a NULL in it: the one cell whose menu has fewer questions. */
+function notePage() {
+  const rows = [
+    { id: 1, note: null },
+    { id: 2, note: "x" },
+    { id: 3, note: "y" }
+  ];
+  return {
+    columns: ["id", "note"],
+    rows,
+    rowCount: rows.length,
+    truncated: false,
+    durationMs: 3,
+    offset: 0,
+    nextOffset: null,
+    pageable: true,
+    catalogChanged: false
+  };
+}
+
+/**
+ * Right-click a cell and walk into its Filter submenu.
+ *
+ * By keyboard, because that is the path somebody without a mouse takes and it
+ * is the one jsdom can drive honestly: the sub-trigger opens on the arrow key,
+ * on a click, or on a pointer resting over it — and of the three, the first two
+ * are reaches this test can make, while the third needs a pointer it has not
+ * got.
+ */
+function openFilterMenu(cell: HTMLElement) {
+  fireEvent.contextMenu(cell);
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Filter" }), { key: "ArrowRight" });
+}
+
+/** Right-click a cell and pick one of the comparisons its menu offers. */
+async function filterBy(cell: HTMLElement, label: string) {
+  openFilterMenu(cell);
+  fireEvent.click(await screen.findByRole("menuitem", { name: label }));
 }
 
 vi.mock("@/services/tauriClient", () => ({
@@ -521,6 +588,166 @@ describe("ConnectionQueryTab", () => {
 
     await waitFor(() => expect(saveTextFile).toHaveBeenCalled());
     expect(saveTextFile).toHaveBeenCalledWith("Result 1.csv", "id\n0\n1");
+  });
+
+  it("filters the loaded page by the value that was right-clicked", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    // The conditions on offer are comparisons against the value under the
+    // pointer, which is the question a person has when they right-click one:
+    // not "what can I do to this column" — the header answers that — but "show
+    // me the rows like this one".
+    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+
+    // The condition is drawn above the rows with the count of what survived it.
+    // The footer still counts the page, because a page is what it is: a filter
+    // that quietly changed that number would be worse than no filter at all.
+    expect(await screen.findByText("region <> 'us-east'")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3 rows match")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+
+    // The rows that are left keep the numbers they had on the page — 2 and 3,
+    // not 1 and 2. A number says where a row came from, not how many are left,
+    // which is also what the record panel counts by.
+    expect(
+      screen
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("cell")[0]?.textContent)
+    ).toEqual(["2", "3"]);
+
+    // Nothing was asked of the server: the filter narrows the page in hand.
+    expect(runDbQuery).toHaveBeenCalledTimes(1);
+    // And the menu shut behind the choice, rather than staying over the rows.
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+  });
+
+  it("asks a NULL cell only what it can answer, and empties the grid when the filter takes every row", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(notePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    // A missing value has no magnitude to be greater or less than and nothing
+    // to contain anything, so those three items would be offering to compare
+    // against no value at all. Only the two that ask *whether* it is missing
+    // are worth a click — and they are different questions from `= 'NULL'`,
+    // four letters somebody may have stored on purpose.
+    openFilterMenu(screen.getByTitle("NULL"));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "Copy",
+      "Filter",
+      "note IS NULL",
+      "note IS NOT NULL"
+    ]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "note IS NULL" }));
+    expect(await screen.findByText("1 of 3 rows match")).toBeInTheDocument();
+
+    // The row that survives is the one with the NULL, so `IS NOT NULL` — asked
+    // of its own cell, which is the only cell left to ask it of — takes the
+    // last row away. The grid then says which kind of nothing it is showing:
+    // "no rows came back" and "your conditions took them all" are different
+    // answers to different problems, and only one of them is worth removing a
+    // condition over.
+    await filterBy(screen.getByTitle("NULL"), "note IS NOT NULL");
+    expect(await screen.findByText("No rows on this page match the filter.")).toBeInTheDocument();
+    expect(screen.getByText("0 of 3 rows match")).toBeInTheDocument();
+
+    // Nothing to read one at a time, so the switch that opens a record is not
+    // offered rather than opening onto an empty panel.
+    expect(screen.getByRole("button", { name: "Record" })).toBeDisabled();
+  });
+
+  it("takes one condition off, and all of them at once", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    // Two conditions, read as ANDs. The second is built from the value in row
+    // 2, and row 1 would answer it as well — the grid's own comparator says
+    // `UTC` and `utc` are one value. It is gone because of the *first*
+    // condition, which is what makes the pair an AND rather than a choice of
+    // two ways to match one row.
+    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    await filterBy(screen.getByTitle("utc"), "time_zone = 'utc'");
+    expect(await screen.findByText("1 of 3 rows match")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+
+    // Each chip is its own way out, so removing one leaves the other doing its
+    // job: the row the second condition kept is the one the first allowed.
+    await user.click(screen.getByRole("button", { name: "Remove filter: time_zone = 'utc'" }));
+    expect(await screen.findByText("2 of 3 rows match")).toBeInTheDocument();
+    expect(screen.queryByText("time_zone = 'utc'")).not.toBeInTheDocument();
+    expect(screen.getByText("region <> 'us-east'")).toBeInTheDocument();
+
+    // Clearing takes the conditions and the strip with them — a bar reading
+    // "3 of 3 rows match" would be a control panel for nothing.
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+    expect(screen.queryByText("2 of 3 rows match")).not.toBeInTheDocument();
+    expect(screen.queryByText("region <> 'us-east'")).not.toBeInTheDocument();
+  });
+
+  it("counts the record panel through the rows that survived the filter", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    await screen.findByText("2 of 3 rows match");
+
+    await user.click(screen.getByRole("button", { name: "Record" }));
+    expect(await screen.findByText("Record 1 of 2")).toBeInTheDocument();
+
+    // The first record is the first row *on screen*, not the first row the page
+    // arrived with: the panel and the grid are reading the same rows in the
+    // same order, which is the whole reason the two are paired up rather than
+    // each working out its own idea of where row 2 is.
+    const panel = screen.getByRole("rowheader", { name: "time_zone" }).closest("table");
+    expect(within(panel!).getByText("utc")).toBeInTheDocument();
+    expect(within(panel!).queryByText("UTC")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Next record" }));
+    expect(await screen.findByText("Record 2 of 2")).toBeInTheDocument();
+    expect(within(panel!).getByText("Asia/Tokyo")).toBeInTheDocument();
+  });
+
+  it("exports what the filter left, not what the page held", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    runDbQuery.mockResolvedValueOnce(zonePage());
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(4));
+
+    await filterBy(screen.getByTitle("us-east"), "region <> 'us-east'");
+    await screen.findByText("2 of 3 rows match");
+
+    // The file follows the view. A dump that carried the rows the user had
+    // filtered off screen would be a different result from the one they were
+    // looking at when they asked for it.
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(await screen.findByRole("button", { name: /^CSV/ }));
+
+    await waitFor(() => expect(saveTextFile).toHaveBeenCalled());
+    expect(saveTextFile).toHaveBeenCalledWith(
+      "Result 1.csv",
+      "id,time_zone,region\n2,utc,eu-west\n3,Asia/Tokyo,ap-northeast"
+    );
   });
 
   it("opens the record panel under the rows, whichever format they are in", async () => {

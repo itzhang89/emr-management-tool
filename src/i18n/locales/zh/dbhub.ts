@@ -234,9 +234,19 @@ const dbhub: TranslationDictionary = {
   "Sort ascending": "升序排列",
   "Sort descending": "降序排列",
   "Clear sort": "清除排序",
+  "Filter": "筛选",
+  "No rows on this page match the filter.": "本页没有符合筛选条件的行。",
+
+  // --- ResultFilterBar -----------------------------------------------------
+  // ("Clear all" already lives in the AI shard, which this bar borrows word for
+  // word — the button means the same thing in both places.)
+  "{kept} of {total} rows match": "{total} 行中有 {kept} 行符合条件",
+  "Remove filter": "移除筛选条件",
 
   // --- ResultTextView ------------------------------------------------------
   "Tab-separated · {count} rows on this page": "制表符分隔 · 本页 {count} 行",
+  "Tab-separated · {count} of {total} rows on this page":
+    "制表符分隔 · 本页 {total} 行中的 {count} 行",
   "Copy as text": "复制为文本",
 
   // --- ResultBottomBar -----------------------------------------------------
