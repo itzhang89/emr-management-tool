@@ -80,6 +80,32 @@ if (typeof Element.prototype.scrollIntoView === "undefined") {
 }
 
 /**
+ * CodeMirror measures its text by asking a Range for its client rects, and
+ * jsdom implements neither that nor the bounding box the same pass falls back
+ * to. A test that types into an editor throws inside the measure pass without
+ * these. Empty rects are the honest answer here — jsdom lays nothing out, so
+ * there is no geometry to report — and the editor's text is still asserted on
+ * through the DOM, which is the part tests actually mean.
+ */
+if (typeof Range.prototype.getClientRects === "undefined") {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+}
+if (typeof Range.prototype.getBoundingClientRect === "undefined") {
+  Range.prototype.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      toJSON: () => ({})
+    }) as DOMRect;
+}
+
+/**
  * The i18n store caches the resolved language in a module variable, so a test
  * that switches language would otherwise leak into every later file and the
  * suite would become order-dependent. Reset the cached state first, then drop
