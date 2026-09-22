@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState, type MouseEvent } from "react";
 import {
+  ClipboardCopy,
   Copy,
   CopyPlus,
   Eye,
@@ -61,6 +62,16 @@ export function defaultSecretKvPairs(): SecretKvPair[] {
     { id: newPairId(), key: "port", value: "3306" },
     { id: newPairId(), key: "database", value: "" }
   ];
+}
+
+/**
+ * The resource segment of a Secrets Manager ARN: everything after the last
+ * colon, e.g. `arn:…:secret:mysql.sales-AbCdEf` → `mysql.sales-AbCdEf`.
+ * AWS appends a 6-character suffix to that segment, so it is not always the
+ * plain secret name — but it is what the API accepts as a SecretId.
+ */
+export function secretArnSegment(arn: string): string {
+  return arn.slice(arn.lastIndexOf(":") + 1);
 }
 
 /** Aggregate first-level key/value rows into a JSON object string for the API. */
@@ -326,6 +337,16 @@ export function SecretsPage() {
     }
   };
 
+  const copyArnSegment = async (secret: SecretSummary, event: MouseEvent) => {
+    event.stopPropagation();
+    const segment = secretArnSegment(secret.arn);
+    try {
+      await copyText(segment, t('Copied "{key}"', { key: segment }));
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to copy to clipboard"));
+    }
+  };
+
   const copyFieldValue = async (value: string, key: string, event: MouseEvent) => {
     event.stopPropagation();
     try {
@@ -455,7 +476,7 @@ export function SecretsPage() {
               <th className="px-3 py-2 font-medium">{t("Description")}</th>
               <th className="px-3 py-2 font-medium">{t("Tags")}</th>
               <th className="px-3 py-2 font-medium">{t("Last changed")}</th>
-              <th className="w-36 px-3 py-2 font-medium">{t("Actions")}</th>
+              <th className="w-48 px-3 py-2 font-medium">{t("Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -535,6 +556,21 @@ export function SecretsPage() {
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>{t("Copy entire secret")}</TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8"
+                                aria-label={t("Copy last ARN segment")}
+                                onClick={(event) => void copyArnSegment(secret, event)}
+                              >
+                                <ClipboardCopy className="size-3.5" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>{t("Copy last ARN segment")}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>

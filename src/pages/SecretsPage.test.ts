@@ -4,7 +4,8 @@ import {
   deleteConfirmationMatches,
   isCreatedBy,
   pairsFromSecretJson,
-  pairsToSecretJson
+  pairsToSecretJson,
+  secretArnSegment
 } from "./SecretsPage";
 import type { SecretSummary } from "@/types/domain";
 
@@ -84,5 +85,24 @@ describe("pairsToSecretJson / pairsFromSecretJson", () => {
       "port",
       "database"
     ]);
+  });
+});
+
+describe("secretArnSegment", () => {
+  it("returns everything after the last colon, AWS suffix included", () => {
+    expect(
+      secretArnSegment("arn:aws:secretsmanager:us-east-1:123456789012:secret:mysql.sales-AbCdEf")
+    ).toBe("mysql.sales-AbCdEf");
+  });
+
+  it("keeps slashes in a path-style secret name intact", () => {
+    expect(secretArnSegment("arn:aws:secretsmanager:us-east-1:123:secret:prod/db/password-XyZ123")).toBe(
+      "prod/db/password-XyZ123"
+    );
+  });
+
+  it("falls back to the whole string when there is no colon", () => {
+    expect(secretArnSegment("mysql.sales")).toBe("mysql.sales");
+    expect(secretArnSegment("")).toBe("");
   });
 });

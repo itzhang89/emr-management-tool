@@ -16,6 +16,8 @@ const secrets: TranslationDictionary = {
   Actions: "操作",
   "Copy entire secret": "复制整个密钥",
   "Copied entire secret": "已复制整个密钥",
+  "Copy last ARN segment": "复制 ARN 最后一段",
+  "Failed to copy to clipboard": "复制到剪贴板失败",
   'Copied "{key}"': "已复制「{key}」",
   'Copy "{key}"': "复制「{key}」",
   "Reveal value": "显示值",
