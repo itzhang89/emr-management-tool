@@ -186,10 +186,12 @@ const dbhub: TranslationDictionary = {
     "用 AI 分析 · 打开带有此连接上下文的对话",
   "Expand catalog panel": "展开目录面板",
   "Show catalog": "显示目录",
-  Write: "写入",
   "Read-only": "只读",
-  "writes allowed here": "此处允许写入",
-  "the AI reads this one": "由 AI 读取",
+  "Writes allowed": "允许写入",
+  "Writes allowed — statements that change data run here.":
+    "允许写入 — 会改动数据的语句将在此执行",
+  "Read-only — the gate refuses every statement that is not a read.":
+    "只读 — 只读闸门会拦截所有非读取语句",
   manual: "手动",
   "Stop query": "停止查询",
   "stops reading; the server notices when the connection closes":

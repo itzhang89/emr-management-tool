@@ -10,8 +10,8 @@ import {
   Table2
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
+import { DbWriteStatusIcon } from "@/components/dbhub/DbWriteStatusIcon";
 import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -710,16 +710,9 @@ export function ConnectionQueryTab({
         <DbKindIcon kind={connection.kind} className="size-3.5" />
         {connection.name}
       </span>
-      <Badge
-        variant={connection.allowWrites ? "destructive" : "outline"}
-        className="text-[10px]"
-      >
-        {t(connection.allowWrites ? "Write" : "Read-only")}
-      </Badge>
+      <DbWriteStatusIcon allowWrites={connection.allowWrites} />
       <span className="text-xs text-muted-foreground">
-        {connection.kind} ·{" "}
-        {t(connection.allowWrites ? "writes allowed here" : "the AI reads this one")} ·{" "}
-        {t(connection.enabledForAi ? "enabled for AI" : "manual")}
+        {connection.kind} · {t(connection.enabledForAi ? "enabled for AI" : "manual")}
       </span>
       {/* Pushed to the right of the connection line; the toolbar itself carries
           no alignment, so a workspace that wants it on the left can have that. */}

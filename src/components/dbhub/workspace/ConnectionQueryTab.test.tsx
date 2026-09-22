@@ -238,7 +238,9 @@ function renderWorkspace(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
+      {/* Zero delay so a test can assert a tooltip without waiting out Radix's
+          default hover delay. */}
+      <TooltipProvider delayDuration={0}>
         <ConnectionQueryTab
           connection={conn as never}
           active={active}
@@ -1114,10 +1116,26 @@ describe("ConnectionQueryTab", () => {
   it("says whether this connection may write", async () => {
     renderWorkspace(connection({ allowWrites: true }));
 
-    // The badge is the only place the workspace says which side of the line
-    // the statement about to run is on.
-    expect(await screen.findByText("Write")).toBeInTheDocument();
-    expect(screen.getByText(/writes allowed here/)).toBeInTheDocument();
+    // The status mark is the only place the workspace says which side of the
+    // line the statement about to run is on, and its name is what carries that
+    // now that the word next to it is gone.
+    expect(await screen.findByRole("img", { name: "Writes allowed" })).toBeInTheDocument();
+  });
+
+  it("marks a read-only connection as read-only and explains the gate on hover", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    // The default connection is read-only, which is the side most connections
+    // are on — and the one whose consequence is least obvious.
+    const mark = await screen.findByRole("img", { name: "Read-only" });
+    await user.hover(mark);
+    // `findAll`: Radix renders the tooltip's text as more than one node (the
+    // visible bubble and an aria-only copy), so a single-match query reports a
+    // collision rather than the content the reader actually sees.
+    expect(
+      await screen.findAllByText(/refuses every statement that is not a read/)
+    ).not.toHaveLength(0);
   });
 
   it("steps back one level at a time", async () => {
