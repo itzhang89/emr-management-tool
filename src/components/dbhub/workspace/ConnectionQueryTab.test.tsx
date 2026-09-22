@@ -41,6 +41,13 @@ const listDbObjects = vi
           { name: "recent_orders", kind: "view" }
         ];
       }
+      if (kinds.includes("procedure") && database === "sales") {
+        return [
+          { name: "orders", kind: "table" },
+          { name: "sp_rebuild", kind: "procedure" },
+          { name: "fn_total", kind: "function" }
+        ];
+      }
       if (database === "sales") {
         return [
           { name: "orders", kind: "table" },
@@ -441,6 +448,52 @@ describe("ConnectionQueryTab", () => {
     // And the first editor never saw it — each tab is its own document.
     await user.click(screen.getByRole("button", { name: "Query 1" }));
     expect(screen.getByLabelText("SQL editor")).toHaveTextContent("SELECT 1;");
+  });
+
+  it("writes a CALL for a clicked procedure and a SELECT for a function", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    // Tick procedures so the routines join the tree.
+    await screen.findByRole("button", { name: "orders" });
+    await user.click(screen.getByRole("button", { name: "Choose what to show" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Procedures" }));
+
+    // A procedure is called, qualified the same way a table is.
+    await user.click(await screen.findByRole("button", { name: "sp_rebuild" }));
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
+      "CALL `sales`.`sp_rebuild`();"
+    );
+
+    // A function is selected, not called.
+    await user.click(screen.getByRole("button", { name: "fn_total" }));
+    expect(screen.getByLabelText("SQL editor")).toHaveTextContent(
+      "SELECT `sales`.`fn_total`();"
+    );
+  });
+
+  it("trims the blank lines around a statement before running it", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    // Replace the default statement with one wrapped in the blank lines and
+    // trailing spaces a draft collects: select all, then type the padded form.
+    const editor = await screen.findByLabelText("SQL editor");
+    await user.click(editor);
+    await user.keyboard("{Control>}a{/Control}");
+    // Paste rather than type: CodeMirror's keyword autocomplete rewrites
+    // per-character input in jsdom, and a paste lands as one edit.
+    await user.paste("\n\nSELECT 42;\n   ");
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    // What reaches the backend is the statement alone — no leading blank lines,
+    // no trailing whitespace.
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ sql: "SELECT 42;" })
+      )
+    );
   });
 
   it("closes a result tab and drops the close buttons once one is left", async () => {

@@ -284,7 +284,12 @@ export function ConnectionQueryTab({
       queryTabId: string,
       options: { mode?: "replace" | "new"; targetId?: string; offset?: number } = {}
     ) => {
-      if (!statement.trim()) return;
+      // Run what the statement *is*, not the blank lines around it: the leading
+      // and trailing whitespace a draft collects is never part of the query, and
+      // sending it only muddies the history entry and the result tab's SQL. The
+      // editor keeps the text the user typed; this is the trimmed form that runs.
+      statement = statement.trim();
+      if (!statement) return;
       const editor = queryTabs.find((tab) => tab.id === queryTabId);
       if (!editor) return;
 
@@ -599,23 +604,37 @@ export function ConnectionQueryTab({
   };
 
   const handleSelectObject = (entry: DbCatalogEntry) => {
-    // A routine is not something a `select * from` can name, and a `CALL`
-    // would be refused by the read-only gate — so a click puts the name in the
-    // editor and stops there, which is as far as it can honestly go.
-    if (!isRelation(entry.kind)) {
-      setEditorSql(entry.name);
-      setSelectedTable(undefined);
-      return;
-    }
-    setSelectedTable(entry.name);
     // Qualify by schema, not by database: Postgres rejects `database.table`
     // outright, and on MySQL the schema *is* the database, so the qualifier is
-    // the same word either way. Empty means the engine has no such level.
+    // the same word either way. Empty means the engine has no such level. Every
+    // kind that gets a runnable statement is named this way, so a click on a
+    // procedure reaches the same object a click on a table would.
     const qualifier = activeSchema || (skipsSchemaLevel ? selectedDatabase : undefined);
     const reference = [qualifier, entry.name]
       .filter((part): part is string => Boolean(part))
       .map((part) => quoteIdentifier(connection.kind, part))
       .join(".");
+
+    // A routine is not something a `select * from` can name. A procedure is
+    // called and a function is selected — either one is a real statement the
+    // user can run (or edit args into first), so a click writes it in full
+    // rather than dropping a bare name they then have to wrap by hand. A read-
+    // only connection will still refuse the CALL at run time; that gate is the
+    // backend's word, not the editor's, and the statement is the honest start.
+    if (!isRelation(entry.kind)) {
+      setSelectedTable(undefined);
+      if (entry.kind === "procedure") {
+        setEditorSql(`CALL ${reference}();`);
+      } else if (entry.kind === "function") {
+        setEditorSql(`SELECT ${reference}();`);
+      } else {
+        // Events and anything without an invocation form: the name is as far
+        // as a click can honestly go.
+        setEditorSql(entry.name);
+      }
+      return;
+    }
+    setSelectedTable(entry.name);
     setEditorSql(`SELECT * FROM ${reference} LIMIT 100;`);
   };
 
