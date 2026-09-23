@@ -66,6 +66,9 @@ const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
 const countDbQuery = vi.fn().mockResolvedValue({ count: 1, durationMs: 2 });
 const cancelDbQuery = vi.fn().mockResolvedValue(true);
 const refreshDbCatalog = vi.fn().mockResolvedValue(undefined);
+// The workspace only reads the connection it was handed, so what this resolves
+// to is never looked at — it just has to resolve for the popover to settle.
+const setDbConnectionFlags = vi.fn().mockResolvedValue({});
 const saveTextFile = vi.fn().mockResolvedValue(undefined);
 
 /** One page of a ho-hum result; `next` decides whether there is another. */
@@ -172,6 +175,7 @@ vi.mock("@/services/tauriClient", () => ({
     countDbQuery: (...args: unknown[]) => countDbQuery(...args),
     cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
     refreshDbCatalog: (...args: unknown[]) => refreshDbCatalog(...args),
+    setDbConnectionFlags: (...args: unknown[]) => setDbConnectionFlags(...args),
     saveTextFile: (...args: unknown[]) => saveTextFile(...args)
   }
 }));
@@ -1119,7 +1123,7 @@ describe("ConnectionQueryTab", () => {
     // The status mark is the only place the workspace says which side of the
     // line the statement about to run is on, and its name is what carries that
     // now that the word next to it is gone.
-    expect(await screen.findByRole("img", { name: "Writes allowed" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Writes allowed" })).toBeInTheDocument();
   });
 
   it("marks a read-only connection as read-only and explains the gate on hover", async () => {
@@ -1128,7 +1132,7 @@ describe("ConnectionQueryTab", () => {
 
     // The default connection is read-only, which is the side most connections
     // are on — and the one whose consequence is least obvious.
-    const mark = await screen.findByRole("img", { name: "Read-only" });
+    const mark = await screen.findByRole("button", { name: "Read-only" });
     await user.hover(mark);
     // `findAll`: Radix renders the tooltip's text as more than one node (the
     // visible bubble and an aria-only copy), so a single-match query reports a
@@ -1136,6 +1140,39 @@ describe("ConnectionQueryTab", () => {
     expect(
       await screen.findAllByText(/refuses every statement that is not a read/)
     ).not.toHaveLength(0);
+  });
+
+  it("enables writes from the query page, behind a click rather than a hover", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    // Read-only to begin with, so the switch starts down.
+    await user.click(await screen.findByRole("button", { name: "Read-only" }));
+    const toggle = await screen.findByRole("switch", { name: "Allow writes" });
+    expect(toggle).not.toBeChecked();
+
+    await user.click(toggle);
+
+    // The flag is saved for this connection — writes are the direction that
+    // needs the deliberate click, and this is the click.
+    await waitFor(() =>
+      expect(setDbConnectionFlags).toHaveBeenCalledWith("c1", { allowWrites: true })
+    );
+  });
+
+  it("turns writes back off from the query page", async () => {
+    const user = userEvent.setup();
+    renderWorkspace(connection({ allowWrites: true }));
+
+    await user.click(await screen.findByRole("button", { name: "Writes allowed" }));
+    const toggle = await screen.findByRole("switch", { name: "Allow writes" });
+    expect(toggle).toBeChecked();
+
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(setDbConnectionFlags).toHaveBeenCalledWith("c1", { allowWrites: false })
+    );
   });
 
   it("steps back one level at a time", async () => {

@@ -65,6 +65,9 @@ export function ConnectionCard({
           if (flags.showAsTab !== undefined) {
             parts.push(t(flags.showAsTab ? "pinned to tabs" : "removed from tabs"));
           }
+          if (flags.allowWrites !== undefined) {
+            parts.push(t(flags.allowWrites ? "writes allowed" : "writes disabled"));
+          }
           if (flags.enabledForAi !== undefined) {
             parts.push(t(flags.enabledForAi ? "enabled for AI" : "disabled for AI"));
           }

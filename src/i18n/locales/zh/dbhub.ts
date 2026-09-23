@@ -31,6 +31,8 @@ const dbhub: TranslationDictionary = {
   // --- ConnectionCard ------------------------------------------------------
   "pinned to tabs": "已固定到标签页",
   "removed from tabs": "已从标签页移除",
+  "writes allowed": "已允许写入",
+  "writes disabled": "已禁用写入",
   "enabled for AI": "已为 AI 启用",
   "disabled for AI": "已为 AI 禁用",
   "{name}: {items}.": "{name}：{items}。",

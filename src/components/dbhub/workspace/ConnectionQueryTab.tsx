@@ -22,7 +22,8 @@ import {
   useDbObjects,
   useCancelDbQuery,
   useRefreshDbCatalog,
-  useRunDbQuery
+  useRunDbQuery,
+  useSetDbConnectionFlags
 } from "@/hooks/useDbHub";
 import { SqlEditor } from "@/components/sql/SqlEditor";
 import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
@@ -113,6 +114,7 @@ export function ConnectionQueryTab({
   const countQuery = useCountDbQuery();
   const refreshCatalog = useRefreshDbCatalog(connection.id);
   const cancelQuery = useCancelDbQuery();
+  const setFlags = useSetDbConnectionFlags();
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
@@ -710,7 +712,29 @@ export function ConnectionQueryTab({
         <DbKindIcon kind={connection.kind} className="size-3.5" />
         {connection.name}
       </span>
-      <DbWriteStatusIcon allowWrites={connection.allowWrites} />
+      <DbWriteStatusIcon
+        allowWrites={connection.allowWrites}
+        pending={setFlags.isPending}
+        onSetWrites={(allowWrites) =>
+          setFlags.mutate(
+            { connectionId: connection.id, flags: { allowWrites } },
+            {
+              // The switch follows the saved row, not the click: the mark above
+              // redraws from the refetched connection, so a write that failed
+              // leaves the popover showing the state that is actually in force.
+              onSuccess: () =>
+                toast.success(
+                  t("{name}: {items}.", {
+                    name: connection.name,
+                    items: t(allowWrites ? "writes allowed" : "writes disabled")
+                  })
+                ),
+              onError: (error) =>
+                toast.error(formatAppError(error, "Failed to update connection."))
+            }
+          )
+        }
+      />
       <span className="text-xs text-muted-foreground">
         {connection.kind} · {t(connection.enabledForAi ? "enabled for AI" : "manual")}
       </span>
