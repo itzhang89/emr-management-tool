@@ -320,35 +320,85 @@ pub fn changes_schema(sql: &str) -> bool {
     })
 }
 
+/// The tier a verb opens at, before the statement's body gets a say.
+///
+/// `None` is a verb the classifier does not place at all — the `Unknown`
+/// default, which lands at the strictest tier because the alternative is asking
+/// a person to judge a statement the tool itself could not read.
+fn tier_for_verb(verb: &str) -> Option<StatementTier> {
+    match verb {
+        // Reads, safe until the body says otherwise.
+        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
+            Some(StatementTier::Free)
+        }
+        // Row changes: a person confirms them, unless they turn out to be
+        // whole-table changes, which the caller refuses instead.
+        "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" => Some(StatementTier::Confirm),
+        // A routine's body is invisible to a text classifier, so calling one is
+        // a confirmation rather than a free pass — and never a refusal, because
+        // a routine that only reads is a routine worth being able to call.
+        "CALL" | "EXECUTE" | "DO" => Some(StatementTier::Confirm),
+        // Structure, permissions, session, and `INTO` — which is what turns a
+        // SELECT into a write. All refused: none of them has a bounded form
+        // worth distinguishing, and several cannot be undone at all.
+        "DROP" | "TRUNCATE" | "ALTER" | "RENAME" | "COMMENT" | "CREATE" | "GRANT" | "REVOKE"
+        | "SET" | "KILL" | "LOCK" | "LOAD" | "HANDLER" | "INTO" => Some(StatementTier::Refuse),
+        _ => None,
+    }
+}
+
+/// Classify one statement: its tier, and the token that decided it.
 fn classify_single(statement: &str) -> Classification {
     let cleaned = strip_comments(statement);
-    let first_word = first_word(&cleaned);
+    let verb = first_word(&cleaned);
 
-    match first_word.as_str() {
-        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
-            // A read-shaped statement is not a read until its body says so:
-            // WITH opens CTEs that normally feed a SELECT, but the body is
-            // audited so a `WITH ... INSERT` is caught, and `SELECT ... INTO`
-            // writes despite opening with the read verb.
-            match first_write_token(&cleaned) {
-                Some(token) => Classification {
-                    tier: StatementTier::Refuse,
-                    matched: token,
-                },
-                None => Classification {
-                    tier: StatementTier::Free,
-                    matched: String::new(),
-                },
-            }
-        }
-        // A verb the classifier does not place. Refused — this is the tier
-        // ladder's `Unknown` default, and it is the conservative end on
-        // purpose: the alternative is asking a person to judge a statement
-        // that the tool itself could not read.
-        _ => Classification {
+    let Some(base) = tier_for_verb(&verb) else {
+        return Classification {
             tier: StatementTier::Refuse,
-            matched: first_word,
-        },
+            matched: verb,
+        };
+    };
+
+    // A read-shaped statement is not a read until its body says so. `WITH`
+    // opens CTEs that normally feed a SELECT but can feed an INSERT, and
+    // `SELECT ... INTO` writes despite opening with the read verb. The verb the
+    // audit finds is tiered by the same table, so `WITH ... INSERT` is treated
+    // as the insert it is rather than as something stranger.
+    if base == StatementTier::Free {
+        return match first_write_token(&cleaned) {
+            Some(token) => Classification {
+                tier: tier_for_verb(&token).unwrap_or(StatementTier::Refuse),
+                matched: token,
+            },
+            None => Classification {
+                tier: StatementTier::Free,
+                matched: String::new(),
+            },
+        };
+    }
+
+    // The line between "confirm this" and "refuse this" for a row change: does
+    // it bound itself at all? `DELETE FROM t` is a whole-table delete wearing a
+    // row change's clothes, and the score of rows it would take is not a thing
+    // a text classifier can count.
+    //
+    // It is a heuristic, and the design says so out loud: `DELETE FROM t WHERE
+    // 1 = 1` carries a WHERE and reads as bounded while removing everything.
+    // The confirm dialog is where that limit is admitted to the reader, because
+    // the honest answer to "how many rows?" is that this cannot tell.
+    if base == StatementTier::Confirm
+        && matches!(verb.as_str(), "UPDATE" | "DELETE")
+        && !has_top_level_where(&cleaned)
+    {
+        return Classification {
+            tier: StatementTier::Refuse,
+            matched: format!("{verb} without WHERE"),
+        };
+    }
+
+    Classification {
+        tier: base,
+        matched: verb,
     }
 }
 
@@ -370,20 +420,26 @@ fn classify_single(statement: &str) -> Classification {
 /// regression: the statement takes row locks, and a read-only session refuses
 /// it at the wire anyway, so it never ran on the connections this gate guards.
 fn first_write_token(cleaned: &str) -> Option<String> {
-    code_tokens(cleaned)
+    code_words(cleaned)
         .into_iter()
-        .find(|token| is_write_keyword(token))
+        .find_map(|(word, _)| is_write_keyword(&word).then_some(word))
 }
 
-/// The statement's words, skipping everything that is data rather than code:
-/// string literals, quoted identifiers and comments.
+/// The statement's words, each with the parenthesis depth it sits at, skipping
+/// everything that is data rather than code: string literals, quoted
+/// identifiers and comments.
+///
+/// One walk answers both things the gate asks of the code — which words are
+/// there, and whether `WHERE` appears at the top level — because telling data
+/// from code is the same job either way.
 ///
 /// A word is a run of identifier characters, so `INTO(` yields `INTO` while
-/// `into_backup` does not — a keyword is matched as a word, never as a fragment
+/// `into_backup` does not: a keyword is matched as a word, never as a fragment
 /// of a longer name.
-fn code_tokens(statement: &str) -> Vec<String> {
+fn code_words(statement: &str) -> Vec<(String, usize)> {
     let chars: Vec<char> = statement.chars().collect();
-    let mut tokens = Vec::new();
+    let mut words = Vec::new();
+    let mut depth = 0usize;
     let mut index = 0;
 
     while index < chars.len() {
@@ -394,23 +450,45 @@ fn code_tokens(statement: &str) -> Vec<String> {
             '-' if chars.get(index + 1) == Some(&'-') => index = skip_to_line_end(&chars, index),
             '#' => index = skip_to_line_end(&chars, index),
             '/' if chars.get(index + 1) == Some(&'*') => index = skip_block_comment(&chars, index),
+            '(' => {
+                depth += 1;
+                index += 1;
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                index += 1;
+            }
             current if is_word_char(current) => {
                 let start = index;
                 while index < chars.len() && is_word_char(chars[index]) {
                     index += 1;
                 }
-                tokens.push(
+                words.push((
                     chars[start..index]
                         .iter()
                         .collect::<String>()
                         .to_ascii_uppercase(),
-                );
+                    depth,
+                ));
             }
             _ => index += 1,
         }
     }
 
-    tokens
+    words
+}
+
+/// Whether the statement bounds itself with a `WHERE` of its own.
+///
+/// Top-level on purpose: a `WHERE` inside a subquery does not narrow the
+/// statement around it, so `UPDATE t SET x = (SELECT y FROM z WHERE a = 1)` is
+/// still a whole-table update and must not read as a bounded one. Depth is
+/// counted from the statement's opening, so a `WHERE` after the last `)` — the
+/// ordinary shape — is the one that counts.
+fn has_top_level_where(statement: &str) -> bool {
+    code_words(statement)
+        .iter()
+        .any(|(word, depth)| *depth == 0 && word == "WHERE")
 }
 
 /// Identifier characters, so a keyword is never found inside a longer name.
@@ -782,12 +860,110 @@ mod tests {
 
     #[test]
     fn a_free_statement_never_carries_a_refusal() {
-        // The Confirm arm exists for the tier the classifier will start
-        // emitting next; until then nothing may reach it, and this pins that
-        // the free path stays clean rather than acquiring a stray reason.
+        // A free read has no token to name and no reason to give. Pinned so a
+        // tier added later cannot leave a stray reason on the free path.
         let decision = ruling("SELECT 1");
         assert_eq!(decision.action, GateAction::Allow);
         assert!(decision.matched.is_empty());
         assert_eq!(decision.tier, StatementTier::Free);
+    }
+
+    #[test]
+    fn a_bounded_row_change_asks_for_confirmation() {
+        for sql in [
+            "INSERT INTO orders VALUES (1)",
+            "UPDATE orders SET total = 0 WHERE id = 3",
+            "DELETE FROM orders WHERE id = 3",
+            "REPLACE INTO orders VALUES (1)",
+            "MERGE INTO orders USING staging ON orders.id = staging.id",
+            // A routine's body is invisible to a text classifier, so calling
+            // one is a confirmation rather than a free pass.
+            "CALL rebuild_indexes()",
+            // Leading with WITH does not change what it is.
+            "WITH stale AS (SELECT id FROM orders WHERE old) DELETE FROM orders WHERE id IN (SELECT id FROM stale)",
+        ] {
+            assert_eq!(classify(sql).tier, StatementTier::Confirm, "{sql}");
+        }
+    }
+
+    #[test]
+    fn an_unbounded_row_change_is_refused() {
+        // The line the design draws between "confirm this" and "refuse this":
+        // a row change that never says which rows is a whole-table change.
+        for sql in [
+            "DELETE FROM orders",
+            "delete from orders",
+            "UPDATE orders SET total = 0",
+        ] {
+            assert_eq!(classify(sql).tier, StatementTier::Refuse, "{sql}");
+            assert!(
+                classify(sql).matched.contains("without WHERE"),
+                "the refusal should say why: {sql}"
+            );
+        }
+        assert_blocked("DELETE FROM orders", "delete without where");
+    }
+
+    #[test]
+    fn a_subquery_where_does_not_bound_the_statement_around_it() {
+        // Top-level only. The WHERE below belongs to the subquery, so the
+        // UPDATE is still every row — and reading it as bounded would hand a
+        // person a confirmation dialog for a whole-table change.
+        assert_eq!(
+            classify("UPDATE t SET x = (SELECT y FROM z WHERE a = 1)").tier,
+            StatementTier::Refuse
+        );
+        // The ordinary shape — WHERE after the closing paren — still counts.
+        assert_eq!(
+            classify("UPDATE t SET x = (SELECT y FROM z) WHERE id = 1").tier,
+            StatementTier::Confirm
+        );
+    }
+
+    #[test]
+    fn the_whole_table_rule_reads_code_not_values() {
+        // It is the same scan, so a value naming a whole-table delete does not
+        // trip it — the bug that started this work.
+        assert_read("SELECT * FROM audit WHERE note = 'DELETE FROM orders'");
+        assert_read("SELECT * FROM t WHERE body = 'UPDATE t SET x = 1'");
+    }
+
+    #[test]
+    fn a_batch_takes_the_strictest_tier_it_holds() {
+        // Now that two non-free tiers exist, a batch has to climb past Confirm
+        // to Refuse rather than stopping at the first non-free statement.
+        assert_eq!(
+            classify("DELETE FROM t WHERE id = 1").tier,
+            StatementTier::Confirm
+        );
+        assert_eq!(
+            classify("DELETE FROM t WHERE id = 1; DROP TABLE t").tier,
+            StatementTier::Refuse
+        );
+        assert_eq!(
+            classify("INSERT INTO t VALUES (1); DELETE FROM t WHERE id = 1").tier,
+            StatementTier::Confirm
+        );
+    }
+
+    #[test]
+    fn a_confirmed_statement_runs_only_where_confirmation_exists() {
+        // Which is nowhere, for every caller in the tree today: a read-only
+        // connection refuses the tier, and a writable one allows it outright
+        // without asking. The tier is visible before it is actionable.
+        let sql = "DELETE FROM orders WHERE id = 3";
+        assert_eq!(classify(sql).tier, StatementTier::Confirm);
+        assert!(matches!(
+            GatePolicy::read_only(GateActor::Human)
+                .decide(classify(sql))
+                .action,
+            GateAction::Refuse { .. }
+        ));
+        assert_eq!(
+            GatePolicy::for_connection(true)
+                .decide(classify(sql))
+                .action,
+            GateAction::Allow
+        );
     }
 }
