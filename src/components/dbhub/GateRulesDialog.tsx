@@ -23,12 +23,35 @@ import type { GateLadderEntry, GateOverrides, GateRefusal, StatementTier } from 
 
 const TIERS: StatementTier[] = ["free", "confirm", "refuse"];
 
-/** The tier a verb ends up at once the rules have had their say. */
-function effectiveTier(verb: string, overrides: GateOverrides): StatementTier | undefined {
-  const rule = Object.entries(overrides).find(
-    ([key]) => !key.includes("*") && !key.includes("?") && key.toUpperCase() === verb
+/** `CALL`/`EXECUTE`/`DO` and the name after it, qualified or not. */
+const CALLED_ROUTINE =
+  /^\s*(?:CALL|EXECUTE|DO)\s+((?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*))?)/i;
+
+/** One part of a possibly-qualified name: quoted, or bare. */
+const NAME_SEGMENT = /`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*/g;
+
+/** The rule that names this verb exactly, if the reader has one. */
+function exactRuleKey(verb: string, overrides: GateOverrides): string | undefined {
+  return Object.keys(overrides).find(
+    (key) => !key.includes("*") && !key.includes("?") && key.toUpperCase() === verb
   );
-  return rule?.[1];
+}
+
+/**
+ * The tier a verb ends up at once the rules have had their say.
+ *
+ * Only exact keys are consulted. A glob is matched by the gate, not here, and
+ * this deliberately does not re-implement that matching: two answers to "does
+ * etl_* cover etl_load" is one answer too many, and the one that matters is the
+ * gate's. So a glob rule leaves the chips where the defaults put them.
+ */
+function effectiveTier(verb: string, overrides: GateOverrides): StatementTier | undefined {
+  const key = exactRuleKey(verb, overrides);
+  return key ? overrides[key] : undefined;
+}
+
+function hasExactRule(verb: string, overrides: GateOverrides): boolean {
+  return exactRuleKey(verb, overrides) !== undefined;
 }
 
 /**
@@ -48,9 +71,20 @@ function effectiveTier(verb: string, overrides: GateOverrides): StatementTier | 
  * narrow the other way before saving.
  */
 export function suggestKeyFor(refusal: GateRefusal): string {
-  const called =
-    /^\s*(?:CALL|EXECUTE|DO)\s+(?:`([^`]+)`|"([^"]+)"|([A-Za-z_][\w$]*))/i.exec(refusal.sql);
-  if (called) return called[1] ?? called[2] ?? called[3] ?? "";
+  const called = CALLED_ROUTINE.exec(refusal.sql);
+  if (called) {
+    // A call is often qualified — `CALL bigdata_etl.sp_get_job_count_info()`,
+    // and MySQL writes it with backticks around each part. The rule keys on the
+    // *routine*, so the last segment is the one that can match. Taking the first
+    // would propose the schema, and a name key is only ever matched against a
+    // routine — so that rule would silently never fire, which is worse than no
+    // rule because the reader would believe it was working.
+    // Matched as segments rather than split on dots, so a quoted name that
+    // contains one — `` `etl.load` `` is a single routine — is not cut in half.
+    const segments = called[1].match(NAME_SEGMENT) ?? [];
+    const last = segments[segments.length - 1] ?? "";
+    return last.replace(/[`"]/g, "").trim();
+  }
   // `matched` is the verb, or "VERB without WHERE" — the verb is what a rule
   // can key on either way.
   return refusal.matched.split(/\s+/)[0] ?? "";
@@ -157,7 +191,13 @@ export function GateRulesDialog({
           {TIERS.map((tier) => {
             const rules = Object.entries(draft).filter(([, value]) => value === tier);
             const defaults = ladder.filter(
-              (entry) => (effectiveTier(entry.verb, draft) ?? entry.tier) === tier
+              (entry) =>
+                // A verb the reader has ruled on is drawn as that rule's row,
+                // which names it and offers its tier back. Showing it here as
+                // well would put one command in one group twice, and a reader
+                // counting what a tier holds would count it twice.
+                !hasExactRule(entry.verb, draft) &&
+                (effectiveTier(entry.verb, draft) ?? entry.tier) === tier
             );
             return (
               <section key={tier} className="space-y-1.5">
@@ -226,7 +266,13 @@ export function GateRulesDialog({
           <div className="flex items-center gap-2 border-t pt-3">
             <Input
               value={newKey}
-              onChange={(event) => setNewKey(event.target.value)}
+              onChange={(event) => {
+                setNewKey(event.target.value);
+                // The message is about the value that was rejected, so the
+                // moment the value changes it is describing something the
+                // reader is no longer looking at.
+                setError(undefined);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") addRule();
               }}

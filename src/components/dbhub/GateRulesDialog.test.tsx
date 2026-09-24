@@ -53,6 +53,20 @@ describe("suggestKeyFor", () => {
     expect(suggestKeyFor(refusal({ sql: "EXECUTE sp_rebuild" }))).toBe("sp_rebuild");
   });
 
+  it("proposes the routine, not the schema, for a qualified call", () => {
+    // How MySQL writes it, and how the log stores it: the qualifier is a schema
+    // and a name key is only ever matched against a routine, so proposing the
+    // first segment would hand the reader a rule that silently never fires.
+    expect(
+      suggestKeyFor(refusal({ sql: "CALL bigdata_etl.sp_get_job_count_info();" }))
+    ).toBe("sp_get_job_count_info");
+    expect(
+      suggestKeyFor(refusal({ sql: "CALL `bigdata_etl`.`sp_get_job_count_info`();" }))
+    ).toBe("sp_get_job_count_info");
+    // Unqualified still works, and so does a quoted name holding a dot.
+    expect(suggestKeyFor(refusal({ sql: "CALL `etl load`()" }))).toBe("etl load");
+  });
+
   it("falls back to the verb for anything that is not a call", () => {
     // `matched` carries the verb, or "VERB without WHERE" — the verb is what a
     // rule can key on either way.
@@ -119,6 +133,31 @@ describe("GateRulesDialog", () => {
     expect(screen.getByText("etl_load")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onSave).toHaveBeenCalledWith({ etl_load: "free" });
+  });
+
+  it("retires the error as soon as the value changes", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.type(screen.getByLabelText("Rule key"), "*");
+    await user.click(screen.getByRole("button", { name: /Add rule/i }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    // The message is about the value that was rejected. The moment the value
+    // changes it describes something the reader is no longer looking at, and
+    // leaving it up accuses the text they just typed.
+    await user.clear(screen.getByLabelText("Rule key"));
+    await user.type(screen.getByLabelText("Rule key"), "etl_*");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("draws a ruled-on verb once, as the rule that moved it", () => {
+    // TRUNCATE is a Refuse-tier verb by default. A rule moving it to Confirm
+    // should show it under Confirm once — as the rule — and not also as a
+    // default chip in the same group, or a reader counting what that tier holds
+    // counts it twice.
+    renderDialog({ overrides: { TRUNCATE: "confirm" } });
+    expect(screen.getAllByText("TRUNCATE")).toHaveLength(1);
   });
 
   it("shows no refusals for a scope that has none", () => {

@@ -106,10 +106,19 @@ pub enum Reach {
     ReadOnly,
     /// Reads run; a change is put to a person before it runs.
     Confirm,
-    /// Reads run; a change is asked about and runs once they say so. Whoever
-    /// chose this is the final authority, so the ladder's job is to keep them
-    /// informed rather than to stop them — it overrules nobody.
+    /// Reads and row changes run; a structural change is put to a person first.
+    ///
+    /// The person who turned writes on meant it, and asking about every row
+    /// change would make the switch useless. Structure is the tier where being
+    /// asked is worth the interruption — it is the one that cannot be undone.
     Writable,
+    /// Reads and row changes run; a structural change is refused.
+    ///
+    /// The AI's `free` mode. It differs from `Writable` by exactly the tier that
+    /// leaves the AI's hands: a person may talk themselves through dropping a
+    /// table, and the model may not — that statement is handed to a person
+    /// instead, which is the design's first iron rule.
+    Unattended,
 }
 
 /// Who is running, and how far this connection lets them go.
@@ -159,22 +168,17 @@ impl GatePolicy {
 
     /// The policy an AI runs under on a connection in `mode`.
     ///
-    /// `free` is capped at `Reach::Confirm` for now, which is decision 1: the
-    /// approval surface that would service a confirmation does not exist yet,
-    /// and the design keeps the mode's extra reach shut until it does. Lifting
-    /// that is the one line mapping `Free` to `Reach::Writable`, and it is the
-    /// last step of the design's plan rather than an oversight here.
-    ///
-    /// Note that the cap is doing nothing observable yet either: nothing
-    /// services a confirmation, so `Reach::Confirm` and `Reach::ReadOnly` both
-    /// end in a refusal. What the mode buys today is that the composition is
-    /// written down and tested, so landing the surface changes one mapping
-    /// rather than the shape of the policy.
+    /// `Free` reaches `Unattended`, which is what the mode is for: the model may
+    /// change data on a connection its owner has explicitly put in that mode.
+    /// It is not `Writable` — the structural tier stays out of the model's hands
+    /// in every mode, which is the design's first iron rule and the one thing
+    /// the modes do not vary.
     pub fn for_ai(mode: crate::models::DbReadOnlyPolicy) -> Self {
         use crate::models::DbReadOnlyPolicy;
         let reach = match mode {
             DbReadOnlyPolicy::Observer => Reach::ReadOnly,
-            DbReadOnlyPolicy::Confirm | DbReadOnlyPolicy::Free => Reach::Confirm,
+            DbReadOnlyPolicy::Confirm => Reach::Confirm,
+            DbReadOnlyPolicy::Free => Reach::Unattended,
         };
         Self {
             actor: GateActor::Ai,
@@ -220,19 +224,20 @@ impl GatePolicy {
                 Reach::ReadOnly => GateAction::Refuse {
                     reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
-                Reach::Confirm | Reach::Writable => GateAction::Confirm {
+                Reach::Confirm => GateAction::Confirm {
                     reason: confirm_reason(classification.tier, &classification.matched),
                 },
+                // A person who turned writes on, and an AI whose connection was
+                // put in free mode, both mean it: a row change runs.
+                Reach::Writable | Reach::Unattended => GateAction::Allow,
             },
             StatementTier::Refuse => match self.reach {
-                Reach::ReadOnly | Reach::Confirm => GateAction::Refuse {
+                Reach::ReadOnly | Reach::Confirm | Reach::Unattended => GateAction::Refuse {
                     reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
-                // The tiers are the AI's permission model. For a person who
-                // turned writes on they are advice, and the strictest tier is the
-                // loudest warning rather than a wall — the final decision is
-                // theirs, and a gate that overruled them would be a gate that
-                // could not be talked out of anything.
+                // The one tier a person may talk themselves through, because it
+                // is the one that cannot be undone. The AI is refused it above
+                // and the statement is handed over instead.
                 Reach::Writable => GateAction::Confirm {
                     reason: confirm_reason(classification.tier, &classification.matched),
                 },
@@ -242,7 +247,7 @@ impl GatePolicy {
             action,
             tier: classification.tier,
             matched: classification.matched,
-            session_writable: self.reach == Reach::Writable,
+            session_writable: matches!(self.reach, Reach::Writable | Reach::Unattended),
             actor: self.actor,
             overridden_by,
         }
@@ -452,22 +457,32 @@ fn refusal_reason(
              person to run it."
         );
     }
-    match classification.tier {
-        // Not reached: a free statement is never refused. Spelled out so this
-        // stays honest if a tier is ever added and this match is overlooked.
-        StatementTier::Free => "The statement was not run.".to_string(),
-        StatementTier::Confirm => format!(
-            "\"{matched}\" changes data and needs a person to confirm it, which is not \
-             available on this path yet."
+    // What the statement does, said plainly. It is the same for a read and a
+    // write up to the point where one of them cannot be undone.
+    let what = match classification.tier {
+        StatementTier::Refuse => "changes structure or removes data",
+        _ => "changes data",
+    };
+
+    match actor {
+        // A person reading this is looking at their own connection, so the
+        // message is the one thing they can act on. It is *not* "a confirmation
+        // is unavailable": they are the person a confirmation would be put to,
+        // and the switch below is what is actually in the way.
+        GateActor::Human => format!(
+            "\"{matched}\" {what}. This connection is read-only — turn writes on for it to run."
         ),
-        StatementTier::Refuse => match actor {
-            GateActor::Human => format!(
-                "\"{matched}\" is refused: this connection is read-only. Turn writes on for \
-                 this connection to run it."
+        GateActor::Ai => match classification.tier {
+            StatementTier::Refuse => format!(
+                "\"{matched}\" {what}, which is left for a person to run on this connection."
             ),
-            GateActor::Ai => format!(
-                "\"{matched}\" is refused: this connection is read-only for the AI, and \
-                 changes like this are left for a person to run."
+            // The model can act on this one, and it is told what to say: the
+            // reach is a setting its reader can change, so the answer is a next
+            // step rather than a wall.
+            _ => format!(
+                "\"{matched}\" {what}, and this connection's AI is set to read only. Tell the \
+                 user to run it in the connection's query tab, or to put the connection in \
+                 confirm mode."
             ),
         },
     }
@@ -1273,22 +1288,33 @@ mod tests {
     }
 
     #[test]
-    fn a_writable_connection_is_warned_rather_than_stopped() {
-        // The tiers are the AI's permission model. For a person who turned
-        // writes on they are advice: the final decision is theirs, so the gate
-        // asks rather than overrules — and it asks at every tier above a read,
-        // including the strictest.
+    fn a_writable_connection_runs_changes_and_is_asked_about_structure() {
+        // Turning writes on is a decision, and asking about every row change
+        // would make the switch useless. Structure is where the interruption
+        // earns itself: it is the tier that cannot be undone.
         let policy = GatePolicy::for_connection(true);
 
-        // A read is not a question worth asking.
-        assert_eq!(policy.decide(classify("SELECT 1")).action, GateAction::Allow);
+        for sql in [
+            "SELECT 1",
+            "DELETE FROM t WHERE id = 1",
+            "UPDATE t SET x = 1 WHERE id = 1",
+        ] {
+            assert_eq!(
+                policy.decide(classify(sql)).action,
+                GateAction::Allow,
+                "a writable connection runs {sql}"
+            );
+        }
 
         for sql in [
-            "DELETE FROM t",
             "DROP TABLE t",
             "ALTER TABLE t ADD COLUMN x INT",
-            // Even a verb the classifier cannot place: the person is told the
-            // tool does not recognise it, which is the honest thing to say.
+            // A delete that names no rows is a whole-table delete, so it is the
+            // structural tier however it is spelled.
+            "DELETE FROM t",
+            // A verb the classifier cannot place is treated as the strictest
+            // tier, so the person is told the tool does not recognise it rather
+            // than it being waved through as harmless.
             "wibble wobble",
         ] {
             assert!(
@@ -1314,11 +1340,12 @@ mod tests {
         };
         assert!(reason.contains("cannot be undone"), "{reason}");
 
-        let changing = policy.decide(classify("DELETE FROM t WHERE id = 1")).action;
-        let GateAction::Confirm { reason } = changing else {
-            panic!("a bounded delete is asked about");
-        };
-        assert!(reason.contains("cannot tell how many rows"), "{reason}");
+        // A change is not asked about at this reach, so nothing says how many
+        // rows — the row-count wording belongs to the reach that does ask.
+        assert_eq!(
+            policy.decide(classify("DELETE FROM t WHERE id = 1")).action,
+            GateAction::Allow
+        );
     }
 
     #[test]
@@ -1345,12 +1372,15 @@ mod tests {
             panic!("the AI's ceiling must refuse DDL");
         };
         assert!(reason.contains("left for a person"), "{reason}");
+        // And it says the structural tier cannot be undone, which is why it is
+        // the tier no mode reaches.
+        assert!(reason.contains("removes data"), "{reason}");
 
         let human = ruling("DROP TABLE t");
         let GateAction::Refuse { reason } = human.action else {
             panic!("DDL is refused by default");
         };
-        assert!(reason.contains("Turn writes on"), "{reason}");
+        assert!(reason.contains("turn writes on"), "{reason}");
         assert_eq!(human.actor, GateActor::Human);
     }
 
@@ -1829,6 +1859,65 @@ mod tests {
     }
 
     #[test]
+    fn the_ai_free_mode_changes_data_and_is_still_refused_a_drop() {
+        use crate::models::DbReadOnlyPolicy;
+        let policy = GatePolicy::for_ai(DbReadOnlyPolicy::Free);
+
+        // What the mode is for.
+        let change = policy.decide(classify("DELETE FROM t WHERE id = 1"));
+        assert_eq!(change.action, GateAction::Allow);
+        // And it needs a session that can carry it out: the driver's read-only
+        // mode sits behind the gate, and would refuse at the wire what the gate
+        // just allowed — reporting a write the user asked for as a database
+        // error from the thing meant to be helping.
+        assert!(change.session_writable);
+
+        // The one tier no mode reaches, and refused rather than confirmed so the
+        // model is told to hand it to a person instead of waiting for an answer
+        // this path cannot collect.
+        assert!(matches!(
+            policy.decide(classify("DROP TABLE t")).action,
+            GateAction::Refuse { .. }
+        ));
+    }
+
+    #[test]
+    fn only_a_person_may_talk_themselves_through_structure() {
+        // The difference between `Writable` and `Unattended` is exactly this
+        // tier, and it is the whole of the design's first iron rule: a person
+        // owns the database and may overrule its advice; the model is handed the
+        // statement instead.
+        let sql = "DROP TABLE t";
+
+        let human = GatePolicy::for_connection(true).decide(classify(sql));
+        assert!(matches!(human.action, GateAction::Confirm { .. }));
+        assert_eq!(human.actor, GateActor::Human);
+
+        let ai = GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Free).decide(classify(sql));
+        assert!(matches!(ai.action, GateAction::Refuse { .. }));
+        assert_eq!(ai.actor, GateActor::Ai);
+    }
+
+    #[test]
+    fn a_refusal_names_the_step_its_reader_can_take() {
+        // The one message that is easy to get wrong, and did get written wrong
+        // once: a person on a read-only connection was told a confirmation "is
+        // not available on this path", when a confirmation is exactly what their
+        // own dialog does. What is in the way is their write switch, so that is
+        // what the message names.
+        assert_blocked("DELETE FROM t WHERE id = 1", "turn writes on");
+
+        // The model cannot change a setting, so it is told what to say instead.
+        let observing =
+            GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Observer).decide(classify("DELETE FROM t WHERE id = 1"));
+        let GateAction::Refuse { reason } = observing.action else {
+            panic!("an observer is stopped at the changing tier");
+        };
+        assert!(reason.contains("confirm mode"), "{reason}");
+        assert!(reason.contains("query tab"), "{reason}");
+    }
+
+    #[test]
     fn the_reach_table_is_the_designs_matrix() {
         // Actor × tier, as one table, because that is the thing the design
         // specifies and the thing a later change is most likely to break.
@@ -1839,12 +1928,16 @@ mod tests {
             (Reach::Confirm, "SELECT 1", "allow"),
             (Reach::Confirm, "DELETE FROM t WHERE id = 1", "confirm"),
             (Reach::Confirm, "DROP TABLE t", "refuse"),
-            // A person with writes on is asked at both tiers above a read:
-            // the ladder is the AI's permission model, and for them it is the
-            // information they need to decide.
+            // A person who turned writes on means it: row changes run, and the
+            // tier that cannot be undone is the one worth interrupting them for.
             (Reach::Writable, "SELECT 1", "allow"),
-            (Reach::Writable, "DELETE FROM t WHERE id = 1", "confirm"),
+            (Reach::Writable, "DELETE FROM t WHERE id = 1", "allow"),
             (Reach::Writable, "DROP TABLE t", "confirm"),
+            // The AI's free mode is the same shape one tier lower: it runs the
+            // change and is refused the structure, which is handed to a person.
+            (Reach::Unattended, "SELECT 1", "allow"),
+            (Reach::Unattended, "DELETE FROM t WHERE id = 1", "allow"),
+            (Reach::Unattended, "DROP TABLE t", "refuse"),
         ];
         for (reach, sql, expected) in cases {
             let policy = GatePolicy {
@@ -1879,6 +1972,13 @@ mod tests {
                 "{reach:?}"
             );
         }
+        // `Unattended` dials writable too, and has to: it is allowed to change
+        // data, and the driver's read-only session would refuse it at the wire.
+        assert!(
+            GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Free)
+                .decide(classify("SELECT 1"))
+                .session_writable
+        );
         assert!(
             GatePolicy::for_connection(true)
                 .decide(classify("SELECT 1"))
@@ -1897,12 +1997,12 @@ mod tests {
             GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).reach,
             Reach::Confirm
         );
-        // `free` is capped at confirm until the approval surface exists
-        // (decision 1). This assertion is the cap: when the surface lands, the
-        // mapping changes to `Reach::Writable` and this line changes with it.
+        // `free` is what the mode is for: the model may change data on a
+        // connection its owner put in that mode. It is deliberately not
+        // `Writable` — the structural tier stays out of its hands.
         assert_eq!(
             GatePolicy::for_ai(DbReadOnlyPolicy::Free).reach,
-            Reach::Confirm
+            Reach::Unattended
         );
     }
 
@@ -1945,19 +2045,31 @@ mod tests {
 
     #[test]
     fn a_confirmed_statement_runs_only_where_confirmation_exists() {
-        // Which is the person's own workspace, and nowhere else: a read-only
-        // connection refuses the tier, the AI cannot service a confirmation,
-        // and only the WebView's dialog can answer one.
-        let sql = "DELETE FROM orders WHERE id = 3";
-        assert_eq!(classify(sql).tier, StatementTier::Confirm);
+        // Which is two places, and neither of them a read-only connection or
+        // an AI below free mode: the person's own dialog for the structural
+        // tier, and the AI's confirm mode for a row change.
+        assert_eq!(
+            classify("DELETE FROM orders WHERE id = 3").tier,
+            StatementTier::Confirm
+        );
         assert!(matches!(
             GatePolicy::read_only(GateActor::Human)
-                .decide(classify(sql))
+                .decide(classify("DELETE FROM orders WHERE id = 3"))
                 .action,
             GateAction::Refuse { .. }
         ));
+        // A row change at a writable reach runs: the switch is the decision.
+        assert_eq!(
+            GatePolicy::for_connection(true)
+                .decide(classify("DELETE FROM orders WHERE id = 3"))
+                .action,
+            GateAction::Allow
+        );
+        // The structural tier is what a person is asked about.
         assert!(matches!(
-            GatePolicy::for_connection(true).decide(classify(sql)).action,
+            GatePolicy::for_connection(true)
+                .decide(classify("DROP TABLE orders"))
+                .action,
             GateAction::Confirm { .. }
         ));
     }
