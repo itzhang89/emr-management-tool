@@ -99,7 +99,10 @@ import type {
   UpdateSecretInput,
   DeleteSecretInput,
   DeleteSecretResult,
-  SecretValueResponse
+  SecretValueResponse,
+  GateLadderEntry,
+  GateOverrides,
+  GateRefusal
 } from "@/types/domain";
 
 export type InvokeFunction = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -306,6 +309,14 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbConnection>("update_db_connection", request),
     setDbConnectionFlags: (connectionId: string, request: DbConnectionFlags) =>
       call<DbConnection>("set_db_connection_flags", { connectionId, ...request }),
+    // The default ladder, served rather than copied here so the rules editor
+    // groups by the classifier that actually exists.
+    getGateLadder: () => call<GateLadderEntry[]>("get_gate_ladder"),
+    getDbGateOverrides: () => call<GateOverrides>("get_db_gate_overrides"),
+    setDbGateOverrides: (overrides: GateOverrides) =>
+      call<GateOverrides>("set_db_gate_overrides", { overrides }),
+    listDbGateRefusals: (connectionId: string, limit?: number) =>
+      call<GateRefusal[]>("list_db_gate_refusals", { connectionId, limit }),
     deleteDbConnection: (connectionId: string) =>
       call<DbConnection[]>("delete_db_connection", { connectionId }),
     testDbConnection: (connectionId: string) =>

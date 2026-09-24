@@ -459,7 +459,34 @@ const dbhub: TranslationDictionary = {
   Functions: "函数",
   Events: "事件",
   "Foreign Tables": "外部表",
-  "Materialized Views": "物化视图"
+  "Materialized Views": "物化视图",
+
+  // --- Gate rules editor ---------------------------------------------------
+  "Command rules — {scope}": "命令规则 — {scope}",
+  "Commands you do not list run at the tier shown. A rule key is a verb, a routine name, or a glob like etl_*.": "未列出的命令按所示档位执行。规则的键可以是动词、过程名，或像 etl_* 这样的通配符。",
+  "A rule of * on its own is not a rule. Give it a prefix, like etl_*.": "单独一个 * 不算规则。给它一个前缀，例如 etl_*。",
+  Free: "自由执行",
+  Refuse: "拒绝",
+  "runs without asking": "直接执行",
+  "a person is asked first": "先询问你",
+  "never runs": "永不执行",
+  "Tier for {key}": "{key} 的档位",
+  "Remove the rule for {key}": "删除 {key} 的规则",
+  "TRUNCATE, sp_rebuild, etl_*…": "TRUNCATE、sp_rebuild、etl_*…",
+  "Rule key": "规则键",
+  Tier: "档位",
+  "Add rule": "添加规则",
+  "Recently refused": "最近被拒绝",
+  "What the gate turned away here — the quickest way to write the rule it needs.": "此处被门禁拦下的语句——这是写出它所需规则的最快途径。",
+  "Make a rule": "建规则",
+  "Ignore {sql}": "忽略 {sql}",
+  "Gate rules": "门禁规则",
+  "Gate rules ({count}) — what every database may run": "门禁规则（{count}）—— 所有数据库可以执行什么",
+  "All databases": "所有数据库",
+  "Account rules saved.": "账户规则已保存。",
+  "Command rules": "命令规则",
+  "Command rules · what this database allows, confirms and refuses": "命令规则 · 这个数据库允许、需确认、拒绝哪些命令",
+  "Rules saved for {name}.": "已保存 {name} 的规则。",
 };
 
 export default dbhub;

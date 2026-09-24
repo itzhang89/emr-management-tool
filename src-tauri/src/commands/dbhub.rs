@@ -14,8 +14,8 @@ use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput, DbConnectionRef,
-    DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, GateOverrides, GateRefusal,
-    NetworkProfile, NetworkProfileInput, NetworkProfileRef, NetworkProfileTestInput,
+    DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, GateLadderEntry, GateOverrides,
+    GateRefusal, NetworkProfile, NetworkProfileInput, NetworkProfileRef, NetworkProfileTestInput,
 };
 use tauri::AppHandle;
 
@@ -312,6 +312,22 @@ pub async fn update_db_connection(
 }
 
 // --- Account-wide gate rules ------------------------------------------------
+
+/// The default ladder, for the rules editor to group by.
+///
+/// Static: it is the classifier's own table, so there is no pool to reach for
+/// and nothing to scope. Serving it rather than copying it into the WebView is
+/// what keeps the editor describing a gate that exists.
+#[tauri::command]
+pub fn get_gate_ladder() -> Vec<GateLadderEntry> {
+    crate::db::dbhub::gate::default_ladder()
+        .iter()
+        .map(|(verb, tier)| GateLadderEntry {
+            verb: (*verb).to_string(),
+            tier: *tier,
+        })
+        .collect()
+}
 
 /// The rules that apply to every connection in the active account.
 #[tauri::command]

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Network } from "lucide-react";
+import { Network, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,7 +11,14 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
-import { useDbConnections, useDeleteDbConnection, useNetworkProfiles } from "@/hooks/useDbHub";
+import {
+  useDbConnections,
+  useDbGateOverrides,
+  useDeleteDbConnection,
+  useGateLadder,
+  useNetworkProfiles,
+  useSetDbGateOverrides
+} from "@/hooks/useDbHub";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
 import { clearDbWorkspace } from "@/services/dbWorkspaceCache";
@@ -20,6 +27,7 @@ import type { DbConnection } from "@/types/domain";
 import { ConnectionCard } from "./ConnectionCard";
 import { ConnectionFormDialog } from "./ConnectionFormDialog";
 import { NetworkProfilesSection } from "./NetworkProfilesSection";
+import { GateRulesDialog } from "@/components/dbhub/GateRulesDialog";
 
 /**
  * The DBHub Overview tab (design section 1, as adjusted): connection cards for
@@ -40,6 +48,10 @@ export function OverviewPanel() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<DbConnection>();
   const [profilesOpen, setProfilesOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const ladder = useGateLadder();
+  const gateOverrides = useDbGateOverrides();
+  const setGateOverrides = useSetDbGateOverrides();
   const [pendingDelete, setPendingDelete] = useState<DbConnection>();
 
   const openCreate = () => {
@@ -99,6 +111,24 @@ export function OverviewPanel() {
               <TooltipContent>
                 {t("Network Profiles ({count}) — SSH tunnels & SOCKS5 proxies", {
                   count: profiles.length
+                })}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={t("Gate rules")}
+                  onClick={() => setRulesOpen(true)}
+                >
+                  <ShieldCheck className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t("Gate rules ({count}) — what every database may run", {
+                  count: Object.keys(gateOverrides.data ?? {}).length
                 })}
               </TooltipContent>
             </Tooltip>
@@ -178,6 +208,24 @@ export function OverviewPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <GateRulesDialog
+        open={rulesOpen}
+        onOpenChange={setRulesOpen}
+        scopeLabel={t("All databases")}
+        overrides={gateOverrides.data ?? {}}
+        ladder={ladder.data ?? []}
+        pending={setGateOverrides.isPending}
+        onSave={(next) =>
+          setGateOverrides.mutate(next, {
+            onSuccess: () => {
+              setRulesOpen(false);
+              toast.success(t("Account rules saved."));
+            },
+            onError: (error) => toast.error(formatAppError(error, "Failed to save the rules."))
+          })
+        }
+      />
     </div>
   );
 }

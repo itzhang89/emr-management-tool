@@ -168,6 +168,7 @@ pub fn run() {
             commands::dbhub::create_db_connection,
             commands::dbhub::update_db_connection,
             commands::dbhub::set_db_connection_flags,
+            commands::dbhub::get_gate_ladder,
             commands::dbhub::get_db_gate_overrides,
             commands::dbhub::set_db_gate_overrides,
             commands::dbhub::list_db_gate_refusals,

@@ -1134,6 +1134,47 @@ export type DbAuthMode = "manual" | "aws_secret";
  */
 export type DbReadOnlyPolicy = "observer" | "confirm" | "free";
 
+/**
+ * What a statement *is*, independent of who may run it. Ordered by severity:
+ * a run of statements is only as free as its strictest one.
+ */
+export type StatementTier = "free" | "confirm" | "refuse";
+
+/**
+ * A connection's own changes to the ladder, keyed by a verb (`TRUNCATE`) or by
+ * the name of a routine (`sp_rebuild_index`, or a glob like `etl_*`).
+ *
+ * How a key is matched is the gate's business and it is deliberately narrow: an
+ * override is the one thing that can *loosen* the ladder. A verb key applies
+ * only when that verb decided the tier, and a name key only to a routine call —
+ * so `sp_x: free` says "calling this is fine", never "this name is safe to write
+ * anywhere".
+ */
+export type GateOverrides = Record<string, StatementTier>;
+
+/** One rung of the default ladder, as the classifier itself reports it. */
+export interface GateLadderEntry {
+  verb: string;
+  tier: StatementTier;
+}
+
+/**
+ * One statement the gate refused on a connection, grouped by shape.
+ *
+ * `sql` is the *masked* statement — literals blanked — so two runs differing
+ * only in values are one row with `hits` counted. Everything a rule can be
+ * built from (the verb, the routine name) is code and survives.
+ */
+export interface GateRefusal {
+  statementKey: string;
+  sql: string;
+  tier: StatementTier;
+  matched: string;
+  actor: "human" | "ai";
+  hits: number;
+  lastAt: string;
+}
+
 /** A saved database connection, bound to the active AWS account. */
 export interface DbConnection {
   id: string;
@@ -1149,6 +1190,8 @@ export interface DbConnection {
   showAsTab: boolean;
   /** Register the read-only SQL tool for this connection into the AI Chat. */
   enabledForAi: boolean;
+  /** This connection's own changes to the statement ladder, if it has any. */
+  gateOverrides: GateOverrides;
   aiReadOnlyPolicy: DbReadOnlyPolicy;
   /**
    * Whether queries typed in this connection's own workspace may write.
@@ -1214,6 +1257,11 @@ export interface DbConnectionFlags {
   showAsTab?: boolean;
   enabledForAi?: boolean;
   aiReadOnlyPolicy?: DbReadOnlyPolicy;
+  /**
+   * Replace this connection's own rules. An empty object clears them back to
+   * the default ladder; absent leaves them as they are.
+   */
+  gateOverrides?: GateOverrides;
   allowWrites?: boolean;
 }
 

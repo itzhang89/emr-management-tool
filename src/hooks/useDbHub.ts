@@ -6,6 +6,7 @@ import type {
   DbConnectionUpdateInput,
   DbQueryRequest,
   DbQueryCountRequest,
+  GateOverrides,
   NetworkProfileInput,
   NetworkProfileTestInput,
   SchemaObjectKind
@@ -22,6 +23,9 @@ import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 
 export const DB_CONNECTIONS_QUERY_KEY = "dbhub-connections";
 export const DB_PROFILES_QUERY_KEY = "dbhub-profiles";
+export const GATE_LADDER_QUERY_KEY = "dbhub-gate-ladder";
+export const GATE_OVERRIDES_QUERY_KEY = "dbhub-gate-overrides";
+export const GATE_REFUSALS_QUERY_KEY = "dbhub-gate-refusals";
 
 export function useDbConnections() {
   const activeAccount = useActiveAwsAccount();
@@ -245,5 +249,63 @@ export function useDbObjects(
     enabled: Boolean(
       active && accountId && connectionId && database && schema !== undefined && kinds.length
     )
+  });
+}
+
+/**
+ * The default ladder, for a rules editor to group by.
+ *
+ * Cached for the session: it is the classifier's own static table, so it cannot
+ * change while the app is running.
+ */
+export function useGateLadder() {
+  return useQuery({
+    queryKey: [GATE_LADDER_QUERY_KEY],
+    queryFn: () => dbHubService.gateLadder(),
+    staleTime: Infinity
+  });
+}
+
+/** The rules that apply to every connection in the active account. */
+export function useDbGateOverrides() {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useQuery({
+    queryKey: [GATE_OVERRIDES_QUERY_KEY, accountId],
+    queryFn: () => dbHubService.gateOverrides(),
+    enabled: Boolean(accountId)
+  });
+}
+
+/**
+ * Replace the account's rules.
+ *
+ * Writes and invalidates together, so the editor and the connections that read
+ * them agree the moment the dialog closes.
+ */
+export function useSetDbGateOverrides() {
+  const queryClient = useQueryClient();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useMutation({
+    mutationFn: (overrides: GateOverrides) => dbHubService.setGateOverrides(overrides),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: [GATE_OVERRIDES_QUERY_KEY, accountId] });
+    }
+  });
+}
+
+/**
+ * What the gate refused on a connection.
+ *
+ * Not cached long: its whole purpose is to show someone what to write a rule
+ * for right after they hit the wall, so a stale list is a useless one.
+ */
+export function useDbGateRefusals(connectionId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: [GATE_REFUSALS_QUERY_KEY, connectionId],
+    queryFn: () => dbHubService.gateRefusals(connectionId!),
+    enabled: Boolean(connectionId) && enabled,
+    staleTime: 0
   });
 }

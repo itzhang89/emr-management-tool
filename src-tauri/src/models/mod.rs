@@ -1615,6 +1615,17 @@ pub enum StatementTier {
 /// decides, and loosening is the direction that can lose data.
 pub type GateOverrides = std::collections::BTreeMap<String, StatementTier>;
 
+/// One rung of the default ladder: a verb, and the tier it opens at.
+///
+/// Read by the rules editor so the defaults it shows are the classifier's own
+/// rather than a copy in the WebView that can drift away from it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateLadderEntry {
+    pub verb: String,
+    pub tier: StatementTier,
+}
+
 /// One statement the gate refused on a connection, with how often it has been.
 ///
 /// Not an audit row: this exists to answer one question — "what rule should I

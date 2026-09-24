@@ -7,6 +7,9 @@ import type {
   DbConnectionUpdateInput,
   DbQueryRequest,
   DbQueryCountRequest,
+  GateLadderEntry,
+  GateOverrides,
+  GateRefusal,
   NetworkProfile,
   NetworkProfileInput,
   NetworkProfileTestInput,
@@ -23,6 +26,11 @@ export const dbHubService = {
   updateConnection: (input: DbConnectionUpdateInput) => tauriClient.updateDbConnection(input),
   setConnectionFlags: (connectionId: string, flags: DbConnectionFlags) =>
     tauriClient.setDbConnectionFlags(connectionId, flags),
+  gateLadder: () => tauriClient.getGateLadder(),
+  gateOverrides: () => tauriClient.getDbGateOverrides(),
+  setGateOverrides: (overrides: GateOverrides) => tauriClient.setDbGateOverrides(overrides),
+  gateRefusals: (connectionId: string, limit?: number) =>
+    tauriClient.listDbGateRefusals(connectionId, limit),
   deleteConnection: (connectionId: string) => tauriClient.deleteDbConnection(connectionId),
   testConnection: (connectionId: string) => tauriClient.testDbConnection(connectionId),
   testDraftConnection: (input: DbConnectionTestInput) => tauriClient.testDbConnectionDraft(input),

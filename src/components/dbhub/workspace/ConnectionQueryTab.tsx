@@ -7,11 +7,13 @@ import {
   Folder,
   ListFilter,
   PanelLeftOpen,
+  ShieldCheck,
   Table2
 } from "lucide-react";
 import { toast } from "sonner";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { DbWriteStatusIcon } from "@/components/dbhub/DbWriteStatusIcon";
+import { GateRulesDialog } from "@/components/dbhub/GateRulesDialog";
 import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -22,6 +24,8 @@ import {
   useDbObjects,
   useCancelDbQuery,
   useRefreshDbCatalog,
+  useDbGateRefusals,
+  useGateLadder,
   useRunDbQuery,
   useSetDbConnectionFlags
 } from "@/hooks/useDbHub";
@@ -115,6 +119,11 @@ export function ConnectionQueryTab({
   const refreshCatalog = useRefreshDbCatalog(connection.id);
   const cancelQuery = useCancelDbQuery();
   const setFlags = useSetDbConnectionFlags();
+  const [rulesOpen, setRulesOpen] = useState(false);
+  // Asked for only while the dialog is open: the list exists to answer "what
+  // rule do I write", and that question is only being asked there.
+  const ladder = useGateLadder();
+  const refusals = useDbGateRefusals(connection.id, rulesOpen);
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
@@ -683,6 +692,27 @@ export function ConnectionQueryTab({
     );
   };
 
+  /** This database's own rules — what it allows, confirms and refuses. */
+  const rulesButton = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="size-4"
+          aria-label={t("Command rules")}
+          onClick={() => setRulesOpen(true)}
+        >
+          <ShieldCheck className="size-3" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {t("Command rules · what this database allows, confirms and refuses")}
+      </TooltipContent>
+    </Tooltip>
+  );
+
   const analyzeButton = onOpenAiAssistant ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -742,7 +772,12 @@ export function ConnectionQueryTab({
           no alignment, so a workspace that wants it on the left can have that. */}
       <div className="ml-auto">
         <SqlQueryToolbar
-            leading={analyzeButton}
+            leading={
+              <>
+                {analyzeButton}
+                {rulesButton}
+              </>
+            }
           templates={dbSqlTemplates(connection.kind)}
           history={history}
           favoriteSqlSet={new Set(favorites.map((entry) => entry.sql.trim()))}
@@ -990,6 +1025,29 @@ export function ConnectionQueryTab({
           }
           setFavoritePrompt(undefined);
         }}
+      />
+
+      <GateRulesDialog
+        open={rulesOpen}
+        onOpenChange={setRulesOpen}
+        scopeLabel={connection.name}
+        overrides={connection.gateOverrides ?? {}}
+        ladder={ladder.data ?? []}
+        pending={setFlags.isPending}
+        refusals={refusals.data}
+        onSave={(next) =>
+          setFlags.mutate(
+            { connectionId: connection.id, flags: { gateOverrides: next } },
+            {
+              onSuccess: () => {
+                setRulesOpen(false);
+                toast.success(t("Rules saved for {name}.", { name: connection.name }));
+              },
+              onError: (error) =>
+                toast.error(formatAppError(error, "Failed to save the rules."))
+            }
+          )
+        }
       />
 
       <DbAnalyzeDialog
