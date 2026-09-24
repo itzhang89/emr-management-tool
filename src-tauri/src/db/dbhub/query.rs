@@ -311,9 +311,11 @@ pub async fn run_for_command(    app: &tauri::AppHandle,
         // driver dial; binding it to this scope does exactly that.
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-        // The one place the person's write switch is read. Nothing on an AI
-        // path asks, so the AI's ceiling stays a property of the code.
+        // The one place the person's write switch is read, and the one place
+        // their connection's own rules are applied. Nothing on an AI path asks
+        // for either, so the AI's ceiling stays a property of the code.
         let decision = gate::GatePolicy::for_connection(shape.connection.allow_writes)
+            .with_overrides(shape.connection.gate_overrides.clone())
             .decide(gate::classify(sql));
         execute(
             &shape,

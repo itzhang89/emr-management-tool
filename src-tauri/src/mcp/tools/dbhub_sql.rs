@@ -265,6 +265,14 @@ pub async fn sql_query_text(
     // user has configured writes for their own typing, the model never gets a
     // session that can write. This is the ceiling the design keeps in code
     // rather than in configuration.
+    //
+    // The connection's own tier overrides are deliberately not applied here
+    // yet. An override is the one thing in this system that can *loosen* the
+    // ladder, and if one reached the AI path then `TRUNCATE: free` — a
+    // reasonable rule for a person working on a staging database — would also
+    // hand the model a truncate. How an override and an AI mode compose is the
+    // question the confirm modes settle, and this path stays at the strict end
+    // until it does.
     let decision =
         gate::GatePolicy::read_only(gate::GateActor::Ai).decide(gate::classify(&args.sql));
     let result = query::execute(
