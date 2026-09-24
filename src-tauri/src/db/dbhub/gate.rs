@@ -171,7 +171,7 @@ fn classify_single(statement: &str) -> StatementClass {
         "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
             // WITH opens CTEs that normally feed a SELECT; the body is still
             // audited below so a WITH ... INSERT/UPDATE/DELETE is caught.
-            audit_with_statement(&cleaned, &first_word)
+            audit_with_statement(&cleaned)
         }
         _ => StatementClass::Blocked {
             reason: format!(
@@ -183,41 +183,154 @@ fn classify_single(statement: &str) -> StatementClass {
 }
 
 /// Second-pass audit: reject write keywords appearing after CTEs or inside
-/// otherwise-read-looking statements (SELECT ... FOR UPDATE stays allowed —
-/// it reads; SELECT ... INTO writes and is caught by the INTO token).
-fn audit_with_statement(cleaned: &str, first_word: &str) -> StatementClass {
-    let upper = cleaned.to_ascii_uppercase();
-    for keyword in [
-        " INSERT ",
-        " UPDATE ",
-        " DELETE ",
-        " MERGE ",
-        " REPLACE ",
-        " INTO ",
-        " CALL ",
-        " GRANT ",
-        " REVOKE ",
-        " ALTER ",
-        " DROP ",
-        " CREATE ",
-        " TRUNCATE ",
-        " SET ",
-        " LOCK ",
-        " KILL ",
-        " LOAD ",
-        " HANDLER ",
-    ] {
-        if upper.contains(keyword) {
-            return StatementClass::Blocked {
-                reason: format!(
-                    "This statement contains {0} and is blocked: the connection is read-only.",
-                    keyword.trim()
-                ),
-            };
+/// otherwise-read-looking statements.
+///
+/// The scan reads the statement's *code* — the words outside string literals,
+/// quoted identifiers and comments — and it matches whole words. Matching the
+/// raw text had a bug in each direction:
+///
+/// * A value was read as code. `where note = 'please DROP this row'` contains
+///   ` DROP `, so a query against a table storing SQL text — a templates table
+///   is the ordinary case — was refused as a write.
+/// * A keyword beside punctuation was missed. The check wanted a space on both
+///   sides, so a newline where that space was expected carried `INTO` straight
+///   past it: `SELECT * INTO\nOUTFILE '/tmp/x'` was allowed through.
+///
+/// `SELECT ... FOR UPDATE` is refused now; it used to slip past on the trailing
+/// newline `strip_comments` appends. That is the honest verdict rather than a
+/// regression: the statement takes row locks, and a read-only session refuses
+/// it at the wire anyway, so it never ran on the connections this gate guards.
+fn audit_with_statement(cleaned: &str) -> StatementClass {
+    match first_write_token(cleaned) {
+        Some(token) => StatementClass::Blocked {
+            reason: format!(
+                "This statement contains {token} and is blocked: the connection is read-only."
+            ),
+        },
+        None => StatementClass::Read,
+    }
+}
+
+/// The first write keyword in the statement's code, if any.
+fn first_write_token(cleaned: &str) -> Option<String> {
+    code_tokens(cleaned)
+        .into_iter()
+        .find(|token| is_write_keyword(token))
+}
+
+/// The statement's words, skipping everything that is data rather than code:
+/// string literals, quoted identifiers and comments.
+///
+/// A word is a run of identifier characters, so `INTO(` yields `INTO` while
+/// `into_backup` does not — a keyword is matched as a word, never as a fragment
+/// of a longer name.
+fn code_tokens(statement: &str) -> Vec<String> {
+    let chars: Vec<char> = statement.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+
+    while index < chars.len() {
+        match chars[index] {
+            // A value, or a name in quotes. Neither is code.
+            '\'' | '"' | '`' => index = skip_quoted(&chars, index, chars[index]),
+            // `--` and MySQL's `#` run to the end of the line.
+            '-' if chars.get(index + 1) == Some(&'-') => index = skip_to_line_end(&chars, index),
+            '#' => index = skip_to_line_end(&chars, index),
+            '/' if chars.get(index + 1) == Some(&'*') => index = skip_block_comment(&chars, index),
+            current if is_word_char(current) => {
+                let start = index;
+                while index < chars.len() && is_word_char(chars[index]) {
+                    index += 1;
+                }
+                tokens.push(
+                    chars[start..index]
+                        .iter()
+                        .collect::<String>()
+                        .to_ascii_uppercase(),
+                );
+            }
+            _ => index += 1,
         }
     }
-    let _ = first_word;
-    StatementClass::Read
+
+    tokens
+}
+
+/// Identifier characters, so a keyword is never found inside a longer name.
+fn is_word_char(current: char) -> bool {
+    current.is_alphanumeric() || current == '_' || current == '$'
+}
+
+/// Step past a quoted run, starting on its opening quote.
+///
+/// A doubled quote escapes a quote and so does not end the literal. A backslash
+/// deliberately does *not* escape: MySQL reads `\'` as a quote inside the value,
+/// but honouring that would let a backslash swallow the remainder of the
+/// statement — any write keyword with it — so the scan treats a backslash as an
+/// ordinary character and errs toward seeing code. The cost is a false positive
+/// on a value that both contains `\'` and names a write verb: rare, and it
+/// fails closed.
+///
+/// An unterminated literal runs to the end, which is also where the statement
+/// stops being readable as one.
+fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == quote {
+            if chars.get(index + 1) == Some(&quote) {
+                index += 2;
+                continue;
+            }
+            return index + 1;
+        }
+        index += 1;
+    }
+    chars.len()
+}
+
+fn skip_to_line_end(chars: &[char], start: usize) -> usize {
+    let mut index = start;
+    while index < chars.len() && chars[index] != '\n' {
+        index += 1;
+    }
+    index
+}
+
+fn skip_block_comment(chars: &[char], start: usize) -> usize {
+    let mut index = start + 2;
+    while index + 1 < chars.len() {
+        if chars[index] == '*' && chars[index + 1] == '/' {
+            return index + 2;
+        }
+        index += 1;
+    }
+    chars.len()
+}
+
+/// The verbs that make a statement more than a read. `INTO` is here because it
+/// is what turns a `SELECT` into a write (`SELECT ... INTO OUTFILE`).
+fn is_write_keyword(token: &str) -> bool {
+    matches!(
+        token,
+        "INSERT"
+            | "UPDATE"
+            | "DELETE"
+            | "MERGE"
+            | "REPLACE"
+            | "INTO"
+            | "CALL"
+            | "GRANT"
+            | "REVOKE"
+            | "ALTER"
+            | "DROP"
+            | "CREATE"
+            | "TRUNCATE"
+            | "SET"
+            | "LOCK"
+            | "KILL"
+            | "LOAD"
+            | "HANDLER"
+    )
 }
 
 #[cfg(test)]
@@ -354,5 +467,69 @@ mod tests {
         assert_blocked(";", "no sql");
         assert_blocked("   ", "no sql");
         assert_blocked("-- only a comment", "no sql");
+    }
+
+    #[test]
+    fn write_keywords_inside_values_are_not_writes() {
+        // A value is data, not SQL. A table holding SQL text — a templates
+        // table is the ordinary case — has to stay queryable.
+        assert_read("SELECT * FROM t WHERE note = 'please DROP this row'");
+        assert_read("SELECT 'a INTO b' AS x");
+        assert_read("SELECT * FROM templates WHERE body = 'INSERT INTO audit VALUES (1)'");
+        assert_read("SELECT * FROM t WHERE msg = 'we will CALL you'");
+        // A doubled quote escapes a quote, so the literal stays open across it
+        // and the verb after it is still inside the value.
+        assert_read("SELECT 'it''s fine to DELETE this' AS x");
+    }
+
+    #[test]
+    fn write_keywords_inside_comments_are_not_writes() {
+        assert_read("-- DROP TABLE orders\nSELECT 1");
+        assert_read("# DELETE FROM orders\nSELECT 1");
+        assert_read("/* UPDATE orders SET x = 1 */ SELECT 1");
+        // A trailing comment, which `strip_comments` leaves in place — the
+        // token scan is what keeps it from being read as a verb.
+        assert_read("SELECT 1 -- DROP TABLE orders");
+    }
+
+    #[test]
+    fn quoted_identifiers_are_not_keywords() {
+        assert_read("SELECT \"delete\" FROM t");
+        assert_read("SELECT `insert` FROM t");
+        assert_read("SELECT * FROM t AS `update`");
+    }
+
+    #[test]
+    fn a_keyword_inside_a_longer_name_is_not_a_keyword() {
+        assert_read("SELECT into_backup, insert_log FROM t");
+        assert_read("SELECT * FROM settings");
+        assert_read("SELECT updated_at, created_at FROM t");
+    }
+
+    #[test]
+    fn a_keyword_beside_punctuation_is_still_caught() {
+        // What the old space-delimited check missed: anything putting a newline
+        // or a bracket where it wanted a space.
+        assert_blocked("SELECT * INTO\nOUTFILE '/tmp/x' FROM orders", "INTO");
+        assert_blocked("SELECT * FROM orders INTO(OUTFILE)", "INTO");
+        assert_blocked("WITH t AS (SELECT 1)\nINSERT INTO log VALUES (1)", "INSERT");
+    }
+
+    #[test]
+    fn a_backslash_does_not_hide_code_from_the_scan() {
+        // MySQL would read `\'` as an escaped quote and keep the literal open,
+        // which would swallow the DROP below. The scan deliberately reads a
+        // backslash as an ordinary character so it cannot be used that way;
+        // the cost is a false positive on values that both contain `\'` and
+        // name a write verb.
+        assert_blocked("SELECT 'it\\'s DROP TABLE t' AS x", "DROP");
+    }
+
+    #[test]
+    fn select_for_update_is_refused() {
+        // It takes row locks, and a read-only session refuses it at the wire
+        // anyway — so the gate says so first rather than relying on the stray
+        // trailing newline that used to let it through.
+        assert_blocked("SELECT * FROM t FOR UPDATE", "UPDATE");
     }
 }
