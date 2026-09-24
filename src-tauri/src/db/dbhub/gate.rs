@@ -15,11 +15,18 @@
 //! (`SELECT ... INTO OUTFILE`) is refused too — a caller can rephrase it, a
 //! destroyed table cannot be un-rephrased.
 
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
 /// What a statement *is*, independent of who may run it.
 ///
 /// Ordered by severity, because a run of statements is only as free as its
-/// strictest one: a batch holding a `DROP` is a `DROP`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// strictest one: a batch holding a `DROP` is a `DROP`. The name is also what a
+/// per-connection override stores, so the spelling reaches the database and the
+/// TS types: `free`, `confirm`, `refuse`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StatementTier {
     /// A read: safe to run unattended.
     Free,
@@ -30,6 +37,16 @@ pub enum StatementTier {
     Refuse,
 }
 
+/// A connection's own changes to the ladder, keyed by a verb (`TRUNCATE`) or by
+/// the name of a routine (`sp_rebuild_index`).
+///
+/// Matching is deliberately narrow, because an override is the one place a
+/// connection can *loosen* what the ladder decides, and loosening is the
+/// direction that can lose data. A verb key applies only when that verb is what
+/// decided the tier; a name key applies only to a routine call. Neither can
+/// reach a `DROP` — see `GatePolicy::apply_overrides`.
+pub type GateOverrides = BTreeMap<String, StatementTier>;
+
 /// A statement's tier, and the token that decided it — so a refusal can name
 /// what it objected to rather than only that it objected.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +55,51 @@ pub struct Classification {
     /// The write verb, or the statement's first word when the classifier does
     /// not recognise it. Empty for a free read, and for an empty batch.
     pub matched: String,
+    /// The verb the statement opens with, uppercased. What a verb-keyed
+    /// override matches on — kept apart from `matched`, which names whatever
+    /// decided the tier and may be a verb found later in the body.
+    pub verb: String,
+    /// The routine a `CALL`/`EXECUTE`/`DO` names, when it names one. What a
+    /// name-keyed override matches on, and only ever set for a routine — a
+    /// `DROP TABLE sp_x` has no routine, so no name override can re-tier it.
+    pub routine: Option<String>,
+}
+
+impl Classification {
+    /// A classification of nothing at all, which is where the batch walk and
+    /// the empty-statement path both start.
+    fn none() -> Self {
+        Self {
+            tier: StatementTier::Free,
+            matched: String::new(),
+            verb: String::new(),
+            routine: None,
+        }
+    }
+
+    /// The same classification with another tier, keeping what named it — an
+    /// override changes the tier, not the statement being talked about.
+    fn retiered(mut self, tier: StatementTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    /// The same classification with another deciding token, for the one case
+    /// where the statement's shape names what was wrong with it.
+    fn with_matched(mut self, matched: impl Into<String>) -> Self {
+        self.matched = matched.into();
+        self
+    }
+
+    /// A statement with a known verb and a named deciding token.
+    fn of(tier: StatementTier, matched: impl Into<String>, verb: impl Into<String>) -> Self {
+        Self {
+            tier,
+            matched: matched.into(),
+            verb: verb.into(),
+            routine: None,
+        }
+    }
 }
 
 /// Who is asking to run the statement.
@@ -66,12 +128,14 @@ pub enum GateAction {
 }
 
 /// Who is running, and how far this connection lets them go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatePolicy {
     pub actor: GateActor,
     /// Whether this connection may be written to at all. Off is the default
     /// everywhere, and the AI's paths never turn it on.
     pub writable: bool,
+    /// This connection's own changes to the ladder, if it has any.
+    pub overrides: GateOverrides,
 }
 
 impl GatePolicy {
@@ -82,6 +146,7 @@ impl GatePolicy {
         Self {
             actor,
             writable: false,
+            overrides: GateOverrides::new(),
         }
     }
 
@@ -91,7 +156,14 @@ impl GatePolicy {
         Self {
             actor: GateActor::Human,
             writable,
+            overrides: GateOverrides::new(),
         }
+    }
+
+    /// The same policy, with this connection's own changes to the ladder.
+    pub fn with_overrides(mut self, overrides: GateOverrides) -> Self {
+        self.overrides = overrides;
+        self
     }
 
     /// Decide what to do with one statement.
@@ -102,13 +174,14 @@ impl GatePolicy {
     /// rather than what stops them. Refusing a `DROP` they asked for is a
     /// decision this policy does not make.
     pub fn decide(&self, classification: Classification) -> GateDecision {
+        let (classification, overridden_by) = self.apply_overrides(classification);
         let action = if self.writable {
             GateAction::Allow
         } else {
             match classification.tier {
                 StatementTier::Free => GateAction::Allow,
                 StatementTier::Confirm | StatementTier::Refuse => GateAction::Refuse {
-                    reason: refusal_reason(self.actor, &classification),
+                    reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
             }
         };
@@ -118,6 +191,52 @@ impl GatePolicy {
             matched: classification.matched,
             session_writable: self.writable,
             actor: self.actor,
+            overridden_by,
+        }
+    }
+
+    /// Move the statement to the tier this connection gives its verb or
+    /// routine, and say which key did it.
+    ///
+    /// An override is the only place a connection can *loosen* the ladder, so
+    /// the matching is narrow on purpose:
+    ///
+    /// * A **verb** key applies only when that verb is what decided the tier.
+    ///   `TRUNCATE: confirm` re-tiers `TRUNCATE t` and nothing else — a `DELETE`
+    ///   whose column happens to be named truncate is untouched, because the key
+    ///   is compared to the verb, not searched for in the text.
+    /// * A **name** key applies only to a routine, and only to the routine the
+    ///   statement calls. `sp_rebuild_index: free` makes `CALL sp_rebuild_index()`
+    ///   free and leaves `DROP TABLE sp_rebuild_index` a `DROP` — the difference
+    ///   between "this procedure is safe to call" and "this name is safe to
+    ///   write anywhere".
+    fn apply_overrides(&self, classification: Classification) -> (Classification, Option<String>) {
+        if self.overrides.is_empty() {
+            return (classification, None);
+        }
+
+        // The verb first: it is the coarser key, and a connection that has an
+        // opinion about every `CALL` means it more than one about one procedure.
+        let verb_match = self
+            .overrides
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(&classification.verb));
+        if let Some((key, tier)) = verb_match {
+            return (classification.retiered(*tier), Some(key.clone()));
+        }
+
+        // Only a routine can be re-tiered by name, and only the routine it
+        // calls. Everything else keeps the tier the ladder gave it.
+        let Some(routine) = classification.routine.as_deref() else {
+            return (classification, None);
+        };
+        match self
+            .overrides
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(routine))
+        {
+            Some((key, tier)) => (classification.retiered(*tier), Some(key.clone())),
+            None => (classification, None),
         }
     }
 }
@@ -138,14 +257,39 @@ pub struct GateDecision {
     /// re-deriving it and risking a disagreement with the gate.
     pub session_writable: bool,
     pub actor: GateActor,
+    /// The connection's own rule that set this tier, when one did. Named so a
+    /// refusal can say the connection decided it rather than the ladder.
+    pub overridden_by: Option<String>,
 }
 
 /// Why a statement was refused, in the words of the policy that refused it.
-fn refusal_reason(actor: GateActor, classification: &Classification) -> String {
-    if classification.matched.is_empty() {
+fn refusal_reason(
+    actor: GateActor,
+    classification: &Classification,
+    overridden_by: Option<&str>,
+) -> String {
+    // Only an empty batch has nothing to name. A free read carries no `matched`
+    // of its own — nothing in its body made it more than a read — but it still
+    // has a verb, and an override that re-tiers it has to be able to say so
+    // rather than report that there was no statement.
+    if classification.verb.is_empty() && classification.matched.is_empty() {
         return "No SQL statement to run.".to_string();
     }
-    let matched = &classification.matched;
+    let named = if classification.matched.is_empty() {
+        &classification.verb
+    } else {
+        &classification.matched
+    };
+    let matched = named;
+    // A connection that has ruled on a verb or a routine has said something
+    // about *this* statement, and the message should quote that rather than
+    // recite the default ladder's reasoning back at them.
+    if let Some(key) = overridden_by {
+        return format!(
+            "\"{matched}\" is refused by this connection's rule for \"{key}\", which needs a \
+             person to run it."
+        );
+    }
     match classification.tier {
         // Not reached: a free statement is never refused. Spelled out so this
         // stays honest if a tier is ever added and this match is overlooked.
@@ -172,28 +316,21 @@ fn refusal_reason(actor: GateActor, classification: &Classification) -> String {
 /// takes the strictest of them), and the read-flavoured utility statements
 /// (SHOW/DESCRIBE/EXPLAIN/USE).
 pub fn classify(sql: &str) -> Classification {
-    let mut worst = Classification {
-        tier: StatementTier::Free,
-        matched: String::new(),
-    };
-    let mut found = false;
+    let mut worst: Option<Classification> = None;
     for statement in split_statements(sql) {
-        found = true;
         let classification = classify_single(&statement);
-        // A run is refused as a whole, so it is as strict as its strictest
-        // statement. Ties keep the earlier one, so the first statement at a
-        // given severity is the one a refusal names.
-        if classification.tier > worst.tier {
-            worst = classification;
-        }
+        worst = Some(match worst {
+            // The first statement seeds the batch, so its verb is what a
+            // verb-keyed override sees even when the whole batch is free.
+            None => classification,
+            // A run is refused as a whole, so it is as strict as its strictest
+            // statement. Ties keep the earlier one, so the first statement at a
+            // given severity is the one a refusal names.
+            Some(current) if classification.tier > current.tier => classification,
+            Some(current) => current,
+        });
     }
-    if !found {
-        return Classification {
-            tier: StatementTier::Refuse,
-            matched: String::new(),
-        };
-    }
-    worst
+    worst.unwrap_or_else(|| Classification::none().retiered(StatementTier::Refuse))
 }
 
 /// Split on semicolons outside quotes; the pieces keep their comments, which
@@ -347,17 +484,59 @@ fn tier_for_verb(verb: &str) -> Option<StatementTier> {
     }
 }
 
+/// The routine a statement calls: the identifier right after its opening verb.
+///
+/// Quoted or bare, because both name the same routine —
+/// ``CALL `sp x`(...)`` and `CALL sp_x(...)` are the same call with different
+/// punctuation. Only ever asked of a statement whose verb is a routine verb, so
+/// the verb is known to be the first word.
+fn routine_after_verb(cleaned: &str) -> Option<String> {
+    let chars: Vec<char> = cleaned.chars().collect();
+    let mut index = 0;
+
+    // The verb.
+    while index < chars.len() && is_word_char(chars[index]) {
+        index += 1;
+    }
+    // Whatever separates it from the name.
+    while index < chars.len() && !is_word_char(chars[index]) && chars[index] != '`' {
+        if matches!(chars[index], '\'' | '"') {
+            return None;
+        }
+        index += 1;
+    }
+    if index >= chars.len() {
+        return None;
+    }
+
+    if chars[index] == '`' {
+        let end = skip_quoted(&chars, index, '`');
+        // `skip_quoted` lands past the closing backtick, so the name is what it
+        // wrapped; an unterminated quote yielded the rest of the statement,
+        // which is as much of a name as there is.
+        let inner: String = chars[index + 1..end.saturating_sub(1).max(index + 1)]
+            .iter()
+            .collect();
+        return (!inner.is_empty()).then_some(inner);
+    }
+
+    let start = index;
+    while index < chars.len() && is_word_char(chars[index]) {
+        index += 1;
+    }
+    (start < index).then(|| chars[start..index].iter().collect())
+}
+
 /// Classify one statement: its tier, and the token that decided it.
 fn classify_single(statement: &str) -> Classification {
     let cleaned = strip_comments(statement);
     let verb = first_word(&cleaned);
 
     let Some(base) = tier_for_verb(&verb) else {
-        return Classification {
-            tier: StatementTier::Refuse,
-            matched: verb,
-        };
+        return Classification::of(StatementTier::Refuse, verb.clone(), verb);
     };
+
+    let mut classification = Classification::of(base, verb.clone(), verb.clone());
 
     // A read-shaped statement is not a read until its body says so. `WITH`
     // opens CTEs that normally feed a SELECT but can feed an INSERT, and
@@ -365,16 +544,21 @@ fn classify_single(statement: &str) -> Classification {
     // audit finds is tiered by the same table, so `WITH ... INSERT` is treated
     // as the insert it is rather than as something stranger.
     if base == StatementTier::Free {
-        return match first_write_token(&cleaned) {
-            Some(token) => Classification {
-                tier: tier_for_verb(&token).unwrap_or(StatementTier::Refuse),
-                matched: token,
-            },
-            None => Classification {
-                tier: StatementTier::Free,
-                matched: String::new(),
-            },
-        };
+        if let Some(token) = first_write_token(&cleaned) {
+            let tier = tier_for_verb(&token).unwrap_or(StatementTier::Refuse);
+            return Classification::of(tier, token, verb);
+        }
+        // Nothing in the body made it more than a read, so nothing names it.
+        // `verb` still says what it was, which is what an override that
+        // re-tiers the statement will need to name it in turn.
+        return classification.with_matched(String::new());
+    }
+
+    // What a routine call names, for a name-keyed override to match. Recorded
+    // only for routines: a `DROP TABLE sp_x` mentions the same name and must
+    // never be re-tiered by it.
+    if matches!(verb.as_str(), "CALL" | "EXECUTE" | "DO") {
+        classification.routine = routine_after_verb(&cleaned);
     }
 
     // The line between "confirm this" and "refuse this" for a row change: does
@@ -390,16 +574,13 @@ fn classify_single(statement: &str) -> Classification {
         && matches!(verb.as_str(), "UPDATE" | "DELETE")
         && !has_top_level_where(&cleaned)
     {
-        return Classification {
-            tier: StatementTier::Refuse,
-            matched: format!("{verb} without WHERE"),
-        };
+        let matched = format!("{verb} without WHERE");
+        return classification
+            .retiered(StatementTier::Refuse)
+            .with_matched(matched);
     }
 
-    Classification {
-        tier: base,
-        matched: verb,
-    }
+    classification
 }
 
 /// The first write keyword in the statement's code, if any.
@@ -944,6 +1125,133 @@ mod tests {
             classify("INSERT INTO t VALUES (1); DELETE FROM t WHERE id = 1").tier,
             StatementTier::Confirm
         );
+    }
+
+    /// A read-only connection that has ruled on some of its own commands, which
+    /// is how an overridden connection arrives here.
+    fn ruling_with(overrides: &[(&str, StatementTier)], sql: &str) -> GateDecision {
+        let map = overrides
+            .iter()
+            .map(|(key, tier)| ((*key).to_string(), *tier))
+            .collect();
+        GatePolicy::read_only(GateActor::Human)
+            .with_overrides(map)
+            .decide(classify(sql))
+    }
+
+    #[test]
+    fn a_verb_override_retiers_only_that_verb() {
+        // This staging database clears its tables as a matter of routine, so
+        // TRUNCATE is a confirmation here rather than a refusal.
+        let decision = ruling_with(&[("TRUNCATE", StatementTier::Confirm)], "TRUNCATE staging");
+        assert_eq!(decision.tier, StatementTier::Confirm);
+        assert_eq!(decision.overridden_by.as_deref(), Some("TRUNCATE"));
+        // The override moved the tier; the policy still decides the action, and
+        // a read-only connection refuses a confirmation either way.
+        assert!(matches!(decision.action, GateAction::Refuse { .. }));
+
+        // A DROP is untouched even though the word appears in the statement,
+        // because the key is compared to the verb rather than searched for.
+        let drop = ruling_with(
+            &[("TRUNCATE", StatementTier::Confirm)],
+            "DROP TABLE truncate_log",
+        );
+        assert_eq!(drop.tier, StatementTier::Refuse);
+        assert!(drop.overridden_by.is_none());
+    }
+
+    #[test]
+    fn a_verb_override_can_loosen_a_statement_to_free() {
+        // The direction that carries the risk: this database says calling its
+        // procedures is safe, so a read-only connection runs one.
+        let decision = ruling_with(&[("CALL", StatementTier::Free)], "CALL rebuild_index()");
+        assert_eq!(decision.tier, StatementTier::Free);
+        assert_eq!(decision.action, GateAction::Allow);
+    }
+
+    #[test]
+    fn a_routine_name_override_applies_to_its_call_and_nothing_else() {
+        let overrides = [("sp_rebuild_index", StatementTier::Free)];
+
+        let call = ruling_with(&overrides, "CALL sp_rebuild_index()");
+        assert_eq!(call.tier, StatementTier::Free);
+        assert_eq!(call.action, GateAction::Allow);
+        assert_eq!(call.overridden_by.as_deref(), Some("sp_rebuild_index"));
+
+        // The property the whole narrow-matching rule exists for: the same name
+        // in a DROP is still a DROP. A name override says "calling this is
+        // fine", never "this name is safe to write anywhere".
+        let drop = ruling_with(&overrides, "DROP TABLE sp_rebuild_index");
+        assert_eq!(drop.tier, StatementTier::Refuse);
+        assert!(drop.overridden_by.is_none());
+
+        // Nor does it reach a bounded write that merely mentions the name.
+        let delete = ruling_with(&overrides, "DELETE FROM sp_rebuild_index WHERE id = 1");
+        assert_eq!(delete.tier, StatementTier::Confirm);
+        assert!(delete.overridden_by.is_none());
+    }
+
+    #[test]
+    fn a_quoted_routine_name_matches_the_bare_one() {
+        // Both spellings name the same routine, so an override has to see both
+        // — otherwise the rule would depend on how the caller punctuated it.
+        let overrides = [("sp_rebuild_index", StatementTier::Free)];
+        for sql in [
+            "CALL sp_rebuild_index()",
+            "CALL `sp_rebuild_index`()",
+            "call SP_REBUILD_INDEX()",
+        ] {
+            assert_eq!(
+                ruling_with(&overrides, sql).tier,
+                StatementTier::Free,
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_override_that_tightens_names_what_it_refused() {
+        // A free statement carries no `matched` of its own, so the message has
+        // to fall back to the verb. Without that it would tell a reader who
+        // refused SELECT that there was no statement to run.
+        let decision = ruling_with(&[("SELECT", StatementTier::Refuse)], "SELECT 1");
+        let GateAction::Refuse { reason } = decision.action else {
+            panic!("the override refused it");
+        };
+        assert!(reason.contains("SELECT"), "{reason}");
+        assert!(!reason.contains("No SQL statement"), "{reason}");
+        assert!(reason.contains("this connection's rule"), "{reason}");
+    }
+
+    #[test]
+    fn a_connection_with_no_overrides_is_the_plain_ladder() {
+        // The empty map is the default everywhere, so this is the path every
+        // existing connection takes.
+        let plain = GatePolicy::read_only(GateActor::Human);
+        assert!(plain.overrides.is_empty());
+        for sql in ["SELECT 1", "DELETE FROM t", "DROP TABLE t", "CALL f()"] {
+            let with = plain.decide(classify(sql));
+            assert_eq!(with.tier, classify(sql).tier, "{sql}");
+            assert!(with.overridden_by.is_none(), "{sql}");
+        }
+    }
+
+    #[test]
+    fn an_empty_batch_has_nothing_for_an_override_to_match() {
+        // No verb, so no key applies however permissive the map is — and the
+        // statement is still refused for being empty.
+        let decision = ruling_with(&[("SELECT", StatementTier::Free)], "   ");
+        assert_eq!(decision.tier, StatementTier::Refuse);
+        assert!(matches!(decision.action, GateAction::Refuse { .. }));
+    }
+
+    #[test]
+    fn a_routine_call_that_names_nothing_still_confirms() {
+        // `CALL` with no name has no routine to match, so a name override
+        // cannot reach it and the ladder's answer stands.
+        let decision = ruling_with(&[("sp_x", StatementTier::Free)], "CALL");
+        assert_eq!(decision.tier, StatementTier::Confirm);
+        assert!(decision.overridden_by.is_none());
     }
 
     #[test]
