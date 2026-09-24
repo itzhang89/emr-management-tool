@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { DbKindIcon } from "@/components/dbhub/DbKindIcon";
 import { DbWriteStatusIcon } from "@/components/dbhub/DbWriteStatusIcon";
 import { GateRulesDialog } from "@/components/dbhub/GateRulesDialog";
+import { ConfirmRunDialog } from "@/components/dbhub/workspace/ConfirmRunDialog";
 import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -142,6 +143,18 @@ export function ConnectionQueryTab({
   /** The history entry a name is being asked for, when favouriting one. */
   const [favoritePrompt, setFavoritePrompt] = useState<SqlHistoryEntry>();
   const [analyzeOpen, setAnalyzeOpen] = useState(false);
+  /**
+   * A statement the gate wants a person to look at, and where it came from.
+   *
+   * Held rather than resolved inline because the answer arrives from a dialog:
+   * `execute` cannot await a human, so it parks the run here and the dialog
+   * picks it up with the answer.
+   */
+  const [confirmPrompt, setConfirmPrompt] = useState<{
+    sql: string;
+    reason: string;
+    queryTabId: string;
+  }>();
   const [objectKinds, setObjectKinds] = useState<SchemaObjectKind[]>(
     DEFAULT_SCHEMA_OBJECT_KINDS
   );
@@ -293,7 +306,13 @@ export function ConnectionQueryTab({
     async (
       statement: string,
       queryTabId: string,
-      options: { mode?: "replace" | "new"; targetId?: string; offset?: number } = {}
+      options: {
+        mode?: "replace" | "new";
+        targetId?: string;
+        offset?: number;
+        /** The reader has already been asked about this statement and agreed. */
+        confirmed?: boolean;
+      } = {}
     ) => {
       // Run what the statement *is*, not the blank lines around it: the leading
       // and trailing whitespace a draft collects is never part of the query, and
@@ -330,7 +349,8 @@ export function ConnectionQueryTab({
           sql: statement,
           maxRows: editor.fetchSize,
           offset,
-          requestId
+          requestId,
+          confirmed: options.confirmed
         });
         const ranAt = new Date().toISOString();
         if (paging) {
@@ -378,6 +398,18 @@ export function ConnectionQueryTab({
         if (result.catalogChanged) void refreshCatalog();
       } catch (error) {
         const appError = error as { code?: string; message?: string };
+        // A question, not a failure: nothing is wrong, and the answer is the
+        // dialog. Parked with the editor it came from so the re-run lands in the
+        // same place, and with `confirmed` set so the gate resolves it once
+        // rather than asking again.
+        if (appError?.code === "NeedsConfirmation") {
+          setConfirmPrompt({
+            sql: statement,
+            reason: appError.message ?? "",
+            queryTabId
+          });
+          return;
+        }
         const cancelled = appError?.code === "Cancelled";
         if (existing) {
           patchResultTab(queryTabId, resultTabId, {
@@ -1024,6 +1056,22 @@ export function ConnectionQueryTab({
             );
           }
           setFavoritePrompt(undefined);
+        }}
+      />
+
+      <ConfirmRunDialog
+        open={Boolean(confirmPrompt)}
+        onOpenChange={(open) => {
+          if (!open) setConfirmPrompt(undefined);
+        }}
+        sql={confirmPrompt?.sql ?? ""}
+        reason={confirmPrompt?.reason ?? ""}
+        pending={running}
+        onConfirm={() => {
+          const prompt = confirmPrompt;
+          setConfirmPrompt(undefined);
+          if (!prompt) return;
+          void execute(prompt.sql, prompt.queryTabId, { mode: "replace", confirmed: true });
         }}
       />
 

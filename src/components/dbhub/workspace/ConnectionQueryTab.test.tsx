@@ -1175,6 +1175,53 @@ describe("ConnectionQueryTab", () => {
     );
   });
 
+  it("asks before running a statement the gate wants confirmed", async () => {
+    const user = userEvent.setup();
+    const confirmation = {
+      code: "NeedsConfirmation",
+      message: '"DELETE" changes data. This tool cannot tell how many rows it would affect.'
+    };
+    runDbQuery.mockRejectedValueOnce(confirmation);
+    renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "orders" }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+
+    // The question, with the statement rendered from the editor rather than
+    // from anything the backend said.
+    expect(await screen.findByText("Run this statement?")).toBeInTheDocument();
+    expect(screen.getByText(/cannot tell how many rows/)).toBeInTheDocument();
+    expect(screen.getByText(/SELECT \* FROM `sales`.`orders`/)).toBeInTheDocument();
+    // And it says plainly that nothing has happened yet.
+    expect(screen.getByText("Nothing has run yet.")).toBeInTheDocument();
+
+    // Saying yes re-runs the same statement, marked as answered.
+    await user.click(screen.getByRole("button", { name: "Run it" }));
+    await waitFor(() =>
+      expect(runDbQuery).toHaveBeenLastCalledWith(
+        expect.objectContaining({ confirmed: true, sql: expect.stringContaining("SELECT * FROM") })
+      )
+    );
+  });
+
+  it("runs nothing when the question is declined", async () => {
+    const user = userEvent.setup();
+    runDbQuery.mockRejectedValueOnce({ code: "NeedsConfirmation", message: "changes data" });
+    renderWorkspace();
+
+    await user.click(await screen.findByRole("button", { name: "orders" }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await screen.findByText("Run this statement?");
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // One attempt, and no second one carrying the answer — a declined question
+    // leaves the statement unrun, which is the whole point of asking.
+    await waitFor(() => expect(screen.queryByText("Run this statement?")).not.toBeInTheDocument());
+    expect(runDbQuery).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Result 1" })).not.toBeInTheDocument();
+  });
+
   it("steps back one level at a time", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "analytics" }));

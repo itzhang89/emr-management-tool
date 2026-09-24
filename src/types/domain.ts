@@ -1408,6 +1408,12 @@ export interface DbQueryRequest {
   offset?: number;
   /** This run's handle, so the stop button can name it. */
   requestId?: string;
+  /**
+   * Set when this statement has already been put to the reader and they said
+   * yes. Absent means the gate decides as it always does, so a caller that does
+   * not know about confirmations cannot skip one by forgetting the field.
+   */
+  confirmed?: boolean;
 }
 
 /**

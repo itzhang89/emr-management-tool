@@ -469,6 +469,11 @@ const dbhub: TranslationDictionary = {
   "Reads now; changes would run. Not enabled yet.": "现在只读；改动将直接执行。尚未启用。",
   "AI set to {mode}": "AI 已设为 {mode}",
 
+  // --- ConfirmRunDialog -----------------------------------------------------
+  "Run this statement?": "要执行这条语句吗？",
+  "Nothing has run yet.": "尚未执行任何语句。",
+  "Run it": "执行",
+
   // --- Gate rules editor ---------------------------------------------------
   "Command rules — {scope}": "命令规则 — {scope}",
   "Commands you do not list run at the tier shown. A rule key is a verb, a routine name, or a glob like etl_*.": "未列出的命令按所示档位执行。规则的键可以是动词、过程名，或像 etl_* 这样的通配符。",
