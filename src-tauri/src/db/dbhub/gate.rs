@@ -246,18 +246,25 @@ impl GatePolicy {
     ///   free and leaves `DROP TABLE sp_rebuild_index` a `DROP` — the difference
     ///   between "this procedure is safe to call" and "this name is safe to
     ///   write anywhere".
+    ///
+    /// Keys are globs (§ design 2.3), anchored at both ends, so `etl_*` covers a
+    /// family of routines and `orders_*` does not reach into `my_orders`.
     fn apply_overrides(&self, classification: Classification) -> (Classification, Option<String>) {
         if self.overrides.is_empty() {
             return (classification, None);
         }
 
+        // An override map is data, and data can be wrong. A key of `*` alone is
+        // refused when a rule is written, so one here means the row came from
+        // somewhere else — and obeying it would loosen every statement at once.
+        // Ignored rather than honoured, the same direction as every other
+        // defensive read in this module.
+        let usable = || self.overrides.iter().filter(|(key, _)| key.trim() != "*");
+
         // The verb first: it is the coarser key, and a connection that has an
         // opinion about every `CALL` means it more than one about one procedure.
-        let verb_match = self
-            .overrides
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(&classification.verb));
-        if let Some((key, tier)) = verb_match {
+        if let Some((key, tier)) = usable().find(|(key, _)| glob_matches(key, &classification.verb))
+        {
             return (classification.retiered(*tier), Some(key.clone()));
         }
 
@@ -266,15 +273,55 @@ impl GatePolicy {
         let Some(routine) = classification.routine.as_deref() else {
             return (classification, None);
         };
-        match self
-            .overrides
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(routine))
-        {
+        match usable().find(|(key, _)| glob_matches(key, routine)) {
             Some((key, tier)) => (classification.retiered(*tier), Some(key.clone())),
             None => (classification, None),
         }
     }
+}
+
+/// Whether a pattern matches a name: `*` for any run of characters, `?` for one.
+///
+/// Anchored at both ends — the whole name has to match. Unanchored matching
+/// would make `o*` hit everything containing an `o`, which is not a behaviour
+/// anyone can reason about, and this pattern decides what may run.
+///
+/// Case-insensitive, because a routine named `ETL_Rebuild` is the same routine
+/// as `etl_rebuild` and the caller should not have to care which they typed.
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    let pattern: Vec<char> = pattern.trim().to_ascii_uppercase().chars().collect();
+    let name: Vec<char> = name.to_ascii_uppercase().chars().collect();
+
+    let (mut p, mut n) = (0usize, 0usize);
+    // Where the last `*` was, and how much of the name it had consumed when we
+    // passed it: the backtracking pair that makes this linear rather than
+    // exponential.
+    let (mut star, mut star_name) = (None, 0usize);
+
+    while n < name.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == name[n]) {
+            p += 1;
+            n += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            star_name = n;
+            p += 1;
+        } else if let Some(star_at) = star {
+            // The `*` was allowed to match one more character than we assumed.
+            p = star_at + 1;
+            star_name += 1;
+            n = star_name;
+        } else {
+            return false;
+        }
+    }
+
+    // Trailing `*`s match the empty remainder; anything else means the name ran
+    // out first.
+    while p < pattern.len() && pattern[p] == '*' {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 /// The gate's ruling on one statement: what to do, and what it was looking at.
@@ -493,31 +540,73 @@ pub fn changes_schema(sql: &str) -> bool {
     })
 }
 
-/// The tier a verb opens at, before the statement's body gets a say.
+/// Every verb the ladder places, with the tier it opens at.
 ///
-/// `None` is a verb the classifier does not place at all — the `Unknown`
-/// default, which lands at the strictest tier because the alternative is asking
-/// a person to judge a statement the tool itself could not read.
+/// One table rather than a `match`, because a second reader exists: the rules
+/// editor shows a connection's defaults grouped by tier, and it has to be the
+/// *same* list the classifier uses or the two drift and the editor starts
+/// describing a gate that no longer exists.
+///
+/// The tier here is the one a statement *opens* at. `UPDATE` and `DELETE` are
+/// refined afterwards — one with no top-level `WHERE` is a whole-table change
+/// and is refused rather than confirmed — so this table alone is not the whole
+/// verdict for those two.
+const VERB_TIERS: &[(&str, StatementTier)] = &[
+    // Reads, safe until the body says otherwise: the body is audited next for
+    // `WITH ... INSERT` and `SELECT ... INTO`.
+    ("SELECT", StatementTier::Free),
+    ("SHOW", StatementTier::Free),
+    ("DESCRIBE", StatementTier::Free),
+    ("DESC", StatementTier::Free),
+    ("EXPLAIN", StatementTier::Free),
+    ("USE", StatementTier::Free),
+    ("WITH", StatementTier::Free),
+    // Row changes: a person confirms them, unless they turn out to be
+    // whole-table changes.
+    ("INSERT", StatementTier::Confirm),
+    ("UPDATE", StatementTier::Confirm),
+    ("DELETE", StatementTier::Confirm),
+    ("MERGE", StatementTier::Confirm),
+    ("REPLACE", StatementTier::Confirm),
+    // A routine's body is invisible to a text classifier, so calling one is a
+    // confirmation rather than a free pass — and never a refusal, because a
+    // routine that only reads is worth being able to call.
+    ("CALL", StatementTier::Confirm),
+    ("EXECUTE", StatementTier::Confirm),
+    ("DO", StatementTier::Confirm),
+    // Structure, permissions, session, and `INTO` — which is what turns a
+    // SELECT into a write. All refused: none has a bounded form worth
+    // distinguishing, and several cannot be undone at all.
+    ("DROP", StatementTier::Refuse),
+    ("TRUNCATE", StatementTier::Refuse),
+    ("ALTER", StatementTier::Refuse),
+    ("RENAME", StatementTier::Refuse),
+    ("COMMENT", StatementTier::Refuse),
+    ("CREATE", StatementTier::Refuse),
+    ("GRANT", StatementTier::Refuse),
+    ("REVOKE", StatementTier::Refuse),
+    ("SET", StatementTier::Refuse),
+    ("KILL", StatementTier::Refuse),
+    ("LOCK", StatementTier::Refuse),
+    ("LOAD", StatementTier::Refuse),
+    ("HANDLER", StatementTier::Refuse),
+    ("INTO", StatementTier::Refuse),
+];
+
+/// The ladder as a reader sees it: every verb and the tier it opens at, for the
+/// rules editor to group.
+pub fn default_ladder() -> &'static [(&'static str, StatementTier)] {
+    VERB_TIERS
+}
+
+/// The tier a verb opens at, or `None` for a verb the classifier does not place
+/// at all — the `Unknown` default, which lands at the strictest tier because the
+/// alternative is asking a person to judge a statement the tool could not read.
 fn tier_for_verb(verb: &str) -> Option<StatementTier> {
-    match verb {
-        // Reads, safe until the body says otherwise.
-        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
-            Some(StatementTier::Free)
-        }
-        // Row changes: a person confirms them, unless they turn out to be
-        // whole-table changes, which the caller refuses instead.
-        "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" => Some(StatementTier::Confirm),
-        // A routine's body is invisible to a text classifier, so calling one is
-        // a confirmation rather than a free pass — and never a refusal, because
-        // a routine that only reads is a routine worth being able to call.
-        "CALL" | "EXECUTE" | "DO" => Some(StatementTier::Confirm),
-        // Structure, permissions, session, and `INTO` — which is what turns a
-        // SELECT into a write. All refused: none of them has a bounded form
-        // worth distinguishing, and several cannot be undone at all.
-        "DROP" | "TRUNCATE" | "ALTER" | "RENAME" | "COMMENT" | "CREATE" | "GRANT" | "REVOKE"
-        | "SET" | "KILL" | "LOCK" | "LOAD" | "HANDLER" | "INTO" => Some(StatementTier::Refuse),
-        _ => None,
-    }
+    VERB_TIERS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(verb))
+        .map(|(_, tier)| *tier)
 }
 
 /// The routine a statement calls: the identifier right after its opening verb.
@@ -1288,6 +1377,102 @@ mod tests {
         let decision = ruling_with(&[("sp_x", StatementTier::Free)], "CALL");
         assert_eq!(decision.tier, StatementTier::Confirm);
         assert!(decision.overridden_by.is_none());
+    }
+
+    #[test]
+    fn a_glob_covers_a_family_of_routines() {
+        // Why globs are here at all: a database with forty `etl_*` procedures
+        // should not need forty rules.
+        let overrides = [("etl_*", StatementTier::Free)];
+        for sql in ["CALL etl_rebuild_idx()", "CALL ETL_load_daily()"] {
+            assert_eq!(
+                ruling_with(&overrides, sql).tier,
+                StatementTier::Free,
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_glob_is_anchored_at_both_ends() {
+        // A name that merely *contains* the prefix is not a match. Unanchored
+        // matching would make `o*` reach everything holding an `o`, which is not
+        // a behaviour anyone can reason about — and this pattern decides what
+        // may run.
+        let overrides = [("etl_*", StatementTier::Free)];
+        let other = ruling_with(&overrides, "CALL my_etl_job()");
+        assert_eq!(other.tier, StatementTier::Confirm);
+        assert!(other.overridden_by.is_none(), "the glob must not have matched");
+    }
+
+    #[test]
+    fn a_question_mark_matches_exactly_one_character() {
+        let overrides = [("sp_?", StatementTier::Free)];
+        assert_eq!(
+            ruling_with(&overrides, "CALL sp_x()").tier,
+            StatementTier::Free
+        );
+        assert_eq!(
+            ruling_with(&overrides, "CALL sp_xy()").tier,
+            StatementTier::Confirm
+        );
+    }
+
+    #[test]
+    fn a_glob_does_not_turn_a_verb_key_into_a_text_search() {
+        // The key is still compared to the verb, not hunted for in the text.
+        let overrides = [("TRUNC*", StatementTier::Confirm)];
+        assert_eq!(
+            ruling_with(&overrides, "TRUNCATE t").tier,
+            StatementTier::Confirm
+        );
+        assert!(ruling_with(&overrides, "DROP TABLE truncate_log")
+            .overridden_by
+            .is_none());
+    }
+
+    #[test]
+    fn a_bare_star_is_ignored_however_it_got_there() {
+        // Writing a rule of `*` is refused at the point of writing it. If a row
+        // holds one anyway — hand-edited, or from another version — obeying it
+        // would loosen every statement at once, which is the one thing an
+        // override must never do by accident. Ignored, like every other
+        // defensive read here.
+        let overrides = [("*", StatementTier::Free)];
+        for sql in ["SELECT 1", "DROP TABLE t", "CALL etl_x()"] {
+            assert!(
+                ruling_with(&overrides, sql).overridden_by.is_none(),
+                "{sql} must not be re-tiered by a bare star"
+            );
+        }
+        assert!(matches!(
+            ruling_with(&overrides, "DROP TABLE t").action,
+            GateAction::Refuse { .. }
+        ));
+    }
+
+    #[test]
+    fn the_default_ladder_is_the_classifiers_own_table() {
+        // The rules editor groups a connection's rules by tier by reading this,
+        // so it has to agree with what the classifier actually does. One table,
+        // two readers — this is the test that keeps them one.
+        for (verb, tier) in default_ladder() {
+            let sql = match *verb {
+                // `INTO` is never a first word: it is the token that turns a
+                // SELECT into a write, and the audit is what finds it.
+                "INTO" => "SELECT * INTO backup FROM t",
+                // The two the table only *opens* for. Without a WHERE they fall
+                // to Refuse, a refinement a flat table cannot express.
+                "UPDATE" => "UPDATE t SET x = 1 WHERE id = 1",
+                "DELETE" => "DELETE FROM t WHERE id = 1",
+                other => other,
+            };
+            assert_eq!(
+                classify(sql).tier,
+                *tier,
+                "the ladder says {verb} opens at {tier:?}"
+            );
+        }
     }
 
     #[test]
