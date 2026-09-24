@@ -81,13 +81,14 @@ impl Classification {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateAction {
     Allow,
-    /// Runnable once a human has confirmed it.
+    /// Runnable once a person has said so.
     ///
-    /// No caller can service this yet — the confirmation surface arrives with
-    /// the AI's confirm mode — so nothing produces it in this step. The variant
-    /// is here so the policies can be written once, in their final shape,
-    /// rather than rewritten when that surface lands.
-    Confirm,
+    /// Carries what to tell them: a prompt with no explanation is a prompt
+    /// nobody can answer well, and the reason differs by tier — a row change and
+    /// a dropped table are not the same question.
+    Confirm {
+        reason: String,
+    },
     Refuse {
         reason: String,
     },
@@ -105,9 +106,9 @@ pub enum Reach {
     ReadOnly,
     /// Reads run; a change is put to a person before it runs.
     Confirm,
-    /// Reads and changes both run. Whoever chose this is the final authority,
-    /// and the ladder's job becomes keeping them informed rather than stopping
-    /// them.
+    /// Reads run; a change is asked about and runs once they say so. Whoever
+    /// chose this is the final authority, so the ladder's job is to keep them
+    /// informed rather than to stop them — it overrules nobody.
     Writable,
 }
 
@@ -219,14 +220,22 @@ impl GatePolicy {
                 Reach::ReadOnly => GateAction::Refuse {
                     reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
-                Reach::Confirm => GateAction::Confirm,
-                Reach::Writable => GateAction::Allow,
+                Reach::Confirm | Reach::Writable => GateAction::Confirm {
+                    reason: confirm_reason(classification.tier, &classification.matched),
+                },
             },
             StatementTier::Refuse => match self.reach {
                 Reach::ReadOnly | Reach::Confirm => GateAction::Refuse {
                     reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
-                Reach::Writable => GateAction::Allow,
+                // The tiers are the AI's permission model. For a person who
+                // turned writes on they are advice, and the strictest tier is the
+                // loudest warning rather than a wall — the final decision is
+                // theirs, and a gate that overruled them would be a gate that
+                // could not be talked out of anything.
+                Reach::Writable => GateAction::Confirm {
+                    reason: confirm_reason(classification.tier, &classification.matched),
+                },
             },
         };
         GateDecision {
@@ -380,6 +389,39 @@ pub struct GateDecision {
     /// The connection's own rule that set this tier, when one did. Named so a
     /// refusal can say the connection decided it rather than the ladder.
     pub overridden_by: Option<String>,
+}
+
+impl GateDecision {
+    /// The same decision once a person has said yes.
+    ///
+    /// Only a caller that actually asked may call this, and only the command
+    /// knows whether one did — the answer arrives from the WebView after a
+    /// dialog. `execute` keeps refusing a bare `Confirm`, so a policy that
+    /// raises one on a path with no way to ask still fails closed rather than
+    /// quietly running what it was unsure about.
+    pub fn confirmed(mut self) -> Self {
+        if matches!(self.action, GateAction::Confirm { .. }) {
+            self.action = GateAction::Allow;
+        }
+        self
+    }
+}
+
+/// What the gate tells a person it is asking about.
+///
+/// The confirming tier admits what the classifier cannot know, which the design
+/// promised it would: this reads a statement's shape, and a shape has no row
+/// count in it. Saying so is better than a dialog that looks like it checked.
+fn confirm_reason(tier: StatementTier, matched: &str) -> String {
+    match tier {
+        StatementTier::Refuse => format!(
+            "\"{matched}\" changes structure or removes data. This cannot be undone."
+        ),
+        // Not reached for a free statement: nothing asks about a read.
+        StatementTier::Free | StatementTier::Confirm => format!(
+            "\"{matched}\" changes data. This tool cannot tell how many rows it would affect."
+        ),
+    }
 }
 
 /// Why a statement was refused, in the words of the policy that refused it.
@@ -1231,24 +1273,52 @@ mod tests {
     }
 
     #[test]
-    fn a_writable_connection_allows_everything() {
-        // What the old code did by skipping the gate outright. The person who
-        // turned writes on is the final authority, so the ladder informs them
-        // rather than stopping them — including at the strictest tier.
+    fn a_writable_connection_is_warned_rather_than_stopped() {
+        // The tiers are the AI's permission model. For a person who turned
+        // writes on they are advice: the final decision is theirs, so the gate
+        // asks rather than overrules — and it asks at every tier above a read,
+        // including the strictest.
         let policy = GatePolicy::for_connection(true);
+
+        // A read is not a question worth asking.
+        assert_eq!(policy.decide(classify("SELECT 1")).action, GateAction::Allow);
+
         for sql in [
-            "SELECT 1",
             "DELETE FROM t",
             "DROP TABLE t",
             "ALTER TABLE t ADD COLUMN x INT",
+            // Even a verb the classifier cannot place: the person is told the
+            // tool does not recognise it, which is the honest thing to say.
             "wibble wobble",
         ] {
-            assert_eq!(
-                policy.decide(classify(sql)).action,
-                GateAction::Allow,
-                "a writable connection should allow {sql}"
+            assert!(
+                matches!(
+                    policy.decide(classify(sql)).action,
+                    GateAction::Confirm { .. }
+                ),
+                "a writable connection should ask about {sql}"
             );
         }
+    }
+
+    #[test]
+    fn the_warning_says_which_kind_of_change_it_is() {
+        // A dropped table and a row change are not the same question, and the
+        // confirming tier admits what the classifier cannot know — the design
+        // promised it would rather than let a dialog look like it checked.
+        let policy = GatePolicy::for_connection(true);
+
+        let dropping = policy.decide(classify("DROP TABLE t")).action;
+        let GateAction::Confirm { reason } = dropping else {
+            panic!("a DROP is asked about");
+        };
+        assert!(reason.contains("cannot be undone"), "{reason}");
+
+        let changing = policy.decide(classify("DELETE FROM t WHERE id = 1")).action;
+        let GateAction::Confirm { reason } = changing else {
+            panic!("a bounded delete is asked about");
+        };
+        assert!(reason.contains("cannot tell how many rows"), "{reason}");
     }
 
     #[test]
@@ -1769,9 +1839,12 @@ mod tests {
             (Reach::Confirm, "SELECT 1", "allow"),
             (Reach::Confirm, "DELETE FROM t WHERE id = 1", "confirm"),
             (Reach::Confirm, "DROP TABLE t", "refuse"),
+            // A person with writes on is asked at both tiers above a read:
+            // the ladder is the AI's permission model, and for them it is the
+            // information they need to decide.
             (Reach::Writable, "SELECT 1", "allow"),
-            (Reach::Writable, "DELETE FROM t WHERE id = 1", "allow"),
-            (Reach::Writable, "DROP TABLE t", "allow"),
+            (Reach::Writable, "DELETE FROM t WHERE id = 1", "confirm"),
+            (Reach::Writable, "DROP TABLE t", "confirm"),
         ];
         for (reach, sql, expected) in cases {
             let policy = GatePolicy {
@@ -1782,7 +1855,7 @@ mod tests {
             };
             let actual = match policy.decide(classify(sql)).action {
                 GateAction::Allow => "allow",
-                GateAction::Confirm => "confirm",
+                GateAction::Confirm { .. } => "confirm",
                 GateAction::Refuse { .. } => "refuse",
             };
             assert_eq!(actual, expected, "{reach:?} running {sql}");
@@ -1839,10 +1912,10 @@ mod tests {
         let policy = GatePolicy::for_ai(DbReadOnlyPolicy::Confirm);
 
         // The tier it may put to a person.
-        assert_eq!(
+        assert!(matches!(
             policy.decide(classify("DELETE FROM t WHERE id = 1")).action,
-            GateAction::Confirm
-        );
+            GateAction::Confirm { .. }
+        ));
         // The tier it may not, in any mode: structural changes stay a person's
         // to run (the design's first iron rule).
         assert!(matches!(
@@ -1872,9 +1945,9 @@ mod tests {
 
     #[test]
     fn a_confirmed_statement_runs_only_where_confirmation_exists() {
-        // Which is nowhere, for every caller in the tree today: a read-only
-        // connection refuses the tier, and a writable one allows it outright
-        // without asking. The tier is visible before it is actionable.
+        // Which is the person's own workspace, and nowhere else: a read-only
+        // connection refuses the tier, the AI cannot service a confirmation,
+        // and only the WebView's dialog can answer one.
         let sql = "DELETE FROM orders WHERE id = 3";
         assert_eq!(classify(sql).tier, StatementTier::Confirm);
         assert!(matches!(
@@ -1883,11 +1956,9 @@ mod tests {
                 .action,
             GateAction::Refuse { .. }
         ));
-        assert_eq!(
-            GatePolicy::for_connection(true)
-                .decide(classify(sql))
-                .action,
-            GateAction::Allow
-        );
+        assert!(matches!(
+            GatePolicy::for_connection(true).decide(classify(sql)).action,
+            GateAction::Confirm { .. }
+        ));
     }
 }

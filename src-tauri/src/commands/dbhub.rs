@@ -830,10 +830,13 @@ pub async fn run_db_query(
         &app,
         &request.connection_id,
         false,
-        &request.sql,
-        request.max_rows,
-        request.offset.unwrap_or(0),
-        request.request_id.as_deref(),
+        &query::QueryRun {
+            sql: &request.sql,
+            max_rows: request.max_rows,
+            offset: request.offset.unwrap_or(0),
+            request_id: request.request_id.as_deref(),
+            confirmed: request.confirmed,
+        },
     )
     .await
 }

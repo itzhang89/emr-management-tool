@@ -127,12 +127,11 @@ pub(crate) async fn execute(
         // written out rather than folded into the refusal below so that adding a
         // policy which produces `Confirm` cannot silently become a way to run
         // whatever it produces.
-        gate::GateAction::Confirm => {
-            return Err(AppError::validation(format!(
-                "Blocked by the read-only gate: \"{}\" needs a person to confirm it, and this \
-                 path cannot ask one.",
-                decision.matched
-            )));
+        gate::GateAction::Confirm { reason } => {
+            // Its own code, not a validation failure: nothing is wrong, and the
+            // WebView answers this with a question rather than an apology. A
+            // caller that cannot ask simply leaves it unresolved and gets this.
+            return Err(AppError::needs_confirmation(reason.clone()));
         }
         gate::GateAction::Refuse { reason } => {
             return Err(AppError::validation(format!(
@@ -295,17 +294,39 @@ pub async fn count_for_command(
     .await
 }
 
+/// One run's parameters.
+///
+/// Grouped rather than passed positionally, because this reached eight
+/// arguments and several of them are the same shape: a `max_rows` transposed
+/// with an `offset`, or a `request_id` with a `confirmed`, is a query that runs
+/// against the wrong intent and says nothing about it.
+#[derive(Debug, Clone)]
+pub struct QueryRun<'a> {
+    pub sql: &'a str,
+    pub max_rows: Option<usize>,
+    /// Rows to skip — non-zero means "read the next page", which re-runs it.
+    pub offset: usize,
+    pub request_id: Option<&'a str>,
+    /// Set when a person has already been asked about this statement and said
+    /// yes. The gate resolves it; nothing else may.
+    pub confirmed: bool,
+}
+
 /// The human query tab's entry point: resolve the connection, open its route,
 /// run the statement.
 pub async fn run_for_command(
     app: &tauri::AppHandle,
     connection_id: &str,
     require_ai_enabled: bool,
-    sql: &str,
-    max_rows: Option<usize>,
-    offset: usize,
-    request_id: Option<&str>,
+    run: &QueryRun<'_>,
 ) -> AppResult<DbQueryResult> {
+    let QueryRun {
+        sql,
+        max_rows,
+        offset,
+        request_id,
+        confirmed,
+    } = *run;
     let shape = shape_for(app, connection_id, require_ai_enabled).await?;
 
     // The stop button's handle, registered before the dial so a stop that
@@ -341,6 +362,13 @@ pub async fn run_for_command(
             .with_overrides(shape.connection.gate_overrides.clone())
             .with_global_overrides(global_overrides)
             .decide(gate::classify(sql));
+        // The answer the WebView collected, applied where it can only be
+        // applied: the command is the one place that knows a person was asked.
+        let decision = if confirmed {
+            decision.confirmed()
+        } else {
+            decision
+        };
 
         // Remember what was turned away, so the rules editor can offer a key to
         // write instead of assuming the reader already knows what one looks
@@ -568,7 +596,7 @@ mod tests {
         let sql = "DELETE FROM orders WHERE id = 3";
         let decision = gate::GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Confirm)
             .decide(gate::classify(sql));
-        assert_eq!(decision.action, gate::GateAction::Confirm);
+        assert!(matches!(decision.action, gate::GateAction::Confirm { .. }));
 
         let error = execute(
             &shape,
@@ -581,8 +609,41 @@ mod tests {
         )
         .await
         .expect_err("an unconfirmed change must not run");
-        assert!(error.message.contains("confirm"), "{error:?}");
+        // Its own code, because the WebView answers this with a question rather
+        // than an apology. The message is for the reader; the code is what the
+        // UI branches on, so that is what the contract is pinned to.
+        assert_eq!(error.code.as_ref(), "NeedsConfirmation", "{error:?}");
+        assert!(error.message.contains("changes data"), "{error:?}");
         assert!(!error.message.contains("dial"), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_change_gets_past_the_gate() {
+        // The other half of the contract: once a person has said yes the
+        // statement runs. The host is a closed port, so "ran" looks like a dial
+        // failure — which is exactly how this tells the two outcomes apart.
+        let mut shape = shape_for_gate_test();
+        shape.connection.host = "127.0.0.1".into();
+        shape.connection.port = 1;
+        let target = DialTarget::direct(&shape.connection);
+
+        let sql = "DELETE FROM orders WHERE id = 3";
+        let decision = gate::GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Confirm)
+            .decide(gate::classify(sql))
+            .confirmed();
+
+        let error = execute(
+            &shape,
+            &target,
+            sql,
+            100,
+            0,
+            &decision,
+            &QueryCancellation::never(),
+        )
+        .await
+        .expect_err("a closed port cannot answer");
+        assert_ne!(error.code.as_ref(), "NeedsConfirmation", "{error:?}");
     }
 
     #[tokio::test]

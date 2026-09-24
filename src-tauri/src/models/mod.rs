@@ -2044,6 +2044,12 @@ pub struct DbQueryRequest {
     /// by the caller because a connection may have several runs in flight.
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Set when the WebView has already put this statement to the person and
+    /// they said yes. Absent means the gate decides as it always does, so a
+    /// caller that does not know about confirmations cannot skip one by
+    /// forgetting the field.
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 /// Names the run to stop. An id the backend no longer holds means the run

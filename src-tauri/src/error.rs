@@ -168,6 +168,24 @@ impl AppError {
         }
     }
 
+    /// A statement the gate wants a person to look at before it runs.
+    ///
+    /// Its own code for the same reason `Cancelled` has one: the UI answers it
+    /// with a question rather than an apology. Nothing is wrong — the statement
+    /// has not run, and the answer is a dialog the reader can say yes to.
+    pub fn needs_confirmation(reason: impl Into<String>) -> Self {
+        Self {
+            kind: "confirmation".into(),
+            code: "NeedsConfirmation".into(),
+            message: reason.into().into(),
+            service: None,
+            request_id: None,
+            retryable: false,
+            account_id: None,
+            details: None,
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             kind: "internal".into(),
