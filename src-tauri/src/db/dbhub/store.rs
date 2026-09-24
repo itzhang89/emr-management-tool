@@ -73,6 +73,11 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             last_at text not null,
             primary key (connection_id, statement_key)
         )",
+        "create table if not exists db_gate_settings (
+            account_id text primary key,
+            overrides_json text not null default '{}',
+            updated_at text not null
+        )",
         "create index if not exists idx_db_connections_account on db_connections(account_id, sort_order)",
         "create index if not exists idx_network_profiles_account on network_profiles(account_id)",
     ] {
@@ -331,6 +336,50 @@ fn tier_from_json(value: &str) -> StatementTier {
         "confirm" => StatementTier::Confirm,
         _ => StatementTier::Refuse,
     }
+}
+
+// --- Account-wide gate settings ---------------------------------------------
+//
+// The rules that apply to every connection in an account, which each
+// connection's own rules then override. Account-scoped like everything else in
+// DBHub: switching the active AWS account swaps the whole view, and a rule that
+// loosened something for one account has no business doing so for another.
+
+/// The account's changes to the ladder. No row, or a row that will not parse,
+/// means none — the same forgiving direction as the per-connection map, and the
+/// safe one, since an override can only ever loosen.
+pub async fn read_gate_overrides(pool: &SqlitePool, account_id: &str) -> AppResult<GateOverrides> {
+    let row = sqlx::query("select overrides_json from db_gate_settings where account_id = ?1")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(row
+        .map(|row| overrides_from_column(&row.get::<String, _>("overrides_json")))
+        .unwrap_or_default())
+}
+
+/// Replace the account's changes to the ladder. An empty map clears them, which
+/// is how "back to the default rules" is written.
+pub async fn write_gate_overrides(
+    pool: &SqlitePool,
+    account_id: &str,
+    overrides: &GateOverrides,
+) -> AppResult<()> {
+    sqlx::query(
+        "insert into db_gate_settings (account_id, overrides_json, updated_at)
+         values (?1, ?2, ?3)
+         on conflict (account_id) do update set
+            overrides_json = excluded.overrides_json,
+            updated_at = excluded.updated_at",
+    )
+    .bind(account_id)
+    .bind(overrides_column(overrides))
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
 }
 
 fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> {
@@ -1522,6 +1571,64 @@ mod tests {
             .await
             .expect("delete"));
         assert!(recent_refusals(&pool, "c1", 50).await.expect("read").is_empty());
+    }
+
+    #[tokio::test]
+    async fn account_rules_round_trip_and_are_scoped() {
+        let pool = test_pool().await;
+        // No row yet reads as no rules, which is every existing install.
+        assert!(read_gate_overrides(&pool, "acct-a")
+            .await
+            .expect("read")
+            .is_empty());
+
+        let rules = overrides(&[("etl_*", StatementTier::Confirm)]);
+        write_gate_overrides(&pool, "acct-a", &rules)
+            .await
+            .expect("write");
+        assert_eq!(
+            read_gate_overrides(&pool, "acct-a").await.expect("read"),
+            rules
+        );
+        // Another account is untouched: the whole app is account-scoped, and a
+        // rule that loosened something for one account must not for another.
+        assert!(read_gate_overrides(&pool, "acct-b")
+            .await
+            .expect("read")
+            .is_empty());
+
+        // An empty map clears them, which is how "back to the default rules" is
+        // written rather than by deleting a row.
+        write_gate_overrides(&pool, "acct-a", &GateOverrides::new())
+            .await
+            .expect("clear");
+        assert!(read_gate_overrides(&pool, "acct-a")
+            .await
+            .expect("read")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn unreadable_account_rules_read_as_none() {
+        // The same forgiving direction as the per-connection map, and it matters
+        // more here: a corrupt row that errored would take every query in the
+        // account with it. An override can only loosen, so dropping one leaves
+        // the statement on the default ladder.
+        let pool = test_pool().await;
+        sqlx::query(
+            "insert into db_gate_settings (account_id, overrides_json, updated_at)
+             values (?1, ?2, ?3)",
+        )
+        .bind("acct-a")
+        .bind("{not json")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .expect("insert");
+        assert!(read_gate_overrides(&pool, "acct-a")
+            .await
+            .expect("read")
+            .is_empty());
     }
 
     #[tokio::test]

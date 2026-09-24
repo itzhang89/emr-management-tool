@@ -330,10 +330,16 @@ pub async fn run_for_command(
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
         // The one place the person's write switch is read, and the one place
-        // their connection's own rules are applied. Nothing on an AI path asks
-        // for either, so the AI's ceiling stays a property of the code.
+        // their rules are applied — the account's underneath the connection's
+        // own, which then win. Nothing on an AI path asks for either, so the
+        // AI's ceiling stays a property of the code.
+        let global_overrides =
+            crate::db::dbhub::store::read_gate_overrides(&shape.pool, &shape.connection.account_id)
+                .await
+                .unwrap_or_default();
         let decision = gate::GatePolicy::for_connection(shape.connection.allow_writes)
             .with_overrides(shape.connection.gate_overrides.clone())
+            .with_global_overrides(global_overrides)
             .decide(gate::classify(sql));
 
         // Remember what was turned away, so the rules editor can offer a key to

@@ -14,8 +14,8 @@ use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput, DbConnectionRef,
-    DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, NetworkProfile,
-    NetworkProfileInput, NetworkProfileRef, NetworkProfileTestInput,
+    DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, GateOverrides, GateRefusal,
+    NetworkProfile, NetworkProfileInput, NetworkProfileRef, NetworkProfileTestInput,
 };
 use tauri::AppHandle;
 
@@ -309,6 +309,48 @@ pub async fn update_db_connection(
     }
 
     Ok(updated)
+}
+
+// --- Account-wide gate rules ------------------------------------------------
+
+/// The rules that apply to every connection in the active account.
+#[tauri::command]
+pub async fn get_db_gate_overrides() -> AppResult<GateOverrides> {
+    let pool = repository::pool().await?;
+    let account_id = active_account_id(&pool).await?;
+    dbhub::store::read_gate_overrides(&pool, &account_id).await
+}
+
+/// Replace them. An empty map clears them back to the default ladder.
+#[tauri::command]
+pub async fn set_db_gate_overrides(overrides: GateOverrides) -> AppResult<GateOverrides> {
+    let pool = repository::pool().await?;
+    let account_id = active_account_id(&pool).await?;
+    // Refused here rather than in the gate, which ignores one if it ever sees it
+    // in a row. This is the layer that can say so to the person typing it.
+    if overrides.keys().any(|key| key.trim() == "*") {
+        return Err(AppError::validation(
+            "A rule of `*` on its own is not a rule. Give it a prefix to match, like `etl_*`.",
+        ));
+    }
+    dbhub::store::write_gate_overrides(&pool, &account_id, &overrides).await?;
+    Ok(overrides)
+}
+
+/// The statements the gate refused on a connection, most recent first, with a
+/// count per statement shape.
+#[tauri::command]
+pub async fn list_db_gate_refusals(
+    connection_id: String,
+    limit: Option<i64>,
+) -> AppResult<Vec<GateRefusal>> {
+    let pool = repository::pool().await?;
+    let account_id = active_account_id(&pool).await?;
+    // Scoped first: a foreign connection reads as missing, as everywhere else.
+    dbhub::get_connection(&pool, &account_id, &connection_id)
+        .await?
+        .ok_or_else(|| AppError::validation("Connection was not found."))?;
+    dbhub::store::recent_refusals(&pool, &connection_id, limit.unwrap_or(50)).await
 }
 
 #[tauri::command]

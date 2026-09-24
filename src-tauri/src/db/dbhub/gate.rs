@@ -118,6 +118,14 @@ pub struct GatePolicy {
     pub reach: Reach,
     /// This connection's own changes to the ladder, if it has any.
     pub overrides: GateOverrides,
+    /// The account's changes, which apply to every connection in it.
+    ///
+    /// A separate layer rather than merged into `overrides`, because merging
+    /// cannot express what the layers mean: two globs from different layers can
+    /// both match one name, and "whichever survived the merge" is not an answer
+    /// anyone can predict. Kept apart, the rule is the one a reader expects —
+    /// the connection's own setting beats the account's.
+    pub global_overrides: GateOverrides,
 }
 
 impl GatePolicy {
@@ -129,6 +137,7 @@ impl GatePolicy {
             actor,
             reach: Reach::ReadOnly,
             overrides: GateOverrides::new(),
+            global_overrides: GateOverrides::new(),
         }
     }
 
@@ -143,6 +152,7 @@ impl GatePolicy {
                 Reach::ReadOnly
             },
             overrides: GateOverrides::new(),
+            global_overrides: GateOverrides::new(),
         }
     }
 
@@ -169,12 +179,19 @@ impl GatePolicy {
             actor: GateActor::Ai,
             reach,
             overrides: GateOverrides::new(),
+            global_overrides: GateOverrides::new(),
         }
     }
 
     /// The same policy, with this connection's own changes to the ladder.
     pub fn with_overrides(mut self, overrides: GateOverrides) -> Self {
         self.overrides = overrides;
+        self
+    }
+
+    /// The same policy, with the account's changes underneath them.
+    pub fn with_global_overrides(mut self, overrides: GateOverrides) -> Self {
+        self.global_overrides = overrides;
         self
     }
 
@@ -225,50 +242,79 @@ impl GatePolicy {
     /// Move the statement to the tier this connection gives its verb or
     /// routine, and say which key did it.
     ///
-    /// An override is the only place a connection can *loosen* the ladder, so
-    /// the matching is narrow on purpose:
+    /// An override is the only place anything can *loosen* the ladder, so the
+    /// matching is narrow on purpose:
     ///
-    /// * A **verb** key applies only when that verb is what decided the tier.
-    ///   `TRUNCATE: confirm` re-tiers `TRUNCATE t` and nothing else — a `DELETE`
-    ///   whose column happens to be named truncate is untouched, because the key
-    ///   is compared to the verb, not searched for in the text.
     /// * A **name** key applies only to a routine, and only to the routine the
     ///   statement calls. `sp_rebuild_index: free` makes `CALL sp_rebuild_index()`
     ///   free and leaves `DROP TABLE sp_rebuild_index` a `DROP` — the difference
     ///   between "this procedure is safe to call" and "this name is safe to
     ///   write anywhere".
+    /// * A **verb** key applies only when that verb is what decided the tier.
+    ///   `TRUNCATE: confirm` re-tiers `TRUNCATE t` and nothing else — a `DELETE`
+    ///   whose column happens to be named truncate is untouched, because the key
+    ///   is compared to the verb, not searched for in the text.
     ///
-    /// Keys are globs (§ design 2.3), anchored at both ends, so `etl_*` covers a
-    /// family of routines and `orders_*` does not reach into `my_orders`.
+    /// Two orderings decide which rule wins when more than one could apply, and
+    /// both are chosen to be the answer a person would give:
+    ///
+    /// 1. **Layer before namespace.** The connection's own rules are consulted
+    ///    first and entirely; the account's only speak where the connection is
+    ///    silent. "My rule for this database wins" is a sentence, and "the merge
+    ///    kept one of them" is not.
+    /// 2. **Name before verb, then specificity.** Within a layer, a routine's own
+    ///    name is a narrower statement than its verb, and among keys of one
+    ///    namespace an exact key beats a glob and a longer glob beats a shorter —
+    ///    the intuition that makes `etl_load` feel more specific than `etl_*`.
     fn apply_overrides(&self, classification: Classification) -> (Classification, Option<String>) {
-        if self.overrides.is_empty() {
-            return (classification, None);
+        for layer in [&self.overrides, &self.global_overrides] {
+            if layer.is_empty() {
+                continue;
+            }
+            if let Some(routine) = classification.routine.as_deref() {
+                if let Some((key, tier)) = best_match(layer, routine) {
+                    return (classification.retiered(tier), Some(key));
+                }
+            }
+            if let Some((key, tier)) = best_match(layer, &classification.verb) {
+                return (classification.retiered(tier), Some(key));
+            }
         }
-
-        // An override map is data, and data can be wrong. A key of `*` alone is
-        // refused when a rule is written, so one here means the row came from
-        // somewhere else — and obeying it would loosen every statement at once.
-        // Ignored rather than honoured, the same direction as every other
-        // defensive read in this module.
-        let usable = || self.overrides.iter().filter(|(key, _)| key.trim() != "*");
-
-        // The verb first: it is the coarser key, and a connection that has an
-        // opinion about every `CALL` means it more than one about one procedure.
-        if let Some((key, tier)) = usable().find(|(key, _)| glob_matches(key, &classification.verb))
-        {
-            return (classification.retiered(*tier), Some(key.clone()));
-        }
-
-        // Only a routine can be re-tiered by name, and only the routine it
-        // calls. Everything else keeps the tier the ladder gave it.
-        let Some(routine) = classification.routine.as_deref() else {
-            return (classification, None);
-        };
-        match usable().find(|(key, _)| glob_matches(key, routine)) {
-            Some((key, tier)) => (classification.retiered(*tier), Some(key.clone())),
-            None => (classification, None),
-        }
+        (classification, None)
     }
+}
+
+/// The most specific key in one layer that matches `name`.
+///
+/// Specificity rather than iteration order, because two globs can both match and
+/// "whichever the map happened to yield first" is not something a user can
+/// predict from what they typed. An exact key beats any glob; among globs the
+/// longer pattern wins. The key itself breaks a remaining tie, so the answer is
+/// stable rather than dependent on how the map was built.
+fn best_match(layer: &GateOverrides, name: &str) -> Option<(String, StatementTier)> {
+    let mut matches: Vec<(&String, StatementTier)> = layer
+        .iter()
+        // A key of `*` alone is refused where rules are written; obeying one
+        // found here would loosen everything at once. Ignored, like every other
+        // defensive read in this module.
+        .filter(|(key, _)| key.trim() != "*" && glob_matches(key, name))
+        .map(|(key, tier)| (key, *tier))
+        .collect();
+
+    matches.sort_by(|(a, _), (b, _)| {
+        specificity(b).cmp(&specificity(a)).then_with(|| a.cmp(b))
+    });
+    matches
+        .first()
+        .map(|(key, tier)| ((*key).clone(), *tier))
+}
+
+/// How narrow a key is. An exact key is narrower than any glob, and a longer
+/// pattern narrower than a shorter one — which is as much of an ordering as a
+/// glob language has.
+fn specificity(pattern: &str) -> (bool, usize) {
+    let is_exact = !pattern.contains('*') && !pattern.contains('?');
+    (is_exact, pattern.trim().len())
 }
 
 /// Whether a pattern matches a name: `*` for any run of characters, `?` for one.
@@ -1615,6 +1661,103 @@ mod tests {
         assert_eq!(a, "DELETE FROM ORDERS WHERE ID = ?");
     }
 
+    /// A read-only policy with a connection layer and an account layer.
+    fn layered(
+        connection: &[(&str, StatementTier)],
+        global: &[(&str, StatementTier)],
+        sql: &str,
+    ) -> GateDecision {
+        let map = |entries: &[(&str, StatementTier)]| -> GateOverrides {
+            entries
+                .iter()
+                .map(|(key, tier)| ((*key).to_string(), *tier))
+                .collect()
+        };
+        GatePolicy::read_only(GateActor::Human)
+            .with_overrides(map(connection))
+            .with_global_overrides(map(global))
+            .decide(classify(sql))
+    }
+
+    #[test]
+    fn the_connections_own_rules_beat_the_accounts() {
+        // Both layers have an opinion and they disagree. The narrower setting is
+        // the more deliberate one, and "my rule for this database wins" is a
+        // sentence a user can hold in their head.
+        let decision = layered(
+            &[("TRUNCATE", StatementTier::Refuse)],
+            &[("TRUNCATE", StatementTier::Free)],
+            "TRUNCATE t",
+        );
+        assert_eq!(decision.tier, StatementTier::Refuse);
+        assert_eq!(decision.overridden_by.as_deref(), Some("TRUNCATE"));
+    }
+
+    #[test]
+    fn the_accounts_rules_speak_where_the_connection_is_silent() {
+        let decision = layered(&[], &[("TRUNCATE", StatementTier::Confirm)], "TRUNCATE t");
+        assert_eq!(decision.tier, StatementTier::Confirm);
+        assert_eq!(decision.overridden_by.as_deref(), Some("TRUNCATE"));
+
+        // And a connection rule about something else does not silence them.
+        let decision = layered(
+            &[("DROP", StatementTier::Confirm)],
+            &[("TRUNCATE", StatementTier::Confirm)],
+            "TRUNCATE t",
+        );
+        assert_eq!(decision.tier, StatementTier::Confirm);
+    }
+
+    #[test]
+    fn a_routines_own_name_beats_its_verb() {
+        // Within one layer, naming a routine is a narrower statement than naming
+        // the verb it is called with: `etl_load` says something about one
+        // procedure, `CALL` says something about all of them.
+        let decision = layered(
+            &[("CALL", StatementTier::Refuse), ("etl_load", StatementTier::Free)],
+            &[],
+            "CALL etl_load()",
+        );
+        assert_eq!(decision.tier, StatementTier::Free);
+        assert_eq!(decision.overridden_by.as_deref(), Some("etl_load"));
+
+        // The verb still speaks for a routine nothing names.
+        let other = layered(
+            &[("CALL", StatementTier::Refuse), ("etl_load", StatementTier::Free)],
+            &[],
+            "CALL something_else()",
+        );
+        assert_eq!(other.tier, StatementTier::Refuse);
+    }
+
+    #[test]
+    fn the_more_specific_key_wins() {
+        // Two keys in one layer can both match, and map order is not something a
+        // user can predict from what they typed.
+        let exact = layered(
+            &[("etl_*", StatementTier::Refuse), ("etl_load", StatementTier::Free)],
+            &[],
+            "CALL etl_load()",
+        );
+        assert_eq!(exact.tier, StatementTier::Free, "an exact key beats a glob");
+        assert_eq!(exact.overridden_by.as_deref(), Some("etl_load"));
+
+        let longer = layered(
+            &[
+                ("etl_*", StatementTier::Refuse),
+                ("etl_load_*", StatementTier::Free),
+            ],
+            &[],
+            "CALL etl_load_daily()",
+        );
+        assert_eq!(
+            longer.tier,
+            StatementTier::Free,
+            "a longer glob beats a shorter one"
+        );
+        assert_eq!(longer.overridden_by.as_deref(), Some("etl_load_*"));
+    }
+
     #[test]
     fn the_reach_table_is_the_designs_matrix() {
         // Actor × tier, as one table, because that is the thing the design
@@ -1635,6 +1778,7 @@ mod tests {
                 actor: GateActor::Human,
                 reach,
                 overrides: GateOverrides::new(),
+                global_overrides: GateOverrides::new(),
             };
             let actual = match policy.decide(classify(sql)).action {
                 GateAction::Allow => "allow",
@@ -1655,6 +1799,7 @@ mod tests {
                 actor: GateActor::Human,
                 reach,
                 overrides: GateOverrides::new(),
+                global_overrides: GateOverrides::new(),
             };
             assert!(
                 !policy.decide(classify("SELECT 1")).session_writable,
