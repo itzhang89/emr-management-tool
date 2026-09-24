@@ -13,8 +13,8 @@
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DbConnection, DbConnectionKind, DbReadOnlyPolicy, GateOverrides, NetworkProfile,
-    NetworkTransport,
+    DbConnection, DbConnectionKind, DbReadOnlyPolicy, GateActor, GateOverrides, GateRefusal,
+    NetworkProfile, NetworkTransport, StatementTier,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -61,6 +61,17 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             payload text not null,
             refreshed_at text not null,
             primary key (connection_id, level, database_name, schema_name, kinds)
+        )",
+        "create table if not exists db_gate_refusals (
+            connection_id text not null,
+            statement_key text not null,
+            sql text not null,
+            tier text not null,
+            matched text not null,
+            actor text not null,
+            hits integer not null default 1,
+            last_at text not null,
+            primary key (connection_id, statement_key)
         )",
         "create index if not exists idx_db_connections_account on db_connections(account_id, sort_order)",
         "create index if not exists idx_network_profiles_account on network_profiles(account_id)",
@@ -172,6 +183,154 @@ fn overrides_from_column(value: &str) -> GateOverrides {
 
 fn overrides_column(overrides: &GateOverrides) -> String {
     serde_json::to_string(overrides).unwrap_or_else(|_| "{}".to_string())
+}
+
+// --- Refusals ---------------------------------------------------------------
+//
+// What the gate turned away, so the rules editor can offer a key to write
+// instead of assuming the reader already knows what one looks like. Capped per
+// connection: this is a hint about what to configure, not a ledger.
+
+/// How many refusals one connection keeps. Enough to see a pattern, few enough
+/// that the list stays a list.
+const MAX_REFUSALS_PER_CONNECTION: i64 = 50;
+
+/// Record one refusal: count it if this statement shape has been refused before,
+/// otherwise start a row.
+///
+/// Grouped by the *masked, uppercased* statement, so the same statement run with
+/// different literals is one row with a count. The count is the point — a
+/// statement refused fourteen times is a rule somebody is waiting for, and
+/// fourteen rows saying the same thing is a list nobody reads.
+pub async fn record_refusal(
+    pool: &SqlitePool,
+    connection_id: &str,
+    sql: &str,
+    tier: StatementTier,
+    matched: &str,
+    actor: GateActor,
+) -> AppResult<()> {
+    let masked = crate::db::dbhub::gate::masked_statement(sql);
+    let key = masked.to_ascii_uppercase();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "insert into db_gate_refusals
+            (connection_id, statement_key, sql, tier, matched, actor, hits, last_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)
+         on conflict (connection_id, statement_key) do update set
+            hits = hits + 1,
+            last_at = excluded.last_at,
+            actor = excluded.actor,
+            matched = excluded.matched",
+    )
+    .bind(connection_id)
+    .bind(&key)
+    .bind(&masked)
+    .bind(tier_json(tier))
+    .bind(matched)
+    .bind(actor.as_str())
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    // Keep the newest, drop the rest. Ordered by `last_at` because that is what
+    // the reader sorts by, so what survives is what it would have shown.
+    sqlx::query(
+        "delete from db_gate_refusals
+          where connection_id = ?1
+            and statement_key not in (
+                select statement_key from db_gate_refusals
+                 where connection_id = ?1
+                 order by last_at desc
+                 limit ?2
+            )",
+    )
+    .bind(connection_id)
+    .bind(MAX_REFUSALS_PER_CONNECTION)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(())
+}
+
+/// The most recently refused statements on a connection, most recent first.
+pub async fn recent_refusals(
+    pool: &SqlitePool,
+    connection_id: &str,
+    limit: i64,
+) -> AppResult<Vec<GateRefusal>> {
+    let rows = sqlx::query(
+        "select * from db_gate_refusals
+          where connection_id = ?1
+          order by last_at desc
+          limit ?2",
+    )
+    .bind(connection_id)
+    .bind(limit.clamp(1, MAX_REFUSALS_PER_CONNECTION))
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+
+    Ok(rows.into_iter().map(refusal_from_row).collect())
+}
+
+/// Forget a connection's refusals — what the editor's "ignore" does for one
+/// entry, and what deleting the connection does for all of them.
+pub async fn clear_refusals(pool: &SqlitePool, connection_id: &str) -> AppResult<()> {
+    sqlx::query("delete from db_gate_refusals where connection_id = ?1")
+        .bind(connection_id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
+/// Forget one statement's refusals.
+pub async fn clear_refusal(
+    pool: &SqlitePool,
+    connection_id: &str,
+    statement_key: &str,
+) -> AppResult<()> {
+    sqlx::query("delete from db_gate_refusals where connection_id = ?1 and statement_key = ?2")
+        .bind(connection_id)
+        .bind(statement_key)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
+fn refusal_from_row(row: sqlx::sqlite::SqliteRow) -> GateRefusal {
+    GateRefusal {
+        statement_key: row.get("statement_key"),
+        sql: row.get("sql"),
+        // A tier this version does not know reads as the strictest, which is the
+        // same direction every other defensive read here goes.
+        tier: tier_from_json(&row.get::<String, _>("tier")),
+        matched: row.get("matched"),
+        actor: GateActor::parse(&row.get::<String, _>("actor")),
+        hits: row.get::<i64, _>("hits"),
+        last_at: crate::db::parse_timestamp(&row.get::<String, _>("last_at")),
+    }
+}
+
+fn tier_json(tier: StatementTier) -> &'static str {
+    match tier {
+        StatementTier::Free => "free",
+        StatementTier::Confirm => "confirm",
+        StatementTier::Refuse => "refuse",
+    }
+}
+
+fn tier_from_json(value: &str) -> StatementTier {
+    match value {
+        "free" => StatementTier::Free,
+        "confirm" => StatementTier::Confirm,
+        _ => StatementTier::Refuse,
+    }
 }
 
 fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> {
@@ -816,9 +975,9 @@ mod tests {
                 ai_read_only_policy: None,
                 gate_overrides: Default::default(),
                 allow_writes: None,
-            auth_mode: None,
-            secret_arn: None,
-            secret_name: None,
+                auth_mode: None,
+                secret_arn: None,
+                secret_name: None,
                 sort_order: None,
             },
         )
@@ -862,9 +1021,9 @@ mod tests {
                 ai_read_only_policy: None,
                 gate_overrides: Default::default(),
                 allow_writes: None,
-            auth_mode: None,
-            secret_arn: None,
-            secret_name: None,
+                auth_mode: None,
+                secret_arn: None,
+                secret_name: None,
                 sort_order: None,
             },
         )
@@ -995,14 +1154,24 @@ mod tests {
     #[tokio::test]
     async fn the_catalog_cache_round_trips_and_clears() {
         let pool = test_pool().await;
-        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
-        write_catalog_cache(&pool, "c1", "objects", "sales", "", "table", "[{\"name\":\"orders\"}]")
-            .await
-            .expect("write");
+        write_catalog_cache(
+            &pool,
+            "c1",
+            "objects",
+            "sales",
+            "",
+            "table",
+            "[{\"name\":\"orders\"}]",
+        )
+        .await
+        .expect("write");
         let (payload, refreshed_at) =
             read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
                 .await
@@ -1013,16 +1182,20 @@ mod tests {
 
         // A different question is a different entry — asking for views must
         // not be answered with the tables.
-        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table,view")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            read_catalog_cache(&pool, "c1", "objects", "sales", "", "table,view")
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         clear_catalog_cache(&pool, "c1").await.expect("clear");
-        assert!(read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            read_catalog_cache(&pool, "c1", "objects", "sales", "", "table")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1035,7 +1208,9 @@ mod tests {
             .await
             .expect("write");
 
-        delete_connection(&pool, "acct-a", "c1").await.expect("delete");
+        delete_connection(&pool, "acct-a", "c1")
+            .await
+            .expect("delete");
 
         // A connection re-created under the same id must not open on its
         // predecessor's tree.
@@ -1189,6 +1364,141 @@ mod tests {
             .unwrap()
             .expect("exists");
         assert!(cleared.gate_overrides.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_counted_rather_than_repeated() {
+        let pool = test_pool().await;
+
+        // The same statement shape three times with different values: one row,
+        // three hits. A wall of near-identical rows is a list nobody reads.
+        for id in [3, 99, 412] {
+            record_refusal(
+                &pool,
+                "c1",
+                &format!("DELETE FROM orders WHERE id = {id}"),
+                StatementTier::Refuse,
+                "DELETE without WHERE",
+                GateActor::Human,
+            )
+            .await
+            .expect("record");
+        }
+
+        let rows = recent_refusals(&pool, "c1", 50).await.expect("read");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].hits, 3);
+        assert_eq!(rows[0].matched, "DELETE without WHERE");
+        assert_eq!(rows[0].actor, GateActor::Human);
+        // Nothing a value could identify survives into what is stored.
+        assert_eq!(rows[0].sql, "DELETE FROM orders WHERE id = ?");
+        assert!(!rows[0].sql.contains("412"));
+    }
+
+    #[tokio::test]
+    async fn refusals_are_per_connection_and_newest_first() {
+        let pool = test_pool().await;
+        record_refusal(
+            &pool,
+            "c1",
+            "DROP TABLE a",
+            StatementTier::Refuse,
+            "DROP",
+            GateActor::Human,
+        )
+        .await
+        .expect("record");
+        record_refusal(
+            &pool,
+            "c2",
+            "DROP TABLE b",
+            StatementTier::Refuse,
+            "DROP",
+            GateActor::Ai,
+        )
+        .await
+        .expect("record");
+        record_refusal(
+            &pool,
+            "c1",
+            "TRUNCATE c",
+            StatementTier::Refuse,
+            "TRUNCATE",
+            GateActor::Ai,
+        )
+        .await
+        .expect("record");
+
+        let c1 = recent_refusals(&pool, "c1", 50).await.expect("read");
+        assert_eq!(c1.len(), 2, "only this connection's");
+        assert_eq!(c1[0].sql, "TRUNCATE c", "newest first");
+        assert_eq!(c1[1].sql, "DROP TABLE a");
+        // The actor is kept, so the editor can say who keeps hitting the wall.
+        assert_eq!(c1[0].actor, GateActor::Ai);
+
+        let c2 = recent_refusals(&pool, "c2", 50).await.expect("read");
+        assert_eq!(c2.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_connections_refusals_are_capped_and_the_newest_survive() {
+        let pool = test_pool().await;
+        for index in 0..(MAX_REFUSALS_PER_CONNECTION + 5) {
+            record_refusal(
+                &pool,
+                "c1",
+                &format!("DROP TABLE t{index}"),
+                StatementTier::Refuse,
+                "DROP",
+                GateActor::Human,
+            )
+            .await
+            .expect("record");
+        }
+        let rows = recent_refusals(&pool, "c1", 200).await.expect("read");
+        assert_eq!(rows.len() as i64, MAX_REFUSALS_PER_CONNECTION);
+        // The most recent one is still here; the first one is gone.
+        assert!(rows.iter().any(|row| row.sql.ends_with("t54")));
+        assert!(!rows.iter().any(|row| row.sql.ends_with("t0")));
+    }
+
+    #[tokio::test]
+    async fn a_refusal_can_be_forgotten() {
+        let pool = test_pool().await;
+        record_refusal(
+            &pool,
+            "c1",
+            "DROP TABLE a",
+            StatementTier::Refuse,
+            "DROP",
+            GateActor::Human,
+        )
+        .await
+        .expect("record");
+        let rows = recent_refusals(&pool, "c1", 50).await.expect("read");
+        let key = rows[0].statement_key.clone();
+
+        clear_refusal(&pool, "c1", &key).await.expect("clear one");
+        assert!(recent_refusals(&pool, "c1", 50)
+            .await
+            .expect("read")
+            .is_empty());
+
+        record_refusal(
+            &pool,
+            "c1",
+            "DROP TABLE a",
+            StatementTier::Refuse,
+            "DROP",
+            GateActor::Human,
+        )
+        .await
+        .expect("record");
+        clear_refusals(&pool, "c1").await.expect("clear all");
+        assert!(recent_refusals(&pool, "c1", 50)
+            .await
+            .expect("read")
+            .is_empty());
     }
 
     #[tokio::test]

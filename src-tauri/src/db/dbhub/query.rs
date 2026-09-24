@@ -297,7 +297,8 @@ pub async fn count_for_command(
 
 /// The human query tab's entry point: resolve the connection, open its route,
 /// run the statement.
-pub async fn run_for_command(    app: &tauri::AppHandle,
+pub async fn run_for_command(
+    app: &tauri::AppHandle,
     connection_id: &str,
     require_ai_enabled: bool,
     sql: &str,
@@ -334,6 +335,23 @@ pub async fn run_for_command(    app: &tauri::AppHandle,
         let decision = gate::GatePolicy::for_connection(shape.connection.allow_writes)
             .with_overrides(shape.connection.gate_overrides.clone())
             .decide(gate::classify(sql));
+
+        // Remember what was turned away, so the rules editor can offer a key to
+        // write instead of assuming the reader already knows what one looks
+        // like. Best-effort on purpose: failing to write a note about a refusal
+        // must not turn into a second failure on top of it.
+        if matches!(decision.action, gate::GateAction::Refuse { .. }) {
+            let _ = crate::db::dbhub::store::record_refusal(
+                &shape.pool,
+                &shape.connection.id,
+                sql,
+                decision.tier,
+                &decision.matched,
+                decision.actor,
+            )
+            .await;
+        }
+
         execute(
             &shape,
             &target,
@@ -479,7 +497,8 @@ mod tests {
     }
 
     #[test]
-    fn a_page_asks_for_one_row_past_itself() {        // The extra row is the sentinel `project` reads to set `truncated`;
+    fn a_page_asks_for_one_row_past_itself() {
+        // The extra row is the sentinel `project` reads to set `truncated`;
         // asking for exactly the cap would make every page look complete.
         let sql = page_sql("select * from orders", 500, 1000);
         assert!(sql.contains("limit 501 offset 1000"), "{sql}");

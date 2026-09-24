@@ -259,8 +259,7 @@ pub async fn sql_query_text(
     // Same route as the workspace query tab: when the connection references a
     // Network Profile, open the SSH/SOCKS5 forward and keep `_forward` alive
     // for the duration of `execute` (dropping it closes the tunnel).
-    let (target, _forward) =
-        tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+    let (target, _forward) = tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
     // `GatePolicy::read_only` and not the connection's own setting: however the
     // user has configured writes for their own typing, the model never gets a
     // session that can write. This is the ceiling the design keeps in code
@@ -275,6 +274,22 @@ pub async fn sql_query_text(
     // until it does.
     let decision =
         gate::GatePolicy::read_only(gate::GateActor::Ai).decide(gate::classify(&args.sql));
+
+    // What the model was refused is as worth remembering as what the person was
+    // — more, arguably: a statement the AI keeps reaching for is the clearest
+    // signal that a rule is missing.
+    if matches!(decision.action, gate::GateAction::Refuse { .. }) {
+        let _ = dbhub::store::record_refusal(
+            &shape.pool,
+            &shape.connection.id,
+            &args.sql,
+            decision.tier,
+            &decision.matched,
+            decision.actor,
+        )
+        .await;
+    }
+
     let result = query::execute(
         &shape,
         &target,
@@ -370,9 +385,7 @@ async fn resolve_connection_by_slug_in(
     let matches: Vec<DbConnection> = dbhub::list_connections(pool, account_id)
         .await?
         .into_iter()
-        .filter(|connection| {
-            connection.enabled_for_ai && connection_slug(&connection.name) == slug
-        })
+        .filter(|connection| connection.enabled_for_ai && connection_slug(&connection.name) == slug)
         .collect();
     match matches.len() {
         1 => Ok(matches.into_iter().next().expect("len checked")),
@@ -461,7 +474,10 @@ mod tests {
         assert_eq!(connection_slug("MySQL-Prod"), "mysql_prod");
         assert_eq!(connection_slug("  Sales DB!! "), "sales_db");
         assert_eq!(connection_slug("___"), "");
-        assert_eq!(tool_name_for("MySQL1").as_deref(), Some("execute_sql_mysql1"));
+        assert_eq!(
+            tool_name_for("MySQL1").as_deref(),
+            Some("execute_sql_mysql1")
+        );
         assert_eq!(tool_name_for("!!!"), None);
     }
 
@@ -526,9 +542,9 @@ mod tests {
                 ai_read_only_policy: None,
                 gate_overrides: Default::default(),
                 allow_writes: None,
-            auth_mode: None,
-            secret_arn: None,
-            secret_name: None,
+                auth_mode: None,
+                secret_arn: None,
+                secret_name: None,
                 sort_order: None,
             },
         )

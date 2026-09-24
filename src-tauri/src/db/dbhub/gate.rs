@@ -20,7 +20,7 @@
 // depend on this. Re-exported because they are the gate's own vocabulary: a
 // caller reasoning about a ruling should not have to know where the vocabulary
 // is stored.
-pub use crate::models::{GateOverrides, StatementTier};
+pub use crate::models::{GateActor, GateOverrides, StatementTier};
 
 /// A statement's tier, and the token that decided it — so a refusal can name
 /// what it objected to rather than only that it objected.
@@ -75,15 +75,6 @@ impl Classification {
             routine: None,
         }
     }
-}
-
-/// Who is asking to run the statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GateActor {
-    /// The person at the keyboard: the final authority on their own database.
-    Human,
-    /// The model, through Chat or an external MCP client.
-    Ai,
 }
 
 /// What the gate decided to do with one statement.
@@ -797,6 +788,100 @@ fn has_top_level_where(statement: &str) -> bool {
         .any(|(word, depth)| *depth == 0 && word == "WHERE")
 }
 
+/// A statement with its values masked: a literal becomes `?`, comments are
+/// dropped, and runs of whitespace collapse to one space.
+///
+/// Both kinds of literal are masked — a single-quoted string and a bare number —
+/// because a rule keys on neither, and `WHERE id = 3` and `WHERE id = 99` are
+/// one statement to a rule. That is what makes the log a count rather than a
+/// wall of near-identical rows.
+///
+/// This is what the refusal log stores, and it is deliberately not the original
+/// text the design first called for. A literal is where the customer ids and the
+/// email addresses are, and nothing a rule can be built from lives inside one:
+/// keys are verbs and routine names, and both are code — `CALL etl_load(?)` names
+/// the routine just as well as `CALL etl_load('2026-01-01')` does.
+///
+/// A quoted *name* is kept, unquoted — Postgres spells identifiers `"like this"`
+/// and MySQL spells them `` `like this` ``, and both are the routine name a rule
+/// would be keyed on. Masking those would erase the one thing this log exists to
+/// provide. It costs nothing the query history does not already store.
+pub fn masked_statement(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
+    let mut out = String::with_capacity(sql.len());
+    let mut index = 0;
+    let mut space_pending = false;
+
+    while index < chars.len() {
+        let piece = match chars[index] {
+            // A value in every dialect, and the only thing masked.
+            '\'' => {
+                index = skip_quoted(&chars, index, '\'');
+                "?".to_string()
+            }
+            quote @ ('"' | '`') => {
+                let end = skip_quoted(&chars, index, quote);
+                // `skip_quoted` lands past a closing quote, or at the end of an
+                // unterminated one — which has no closing quote to drop.
+                let closed = end > index + 1 && chars.get(end - 1) == Some(&quote);
+                let last = if closed { end - 1 } else { end };
+                let name: String = chars[index + 1..last].iter().collect();
+                index = end;
+                name
+            }
+            '-' if chars.get(index + 1) == Some(&'-') => {
+                index = skip_to_line_end(&chars, index);
+                " ".to_string()
+            }
+            '#' => {
+                index = skip_to_line_end(&chars, index);
+                " ".to_string()
+            }
+            '/' if chars.get(index + 1) == Some(&'*') => {
+                index = skip_block_comment(&chars, index);
+                " ".to_string()
+            }
+            // A bare number is a value as much as a quoted string is: `id = 3`
+            // and `id = 99` are one statement to a rule, and the count is the
+            // point of this log. Only when it stands alone — the digits in `t1`
+            // or `col2` are part of a name, and masking those would erase code.
+            digit if digit.is_ascii_digit() => {
+                let inside_name = !space_pending && out.chars().last().is_some_and(is_word_char);
+                let start = index;
+                while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '.')
+                {
+                    index += 1;
+                }
+                let runs_on = chars.get(index).is_some_and(|next| is_word_char(*next));
+                if inside_name || runs_on {
+                    chars[start..index].iter().collect()
+                } else {
+                    "?".to_string()
+                }
+            }
+            current => {
+                index += 1;
+                current.to_string()
+            }
+        };
+        for character in piece.chars() {
+            if character.is_whitespace() {
+                // Collapsed rather than dropped, so `select  *  from` and
+                // `select * from` are the same key.
+                space_pending = !out.is_empty();
+            } else {
+                if space_pending {
+                    out.push(' ');
+                    space_pending = false;
+                }
+                out.push(character);
+            }
+        }
+    }
+
+    out
+}
+
 /// Identifier characters, so a keyword is never found inside a longer name.
 fn is_word_char(current: char) -> bool {
     current.is_alphanumeric() || current == '_' || current == '$'
@@ -1402,7 +1487,10 @@ mod tests {
         let overrides = [("etl_*", StatementTier::Free)];
         let other = ruling_with(&overrides, "CALL my_etl_job()");
         assert_eq!(other.tier, StatementTier::Confirm);
-        assert!(other.overridden_by.is_none(), "the glob must not have matched");
+        assert!(
+            other.overridden_by.is_none(),
+            "the glob must not have matched"
+        );
     }
 
     #[test]
@@ -1476,6 +1564,58 @@ mod tests {
     }
 
     #[test]
+    fn masking_keeps_the_shape_and_drops_the_values() {
+        assert_eq!(
+            masked_statement("SELECT * FROM t WHERE id = 'abc'"),
+            "SELECT * FROM t WHERE id = ?"
+        );
+        // Whitespace collapses, so two spellings of one statement share a key.
+        assert_eq!(masked_statement("select  *\n  from   t"), "select * from t");
+        // Comments are not part of the statement, and a comment is a fine place
+        // to leave something private.
+        assert_eq!(masked_statement("SELECT 1 -- call me on 555\n"), "SELECT ?");
+        assert_eq!(
+            masked_statement("/* drop the temp table */ SELECT 1"),
+            "SELECT ?"
+        );
+        // Digits that are part of a name stay: `t1` is code, and masking it
+        // would erase which table was named.
+        assert_eq!(
+            masked_statement("SELECT * FROM t1 WHERE c2 = 3"),
+            "SELECT * FROM t1 WHERE c2 = ?"
+        );
+        // A doubled quote is an escape and does not end the literal early.
+        assert_eq!(masked_statement("SELECT 'it''s'"), "SELECT ?");
+    }
+
+    #[test]
+    fn masking_a_name_keeps_the_name() {
+        // The one thing the log exists to provide is the routine to key a rule
+        // on, and a quoted identifier is still that name — masking it as if it
+        // were a value would erase exactly what the log is for.
+        assert_eq!(
+            masked_statement("CALL `etl_rebuild`()"),
+            "CALL etl_rebuild()"
+        );
+        assert_eq!(
+            masked_statement("CALL \"etl_rebuild\"()"),
+            "CALL etl_rebuild()"
+        );
+        // An unterminated quote has no closing quote to drop.
+        assert_eq!(masked_statement("CALL `etl_rebuild"), "CALL etl_rebuild");
+    }
+
+    #[test]
+    fn two_runs_of_a_statement_differing_only_in_values_share_a_key() {
+        // This is what makes the log a count rather than a wall of repeats, and
+        // it is the masking that does it.
+        let a = masked_statement("DELETE FROM orders WHERE id = 3").to_ascii_uppercase();
+        let b = masked_statement("delete from orders where id = 99").to_ascii_uppercase();
+        assert_eq!(a, b);
+        assert_eq!(a, "DELETE FROM ORDERS WHERE ID = ?");
+    }
+
+    #[test]
     fn the_reach_table_is_the_designs_matrix() {
         // Actor × tier, as one table, because that is the thing the design
         // specifies and the thing a later change is most likely to break.
@@ -1521,9 +1661,11 @@ mod tests {
                 "{reach:?}"
             );
         }
-        assert!(GatePolicy::for_connection(true)
-            .decide(classify("SELECT 1"))
-            .session_writable);
+        assert!(
+            GatePolicy::for_connection(true)
+                .decide(classify("SELECT 1"))
+                .session_writable
+        );
     }
 
     #[test]

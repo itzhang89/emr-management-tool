@@ -1583,9 +1583,7 @@ impl DbAuthMode {
         match value {
             "manual" => Ok(DbAuthMode::Manual),
             "aws_secret" => Ok(DbAuthMode::AwsSecret),
-            other => Err(format!(
-                "Unknown connection auth_mode in database: {other}"
-            )),
+            other => Err(format!("Unknown connection auth_mode in database: {other}")),
         }
     }
 }
@@ -1616,6 +1614,60 @@ pub enum StatementTier {
 /// an override is the one place a connection can *loosen* what the ladder
 /// decides, and loosening is the direction that can lose data.
 pub type GateOverrides = std::collections::BTreeMap<String, StatementTier>;
+
+/// One statement the gate refused on a connection, with how often it has been.
+///
+/// Not an audit row: this exists to answer one question — "what rule should I
+/// add?" — so it counts by statement shape and keeps the values out. Everything
+/// the rules editor needs to propose a key (the verb, the routine name) is code
+/// and survives the masking; the literals are nobody's business but the
+/// database's.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateRefusal {
+    /// The masked statement, uppercased — what makes two runs of the same
+    /// statement one row.
+    pub statement_key: String,
+    /// The masked statement as typed, for a person to read.
+    pub sql: String,
+    pub tier: StatementTier,
+    /// What named the decision: the verb, or the verb plus `without WHERE`.
+    pub matched: String,
+    pub actor: GateActor,
+    pub hits: i64,
+    pub last_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Whether the person or the AI was asking, as it is stored.
+///
+/// Lives here rather than beside the gate for the same reason `StatementTier`
+/// does: the refusal log persists it, and `models` must not import from `db`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GateActor {
+    /// The person at the keyboard: the final authority on their own database.
+    Human,
+    /// The model, through Chat or an external MCP client.
+    Ai,
+}
+
+impl GateActor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GateActor::Human => "human",
+            GateActor::Ai => "ai",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "ai" => GateActor::Ai,
+            // Anything else reads as the person, which is the reading that
+            // cannot overstate what the AI has been doing.
+            _ => GateActor::Human,
+        }
+    }
+}
 
 /// How far the AI tools may go on a connection, once it is enabled for them.
 ///
