@@ -92,32 +92,36 @@ async fn active_account_id(pool: &sqlx::SqlitePool) -> AppResult<String> {
 
 /// The single execution path.
 ///
-/// Read-only unless the caller says otherwise, and read-only is the default
-/// *everywhere* — including every AI path, which passes `false` unconditionally
-/// so that "the model cannot change your database" stays a property of the code
-/// rather than of a setting.
+/// The caller hands in the gate's ruling rather than a setting, so the
+/// statement's fate is decided in one place and this function only carries it
+/// out. Read-only stays the default *everywhere* — every AI path builds its
+/// decision from `GatePolicy::read_only`, which keeps "the model cannot change
+/// your database" a property of the code rather than of a setting.
 ///
-/// `writable` is the human's opt-in, and it waives both defences at once: the
-/// gate stops classifying, and the driver stops opening its session read-only.
-/// The driver's session is the second line of defence behind the gate, so
-/// leaving it in place while skipping the gate would refuse every write with a
-/// database-level error — the user would have asked for writes and been told
-/// no by the thing that was supposed to be helping.
+/// A writable decision waives both defences at once: the gate stops refusing,
+/// and the driver stops opening its session read-only. The driver's session is
+/// the second line of defence behind the gate, so leaving it in place while
+/// allowing writes would refuse every one of them with a database-level error —
+/// the user would have asked for writes and been told no by the thing that was
+/// supposed to be helping.
+///
+/// `session_writable` rides on the decision for the same reason: it is the
+/// connection's setting rather than the statement's tier, so an allowed read on
+/// a writable connection still opens a writable session, and a read on a
+/// read-only one never does.
 pub(crate) async fn execute(
     shape: &DbConnectionShape,
     target: &DialTarget,
     sql: &str,
     max_rows: usize,
     offset: usize,
-    writable: bool,
+    decision: &gate::GateDecision,
     cancel: &QueryCancellation<'_>,
 ) -> AppResult<DbQueryResult> {
-    if !writable {
-        if let gate::StatementClass::Blocked { reason } = gate::classify(sql) {
-            return Err(AppError::validation(format!(
-                "Blocked by the read-only gate: {reason}"
-            )));
-        }
+    if let gate::GateAction::Refuse { reason } = &decision.action {
+        return Err(AppError::validation(format!(
+            "Blocked by the read-only gate: {reason}"
+        )));
     }
 
     let cap = max_rows.clamp(1, MAX_PAGE_ROWS);
@@ -139,7 +143,7 @@ pub(crate) async fn execute(
     // cache is the tree's memory of it. Dropped outright rather than patched:
     // a `DROP DATABASE` can invalidate every level at once, and re-reading is
     // cheap next to being subtly out of date.
-    let catalog_changed = writable && gate::changes_schema(sql);
+    let catalog_changed = decision.session_writable && gate::changes_schema(sql);
     if catalog_changed {
         let _ =
             crate::db::dbhub::store::clear_catalog_cache(&shape.pool, &shape.connection.id).await;
@@ -147,7 +151,11 @@ pub(crate) async fn execute(
 
     let started = std::time::Instant::now();
     let dial = shape.dial(target);
-    let dial = if writable { dial.writable() } else { dial };
+    let dial = if decision.session_writable {
+        dial.writable()
+    } else {
+        dial
+    };
     let page = driver::driver_for(shape.connection.kind)
         .query(&dial, &statement, cap, cancel)
         .await?;
@@ -303,14 +311,17 @@ pub async fn run_for_command(    app: &tauri::AppHandle,
         // driver dial; binding it to this scope does exactly that.
         let (target, _forward) =
             tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        // The one place the person's write switch is read. Nothing on an AI
+        // path asks, so the AI's ceiling stays a property of the code.
+        let decision = gate::GatePolicy::for_connection(shape.connection.allow_writes)
+            .decide(gate::classify(sql));
         execute(
             &shape,
             &target,
             sql,
             max_rows.unwrap_or(MAX_PAGE_ROWS),
             offset,
-            // The one place the switch is read. Nothing on an AI path asks.
-            shape.connection.allow_writes,
+            &decision,
             &QueryCancellation::new(&token),
         )
         .await
@@ -334,6 +345,14 @@ pub async fn run_for_command(    app: &tauri::AppHandle,
 mod tests {
     use super::*;
     use crate::models::{DbConnectionKind, DbReadOnlyPolicy};
+
+    /// The decision a read-only connection's workspace would reach for `sql`.
+    ///
+    /// Built through the same policy the command uses, so these tests exercise
+    /// the real ruling rather than a hand-made one that could drift from it.
+    fn read_only_decision(sql: &str) -> gate::GateDecision {
+        gate::GatePolicy::read_only(gate::GateActor::Human).decide(gate::classify(sql))
+    }
 
     fn shape_for_gate_test() -> DbConnectionShape {
         DbConnectionShape {
@@ -463,7 +482,7 @@ mod tests {
             "SHOW TABLES",
             100,
             500,
-            false,
+            &read_only_decision("SHOW TABLES"),
             &QueryCancellation::never(),
         )
         .await
@@ -482,7 +501,7 @@ mod tests {
             "DELETE FROM orders",
             100,
             0,
-            false,
+            &read_only_decision("DELETE FROM orders"),
             &QueryCancellation::never(),
         )
         .await
@@ -504,7 +523,7 @@ mod tests {
             "SELECT 1",
             100,
             0,
-            false,
+            &read_only_decision("SELECT 1"),
             &QueryCancellation::never(),
         )
         .await

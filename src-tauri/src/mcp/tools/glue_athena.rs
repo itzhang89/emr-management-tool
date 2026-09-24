@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::commands::{athena, glue};
-use crate::db::dbhub::gate::{self, StatementClass};
+use crate::db::dbhub::gate;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AthenaQueryExecutionRequest, AthenaQueryResultsRequest, AthenaWorkgroup, AwsCommandContext,
@@ -167,11 +167,13 @@ pub async fn execute_athena_sql(
     app: &AppHandle,
     args: &ExecuteAthenaSqlArgs,
 ) -> AppResult<ExecuteAthenaSqlResult> {
-    match gate::classify(&args.sql) {
-        StatementClass::Blocked { reason } => {
-            return Ok(ExecuteAthenaSqlResult::refused(&args.sql, &reason));
-        }
-        StatementClass::Read => {}
+    // Athena is read-only by nature rather than by configuration — there is no
+    // connection row to hold a write switch — so it runs under the read-only
+    // policy and is refused the same way a person's read-only connection is.
+    let decision =
+        gate::GatePolicy::read_only(gate::GateActor::Human).decide(gate::classify(&args.sql));
+    if let gate::GateAction::Refuse { reason } = &decision.action {
+        return Ok(ExecuteAthenaSqlResult::refused(&args.sql, reason));
     }
 
     let max_rows = args.max_rows.unwrap_or(50).clamp(1, TOOL_MAX_ROWS);
@@ -283,13 +285,24 @@ mod tests {
 
     #[test]
     fn gate_blocks_athena_ddl_before_start() {
-        match gate::classify("DROP TABLE foo") {
-            StatementClass::Blocked { .. } => {}
-            StatementClass::Read => panic!("DDL must be blocked"),
-        }
-        match gate::classify("SELECT 1") {
-            StatementClass::Read => {}
-            StatementClass::Blocked { reason } => panic!("SELECT should pass: {reason}"),
-        }
+        // Asked of the classifier rather than the policy: the tier is the
+        // classifier's answer, and Athena's read-only policy is what turns it
+        // into a refusal.
+        assert_eq!(
+            gate::classify("DROP TABLE foo").tier,
+            gate::StatementTier::Refuse
+        );
+        assert_eq!(gate::classify("SELECT 1").tier, gate::StatementTier::Free);
+
+        // And the policy Athena runs under refuses the one and allows the other.
+        let policy = gate::GatePolicy::read_only(gate::GateActor::Human);
+        assert!(matches!(
+            policy.decide(gate::classify("DROP TABLE foo")).action,
+            gate::GateAction::Refuse { .. }
+        ));
+        assert_eq!(
+            policy.decide(gate::classify("SELECT 1")).action,
+            gate::GateAction::Allow
+        );
     }
 }

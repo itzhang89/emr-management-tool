@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::db::dbhub::session::QueryCancellation;
-use crate::db::dbhub::{query, tunnel};
+use crate::db::dbhub::{gate, query, tunnel};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::mcp::tools::dbhub_sql::{self, connection_slug};
@@ -328,6 +328,17 @@ fn qualify_table(
     }
 }
 
+/// The decision this tool's probes run under: an AI caller's read-only ceiling.
+///
+/// The statements are built here rather than typed by anyone, but they still go
+/// through the gate. A table name interpolated from a tool argument is exactly
+/// the kind of thing that should not be exempt from it, and routing them through
+/// the same policy as every other AI path means there is one answer to "what can
+/// the model run", not two.
+fn probe_decision(sql: &str) -> gate::GateDecision {
+    gate::GatePolicy::read_only(gate::GateActor::Ai).decide(gate::classify(sql))
+}
+
 async fn probe_side(
     app: &AppHandle,
     connection: &DbConnection,
@@ -368,7 +379,7 @@ async fn probe_side(
         &count_sql,
         1,
         0,
-        false,
+        &probe_decision(&count_sql),
         &QueryCancellation::never(),
     )
     .await
@@ -396,7 +407,7 @@ async fn probe_side(
             &max_sql,
             1,
             0,
-            false,
+            &probe_decision(&max_sql),
             &QueryCancellation::never(),
         )
         .await

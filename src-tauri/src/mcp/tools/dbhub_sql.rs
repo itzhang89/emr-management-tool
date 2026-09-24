@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::db::dbhub::session::QueryCancellation;
-use crate::db::dbhub::{self, query, tunnel};
+use crate::db::dbhub::{self, gate, query, tunnel};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::DbConnection;
@@ -261,16 +261,19 @@ pub async fn sql_query_text(
     // for the duration of `execute` (dropping it closes the tunnel).
     let (target, _forward) =
         tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
-    // `writable: false` is hardcoded here and not read from the connection:
-    // however the user has configured it for their own typing, the model never
-    // gets a session that can write.
+    // `GatePolicy::read_only` and not the connection's own setting: however the
+    // user has configured writes for their own typing, the model never gets a
+    // session that can write. This is the ceiling the design keeps in code
+    // rather than in configuration.
+    let decision =
+        gate::GatePolicy::read_only(gate::GateActor::Ai).decide(gate::classify(&args.sql));
     let result = query::execute(
         &shape,
         &target,
         &args.sql,
         max_rows,
         0,
-        false,
+        &decision,
         &QueryCancellation::never(),
     )
     .await?;

@@ -1,42 +1,199 @@
-//! The read-only gate every DBHub SQL execution passes through (design
-//! section 8, layer 3): a statement is classified before it is allowed to
-//! leave the process, and the connection itself is opened in read-only
-//! transaction mode as the second line of defence.
+//! The gate every DBHub SQL execution passes through (design section 8, layer
+//! 3): a statement is classified before it is allowed to leave the process, and
+//! the connection itself is opened in read-only transaction mode as the second
+//! line of defence.
 //!
-//! The gate is intentionally conservative: anything not recognised as a
-//! read statement is rejected. A statement that only *looks* read-only but
-//! embeds a write (e.g. `SELECT ... INTO OUTFILE`) fails classification and
-//! is refused — the model or the user can rephrase it, a destroyed table
-//! cannot be un-rephrased.
+//! Classification and policy are two questions, and this module keeps them
+//! apart. `classify` answers only the first — what kind of statement is this —
+//! and says nothing about who may run it; that is `GatePolicy`'s business. They
+//! used to be one function with the refusal wording ("this connection is
+//! read-only") welded into it, which is why a single verdict could not serve a
+//! read-only connection, a trusted one, and an AI with a ceiling of its own.
+//!
+//! The gate is intentionally conservative: a statement the classifier cannot
+//! place is refused. Something that only *looks* read-only but embeds a write
+//! (`SELECT ... INTO OUTFILE`) is refused too — a caller can rephrase it, a
+//! destroyed table cannot be un-rephrased.
 
-/// The classification verdict for one statement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StatementClass {
-    /// Pure read: runs.
-    Read,
-    /// Not recognised as a read: refused with an explanation.
-    Blocked { reason: String },
+/// What a statement *is*, independent of who may run it.
+///
+/// Ordered by severity, because a run of statements is only as free as its
+/// strictest one: a batch holding a `DROP` is a `DROP`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StatementTier {
+    /// A read: safe to run unattended.
+    Free,
+    /// Changes some data: runnable once a human has confirmed it.
+    Confirm,
+    /// Structural or whole-table change, or a statement the classifier cannot
+    /// place at all. Refused.
+    Refuse,
 }
 
-/// Classify one statement for the read-only gate. Handles leading comments
-/// and whitespace (a statement may open with `/* */` or `--`), multiple
-/// statements (any non-read statement rejects the whole batch), and the
-/// read-flavoured utility statements (SHOW/DESCRIBE/EXPLAIN/USE/TCC).
-pub fn classify(sql: &str) -> StatementClass {
-    let mut any_statement = false;
-    for statement in split_statements(sql) {
-        any_statement = true;
-        match classify_single(&statement) {
-            StatementClass::Read => {}
-            StatementClass::Blocked { .. } => return classify_single(&statement),
+/// A statement's tier, and the token that decided it — so a refusal can name
+/// what it objected to rather than only that it objected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Classification {
+    pub tier: StatementTier,
+    /// The write verb, or the statement's first word when the classifier does
+    /// not recognise it. Empty for a free read, and for an empty batch.
+    pub matched: String,
+}
+
+/// Who is asking to run the statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateActor {
+    /// The person at the keyboard: the final authority on their own database.
+    Human,
+    /// The model, through Chat or an external MCP client.
+    Ai,
+}
+
+/// What the gate decided to do with one statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateAction {
+    Allow,
+    /// Runnable once a human has confirmed it.
+    ///
+    /// No caller can service this yet — the confirmation surface arrives with
+    /// the AI's confirm mode — so nothing produces it in this step. The variant
+    /// is here so the policies can be written once, in their final shape,
+    /// rather than rewritten when that surface lands.
+    Confirm,
+    Refuse {
+        reason: String,
+    },
+}
+
+/// Who is running, and how far this connection lets them go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GatePolicy {
+    pub actor: GateActor,
+    /// Whether this connection may be written to at all. Off is the default
+    /// everywhere, and the AI's paths never turn it on.
+    pub writable: bool,
+}
+
+impl GatePolicy {
+    /// A read-only connection's policy, for callers with no per-connection
+    /// setting to read — Glue/Athena, read-only by nature rather than by
+    /// configuration.
+    pub fn read_only(actor: GateActor) -> Self {
+        Self {
+            actor,
+            writable: false,
         }
     }
-    if !any_statement {
-        return StatementClass::Blocked {
-            reason: "No SQL statement to run.".to_string(),
+
+    /// A connection's own workspace: the person typing there, on the terms the
+    /// connection was saved with.
+    pub fn for_connection(writable: bool) -> Self {
+        Self {
+            actor: GateActor::Human,
+            writable,
+        }
+    }
+
+    /// Decide what to do with one statement.
+    ///
+    /// A writable connection allows everything, which is what the old code did
+    /// by skipping the gate outright: the person who turned writes on is the
+    /// final authority, and the tier ladder is what keeps them *informed*
+    /// rather than what stops them. Refusing a `DROP` they asked for is a
+    /// decision this policy does not make.
+    pub fn decide(&self, classification: Classification) -> GateDecision {
+        let action = if self.writable {
+            GateAction::Allow
+        } else {
+            match classification.tier {
+                StatementTier::Free => GateAction::Allow,
+                StatementTier::Confirm | StatementTier::Refuse => GateAction::Refuse {
+                    reason: refusal_reason(self.actor, &classification),
+                },
+            }
+        };
+        GateDecision {
+            action,
+            tier: classification.tier,
+            matched: classification.matched,
+            session_writable: self.writable,
+            actor: self.actor,
+        }
+    }
+}
+
+/// The gate's ruling on one statement: what to do, and what it was looking at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateDecision {
+    pub action: GateAction,
+    pub tier: StatementTier,
+    /// The token that decided the tier, for the refusal message and the audit.
+    pub matched: String,
+    /// Whether the statement runs on a session opened for writing.
+    ///
+    /// Deliberately *not* the same question as "allowed": a free read on a
+    /// writable connection is allowed either way, and it is the connection's
+    /// own setting that decides the session — not the statement's tier. Carried
+    /// on the decision so the execution path reads it from one place instead of
+    /// re-deriving it and risking a disagreement with the gate.
+    pub session_writable: bool,
+    pub actor: GateActor,
+}
+
+/// Why a statement was refused, in the words of the policy that refused it.
+fn refusal_reason(actor: GateActor, classification: &Classification) -> String {
+    if classification.matched.is_empty() {
+        return "No SQL statement to run.".to_string();
+    }
+    let matched = &classification.matched;
+    match classification.tier {
+        // Not reached: a free statement is never refused. Spelled out so this
+        // stays honest if a tier is ever added and this match is overlooked.
+        StatementTier::Free => "The statement was not run.".to_string(),
+        StatementTier::Confirm => format!(
+            "\"{matched}\" changes data and needs a person to confirm it, which is not \
+             available on this path yet."
+        ),
+        StatementTier::Refuse => match actor {
+            GateActor::Human => format!(
+                "\"{matched}\" is refused: this connection is read-only. Turn writes on for \
+                 this connection to run it."
+            ),
+            GateActor::Ai => format!(
+                "\"{matched}\" is refused: this connection is read-only for the AI, and \
+                 changes like this are left for a person to run."
+            ),
+        },
+    }
+}
+
+/// Classify one statement for the gate. Handles leading comments and whitespace
+/// (a statement may open with `/* */` or `--`), multiple statements (the batch
+/// takes the strictest of them), and the read-flavoured utility statements
+/// (SHOW/DESCRIBE/EXPLAIN/USE).
+pub fn classify(sql: &str) -> Classification {
+    let mut worst = Classification {
+        tier: StatementTier::Free,
+        matched: String::new(),
+    };
+    let mut found = false;
+    for statement in split_statements(sql) {
+        found = true;
+        let classification = classify_single(&statement);
+        // A run is refused as a whole, so it is as strict as its strictest
+        // statement. Ties keep the earlier one, so the first statement at a
+        // given severity is the one a refusal names.
+        if classification.tier > worst.tier {
+            worst = classification;
+        }
+    }
+    if !found {
+        return Classification {
+            tier: StatementTier::Refuse,
+            matched: String::new(),
         };
     }
-    StatementClass::Read
+    worst
 }
 
 /// Split on semicolons outside quotes; the pieces keep their comments, which
@@ -163,27 +320,39 @@ pub fn changes_schema(sql: &str) -> bool {
     })
 }
 
-fn classify_single(statement: &str) -> StatementClass {
+fn classify_single(statement: &str) -> Classification {
     let cleaned = strip_comments(statement);
     let first_word = first_word(&cleaned);
 
     match first_word.as_str() {
         "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "USE" | "WITH" => {
-            // WITH opens CTEs that normally feed a SELECT; the body is still
-            // audited below so a WITH ... INSERT/UPDATE/DELETE is caught.
-            audit_with_statement(&cleaned)
+            // A read-shaped statement is not a read until its body says so:
+            // WITH opens CTEs that normally feed a SELECT, but the body is
+            // audited so a `WITH ... INSERT` is caught, and `SELECT ... INTO`
+            // writes despite opening with the read verb.
+            match first_write_token(&cleaned) {
+                Some(token) => Classification {
+                    tier: StatementTier::Refuse,
+                    matched: token,
+                },
+                None => Classification {
+                    tier: StatementTier::Free,
+                    matched: String::new(),
+                },
+            }
         }
-        _ => StatementClass::Blocked {
-            reason: format!(
-                "\"{first_word}\" statements are blocked: this connection is read-only. \
-                 Only SELECT and read utilities (SHOW/DESCRIBE/EXPLAIN) may run."
-            ),
+        // A verb the classifier does not place. Refused — this is the tier
+        // ladder's `Unknown` default, and it is the conservative end on
+        // purpose: the alternative is asking a person to judge a statement
+        // that the tool itself could not read.
+        _ => Classification {
+            tier: StatementTier::Refuse,
+            matched: first_word,
         },
     }
 }
 
-/// Second-pass audit: reject write keywords appearing after CTEs or inside
-/// otherwise-read-looking statements.
+/// The first write keyword in the statement's code, if any.
 ///
 /// The scan reads the statement's *code* — the words outside string literals,
 /// quoted identifiers and comments — and it matches whole words. Matching the
@@ -196,22 +365,10 @@ fn classify_single(statement: &str) -> StatementClass {
 ///   sides, so a newline where that space was expected carried `INTO` straight
 ///   past it: `SELECT * INTO\nOUTFILE '/tmp/x'` was allowed through.
 ///
-/// `SELECT ... FOR UPDATE` is refused now; it used to slip past on the trailing
+/// `SELECT ... FOR UPDATE` is caught now; it used to slip past on the trailing
 /// newline `strip_comments` appends. That is the honest verdict rather than a
 /// regression: the statement takes row locks, and a read-only session refuses
 /// it at the wire anyway, so it never ran on the connections this gate guards.
-fn audit_with_statement(cleaned: &str) -> StatementClass {
-    match first_write_token(cleaned) {
-        Some(token) => StatementClass::Blocked {
-            reason: format!(
-                "This statement contains {token} and is blocked: the connection is read-only."
-            ),
-        },
-        None => StatementClass::Read,
-    }
-}
-
-/// The first write keyword in the statement's code, if any.
 fn first_write_token(cleaned: &str) -> Option<String> {
     code_tokens(cleaned)
         .into_iter()
@@ -337,19 +494,31 @@ fn is_write_keyword(token: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A read-only connection's ruling on `sql` — the configuration these tests
+    /// are about. `classify` answers only what the statement is; the reason a
+    /// refusal carries is the policy's to write, so a test that wants to read
+    /// one has to go through a policy to get it.
+    fn ruling(sql: &str) -> GateDecision {
+        GatePolicy::read_only(GateActor::Human).decide(classify(sql))
+    }
+
     fn assert_read(sql: &str) {
-        assert_eq!(classify(sql), StatementClass::Read, "expected read: {sql}");
+        assert_eq!(
+            classify(sql).tier,
+            StatementTier::Free,
+            "expected a free read: {sql}"
+        );
     }
 
     fn assert_blocked(sql: &str, needle: &str) {
-        match classify(sql) {
-            StatementClass::Blocked { reason } => {
+        match ruling(sql).action {
+            GateAction::Refuse { reason } => {
                 assert!(
                     reason.to_lowercase().contains(&needle.to_lowercase()),
                     "reason \"{reason}\" should mention {needle}"
                 );
             }
-            StatementClass::Read => panic!("expected blocked: {sql}"),
+            other => panic!("expected a refusal for {sql}, got {other:?}"),
         }
     }
 
@@ -531,5 +700,94 @@ mod tests {
         // anyway — so the gate says so first rather than relying on the stray
         // trailing newline that used to let it through.
         assert_blocked("SELECT * FROM t FOR UPDATE", "UPDATE");
+    }
+
+    #[test]
+    fn a_read_only_connection_allows_reads_and_refuses_the_rest() {
+        let policy = GatePolicy::read_only(GateActor::Human);
+        assert_eq!(
+            policy.decide(classify("SELECT 1")).action,
+            GateAction::Allow
+        );
+        assert!(matches!(
+            policy.decide(classify("DELETE FROM t")).action,
+            GateAction::Refuse { .. }
+        ));
+    }
+
+    #[test]
+    fn a_writable_connection_allows_everything() {
+        // What the old code did by skipping the gate outright. The person who
+        // turned writes on is the final authority, so the ladder informs them
+        // rather than stopping them — including at the strictest tier.
+        let policy = GatePolicy::for_connection(true);
+        for sql in [
+            "SELECT 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "ALTER TABLE t ADD COLUMN x INT",
+            "wibble wobble",
+        ] {
+            assert_eq!(
+                policy.decide(classify(sql)).action,
+                GateAction::Allow,
+                "a writable connection should allow {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_writable_decision_opens_a_writable_session() {
+        // The session follows the connection, not the statement's tier: an
+        // allowed read on a writable connection still dials writable, exactly
+        // as it did when the flag was passed straight through.
+        let decision = GatePolicy::for_connection(true).decide(classify("SELECT 1"));
+        assert_eq!(decision.action, GateAction::Allow);
+        assert_eq!(decision.tier, StatementTier::Free);
+        assert!(decision.session_writable);
+
+        // And a read-only connection never does, however free the statement.
+        let decision = GatePolicy::read_only(GateActor::Human).decide(classify("SELECT 1"));
+        assert!(!decision.session_writable);
+    }
+
+    #[test]
+    fn the_ai_is_told_to_hand_the_statement_to_a_person() {
+        // The two actors get different advice because their next step differs:
+        // a person can turn writes on, the model cannot and should say who can.
+        let ai = GatePolicy::read_only(GateActor::Ai).decide(classify("DROP TABLE t"));
+        let GateAction::Refuse { reason } = ai.action else {
+            panic!("the AI's ceiling must refuse DDL");
+        };
+        assert!(reason.contains("left for a person"), "{reason}");
+
+        let human = ruling("DROP TABLE t");
+        let GateAction::Refuse { reason } = human.action else {
+            panic!("DDL is refused by default");
+        };
+        assert!(reason.contains("Turn writes on"), "{reason}");
+        assert_eq!(human.actor, GateActor::Human);
+    }
+
+    #[test]
+    fn a_batch_is_as_strict_as_its_strictest_statement() {
+        // The refusal names the statement that earned it, not the first one in
+        // the batch — a run is refused as a whole, so what it is refused *for*
+        // has to be something actually in it.
+        assert_blocked("SELECT 1; DROP TABLE t", "DROP");
+        assert_blocked("DROP TABLE t; SELECT 1", "DROP");
+        // Reaching it through a read-shaped statement still lands on the verb.
+        assert_blocked("SELECT 1; SELECT * INTO x FROM t", "INTO");
+    }
+
+    #[test]
+    fn a_free_statement_never_carries_a_refusal() {
+        // The Confirm arm exists for the tier the classifier will start
+        // emitting next; until then nothing may reach it, and this pins that
+        // the free path stays clean rather than acquiring a stray reason.
+        let decision = ruling("SELECT 1");
+        assert_eq!(decision.action, GateAction::Allow);
+        assert!(decision.matched.is_empty());
+        assert_eq!(decision.tier, StatementTier::Free);
     }
 }
