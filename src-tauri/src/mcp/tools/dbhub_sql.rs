@@ -9,8 +9,10 @@
 //! `dbhub::query`. Audit rows go through the server's `run_tool`, so Chat-driven
 //! and agent-driven calls are audited exactly once like every other tool.
 //!
-//! The AI path builds its ruling from `GatePolicy::read_only` — never from the
-//! connection's own write switch, which it does not read at all.
+//! The AI path builds its ruling from the connection's stored mode
+//! (`GatePolicy::for_ai`), and never from the connection's own write switch,
+//! which it does not read at all. The model cannot modify a database through
+//! this tool, whatever the mode says.
 
 use std::sync::Arc;
 
@@ -171,6 +173,38 @@ impl SqlQueryTextResult {
     }
 }
 
+/// The tool's answer for a statement this path cannot carry out itself, if it
+/// cannot — which is exactly one case: a confirmation.
+///
+/// A confirmation is not a refusal. Both are "no", but one of them has a next
+/// step, and naming it is the whole of what handing a statement to a person
+/// means until an approval surface exists. Without this the model would see the
+/// same flat failure an observer mode produces and would have no way to tell the
+/// user what to do about it — which would make the confirm mode a mode that
+/// behaves identically to the one below it.
+///
+/// A refusal is deliberately not handled here: it travels through `execute`,
+/// which produces the error the tool reports, and giving it a second shape would
+/// change what every model sees for a plain refusal.
+fn confirmation_handoff(
+    connection_id: &str,
+    sql: &str,
+    decision: &gate::GateDecision,
+) -> Option<SqlQueryTextResult> {
+    if !matches!(decision.action, gate::GateAction::Confirm) {
+        return None;
+    }
+    Some(SqlQueryTextResult::refused(
+        connection_id,
+        sql,
+        &format!(
+            "`{}` is a statement this connection asks a person to confirm, and this tool has no \
+             way to ask one. Tell the user to run it in that connection's query tab.",
+            decision.matched
+        ),
+    ))
+}
+
 /// Build the MCP `Tool` advertisements for every AI-enabled connection in the
 /// active account. Failures (no account, DB down) yield an empty list so the
 /// static EMR tools still advertise.
@@ -265,20 +299,34 @@ pub async fn sql_query_text(
     // session that can write. This is the ceiling the design keeps in code
     // rather than in configuration.
     //
-    // The connection's own tier overrides are deliberately not applied here
-    // yet. An override is the one thing in this system that can *loosen* the
-    // ladder, and if one reached the AI path then `TRUNCATE: free` — a
-    // reasonable rule for a person working on a staging database — would also
-    // hand the model a truncate. How an override and an AI mode compose is the
-    // question the confirm modes settle, and this path stays at the strict end
-    // until it does.
-    let decision =
-        gate::GatePolicy::read_only(gate::GateActor::Ai).decide(gate::classify(&args.sql));
+    // The connection's stored mode, which is the one setting on this path that
+    // is *meant* to be configuration: observer reads, confirm is meant to ask a
+    // person, free is capped (decision 1). Nothing services a confirmation yet,
+    // so `confirm` and `free` both end in the same refusal an observer gets —
+    // but the mode is now read rather than assumed, so landing the approval
+    // surface changes the mapping in one place instead of here.
+    //
+    // What this path still does not read is the connection's `allow_writes`,
+    // and that stays hardcoded to no: however the user has configured writes for
+    // their own typing, the model never gets a session that can write.
+    //
+    // The tier overrides are not applied here either. An override is the one
+    // thing that can *loosen* the ladder, and `TRUNCATE: free` — a reasonable
+    // rule for someone working on a staging database — would also hand the model
+    // a truncate. Whether a rule written for a person's own typing should grant
+    // the AI the same reach is a real question and not one to answer by
+    // accident, so this path stays at the strict end until it is answered.
+    let decision = gate::GatePolicy::for_ai(shape.connection.ai_read_only_policy)
+        .decide(gate::classify(&args.sql));
 
-    // What the model was refused is as worth remembering as what the person was
-    // — more, arguably: a statement the AI keeps reaching for is the clearest
-    // signal that a rule is missing.
-    if matches!(decision.action, gate::GateAction::Refuse { .. }) {
+    // What the gate stopped is worth remembering — a statement the AI keeps
+    // reaching for is the clearest signal that a rule is missing — and a
+    // confirmation counts: the model was stopped and the reader may well want a
+    // rule. The recorded tier tells the two apart.
+    if matches!(
+        decision.action,
+        gate::GateAction::Refuse { .. } | gate::GateAction::Confirm
+    ) {
         let _ = dbhub::store::record_refusal(
             &shape.pool,
             &shape.connection.id,
@@ -288,6 +336,12 @@ pub async fn sql_query_text(
             decision.actor,
         )
         .await;
+    }
+
+    // A confirmation is not a refusal, and the model should be able to tell them
+    // apart: this one has a next step, and the tool is where it gets named.
+    if let Some(handoff) = confirmation_handoff(&args.connection_id, &args.sql, &decision) {
+        return Ok(handoff);
     }
 
     let result = query::execute(
@@ -479,6 +533,32 @@ mod tests {
             Some("execute_sql_mysql1")
         );
         assert_eq!(tool_name_for("!!!"), None);
+    }
+
+    #[test]
+    fn a_confirmation_is_handed_to_a_person_rather_than_flatly_refused() {
+        // Observer and confirm mode both stop a write. The model can only tell
+        // them apart if the tool says which — one of them has a next step, and
+        // that difference is the whole of what a confirm mode means today.
+        let sql = "DELETE FROM t WHERE id = 1";
+
+        let confirming =
+            gate::GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).decide(gate::classify(sql));
+        let handoff = confirmation_handoff("c1", sql, &confirming).expect("handed over");
+        let message = handoff.error.expect("the refusal carries its reason");
+        assert!(message.contains("query tab"), "{message}");
+        assert!(message.contains("confirm"), "{message}");
+
+        // An observer is not handed over: its refusal travels through `execute`,
+        // so giving it a second shape here would change what every model sees.
+        let observing =
+            gate::GatePolicy::for_ai(DbReadOnlyPolicy::Observer).decide(gate::classify(sql));
+        assert!(confirmation_handoff("c1", sql, &observing).is_none());
+
+        // And a statement that runs is not handed over either.
+        let read =
+            gate::GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).decide(gate::classify("SELECT 1"));
+        assert!(confirmation_handoff("c1", "SELECT 1", &read).is_none());
     }
 
     #[tokio::test]
