@@ -32,7 +32,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             show_as_tab integer not null default 0,
             enabled_for_ai integer not null default 1,
             allow_writes integer not null default 0,
-            ai_read_only_policy text not null default 'select-only',
+            ai_read_only_policy text not null default 'observer',
             auth_mode text not null default 'manual',
             secret_arn text,
             secret_name text,
@@ -129,17 +129,27 @@ fn kind_from_column(value: &str) -> AppResult<DbConnectionKind> {
     }
 }
 
-fn policy_column(policy: DbReadOnlyPolicy) -> &'static str {
-    policy.as_str()
+/// The AI mode a stored value means.
+///
+/// Never fails, and never guesses upward. `select-only` is the value every row
+/// written before the modes existed carries, and it means what `observer` means
+/// now. Anything else unrecognised — a corrupt value, or one written by a newer
+/// version — reads as `observer` too: the strictest mode is the only safe guess,
+/// and refusing to load the connection at all would be worse than loading it
+/// read-only, which is where it already was.
+fn policy_from_column(value: &str) -> DbReadOnlyPolicy {
+    match value {
+        "confirm" => DbReadOnlyPolicy::Confirm,
+        "free" => DbReadOnlyPolicy::Free,
+        "observer" | "select-only" => DbReadOnlyPolicy::Observer,
+        _ => DbReadOnlyPolicy::Observer,
+    }
 }
 
-fn policy_from_column(value: &str) -> AppResult<DbReadOnlyPolicy> {
-    match value {
-        "select-only" => Ok(DbReadOnlyPolicy::SelectOnly),
-        other => Err(AppError::storage(format!(
-            "Unknown read-only policy in database: {other}"
-        ))),
-    }
+/// The AI mode to write. Always the current spelling, so a legacy row is
+/// upgraded the first time anything about the connection is saved.
+fn policy_column(policy: DbReadOnlyPolicy) -> &'static str {
+    policy.as_str()
 }
 
 fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> {
@@ -156,7 +166,7 @@ fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> 
         show_as_tab: row.get::<i64, _>("show_as_tab") != 0,
         enabled_for_ai: row.get::<i64, _>("enabled_for_ai") != 0,
         allow_writes: row.get::<i64, _>("allow_writes") != 0,
-        ai_read_only_policy: policy_from_column(&row.get::<String, _>("ai_read_only_policy"))?,
+        ai_read_only_policy: policy_from_column(&row.get::<String, _>("ai_read_only_policy")),
         auth_mode: crate::models::DbAuthMode::parse(&row.get::<String, _>("auth_mode"))
             .map_err(AppError::storage)?,
         secret_arn: row.get("secret_arn"),
@@ -675,7 +685,7 @@ mod tests {
             network_profile_id: None,
             show_as_tab: true,
             enabled_for_ai: true,
-            ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            ai_read_only_policy: DbReadOnlyPolicy::Observer,
             allow_writes: false,
             auth_mode: crate::models::DbAuthMode::Manual,
             secret_arn: None,
@@ -777,7 +787,7 @@ mod tests {
         assert_eq!(updated.port, 3306);
         assert_eq!(updated.username, "bi_reader");
         assert!(updated.show_as_tab);
-        assert_eq!(updated.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
+        assert_eq!(updated.ai_read_only_policy, DbReadOnlyPolicy::Observer);
     }
 
     #[tokio::test]
@@ -928,7 +938,7 @@ mod tests {
             .unwrap()
             .expect("exists");
         assert_eq!(loaded.kind, DbConnectionKind::Yellowbrick);
-        assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
+        assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::Observer);
         assert!(!loaded.allow_writes);
     }
 
@@ -993,7 +1003,7 @@ mod tests {
         let pool = test_pool().await;
         let mut connection = connection("acct-a", "c1", "Writable");
         connection.allow_writes = true;
-        connection.ai_read_only_policy = DbReadOnlyPolicy::SelectOnly;
+        connection.ai_read_only_policy = DbReadOnlyPolicy::Observer;
         insert_connection(&pool, &connection).await.expect("insert");
 
         let loaded = get_connection(&pool, "acct-a", "c1")
@@ -1001,7 +1011,42 @@ mod tests {
             .unwrap()
             .expect("exists");
         assert!(loaded.allow_writes);
-        assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::SelectOnly);
+        assert_eq!(loaded.ai_read_only_policy, DbReadOnlyPolicy::Observer);
+    }
+
+    #[test]
+    fn a_row_written_before_the_modes_still_reads() {
+        // Every install that predates the modes has `select-only` in this
+        // column. It means what `observer` means now, so it reads as one rather
+        // than as an error that would make the connection unopenable.
+        assert_eq!(
+            policy_from_column("select-only"),
+            DbReadOnlyPolicy::Observer
+        );
+    }
+
+    #[test]
+    fn the_modes_round_trip() {
+        for mode in [
+            DbReadOnlyPolicy::Observer,
+            DbReadOnlyPolicy::Confirm,
+            DbReadOnlyPolicy::Free,
+        ] {
+            assert_eq!(policy_from_column(policy_column(mode)), mode);
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_mode_reads_as_the_strictest_one() {
+        // Not an error, and never a widening: a value this version does not
+        // know — corrupt, or written by a newer one — must not grant more than
+        // the default. Refusing to load the connection would be worse than
+        // loading it read-only, which is where it already was.
+        assert_eq!(
+            policy_from_column("writes-everything"),
+            DbReadOnlyPolicy::Observer
+        );
+        assert_eq!(policy_from_column(""), DbReadOnlyPolicy::Observer);
     }
 
     #[tokio::test]

@@ -230,7 +230,7 @@ mod tests {
             network_profile_id: None,
             show_as_tab: false,
             enabled_for_ai: false,
-            ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            ai_read_only_policy: DbReadOnlyPolicy::Observer,
             allow_writes: false,
             auth_mode: DbAuthMode::Manual,
             secret_arn: None,

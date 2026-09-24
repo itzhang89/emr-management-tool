@@ -222,7 +222,7 @@ function connection(overrides: Partial<{ database?: string; kind: string; allowW
     username: "reader",
     showAsTab: true,
     enabledForAi: true,
-    aiReadOnlyPolicy: "select-only",
+    aiReadOnlyPolicy: "observer",
     allowWrites: false,
         authMode: "manual",
     sortOrder: 0,

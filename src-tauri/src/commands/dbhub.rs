@@ -155,7 +155,7 @@ pub async fn create_db_connection(
         enabled_for_ai: request.enabled_for_ai,
         ai_read_only_policy: request
             .ai_read_only_policy
-            .unwrap_or(crate::models::DbReadOnlyPolicy::SelectOnly),
+            .unwrap_or(crate::models::DbReadOnlyPolicy::Observer),
         // Off unless asked for: a connection that can write is one that can be
         // written to by mistake.
         allow_writes: request.allow_writes,
@@ -436,7 +436,7 @@ pub async fn test_db_connection_draft(
         network_profile_id: request.network_profile_id.filter(|value| !value.is_empty()),
         show_as_tab: false,
         enabled_for_ai: false,
-        ai_read_only_policy: crate::models::DbReadOnlyPolicy::SelectOnly,
+        ai_read_only_policy: crate::models::DbReadOnlyPolicy::Observer,
         allow_writes: false,
         auth_mode: request.auth_mode,
         secret_arn: request

@@ -1590,19 +1590,36 @@ impl DbAuthMode {
     }
 }
 
-/// The SQL the AI tools may run against a connection. `select_only` is the
-/// default and only lets SELECT/SHOW/DESCRIBE/EXPLAIN through; read-only
-/// transaction mode enforces it a second time at the wire level.
+/// How far the AI tools may go on a connection, once it is enabled for them.
+///
+/// The name is narrower than what this now holds — `Free` is not read-only —
+/// and the rename lands with the UI that exposes the choice, because renaming
+/// the field would take the column and three TS interfaces with it. Until then
+/// the variants are the honest part: what the AI may run is a mode, not a
+/// flag, and the design records the rename as follow-up work.
+///
+/// Read-only transaction mode enforces the ceiling a second time at the wire
+/// level, so a statement that slips past the classifier still meets the driver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DbReadOnlyPolicy {
-    #[serde(rename = "select-only")]
-    SelectOnly,
+    /// Reads only. The default, and the only mode any caller asks for today.
+    #[serde(rename = "observer")]
+    Observer,
+    /// Reads run; a statement that changes data is put to a person first.
+    #[serde(rename = "confirm")]
+    Confirm,
+    /// Reads and changes both run without asking. Not reachable yet — the
+    /// design keeps it shut until the approval surface and the audit exist.
+    #[serde(rename = "free")]
+    Free,
 }
 
 impl DbReadOnlyPolicy {
     pub fn as_str(&self) -> &'static str {
         match self {
-            DbReadOnlyPolicy::SelectOnly => "select-only",
+            DbReadOnlyPolicy::Observer => "observer",
+            DbReadOnlyPolicy::Confirm => "confirm",
+            DbReadOnlyPolicy::Free => "free",
         }
     }
 }

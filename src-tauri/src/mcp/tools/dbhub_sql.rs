@@ -9,8 +9,8 @@
 //! `dbhub::query`. Audit rows go through the server's `run_tool`, so Chat-driven
 //! and agent-driven calls are audited exactly once like every other tool.
 //!
-//! The AI path always passes `writable: false` — the connection's `allow_writes`
-//! flag never affects tool calls.
+//! The AI path builds its ruling from `GatePolicy::read_only` — never from the
+//! connection's own write switch, which it does not read at all.
 
 use std::sync::Arc;
 
@@ -435,7 +435,7 @@ mod tests {
             network_profile_id: None,
             show_as_tab: true,
             enabled_for_ai,
-            ai_read_only_policy: DbReadOnlyPolicy::SelectOnly,
+            ai_read_only_policy: DbReadOnlyPolicy::Observer,
             allow_writes: false,
             auth_mode: crate::models::DbAuthMode::Manual,
             secret_arn: None,

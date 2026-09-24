@@ -1124,8 +1124,15 @@ export type DbConnectionKind = "mysql" | "postgres" | "yellowbrick";
 /** How a connection authenticates — local keychain or AWS Secrets Manager. */
 export type DbAuthMode = "manual" | "aws_secret";
 
-/** The SQL the AI tools may run — always select-only in this first cut. */
-export type DbReadOnlyPolicy = "select-only";
+/**
+ * How far the AI tools may go on a connection, once it is enabled for them.
+ *
+ * The field name is narrower than what it holds — `free` is not read-only — and
+ * the rename lands with the UI that exposes the choice, because it takes the
+ * column and three interfaces with it. Only `observer` is reachable today: the
+ * other two are stored and read, but nothing offers them yet.
+ */
+export type DbReadOnlyPolicy = "observer" | "confirm" | "free";
 
 /** A saved database connection, bound to the active AWS account. */
 export interface DbConnection {

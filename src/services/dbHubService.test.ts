@@ -27,7 +27,7 @@ describe("dbHub IPC contract", () => {
       username: "bi_reader",
       showAsTab: true,
       enabledForAi: true,
-      aiReadOnlyPolicy: "select-only",
+      aiReadOnlyPolicy: "observer",
       sortOrder: 0
     });
     const client = createTauriClient(invoke);
