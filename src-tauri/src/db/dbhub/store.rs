@@ -659,6 +659,10 @@ pub async fn delete_connection(pool: &SqlitePool, account_id: &str, id: &str) ->
     // connection re-created under the same id would otherwise open on a tree
     // belonging to its predecessor.
     clear_catalog_cache(pool, id).await?;
+    // And so do its refusals, for the same reason: a new connection under a
+    // recycled id would otherwise inherit a list of statements refused by
+    // something else, pointing at rules it has never had.
+    clear_refusals(pool, id).await?;
     let result = sqlx::query("delete from db_connections where id = ?1 and account_id = ?2")
         .bind(id)
         .bind(account_id)
@@ -1499,6 +1503,25 @@ mod tests {
             .await
             .expect("read")
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_connection_takes_its_refusals_with_it() {
+        // A re-created connection can land on a recycled id, and a list of
+        // statements refused by its predecessor would point at rules it has
+        // never had.
+        let pool = test_pool().await;
+        insert_connection(&pool, &connection("acct-a", "c1", "Sales"))
+            .await
+            .expect("insert");
+        record_refusal(&pool, "c1", "DROP TABLE a", StatementTier::Refuse, "DROP", GateActor::Human)
+            .await
+            .expect("record");
+
+        assert!(delete_connection(&pool, "acct-a", "c1")
+            .await
+            .expect("delete"));
+        assert!(recent_refusals(&pool, "c1", 50).await.expect("read").is_empty());
     }
 
     #[tokio::test]
