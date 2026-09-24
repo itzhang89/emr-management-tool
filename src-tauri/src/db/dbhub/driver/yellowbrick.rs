@@ -98,6 +98,7 @@ mod tests {
             show_as_tab: false,
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::Observer,
+            gate_overrides: Default::default(),
             allow_writes: false,
             auth_mode: crate::models::DbAuthMode::Manual,
             secret_arn: None,

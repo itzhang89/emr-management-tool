@@ -1590,6 +1590,33 @@ impl DbAuthMode {
     }
 }
 
+/// What a statement *is*, independent of who may run it.
+///
+/// Lives here rather than beside the classifier because a connection stores its
+/// own changes to the ladder, so the spelling reaches both the database and the
+/// TS types: `free`, `confirm`, `refuse`. Ordered by severity, because a run of
+/// statements is only as free as its strictest one — a batch holding a `DROP` is
+/// a `DROP`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatementTier {
+    /// A read: safe to run unattended.
+    Free,
+    /// Changes some data: runnable once a human has confirmed it.
+    Confirm,
+    /// Structural or whole-table change, or a statement the classifier cannot
+    /// place at all. Refused.
+    Refuse,
+}
+
+/// A connection's own changes to the ladder, keyed by a verb (`TRUNCATE`) or by
+/// the name of a routine (`sp_rebuild_index`).
+///
+/// How a key is matched is the gate's business, and it is deliberately narrow:
+/// an override is the one place a connection can *loosen* what the ladder
+/// decides, and loosening is the direction that can lose data.
+pub type GateOverrides = std::collections::BTreeMap<String, StatementTier>;
+
 /// How far the AI tools may go on a connection, once it is enabled for them.
 ///
 /// The name is narrower than what this now holds — `Free` is not read-only —
@@ -1653,6 +1680,12 @@ pub struct DbConnection {
     /// by default, because a connection that can write is a connection that
     /// can be written to by mistake.
     pub allow_writes: bool,
+    /// This connection's own changes to the statement ladder, if it has any.
+    ///
+    /// Empty for every connection that has not been given any, which is what
+    /// `default` covers — an existing row, and every caller that does not care.
+    #[serde(default)]
+    pub gate_overrides: GateOverrides,
     /// `manual` (local keychain) or `aws_secret` (Secrets Manager by ARN).
     #[serde(default)]
     pub auth_mode: DbAuthMode,
@@ -1763,6 +1796,10 @@ pub struct DbConnectionFlags {
     pub enabled_for_ai: Option<bool>,
     #[serde(default)]
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
+    /// Replace this connection's own changes to the ladder. `Some(empty)` clears
+    /// them back to the default; absent leaves them as they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_overrides: Option<GateOverrides>,
     #[serde(default)]
     pub allow_writes: Option<bool>,
 }

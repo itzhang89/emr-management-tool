@@ -231,6 +231,7 @@ mod tests {
             show_as_tab: false,
             enabled_for_ai: false,
             ai_read_only_policy: DbReadOnlyPolicy::Observer,
+            gate_overrides: Default::default(),
             allow_writes: false,
             auth_mode: DbAuthMode::Manual,
             secret_arn: None,

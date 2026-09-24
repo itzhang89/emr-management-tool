@@ -13,7 +13,8 @@
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DbConnection, DbConnectionKind, DbReadOnlyPolicy, NetworkProfile, NetworkTransport,
+    DbConnection, DbConnectionKind, DbReadOnlyPolicy, GateOverrides, NetworkProfile,
+    NetworkTransport,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -33,6 +34,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             enabled_for_ai integer not null default 1,
             allow_writes integer not null default 0,
             ai_read_only_policy text not null default 'observer',
+            gate_overrides_json text not null default '{}',
             auth_mode text not null default 'manual',
             secret_arn text,
             secret_name text,
@@ -88,6 +90,10 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
         (
             "secret_name",
             "alter table db_connections add column secret_name text",
+        ),
+        (
+            "gate_overrides_json",
+            "alter table db_connections add column gate_overrides_json text not null default '{}'",
         ),
     ] {
         if !connection_column_exists(pool, column).await? {
@@ -152,6 +158,22 @@ fn policy_column(policy: DbReadOnlyPolicy) -> &'static str {
     policy.as_str()
 }
 
+/// A connection's own changes to the ladder, as stored.
+///
+/// Stored as an object keyed by verb or routine name. Reading is forgiving in
+/// the same direction the modes are: a value that will not parse, or a tier
+/// this version does not know, yields no overrides at all rather than an error.
+/// An override can only ever loosen, so dropping one leaves the statement on
+/// the default ladder — which is the safe place to be wrong, and the only place
+/// a corrupt row could not be used to widen anything.
+fn overrides_from_column(value: &str) -> GateOverrides {
+    serde_json::from_str::<GateOverrides>(value).unwrap_or_default()
+}
+
+fn overrides_column(overrides: &GateOverrides) -> String {
+    serde_json::to_string(overrides).unwrap_or_else(|_| "{}".to_string())
+}
+
 fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> {
     Ok(DbConnection {
         id: row.get("id"),
@@ -167,6 +189,7 @@ fn connection_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<DbConnection> 
         enabled_for_ai: row.get::<i64, _>("enabled_for_ai") != 0,
         allow_writes: row.get::<i64, _>("allow_writes") != 0,
         ai_read_only_policy: policy_from_column(&row.get::<String, _>("ai_read_only_policy")),
+        gate_overrides: overrides_from_column(&row.get::<String, _>("gate_overrides_json")),
         auth_mode: crate::models::DbAuthMode::parse(&row.get::<String, _>("auth_mode"))
             .map_err(AppError::storage)?,
         secret_arn: row.get("secret_arn"),
@@ -213,10 +236,10 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     sqlx::query(
         "insert into db_connections
             (id, account_id, kind, name, host, port, database, username, network_profile_id,
-             show_as_tab, enabled_for_ai, ai_read_only_policy, allow_writes,
+             show_as_tab, enabled_for_ai, ai_read_only_policy, allow_writes, gate_overrides_json,
              auth_mode, secret_arn, secret_name,
              sort_order, created_at, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?18)",
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19)",
     )
     .bind(&connection.id)
     .bind(&connection.account_id)
@@ -231,6 +254,7 @@ pub async fn insert_connection(pool: &SqlitePool, connection: &DbConnection) -> 
     .bind(connection.enabled_for_ai as i64)
     .bind(policy_column(connection.ai_read_only_policy))
     .bind(connection.allow_writes as i64)
+    .bind(overrides_column(&connection.gate_overrides))
     .bind(connection.auth_mode.as_str())
     .bind(&connection.secret_arn)
     .bind(&connection.secret_name)
@@ -327,6 +351,10 @@ pub async fn clear_catalog_cache(pool: &SqlitePool, connection_id: &str) -> AppR
 /// its own statement through the `update_column!` macro (compile-time `concat!`
 /// — sqlx 0.9 rejects dynamically built SQL strings), so absent fields are
 /// untouched rather than nulled.
+///
+/// `Default` is every field absent, which is how a caller names only the one
+/// thing it means to change.
+#[derive(Default)]
 pub struct ConnectionPatch<'a> {
     pub name: Option<&'a str>,
     pub host: Option<&'a str>,
@@ -338,6 +366,7 @@ pub struct ConnectionPatch<'a> {
     pub enabled_for_ai: Option<bool>,
     pub ai_read_only_policy: Option<DbReadOnlyPolicy>,
     pub allow_writes: Option<bool>,
+    pub gate_overrides: Option<GateOverrides>,
     pub auth_mode: Option<crate::models::DbAuthMode>,
     pub secret_arn: Option<Option<&'a str>>,
     pub secret_name: Option<Option<&'a str>>,
@@ -411,6 +440,15 @@ pub async fn update_connection(
     }
     if let Some(value) = patch.allow_writes {
         update_column!(pool, id, account_id, "allow_writes", i64::from(value))?;
+    }
+    if let Some(value) = patch.gate_overrides.as_ref() {
+        update_column!(
+            pool,
+            id,
+            account_id,
+            "gate_overrides_json",
+            overrides_column(value)
+        )?;
     }
     if let Some(value) = patch.enabled_for_ai {
         update_column!(pool, id, account_id, "enabled_for_ai", i64::from(value))?;
@@ -660,6 +698,7 @@ pub async fn delete_all_for_account(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::StatementTier;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn test_pool() -> SqlitePool {
@@ -670,6 +709,14 @@ mod tests {
             .expect("connect");
         migrate(&pool).await.expect("migrate");
         pool
+    }
+
+    /// An override map, built the way a caller with an opinion would write it.
+    fn overrides(entries: &[(&str, StatementTier)]) -> GateOverrides {
+        entries
+            .iter()
+            .map(|(key, tier)| ((*key).to_string(), *tier))
+            .collect()
     }
 
     fn connection(account_id: &str, id: &str, name: &str) -> DbConnection {
@@ -686,6 +733,7 @@ mod tests {
             show_as_tab: true,
             enabled_for_ai: true,
             ai_read_only_policy: DbReadOnlyPolicy::Observer,
+            gate_overrides: Default::default(),
             allow_writes: false,
             auth_mode: crate::models::DbAuthMode::Manual,
             secret_arn: None,
@@ -766,6 +814,7 @@ mod tests {
                 show_as_tab: None,
                 enabled_for_ai: Some(false),
                 ai_read_only_policy: None,
+                gate_overrides: Default::default(),
                 allow_writes: None,
             auth_mode: None,
             secret_arn: None,
@@ -811,6 +860,7 @@ mod tests {
                 show_as_tab: None,
                 enabled_for_ai: None,
                 ai_read_only_policy: None,
+                gate_overrides: Default::default(),
                 allow_writes: None,
             auth_mode: None,
             secret_arn: None,
@@ -1047,6 +1097,98 @@ mod tests {
             DbReadOnlyPolicy::Observer
         );
         assert_eq!(policy_from_column(""), DbReadOnlyPolicy::Observer);
+    }
+
+    #[test]
+    fn overrides_read_forgivingly() {
+        // The same direction as the modes: an override can only ever loosen, so
+        // dropping one leaves the statement on the default ladder. A row that
+        // will not parse must not be readable as a widening, and must not stop
+        // the connection loading either.
+        for broken in ["", "not json", "[]", "{\"TRUNCATE\": \"nonsense\"}"] {
+            assert!(
+                overrides_from_column(broken).is_empty(),
+                "should read as no overrides: {broken}"
+            );
+        }
+        // A good map survives.
+        let stored = overrides_column(&overrides(&[("TRUNCATE", StatementTier::Confirm)]));
+        assert_eq!(
+            overrides_from_column(&stored),
+            overrides(&[("TRUNCATE", StatementTier::Confirm)])
+        );
+    }
+
+    #[tokio::test]
+    async fn overrides_round_trip_through_a_connection_row() {
+        let pool = test_pool().await;
+        let mut saved = connection("acct-a", "c1", "Sales");
+        saved.gate_overrides = overrides(&[
+            ("TRUNCATE", StatementTier::Confirm),
+            ("sp_rebuild_index", StatementTier::Free),
+        ]);
+        insert_connection(&pool, &saved).await.expect("insert");
+
+        let loaded = get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .expect("exists");
+        assert_eq!(loaded.gate_overrides, saved.gate_overrides);
+
+        // And a connection saved without any carries an empty map, which is
+        // what every connection that predates them reads as.
+        insert_connection(&pool, &connection("acct-a", "c2", "Plain"))
+            .await
+            .expect("insert");
+        let plain = get_connection(&pool, "acct-a", "c2")
+            .await
+            .unwrap()
+            .expect("exists");
+        assert!(plain.gate_overrides.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_flags_patch_replaces_overrides_and_an_empty_map_clears_them() {
+        let pool = test_pool().await;
+        let mut saved = connection("acct-a", "c1", "Sales");
+        saved.gate_overrides = overrides(&[("TRUNCATE", StatementTier::Confirm)]);
+        insert_connection(&pool, &saved).await.expect("insert");
+
+        // A patch that says nothing about them leaves them where they are.
+        update_connection(
+            &pool,
+            "acct-a",
+            "c1",
+            &ConnectionPatch {
+                show_as_tab: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("patch");
+        let untouched = get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .expect("exists");
+        assert_eq!(untouched.gate_overrides.len(), 1);
+
+        // An explicit empty map is how the UI clears them again.
+        update_connection(
+            &pool,
+            "acct-a",
+            "c1",
+            &ConnectionPatch {
+                gate_overrides: Some(GateOverrides::new()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("patch");
+        let cleared = get_connection(&pool, "acct-a", "c1")
+            .await
+            .unwrap()
+            .expect("exists");
+        assert!(cleared.gate_overrides.is_empty());
     }
 
     #[tokio::test]

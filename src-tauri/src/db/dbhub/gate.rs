@@ -15,37 +15,12 @@
 //! (`SELECT ... INTO OUTFILE`) is refused too — a caller can rephrase it, a
 //! destroyed table cannot be un-rephrased.
 
-use std::collections::BTreeMap;
-
-use serde::{Deserialize, Serialize};
-
-/// What a statement *is*, independent of who may run it.
-///
-/// Ordered by severity, because a run of statements is only as free as its
-/// strictest one: a batch holding a `DROP` is a `DROP`. The name is also what a
-/// per-connection override stores, so the spelling reaches the database and the
-/// TS types: `free`, `confirm`, `refuse`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum StatementTier {
-    /// A read: safe to run unattended.
-    Free,
-    /// Changes some data: runnable once a human has confirmed it.
-    Confirm,
-    /// Structural or whole-table change, or a statement the classifier cannot
-    /// place at all. Refused.
-    Refuse,
-}
-
-/// A connection's own changes to the ladder, keyed by a verb (`TRUNCATE`) or by
-/// the name of a routine (`sp_rebuild_index`).
-///
-/// Matching is deliberately narrow, because an override is the one place a
-/// connection can *loosen* what the ladder decides, and loosening is the
-/// direction that can lose data. A verb key applies only when that verb is what
-/// decided the tier; a name key applies only to a routine call. Neither can
-/// reach a `DROP` — see `GatePolicy::apply_overrides`.
-pub type GateOverrides = BTreeMap<String, StatementTier>;
+// The tier and the override map are persisted connection settings, so they live
+// in `models` — a leaf module this one already depends on, and one that must not
+// depend on this. Re-exported because they are the gate's own vocabulary: a
+// caller reasoning about a ruling should not have to know where the vocabulary
+// is stored.
+pub use crate::models::{GateOverrides, StatementTier};
 
 /// A statement's tier, and the token that decided it — so a refusal can name
 /// what it objected to rather than only that it objected.

@@ -159,6 +159,8 @@ pub async fn create_db_connection(
         // Off unless asked for: a connection that can write is one that can be
         // written to by mistake.
         allow_writes: request.allow_writes,
+        // A new connection has no opinions of its own yet.
+        gate_overrides: Default::default(),
         auth_mode: request.auth_mode,
         secret_arn: request
             .secret_arn
@@ -266,6 +268,7 @@ pub async fn update_db_connection(
             show_as_tab: request.show_as_tab,
             enabled_for_ai: request.enabled_for_ai,
             ai_read_only_policy: request.ai_read_only_policy,
+            gate_overrides: Default::default(),
             allow_writes: request.allow_writes,
             auth_mode: request.auth_mode,
             secret_arn: request.secret_arn.as_deref().map(|value| {
@@ -348,6 +351,7 @@ pub async fn set_db_connection_flags(
             show_as_tab: request.flags.show_as_tab,
             enabled_for_ai: request.flags.enabled_for_ai,
             ai_read_only_policy: request.flags.ai_read_only_policy,
+            gate_overrides: Default::default(),
             allow_writes: request.flags.allow_writes,
             auth_mode: None,
             secret_arn: None,
@@ -437,6 +441,8 @@ pub async fn test_db_connection_draft(
         show_as_tab: false,
         enabled_for_ai: false,
         ai_read_only_policy: crate::models::DbReadOnlyPolicy::Observer,
+        // Nothing to probe here reads the ladder; a draft has no opinions.
+        gate_overrides: Default::default(),
         allow_writes: false,
         auth_mode: request.auth_mode,
         secret_arn: request
