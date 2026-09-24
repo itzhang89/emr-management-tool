@@ -118,10 +118,27 @@ pub(crate) async fn execute(
     decision: &gate::GateDecision,
     cancel: &QueryCancellation<'_>,
 ) -> AppResult<DbQueryResult> {
-    if let gate::GateAction::Refuse { reason } = &decision.action {
-        return Err(AppError::validation(format!(
-            "Blocked by the read-only gate: {reason}"
-        )));
+    match &decision.action {
+        gate::GateAction::Allow => {}
+        // Fail closed on the one action this path cannot service. A `Confirm`
+        // reaching here means a policy believed something would ask the person
+        // first and nothing did — so the honest answer is to refuse rather than
+        // run a statement whose gate wanted a decision nobody made. The arm is
+        // written out rather than folded into the refusal below so that adding a
+        // policy which produces `Confirm` cannot silently become a way to run
+        // whatever it produces.
+        gate::GateAction::Confirm => {
+            return Err(AppError::validation(format!(
+                "Blocked by the read-only gate: \"{}\" needs a person to confirm it, and this \
+                 path cannot ask one.",
+                decision.matched
+            )));
+        }
+        gate::GateAction::Refuse { reason } => {
+            return Err(AppError::validation(format!(
+                "Blocked by the read-only gate: {reason}"
+            )));
+        }
     }
 
     let cap = max_rows.clamp(1, MAX_PAGE_ROWS);
@@ -510,6 +527,37 @@ mod tests {
         .await
         .expect_err("must be blocked");
         assert!(error.message.contains("read-only gate"));
+    }
+
+    #[tokio::test]
+    async fn a_confirmation_this_path_cannot_ask_for_is_refused() {
+        // A policy can now produce `Confirm` and nothing here can service it.
+        // Running the statement instead would be the one silent way for a gate
+        // that wanted a decision to end up executing anyway. The host is a
+        // closed port, so running it would fail as a dial error instead.
+        let mut shape = shape_for_gate_test();
+        shape.connection.host = "127.0.0.1".into();
+        shape.connection.port = 1;
+        let target = DialTarget::direct(&shape.connection);
+
+        let sql = "DELETE FROM orders WHERE id = 3";
+        let decision = gate::GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Confirm)
+            .decide(gate::classify(sql));
+        assert_eq!(decision.action, gate::GateAction::Confirm);
+
+        let error = execute(
+            &shape,
+            &target,
+            sql,
+            100,
+            0,
+            &decision,
+            &QueryCancellation::never(),
+        )
+        .await
+        .expect_err("an unconfirmed change must not run");
+        assert!(error.message.contains("confirm"), "{error:?}");
+        assert!(!error.message.contains("dial"), "{error:?}");
     }
 
     #[tokio::test]

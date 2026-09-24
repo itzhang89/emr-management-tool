@@ -102,13 +102,29 @@ pub enum GateAction {
     },
 }
 
+/// How far an actor may go when the ladder says a statement changes data.
+///
+/// Kept apart from *who* is asking, because the two compose: a person and an AI
+/// arrive at `ReadOnly` by different roads and the action that follows is the
+/// same one. It is the policy's job to say which road, and this is the answer
+/// both roads end at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Reads run; anything that changes data is refused.
+    ReadOnly,
+    /// Reads run; a change is put to a person before it runs.
+    Confirm,
+    /// Reads and changes both run. Whoever chose this is the final authority,
+    /// and the ladder's job becomes keeping them informed rather than stopping
+    /// them.
+    Writable,
+}
+
 /// Who is running, and how far this connection lets them go.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatePolicy {
     pub actor: GateActor,
-    /// Whether this connection may be written to at all. Off is the default
-    /// everywhere, and the AI's paths never turn it on.
-    pub writable: bool,
+    pub reach: Reach,
     /// This connection's own changes to the ladder, if it has any.
     pub overrides: GateOverrides,
 }
@@ -120,7 +136,7 @@ impl GatePolicy {
     pub fn read_only(actor: GateActor) -> Self {
         Self {
             actor,
-            writable: false,
+            reach: Reach::ReadOnly,
             overrides: GateOverrides::new(),
         }
     }
@@ -130,7 +146,37 @@ impl GatePolicy {
     pub fn for_connection(writable: bool) -> Self {
         Self {
             actor: GateActor::Human,
-            writable,
+            reach: if writable {
+                Reach::Writable
+            } else {
+                Reach::ReadOnly
+            },
+            overrides: GateOverrides::new(),
+        }
+    }
+
+    /// The policy an AI runs under on a connection in `mode`.
+    ///
+    /// `free` is capped at `Reach::Confirm` for now, which is decision 1: the
+    /// approval surface that would service a confirmation does not exist yet,
+    /// and the design keeps the mode's extra reach shut until it does. Lifting
+    /// that is the one line mapping `Free` to `Reach::Writable`, and it is the
+    /// last step of the design's plan rather than an oversight here.
+    ///
+    /// Note that the cap is doing nothing observable yet either: nothing
+    /// services a confirmation, so `Reach::Confirm` and `Reach::ReadOnly` both
+    /// end in a refusal. What the mode buys today is that the composition is
+    /// written down and tested, so landing the surface changes one mapping
+    /// rather than the shape of the policy.
+    pub fn for_ai(mode: crate::models::DbReadOnlyPolicy) -> Self {
+        use crate::models::DbReadOnlyPolicy;
+        let reach = match mode {
+            DbReadOnlyPolicy::Observer => Reach::ReadOnly,
+            DbReadOnlyPolicy::Confirm | DbReadOnlyPolicy::Free => Reach::Confirm,
+        };
+        Self {
+            actor: GateActor::Ai,
+            reach,
             overrides: GateOverrides::new(),
         }
     }
@@ -143,28 +189,43 @@ impl GatePolicy {
 
     /// Decide what to do with one statement.
     ///
-    /// A writable connection allows everything, which is what the old code did
-    /// by skipping the gate outright: the person who turned writes on is the
-    /// final authority, and the tier ladder is what keeps them *informed*
-    /// rather than what stops them. Refusing a `DROP` they asked for is a
-    /// decision this policy does not make.
+    /// | reach | free | confirm | refuse |
+    /// |---|---|---|---|
+    /// | read-only | allow | refuse | refuse |
+    /// | confirm | allow | confirm | refuse |
+    /// | writable | allow | allow | allow |
+    ///
+    /// A `Writable` reach allows even the refusals, which is what the old code
+    /// did by skipping the gate outright: the person who turned writes on is the
+    /// final authority, and refusing a `DROP` they asked for is a decision this
+    /// policy does not make. The design does want them *told* — a confirmation
+    /// for a change and a heavier one for a `DROP` — and that arrives with the
+    /// dialog, because turning those into prompts today would refuse every write
+    /// a writable connection makes.
     pub fn decide(&self, classification: Classification) -> GateDecision {
         let (classification, overridden_by) = self.apply_overrides(classification);
-        let action = if self.writable {
-            GateAction::Allow
-        } else {
-            match classification.tier {
-                StatementTier::Free => GateAction::Allow,
-                StatementTier::Confirm | StatementTier::Refuse => GateAction::Refuse {
+        let action = match classification.tier {
+            // A read is a read wherever it runs: nothing here refuses one.
+            StatementTier::Free => GateAction::Allow,
+            StatementTier::Confirm => match self.reach {
+                Reach::ReadOnly => GateAction::Refuse {
                     reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
                 },
-            }
+                Reach::Confirm => GateAction::Confirm,
+                Reach::Writable => GateAction::Allow,
+            },
+            StatementTier::Refuse => match self.reach {
+                Reach::ReadOnly | Reach::Confirm => GateAction::Refuse {
+                    reason: refusal_reason(self.actor, &classification, overridden_by.as_deref()),
+                },
+                Reach::Writable => GateAction::Allow,
+            },
         };
         GateDecision {
             action,
             tier: classification.tier,
             matched: classification.matched,
-            session_writable: self.writable,
+            session_writable: self.reach == Reach::Writable,
             actor: self.actor,
             overridden_by,
         }
@@ -1227,6 +1288,114 @@ mod tests {
         let decision = ruling_with(&[("sp_x", StatementTier::Free)], "CALL");
         assert_eq!(decision.tier, StatementTier::Confirm);
         assert!(decision.overridden_by.is_none());
+    }
+
+    #[test]
+    fn the_reach_table_is_the_designs_matrix() {
+        // Actor × tier, as one table, because that is the thing the design
+        // specifies and the thing a later change is most likely to break.
+        let cases = [
+            (Reach::ReadOnly, "SELECT 1", "allow"),
+            (Reach::ReadOnly, "DELETE FROM t WHERE id = 1", "refuse"),
+            (Reach::ReadOnly, "DROP TABLE t", "refuse"),
+            (Reach::Confirm, "SELECT 1", "allow"),
+            (Reach::Confirm, "DELETE FROM t WHERE id = 1", "confirm"),
+            (Reach::Confirm, "DROP TABLE t", "refuse"),
+            (Reach::Writable, "SELECT 1", "allow"),
+            (Reach::Writable, "DELETE FROM t WHERE id = 1", "allow"),
+            (Reach::Writable, "DROP TABLE t", "allow"),
+        ];
+        for (reach, sql, expected) in cases {
+            let policy = GatePolicy {
+                actor: GateActor::Human,
+                reach,
+                overrides: GateOverrides::new(),
+            };
+            let actual = match policy.decide(classify(sql)).action {
+                GateAction::Allow => "allow",
+                GateAction::Confirm => "confirm",
+                GateAction::Refuse { .. } => "refuse",
+            };
+            assert_eq!(actual, expected, "{reach:?} running {sql}");
+        }
+    }
+
+    #[test]
+    fn a_writable_reach_opens_a_writable_session_and_the_others_do_not() {
+        // The session follows the reach, not the tier: a writable connection
+        // dials writable even for a plain read, exactly as it did when the flag
+        // was passed straight through.
+        for reach in [Reach::ReadOnly, Reach::Confirm] {
+            let policy = GatePolicy {
+                actor: GateActor::Human,
+                reach,
+                overrides: GateOverrides::new(),
+            };
+            assert!(
+                !policy.decide(classify("SELECT 1")).session_writable,
+                "{reach:?}"
+            );
+        }
+        assert!(GatePolicy::for_connection(true)
+            .decide(classify("SELECT 1"))
+            .session_writable);
+    }
+
+    #[test]
+    fn the_ai_modes_land_where_the_design_says() {
+        use crate::models::DbReadOnlyPolicy;
+        assert_eq!(
+            GatePolicy::for_ai(DbReadOnlyPolicy::Observer).reach,
+            Reach::ReadOnly
+        );
+        assert_eq!(
+            GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).reach,
+            Reach::Confirm
+        );
+        // `free` is capped at confirm until the approval surface exists
+        // (decision 1). This assertion is the cap: when the surface lands, the
+        // mapping changes to `Reach::Writable` and this line changes with it.
+        assert_eq!(
+            GatePolicy::for_ai(DbReadOnlyPolicy::Free).reach,
+            Reach::Confirm
+        );
+    }
+
+    #[test]
+    fn an_ai_that_may_confirm_is_still_refused_a_drop() {
+        use crate::models::DbReadOnlyPolicy;
+        let policy = GatePolicy::for_ai(DbReadOnlyPolicy::Confirm);
+
+        // The tier it may put to a person.
+        assert_eq!(
+            policy.decide(classify("DELETE FROM t WHERE id = 1")).action,
+            GateAction::Confirm
+        );
+        // The tier it may not, in any mode: structural changes stay a person's
+        // to run (the design's first iron rule).
+        assert!(matches!(
+            policy.decide(classify("DROP TABLE t")).action,
+            GateAction::Refuse { .. }
+        ));
+        // And an AI never dials a writable session, whatever it is allowed.
+        assert!(
+            !policy
+                .decide(classify("DELETE FROM t WHERE id = 1"))
+                .session_writable
+        );
+    }
+
+    #[test]
+    fn the_ai_still_cannot_reach_the_ladder_through_an_override() {
+        // Overrides are not applied on the AI path (they arrive with the policy
+        // that declines them), so the composability question stays open rather
+        // than being answered by accident.
+        let policy = GatePolicy::for_ai(crate::models::DbReadOnlyPolicy::Confirm);
+        assert!(policy.overrides.is_empty());
+        assert!(matches!(
+            policy.decide(classify("DROP TABLE t")).action,
+            GateAction::Refuse { .. }
+        ));
     }
 
     #[test]
