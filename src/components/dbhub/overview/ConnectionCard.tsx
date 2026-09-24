@@ -3,6 +3,13 @@ import { CircleCheck, CircleX, LoaderCircle, Pencil, Plug, Trash2 } from "lucide
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DbKindIcon, dbKindLabel } from "@/components/dbhub/DbKindIcon";
@@ -11,14 +18,41 @@ import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { DbConnection, DbConnectionFlags, DbTestResult, NetworkProfile } from "@/types/domain";
+import type {
+  DbConnection,
+  DbConnectionFlags,
+  DbReadOnlyPolicy,
+  DbTestResult,
+  NetworkProfile
+} from "@/types/domain";
+
+/** What the AI's mode is called. */
+function modeLabel(mode: DbReadOnlyPolicy): string {
+  return mode === "observer" ? "Observer" : mode === "confirm" ? "Confirm" : "Free";
+}
 
 /**
- * One connection on the Overview board: identity + routing info plus the three
- * switches the DBHub design gives every connection — Show as tab (dynamic
- * second-level tab next to Glue Catalog), Enabled for AI (the read-only SQL
- * tool registration) and the read-only policy label. Edit opens the connection
- * form (batch 3). Test dials the saved connection in place, so checking that a
+ * What a mode means, told truthfully.
+ *
+ * The last two say what they do *today* rather than what they are for, because
+ * nothing services a confirmation yet: choosing them changes the stored setting
+ * and nothing else, and a card that implied otherwise would have someone
+ * believing the AI may write when it cannot.
+ */
+function modeHint(mode: DbReadOnlyPolicy): string {
+  return mode === "observer"
+    ? "Reads only."
+    : mode === "confirm"
+      ? "Reads now; a change would ask you first. Asking is not built yet."
+      : "Reads now; changes would run. Not enabled yet.";
+}
+
+/**
+ * One connection on the Overview board: identity + routing info plus the
+ * settings the DBHub design gives every connection — Show as tab (dynamic
+ * second-level tab next to Glue Catalog), Allow writes, Enabled for AI (the SQL
+ * tool registration) and, under that, how far the AI may go. Edit opens the
+ * connection form. Test dials the saved connection in place, so checking that a
  * connection still works never means opening the form and closing it again.
  */
 export function ConnectionCard({
@@ -70,6 +104,9 @@ export function ConnectionCard({
           }
           if (flags.enabledForAi !== undefined) {
             parts.push(t(flags.enabledForAi ? "enabled for AI" : "disabled for AI"));
+          }
+          if (flags.aiReadOnlyPolicy !== undefined) {
+            parts.push(t("AI set to {mode}", { mode: t(modeLabel(flags.aiReadOnlyPolicy)) }));
           }
           toast.success(t("{name}: {items}.", { name: updated.name, items: parts.join(", ") }));
         },
@@ -256,9 +293,7 @@ export function ConnectionCard({
             <Label htmlFor={`ai-${connection.id}`} className="text-sm font-normal">
               {t("Enabled for AI")}
             </Label>
-            <p className="text-xs text-muted-foreground">
-              {t("Read-only SQL tool")} ({connection.aiReadOnlyPolicy})
-            </p>
+            <p className="text-xs text-muted-foreground">{t("Read-only SQL tool")}</p>
           </div>
           <Switch
             id={`ai-${connection.id}`}
@@ -266,6 +301,39 @@ export function ConnectionCard({
             disabled={setFlags.isPending}
             onCheckedChange={(checked) => update({ enabledForAi: checked })}
           />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <Label htmlFor={`ai-mode-${connection.id}`} className="text-sm font-normal">
+              {t("AI may")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t(modeHint(connection.aiReadOnlyPolicy))}
+            </p>
+          </div>
+          {/* Greyed with the switch above it rather than removed: a mode with no
+              tool to govern is not a mode, and an empty gap would read as a
+              missing feature instead of a disabled one. */}
+          <Select
+            value={connection.aiReadOnlyPolicy}
+            disabled={setFlags.isPending || !connection.enabledForAi}
+            onValueChange={(next) => update({ aiReadOnlyPolicy: next as DbReadOnlyPolicy })}
+          >
+            <SelectTrigger
+              id={`ai-mode-${connection.id}`}
+              className="h-8 w-32 shrink-0 text-xs"
+              aria-label={t("AI may")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(["observer", "confirm", "free"] as DbReadOnlyPolicy[]).map((mode) => (
+                <SelectItem key={mode} value={mode} className="text-xs">
+                  {t(modeLabel(mode))}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     </div>

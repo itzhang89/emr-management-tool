@@ -461,6 +461,14 @@ const dbhub: TranslationDictionary = {
   "Foreign Tables": "外部表",
   "Materialized Views": "物化视图",
 
+  // --- ConnectionCard: the AI's mode ----------------------------------------
+  "AI may": "AI 可以",
+  "Observer": "观察者",
+  "Reads only.": "只读取。",
+  "Reads now; a change would ask you first. Asking is not built yet.": "现在只读；改动会先询问你。询问功能尚未实现。",
+  "Reads now; changes would run. Not enabled yet.": "现在只读；改动将直接执行。尚未启用。",
+  "AI set to {mode}": "AI 已设为 {mode}",
+
   // --- Gate rules editor ---------------------------------------------------
   "Command rules — {scope}": "命令规则 — {scope}",
   "Commands you do not list run at the tier shown. A rule key is a verb, a routine name, or a glob like etl_*.": "未列出的命令按所示档位执行。规则的键可以是动词、过程名，或像 etl_* 这样的通配符。",
