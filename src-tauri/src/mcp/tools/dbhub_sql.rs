@@ -191,7 +191,7 @@ fn confirmation_handoff(
     sql: &str,
     decision: &gate::GateDecision,
 ) -> Option<SqlQueryTextResult> {
-    if !matches!(decision.action, gate::GateAction::Confirm) {
+    if !matches!(decision.action, gate::GateAction::Confirm { .. }) {
         return None;
     }
     Some(SqlQueryTextResult::refused(
@@ -325,7 +325,7 @@ pub async fn sql_query_text(
     // rule. The recorded tier tells the two apart.
     if matches!(
         decision.action,
-        gate::GateAction::Refuse { .. } | gate::GateAction::Confirm
+        gate::GateAction::Refuse { .. } | gate::GateAction::Confirm { .. }
     ) {
         let _ = dbhub::store::record_refusal(
             &shape.pool,
