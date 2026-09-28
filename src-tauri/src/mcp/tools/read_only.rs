@@ -413,8 +413,8 @@ mod tests {
     fn safe_account_uses_the_session_name_for_assumed_roles() {
         let safe = SafeAccount::from(account(
             "Prod",
-            Some("arn:aws:sts::123456789012:assumed-role/EMRAdmin/jinghui"),
+            Some("arn:aws:sts::123456789012:assumed-role/EMRAdmin/user"),
         ));
-        assert_eq!(safe.username, "jinghui");
+        assert_eq!(safe.username, "user");
     }
 }
