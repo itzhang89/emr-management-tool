@@ -285,7 +285,7 @@ describe("S3BrowserPage", () => {
     expect(screen.queryByText("s3://logs-bucket/year/month/day/run/")).not.toBeInTheDocument();
   });
 
-  it("shows only current directory entries, drills into folders, refreshes, and goes up", async () => {
+  it("shows only current directory entries, drills into folders, and goes up", async () => {
     const user = userEvent.setup();
 
     renderS3BrowserPage();
@@ -303,11 +303,6 @@ describe("S3BrowserPage", () => {
     expect(within(browser).getByRole("button", { name: /stdout\.log/i })).toBeInTheDocument();
     expect(screen.queryByText("logs/stdout.log")).not.toBeInTheDocument();
 
-    const refreshButton = screen.getByRole("button", { name: /^Refresh$/i });
-    expect(refreshButton).not.toHaveTextContent(/Refresh/i);
-    await user.click(refreshButton);
-    expect(refetchObjects).toHaveBeenCalled();
-
     const upButton = screen.getByRole("button", { name: /^Up$/i });
     expect(upButton).not.toHaveTextContent(/Up/i);
     await user.click(upButton);
@@ -323,7 +318,9 @@ describe("S3BrowserPage", () => {
     browser.focus();
 
     fireEvent.keyDown(browser, { key: "ArrowDown" });
-    expect(screen.getByRole("region", { name: /Selected S3 object/i })).toHaveTextContent("readme.txt");
+    // Default sort is newest-first, so after the leading folder the first file
+    // is archive.zip (04:20), ahead of readme.txt (03:20).
+    expect(screen.getByRole("region", { name: /Selected S3 object/i })).toHaveTextContent("archive.zip");
 
     fireEvent.keyDown(browser, { key: "ArrowUp" });
     expect(screen.getByRole("region", { name: /Selected S3 object/i })).toHaveTextContent("logs/");

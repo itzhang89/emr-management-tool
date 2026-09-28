@@ -1,4 +1,4 @@
-import { ArrowUp, CircleAlert, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, Lock, RefreshCw, Save, Trash2, Upload } from "lucide-react";
+import { ArrowDownWideNarrow, ArrowUp, Check, CircleAlert, Copy, Download, FileText, Folder, FolderOpen, FolderPlus, Lock, Save, Trash2, Upload } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,8 @@ const BROWSER_PANE_MIN_WIDTH = 220;
 const BROWSER_PANE_MAX_WIDTH = 720;
 const BROWSER_PANE_DEFAULT_WIDTH = 280;
 
+type S3SortKey = "modified" | "name" | "size";
+
 export function S3BrowserPage() {
   const t = useT();
   const activeAccount = useActiveAwsAccount();
@@ -91,6 +93,7 @@ export function S3BrowserPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renamingKey, setRenamingKey] = useState<string>();
   const [renameValue, setRenameValue] = useState("");
+  const [sortKey, setSortKey] = useState<S3SortKey>("modified");
   const selectedObject = useMemo(
     () => objects.data?.find((object) => object.key === selectedKey),
     [objects.data, selectedKey]
@@ -112,6 +115,31 @@ export function S3BrowserPage() {
   const editability = selectedObject
     ? getS3ObjectEditability({ key: selectedObject.key, size: selectedObject.size })
     : undefined;
+
+  // Folders always lead the list — they are the way down the tree, not data — so
+  // the sort only orders within each of the two groups. "modified" newest-first
+  // is the default because the reason to open a prefix is usually the run that
+  // just landed in it; name and size are the alternatives.
+  const sortedObjects = useMemo(() => {
+    const rows = objects.data ?? [];
+    const byName = (a: S3ObjectEntry, b: S3ObjectEntry) =>
+      a.key.localeCompare(b.key, undefined, { numeric: true, sensitivity: "base" });
+    const byModified = (a: S3ObjectEntry, b: S3ObjectEntry) => {
+      const at = a.lastModified ? Date.parse(a.lastModified) : 0;
+      const bt = b.lastModified ? Date.parse(b.lastModified) : 0;
+      if (at === bt) return byName(a, b);
+      return bt - at;
+    };
+    const bySize = (a: S3ObjectEntry, b: S3ObjectEntry) => {
+      if (a.size === b.size) return byName(a, b);
+      return b.size - a.size;
+    };
+    const compare = sortKey === "name" ? byName : sortKey === "size" ? bySize : byModified;
+    return [...rows].sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "folder" ? -1 : 1;
+      return compare(a, b);
+    });
+  }, [objects.data, sortKey]);
 
   useEffect(() => {
     let disposed = false;
@@ -169,10 +197,10 @@ export function S3BrowserPage() {
   }, [accountId, prefix, selectedBucket]);
 
   useEffect(() => {
-    if (!selectedKey && objects.data?.[0]) {
-      setSelectedKey(objects.data[0].key);
+    if (!selectedKey && sortedObjects[0]) {
+      setSelectedKey(sortedObjects[0].key);
     }
-  }, [objects.data, selectedKey]);
+  }, [sortedObjects, selectedKey]);
 
   useEffect(() => {
     if (textObject.data?.content !== undefined) {
@@ -516,7 +544,7 @@ export function S3BrowserPage() {
   };
 
   const handleObjectListKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    const currentObjects = objects.data ?? [];
+    const currentObjects = sortedObjects;
     if (currentObjects.length === 0) return;
 
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -635,10 +663,11 @@ export function S3BrowserPage() {
                 type="button"
                 variant="ghost"
                 size="sm"
+                className="h-7 px-1.5"
                 aria-label={t("Browse S3 path")}
                 onClick={() => setPathPickerOpen(true)}
               >
-                <FolderOpen data-icon="inline-start" />
+                <FolderOpen className="size-4" />
               </Button>
             </CardTitle>
             <CardDescription className="text-xs">
@@ -648,9 +677,9 @@ export function S3BrowserPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden p-4 pt-0">
-            <div className="flex shrink-0 gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <Button type="button" variant="outline" size="sm" className="h-7 px-2" aria-label={t("Up")} disabled={!prefix} onClick={goUp}>
-                <ArrowUp data-icon="inline-start" />
+                <ArrowUp className="size-4" />
               </Button>
               <Button
                 type="button"
@@ -664,7 +693,7 @@ export function S3BrowserPage() {
                   setCreateFolderOpen(true);
                 }}
               >
-                <FolderPlus data-icon="inline-start" />
+                <FolderPlus className="size-4" />
               </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -681,7 +710,7 @@ export function S3BrowserPage() {
                     disabled={!selectedBucket || transferPending}
                     onClick={upload}
                   >
-                    <Upload data-icon="inline-start" />
+                    <Upload className="size-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -690,17 +719,7 @@ export function S3BrowserPage() {
                     : t("Upload")}
                 </TooltipContent>
               </Tooltip>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 px-2"
-                aria-label={t("Refresh")}
-                disabled={!selectedBucket || objects.isLoading}
-                onClick={() => void objects.refetch()}
-              >
-                <RefreshCw data-icon="inline-start" />
-              </Button>
+              <SortMenu value={sortKey} onChange={setSortKey} className="ml-auto" />
             </div>
             {buckets.isLoading || objects.isLoading ? (
               <p className="shrink-0 text-xs text-muted-foreground">{t("Loading S3 objects...")}</p>
@@ -714,68 +733,80 @@ export function S3BrowserPage() {
             ) : null}
             <nav
               aria-label={t("S3 objects")}
-              className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="min-h-0 flex-1 overflow-y-auto rounded-md border text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               tabIndex={0}
               ref={objectListRef}
               onKeyDown={handleObjectListKeyDown}
             >
-              {(objects.data ?? []).map((object) => {
-                const objectName = displayObjectName(object.key, prefix, object.kind);
-                const isRenaming = renamingKey === object.key;
+              <ul className="divide-y">
+                {sortedObjects.map((object) => {
+                  const objectName = displayObjectName(object.key, prefix, object.kind);
+                  const isRenaming = renamingKey === object.key;
 
-                if (isRenaming) {
+                  if (isRenaming) {
+                    return (
+                      <li key={object.key} className="px-1.5 py-0.5">
+                        <Input
+                          autoFocus
+                          className="h-7 font-mono text-xs"
+                          value={renameValue}
+                          onChange={(event) => setRenameValue(event.target.value)}
+                          onBlur={() => void submitRename(object.key)}
+                          onKeyDown={(event) => handleRenameKeyDown(event, object.key)}
+                        />
+                      </li>
+                    );
+                  }
+
                   return (
-                    <Input
-                      key={object.key}
-                      autoFocus
-                      className="h-7 font-mono text-xs"
-                      value={renameValue}
-                      onChange={(event) => setRenameValue(event.target.value)}
-                      onBlur={() => void submitRename(object.key)}
-                      onKeyDown={(event) => handleRenameKeyDown(event, object.key)}
-                    />
+                    <li key={object.key}>
+                      <div
+                        className={cn(
+                          "group flex w-full items-center gap-1 px-1.5 py-0.5 hover:bg-accent",
+                          object.key === selectedKey && "bg-primary/10 text-primary"
+                        )}
+                      >
+                        <button
+                          className={cn(
+                            "flex min-w-0 w-full flex-1 flex-col items-start gap-0.5 px-1 py-1 text-left text-xs",
+                            object.kind === "file" && "font-mono"
+                          )}
+                          type="button"
+                          data-active={object.key === selectedKey}
+                          title={objectName}
+                          onClick={() => setSelectedKey(object.key)}
+                          onDoubleClick={() => {
+                            if (object.kind === "folder") {
+                              setPrefix(object.key);
+                              setSelectedKey(undefined);
+                              setContent("");
+                              setBaselineContent("");
+                              return;
+                            }
+                            startRename(object);
+                          }}
+                        >
+                          <span className="flex min-w-0 w-full items-center gap-1.5">
+                            {object.kind === "folder" ? (
+                              <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                            ) : (
+                              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                            )}
+                            <span className={cn("min-w-0 truncate", object.kind === "folder" && "font-medium")}>
+                              {objectName}
+                            </span>
+                          </span>
+                          {object.kind === "file" ? (
+                            <span className="w-full truncate pl-5 text-[10px] leading-tight text-muted-foreground">
+                              {formatObjectListMeta(object)}
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
+                    </li>
                   );
-                }
-
-                return (
-                  <button
-                    key={object.key}
-                    className={cn(
-                      "flex min-w-0 w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-1.5 text-left text-xs hover:bg-accent",
-                      object.kind === "file" && "font-mono",
-                      object.key === selectedKey && "bg-primary/10 text-primary"
-                    )}
-                    type="button"
-                    data-active={object.key === selectedKey}
-                    title={objectName}
-                    onClick={() => setSelectedKey(object.key)}
-                    onDoubleClick={() => {
-                      if (object.kind === "folder") {
-                        setPrefix(object.key);
-                        setSelectedKey(undefined);
-                        setContent("");
-                        setBaselineContent("");
-                        return;
-                      }
-                      startRename(object);
-                    }}
-                  >
-                    <span className="flex min-w-0 w-full items-center gap-1.5">
-                      {object.kind === "folder" ? (
-                        <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="min-w-0 truncate">{objectName}</span>
-                    </span>
-                    {object.kind === "file" ? (
-                      <span className="w-full truncate pl-5 text-[10px] leading-tight text-muted-foreground">
-                        {formatObjectListMeta(object)}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
+                })}
+              </ul>
             </nav>
             {objects.data?.length === 0 ? (
               <p className="shrink-0 text-xs text-muted-foreground">{t("No objects under this prefix.")}</p>
@@ -1097,6 +1128,72 @@ function formatObjectListMeta(object: S3ObjectEntry) {
   const modified = formatS3Timestamp(object.lastModified);
   if (modified) parts.push(modified);
   return parts.join(" · ");
+}
+
+/**
+ * Orders the object list. Folders stay grouped ahead of files regardless — the
+ * choice here only reorders within each group. "modified" (newest first) is the
+ * default because a prefix is usually opened for the run that just landed in it.
+ */
+function SortMenu({
+  value,
+  onChange,
+  className
+}: {
+  value: S3SortKey;
+  onChange: (next: S3SortKey) => void;
+  className?: string;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const options: { key: S3SortKey; label: string }[] = [
+    { key: "modified", label: t("Modified") },
+    { key: "name", label: t("Name") },
+    { key: "size", label: t("Size") }
+  ];
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn("h-7 px-2", className)}
+              aria-label={t("Sort objects")}
+            >
+              <ArrowDownWideNarrow className="size-4" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{t("Sort objects")}</TooltipContent>
+      </Tooltip>
+      <PopoverContent align="end" className="w-36 p-1">
+        <ul>
+          {options.map((option) => (
+            <li key={option.key}>
+              <button
+                type="button"
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-xs hover:bg-accent",
+                  value === option.key && "font-medium text-primary"
+                )}
+                onClick={() => {
+                  onChange(option.key);
+                  setOpen(false);
+                }}
+              >
+                <span>{option.label}</span>
+                {value === option.key ? <Check className="size-3.5 shrink-0" /> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function ObjectProperties({ object }: { object?: S3ObjectEntry }) {
