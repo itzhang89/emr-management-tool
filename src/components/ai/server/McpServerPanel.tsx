@@ -183,7 +183,7 @@ export function McpServerPanel() {
   }, [endpointUrl, t]);
 
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="w-full min-w-0 space-y-6">
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div className="space-y-1.5">
