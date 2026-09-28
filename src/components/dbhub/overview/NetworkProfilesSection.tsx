@@ -19,6 +19,7 @@ import {
   useSaveNetworkProfile
 } from "@/hooks/useDbHub";
 import { useT, type Translator } from "@/i18n";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { formatAppError } from "@/services/appErrorMessage";
 import type { NetworkProfile, NetworkProfileInput } from "@/types/domain";
 import { ProfileDetail } from "./ProfileDetail";
@@ -286,7 +287,7 @@ function ProfileList({
                     className="h-7 min-w-0 flex-1 text-sm"
                     onChange={(event) => setDraftName(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") finishRename(profile, true);
+                      if (event.key === "Enter" && !isImeComposing(event)) finishRename(profile, true);
                       if (event.key === "Escape") finishRename(profile, false);
                     }}
                     onBlur={() => finishRename(profile, true)}

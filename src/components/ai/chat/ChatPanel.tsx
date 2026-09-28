@@ -25,7 +25,7 @@ import {
   type ModelOption
 } from "@/components/ai/chat/ModelSelect";
 import { useLlmProviders } from "@/hooks/useLlmConfig";
-import { isClearContextKey } from "@/lib/keyboardShortcut";
+import { isClearContextKey, isImeComposing } from "@/lib/keyboardShortcut";
 import { dbAnalysisPrompt, dbSessionTitle } from "@/services/aiAnalyzeDb";
 import { jobAnalysisPrompt, jobSessionTitle, sameJobTitle } from "@/services/aiAnalyzeJob";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -687,6 +687,7 @@ export function ChatPanel({
             }
             onKeyDown={(event) => {
               if (event.key === "Enter") {
+                if (isImeComposing(event)) return;
                 event.preventDefault();
                 handleRename();
               }

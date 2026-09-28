@@ -17,7 +17,7 @@ import { useT, type Translator } from "@/i18n";
 import { t as translateNow } from "@/i18n/translate";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
+import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isImeComposing, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { isBottomNavItem, navigationItems, type PageId } from "@/pages/pageMeta";
@@ -195,7 +195,14 @@ export function AppShell() {
         return;
       }
 
-      if (accountDialogOpen && event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (
+        accountDialogOpen &&
+        event.key === "Enter" &&
+        !isImeComposing(event) &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
         event.preventDefault();
         if (selectedAccountId) {
           activateAccount(selectedAccountId);

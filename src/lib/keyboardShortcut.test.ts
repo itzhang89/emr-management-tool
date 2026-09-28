@@ -5,6 +5,7 @@ import {
   isClearContextKey,
   isCloseTabKey,
   isFocusSearchKey,
+  isImeComposing,
   isNewTabKey,
   isPageCycleNextKey,
   isPageCyclePreviousKey,
@@ -14,6 +15,25 @@ import {
   isSidebarToggleKey,
   getPageNavigationIndex
 } from "./keyboardShortcut";
+
+describe("isImeComposing", () => {
+  it("is true while a React synthetic event carries isComposing", () => {
+    expect(isImeComposing({ isComposing: true })).toBe(true);
+  });
+
+  it("is true when the underlying native event is composing", () => {
+    expect(isImeComposing({ nativeEvent: { isComposing: true } })).toBe(true);
+  });
+
+  it("is true for the legacy keyCode 229 IME signal", () => {
+    expect(isImeComposing({ keyCode: 229 })).toBe(true);
+  });
+
+  it("is false for a plain committed Enter", () => {
+    expect(isImeComposing({ keyCode: 13, isComposing: false })).toBe(false);
+    expect(isImeComposing({})).toBe(false);
+  });
+});
 
 describe("formatShortcutsHelpLabel", () => {
   it("returns platform-specific help shortcut label", () => {

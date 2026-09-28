@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { cn } from "@/lib/utils";
 
 /**
@@ -66,6 +67,7 @@ export function CommitInput({
       onBlur={() => void commit()}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
+          if (isImeComposing(event)) return;
           event.preventDefault();
           event.currentTarget.blur();
         } else if (event.key === "Escape") {

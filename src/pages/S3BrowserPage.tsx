@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { S3PathPickerDialog } from "@/components/s3/S3PathPicker";
 import { S3ObjectEditor, type S3ObjectEditorHandle } from "@/components/s3/S3ObjectEditor";
 import { cn } from "@/lib/utils";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import {
   useCreateS3Folder,
@@ -504,6 +505,7 @@ export function S3BrowserPage() {
 
   const handleRenameKeyDown = (event: KeyboardEvent<HTMLInputElement>, sourceKey: string) => {
     if (event.key === "Enter") {
+      if (isImeComposing(event)) return;
       event.preventDefault();
       void submitRename(sourceKey);
     }
@@ -987,6 +989,7 @@ export function S3BrowserPage() {
               onChange={(event) => setConflictRenameValue(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
+                  if (isImeComposing(event)) return;
                   event.preventDefault();
                   void renameConflictUpload();
                 }

@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { cn } from "@/lib/utils";
 import { SQL_DDL_TEMPLATES } from "@/services/glueSqlTemplates";
 import type { SqlFavoriteEntry, SqlHistoryEntry } from "@/types/domain";
@@ -61,6 +62,7 @@ export function FavoriteNameDialog({
             onChange={(event) => setName(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
+                if (isImeComposing(event)) return;
                 event.preventDefault();
                 handleConfirm();
               }

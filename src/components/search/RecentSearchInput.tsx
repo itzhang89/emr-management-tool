@@ -2,6 +2,7 @@ import { Search } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 
 export type RecentSearchInputHandle = {
   focus: () => void;
@@ -84,6 +85,7 @@ export const RecentSearchInput = forwardRef<
         onClick={openRecentSearches}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
+            if (isImeComposing(event)) return;
             event.preventDefault();
             submit(value);
           }

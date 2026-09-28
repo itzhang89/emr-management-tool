@@ -18,6 +18,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { useT } from "@/i18n";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { cn } from "@/lib/utils";
 import type { GateLadderEntry, GateOverrides, GateRefusal, StatementTier } from "@/types/domain";
 
@@ -274,7 +275,7 @@ export function GateRulesDialog({
                 setError(undefined);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") addRule();
+                if (event.key === "Enter" && !isImeComposing(event)) addRule();
               }}
               placeholder={t("TRUNCATE, sp_rebuild, etl_*…")}
               aria-label={t("Rule key")}

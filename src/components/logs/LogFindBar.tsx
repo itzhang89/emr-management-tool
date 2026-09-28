@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 
 export function LogFindBar({
   open,
@@ -73,6 +74,7 @@ export function LogFindBar({
             return;
           }
           if (event.key === "Enter") {
+            if (isImeComposing(event)) return;
             event.preventDefault();
             if (event.shiftKey) {
               onPreviousMatch();

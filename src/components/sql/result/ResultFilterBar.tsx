@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Code, Search } from "lucide-react";
 import { useT } from "@/i18n";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import { cn } from "@/lib/utils";
 import type { CellFilter } from "@/services/resultView";
 import {
@@ -141,6 +142,9 @@ export function ResultFilterBar({
   };
 
   const keyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // An Enter that only confirms an IME candidate should neither commit the
+    // filter nor accept a suggestion.
+    if (event.key === "Enter" && isImeComposing(event)) return;
     if (event.key === " " && event.ctrlKey) {
       event.preventDefault();
       offer(draft, inputRef.current?.selectionStart ?? draft.length, true);

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n";
-import { formatModShortcut } from "@/lib/keyboardShortcut";
+import { formatModShortcut, isImeComposing } from "@/lib/keyboardShortcut";
 
 /**
  * The input area: message box, clear-context, and send/stop.
@@ -76,6 +76,8 @@ export function Composer({
         onChange={(event) => onValueChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
+            // An Enter that confirms an IME candidate is not a send.
+            if (isImeComposing(event)) return;
             event.preventDefault();
             submit();
           } else if (event.key === "Escape" && editing) {

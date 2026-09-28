@@ -2,6 +2,24 @@ function isMacPlatform() {
   return typeof navigator !== "undefined" && /Mac|iPhone|iPod|iPad/i.test(navigator.platform);
 }
 
+/**
+ * True while an IME composition is in flight — the user is picking a candidate,
+ * not committing an action. An Enter that confirms a Chinese/Japanese/Korean
+ * word arrives as a keydown with `key === "Enter"`, so a naive Enter handler
+ * would send the message on the keystroke that was only meant to accept the
+ * word. `isComposing` is the standard signal; `keyCode === 229` is the legacy
+ * fallback some IME/browser combinations still emit instead.
+ */
+export function isImeComposing(
+  event: { keyCode?: number; isComposing?: boolean; nativeEvent?: { isComposing?: boolean } }
+) {
+  return (
+    event.isComposing === true ||
+    event.nativeEvent?.isComposing === true ||
+    event.keyCode === 229
+  );
+}
+
 function modKeyLabel() {
   return isMacPlatform() ? "⌘" : "Ctrl";
 }

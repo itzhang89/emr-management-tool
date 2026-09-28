@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useS3Buckets, useS3Objects } from "@/hooks/useS3";
+import { isImeComposing } from "@/lib/keyboardShortcut";
 import {
   appendSlashForMatching,
   formatPathInput,
@@ -115,6 +116,7 @@ export function useS3PathPicker({
 
       if (!suggestionsOpen || suggestions.length === 0) {
         if (event.key === "Enter") {
+          if (isImeComposing(event)) return;
           event.preventDefault();
           submitPathInput(event.currentTarget.value);
         }
@@ -134,6 +136,7 @@ export function useS3PathPicker({
       }
 
       if (event.key === "Enter") {
+        if (isImeComposing(event)) return;
         event.preventDefault();
         if (highlightIndex >= 0 && highlightIndex < suggestions.length) {
           selectOption(suggestions[highlightIndex]);
