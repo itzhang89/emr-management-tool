@@ -79,7 +79,10 @@ jobs:
             # A beta is always published: the updater fetches its assets from
             # public URLs, which a draft release does not serve.
             [[ "$RELEASE_DRAFT" == "true" ]] && echo "::warning::Beta releases are always published; ignoring draft=true."
-            args=(--title "$NAME" --notes "Beta build for $VERSION. Release-profile packages update in place; the -debug packages install side by side for troubleshooting." --prerelease)
+            # --generate-notes appends the auto-generated changelog (commits and
+            # merged PRs since the previous tag) after this header line, so the
+            # release notes update themselves each beta rather than staying static.
+            args=(--title "$NAME" --notes "Beta build for $VERSION. Release-profile packages update in place; the -debug packages install side by side for troubleshooting." --generate-notes --prerelease)
           else
             TAG="${RELEASE_CHANNEL}-build-${GITHUB_RUN_NUMBER}"
             NAME="EMR Management Tool ${RELEASE_CHANNEL} build ${GITHUB_RUN_NUMBER}"
