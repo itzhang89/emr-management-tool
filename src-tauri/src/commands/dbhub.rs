@@ -409,7 +409,10 @@ pub async fn set_db_connection_flags(
             show_as_tab: request.flags.show_as_tab,
             enabled_for_ai: request.flags.enabled_for_ai,
             ai_read_only_policy: request.flags.ai_read_only_policy,
-            gate_overrides: Default::default(),
+            // Pass the flags through: absent leaves the stored rules where they
+            // are (a flag toggle like show_as_tab must not wipe them), `Some`
+            // replaces them (and an explicit empty map clears them).
+            gate_overrides: request.flags.gate_overrides,
             allow_writes: request.flags.allow_writes,
             auth_mode: None,
             secret_arn: None,
