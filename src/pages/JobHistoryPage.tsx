@@ -141,13 +141,17 @@ export function JobHistoryPage({
 
   useEffect(() => {
     if (!logTabIntent || logTabIntent.nonce === handledNonce) return;
+    // Wait until this account's tabs are hydrated. Opening before that races the
+    // restore write and can concat a second tab with the same id — both panes
+    // then match the active value and stack vertically.
+    if (!accountId) return;
     const virtualClusterId = logTabIntent.virtualClusterId ?? effectiveVirtualClusterId;
     if (!virtualClusterId) return;
     setHandledNonce(logTabIntent.nonce);
     if (openJobTab(logTabIntent.jobId, virtualClusterId) === "at-capacity") {
       refuseAtCapacity();
     }
-  }, [effectiveVirtualClusterId, handledNonce, logTabIntent, openJobTab, refuseAtCapacity]);
+  }, [accountId, effectiveVirtualClusterId, handledNonce, logTabIntent, openJobTab, refuseAtCapacity]);
 
   const stripTabs: JobTabStripItem[] = [
     { id: HISTORY_TAB_ID, title: t("Job History"), closable: false },
@@ -211,7 +215,9 @@ export function JobHistoryPage({
               // The account is part of the key: two accounts can hold a tab with
               // the same `cluster:job` id, and React would otherwise keep the
               // first account's mounted viewer, its selection and its text.
-              key={`${accountId ?? "pending"}:${tab.id}`}
+              // `reloadToken` remounts when the same job is opened again (e.g.
+              // Logs from Recent Submissions) so the pane refreshes in place.
+              key={`${accountId ?? "pending"}:${tab.id}:${tab.reloadToken ?? 0}`}
               value={tab.id}
               forceMount
               className="mt-0 hidden min-h-0 min-w-0 flex-1 overflow-hidden data-[state=active]:flex"

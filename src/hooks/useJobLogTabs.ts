@@ -32,6 +32,9 @@ export interface WorkspaceTab {
   content?: CachedLogContent;
   contentTruncated?: boolean;
   contentDropped?: boolean;
+  /** Session-only: bumped when the same job is opened again so the pane remounts
+   *  instead of stacking a second TabsContent with the same value. Not persisted. */
+  reloadToken?: number;
 }
 
 /** Why a tab request was refused, so the page can say so. */
@@ -180,26 +183,72 @@ export function useJobLogTabs() {
   const openJobTab = useCallback(
     (jobId: string, virtualClusterId: string, jobName?: string): OpenTabResult => {
       const id = `${virtualClusterId}:${jobId}`;
-      const existing = tabs.find((tab) => tab.id === id);
+      // Read through `latest`, not the render closure: a cross-page intent can
+      // fire in the same tick as hydrate, and a second Logs click can land before
+      // React has committed the first open. Both used to concat another tab with
+      // the same id; Radix then shows every matching TabsContent at once.
+      const currentTabs = latest.current.tabs;
+      const existing = currentTabs.find((tab) => tab.id === id);
       if (existing) {
-        selectTab(id);
+        const now = new Date().toISOString();
+        const nextTabs = currentTabs.map((tab) =>
+          tab.id === id
+            ? {
+                ...tab,
+                lastViewedAt: now,
+                jobName: jobName ?? tab.jobName,
+                reloadToken: (tab.reloadToken ?? 0) + 1
+              }
+            : tab
+        );
+        commit(nextTabs, id);
+        setTabs(nextTabs);
+        setActiveTabId(id);
         return "activated";
       }
-      if (tabs.filter((tab) => tab.kind !== "history").length >= MAX_LOG_TABS) {
+      if (currentTabs.filter((tab) => tab.kind !== "history").length >= MAX_LOG_TABS) {
         return "at-capacity";
       }
       const now = new Date().toISOString();
       // The caller usually has the job summary in hand, so the tab is labelled
       // from the first paint instead of flashing a raw id until describe lands.
-      const tab: WorkspaceTab = { id, kind: "job", jobId, virtualClusterId, jobName, openedAt: now, lastViewedAt: now };
-      setTabs((current) => current.concat(tab));
+      const tab: WorkspaceTab = {
+        id,
+        kind: "job",
+        jobId,
+        virtualClusterId,
+        jobName,
+        openedAt: now,
+        lastViewedAt: now,
+        reloadToken: 0
+      };
+      commit(currentTabs.concat(tab), id);
+      setTabs((current) => {
+        // Hydrate (or a twin open) may have added this id since we read latest.
+        if (current.some((entry) => entry.id === id)) {
+          return current.map((entry) =>
+            entry.id === id
+              ? {
+                  ...entry,
+                  lastViewedAt: now,
+                  jobName: jobName ?? entry.jobName,
+                  reloadToken: (entry.reloadToken ?? 0) + 1
+                }
+              : entry
+          );
+        }
+        if (current.filter((entry) => entry.kind !== "history").length >= MAX_LOG_TABS) {
+          return current;
+        }
+        return current.concat(tab);
+      });
       setActiveTabId(id);
       // Only a job the user actually opened belongs in "recently viewed" —
       // restoring the cache at boot must not rewrite it.
       if (hydratedAccount) rememberLogsJobIdSearch(hydratedAccount, jobId);
       return "opened";
     },
-    [hydratedAccount, selectTab, tabs]
+    [commit, hydratedAccount]
   );
 
   const openDraftTab = useCallback((): OpenTabResult => {
@@ -221,32 +270,43 @@ export function useJobLogTabs() {
   const promoteDraftTab = useCallback(
     (draftId: string, jobId: string, virtualClusterId: string): OpenTabResult => {
       const id = `${virtualClusterId}:${jobId}`;
-      const existing = tabs.find((tab) => tab.id === id && tab.id !== draftId);
+      const currentTabs = latest.current.tabs;
+      const existing = currentTabs.find((tab) => tab.id === id && tab.id !== draftId);
       if (existing) {
-        setTabs((current) => current.filter((tab) => tab.id !== draftId));
-        selectTab(id);
+        const now = new Date().toISOString();
+        const nextTabs = currentTabs
+          .filter((tab) => tab.id !== draftId)
+          .map((tab) =>
+            tab.id === id
+              ? { ...tab, lastViewedAt: now, reloadToken: (tab.reloadToken ?? 0) + 1 }
+              : tab
+          );
+        commit(nextTabs, id);
+        setTabs(nextTabs);
+        setActiveTabId(id);
         return "activated";
       }
       const now = new Date().toISOString();
-      setTabs((current) =>
-        current.map((tab) =>
-          tab.id === draftId
-            ? {
-                id,
-                kind: "job" as const,
-                jobId,
-                virtualClusterId,
-                openedAt: now,
-                lastViewedAt: now
-              }
-            : tab
-        )
+      const nextTabs = currentTabs.map((tab) =>
+        tab.id === draftId
+          ? {
+              id,
+              kind: "job" as const,
+              jobId,
+              virtualClusterId,
+              openedAt: now,
+              lastViewedAt: now,
+              reloadToken: 0
+            }
+          : tab
       );
+      commit(nextTabs, id);
+      setTabs(nextTabs);
       setActiveTabId(id);
       if (hydratedAccount) rememberLogsJobIdSearch(hydratedAccount, jobId);
       return "opened";
     },
-    [hydratedAccount, selectTab, tabs]
+    [commit, hydratedAccount]
   );
 
   const closeTab = useCallback(

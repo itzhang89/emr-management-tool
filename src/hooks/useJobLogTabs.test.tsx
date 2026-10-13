@@ -105,6 +105,23 @@ describe("useJobLogTabs", () => {
     expect(outcome).toBe("activated");
     expect(result.current.tabs).toHaveLength(2);
     expect(result.current.activeTabId).toBe("vc-a:job-a");
+    // Re-open bumps the session token so the pane remounts instead of stacking.
+    expect(result.current.tabs.find((tab) => tab.id === "vc-a:job-a")?.reloadToken).toBe(1);
+  });
+
+  it("dedupes a second open that lands before the first commit", async () => {
+    const { result } = renderHook(() => useJobLogTabs());
+
+    let first: string | undefined;
+    let second: string | undefined;
+    act(() => {
+      first = result.current.openJobTab("job-a", "vc-a", "etl-a");
+      second = result.current.openJobTab("job-a", "vc-a", "etl-a");
+    });
+
+    expect(first).toBe("opened");
+    expect(second).toBe("activated");
+    expect(result.current.tabs.filter((tab) => tab.id === "vc-a:job-a")).toHaveLength(1);
   });
 
   it("refuses past the limit and reports why", async () => {

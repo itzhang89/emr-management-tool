@@ -612,6 +612,39 @@ describe("JobHistoryPage", () => {
     expect(screen.getByRole("tab", { name: "job-1" })).toBeInTheDocument();
   });
 
+  it("activates a restored tab for a cross-page intent instead of stacking a duplicate", async () => {
+    window.localStorage.setItem(
+      "emr-eks:job-history-tabs:acct-test",
+      JSON.stringify({
+        version: 1,
+        activeTabId: "vc-1:job-1",
+        tabs: [
+          {
+            id: "vc-1:job-1",
+            jobId: "job-1",
+            virtualClusterId: "vc-1",
+            jobName: "restored-etl",
+            openedAt: "2026-09-19T00:00:00.000Z",
+            lastViewedAt: "2026-09-19T00:00:00.000Z",
+            contentLength: 0
+          }
+        ]
+      })
+    );
+
+    // Same path as Submit Job → Logs: the page mounts with an intent while
+    // the account's tabs are still hydrating from localStorage.
+    renderJobHistoryPage({
+      logTabIntent: { jobId: "job-1", virtualClusterId: "vc-1", nonce: 1 }
+    });
+
+    expect(await screen.findByRole("tab", { name: "restored-etl" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    expect(screen.getAllByRole("tab", { name: "restored-etl" })).toHaveLength(1);
+  });
+
   it("looks up a missing local job id from AWS using the selected virtual cluster", async () => {
     const user = userEvent.setup();
     describeJobRun.mockResolvedValue({
