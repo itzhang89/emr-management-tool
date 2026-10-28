@@ -25,6 +25,8 @@ const s3: TranslationDictionary = {
   "Browse S3 path": "浏览 S3 路径",
   "Opened from job monitoring configuration.": "从作业监控配置打开。",
   "Supported text files can be edited in place.": "支持的文本文件可直接编辑。",
+  "Sort objects": "排序对象",
+  Modified: "修改时间",
 
   // Selected object header and preview
   "Object is read-only": "对象为只读",

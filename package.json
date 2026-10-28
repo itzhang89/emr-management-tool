@@ -19,9 +19,10 @@
   "private": true,
   "type": "module",
   "overrides": {
-    "undici": "7.29.0",
+    "undici": "7.30.1",
     "nanoid": "3.3.18",
-    "browserslist": "4.28.7"
+    "browserslist": "4.28.7",
+    "source-map-js": "1.2.2"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -70,8 +71,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
-    "zod": "^4.4.3",
+    "vite": "^8.1.6",
+    "zod": "^4.6.7",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -87,6 +88,6 @@
     "jsdom": "^29.1.1",
     "postcss": "^8.5.25",
     "tailwindcss": "^4.3.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
