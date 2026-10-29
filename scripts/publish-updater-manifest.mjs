@@ -14,7 +14,9 @@ const UPDATER_TARGETS = [
     platform: "darwin-x86_64",
     isBundle: (name) =>
       /\.app\.tar\.gz$/i.test(name) &&
-      /(amd64|x86_64|-x64)/i.test(name) &&
+      // tauri names the x86_64 bundle `EMR.Management.Tool_x64.app.tar.gz`;
+      // `[-_.]x64` must cover the underscore form, not just `-x64`.
+      /(amd64|x86_64|[_.-]x64)/i.test(name) &&
       !/(aarch64|arm64)/i.test(name)
   },
   {
