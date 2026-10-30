@@ -32,19 +32,23 @@ export function LanguageCard() {
           onValueChange={(value) => setLanguagePreference(value as LanguagePreference)}
           className="flex flex-col gap-2"
         >
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <RadioGroupItem value="system" />
+          {/* Rows are not labels: only the radio itself toggles the preference. */}
+          <div className="flex items-center gap-2 text-sm">
+            <RadioGroupItem
+              value="system"
+              aria-label={`${t("Follow system language")} (${systemLabel})`}
+            />
             {t("Follow system language")}
             <span className="text-xs text-muted-foreground">({systemLabel})</span>
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <RadioGroupItem value="zh" />
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <RadioGroupItem value="zh" aria-label="中文" />
             中文
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <RadioGroupItem value="en" />
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <RadioGroupItem value="en" aria-label="English" />
             English
-          </label>
+          </div>
         </RadioGroup>
       </CardContent>
     </Card>

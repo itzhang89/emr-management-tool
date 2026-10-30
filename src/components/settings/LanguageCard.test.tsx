@@ -26,6 +26,16 @@ describe("LanguageCard", () => {
     expect(screen.getByText("跟随系统语言")).toBeInTheDocument();
   });
 
+  it("does not switch language when the option text is clicked", async () => {
+    const user = userEvent.setup();
+    render(<LanguageCard />);
+
+    await user.click(screen.getByText("中文"));
+
+    expect(window.localStorage.getItem(storageKey)).not.toBe("zh");
+    expect(screen.getByRole("radio", { name: "中文" })).not.toBeChecked();
+  });
+
   it("keeps the language endonyms untranslated so they stay findable", async () => {
     const user = userEvent.setup();
     render(<LanguageCard />);
