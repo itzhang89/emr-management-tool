@@ -271,10 +271,12 @@ const ai: TranslationDictionary = {
   "Remove {model}": "移除 {model}",
   'Removed "{name}". Save to apply.': "已移除“{name}”。保存后生效。",
   "Rename conversation": "重命名对话",
+  "Reply in the question's language": "按提问语言回答",
   Replaced: "已替换",
   Replacement: "替换为",
   "Request arguments": "请求参数",
   "Reset to defaults": "恢复默认值",
+  "Resize assistant sidebar": "调整助手侧边栏宽度",
   Response: "响应",
   "Response content": "响应内容",
   "Restart with new port": "使用新端口重启",
@@ -363,6 +365,8 @@ const ai: TranslationDictionary = {
   Video: "视频",
   Vision: "视觉",
   "Waiting for model…": "等待模型响应…",
+  "When on, answers match the language of the question — for example, Chinese questions get Chinese replies.":
+    "开启后，回答会与提问语言一致——例如中文提问用中文回复。",
   "Which values in MCP tool log output are masked before it reaches an AI model.":
     "MCP 工具日志输出中哪些内容会在送达 AI 模型之前被遮盖。",
   Working: "正常",

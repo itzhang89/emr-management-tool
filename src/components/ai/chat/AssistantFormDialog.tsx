@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ACCENT_NAMES, accentClasses } from "@/components/ai/chat/accents";
 import { useT } from "@/i18n";
@@ -51,6 +52,8 @@ export function AssistantFormDialog({
   const [systemPrompt, setSystemPrompt] = useState("");
   const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
   const [accent, setAccent] = useState("blue");
+  // Defaults on so replies follow the question's language unless the user turns it off.
+  const [matchQuestionLanguage, setMatchQuestionLanguage] = useState(true);
   const [restrictTools, setRestrictTools] = useState(false);
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
 
@@ -60,6 +63,7 @@ export function AssistantFormDialog({
     setSystemPrompt(assistant?.systemPrompt ?? "");
     setDefaultModelId(assistant?.defaultModelId ?? null);
     setAccent(assistant?.accent ?? "blue");
+    setMatchQuestionLanguage(assistant?.matchQuestionLanguage ?? true);
     // null means "every tool", which is the default for a new assistant.
     setRestrictTools(Boolean(assistant?.enabledTools));
     setEnabledTools(assistant?.enabledTools ?? availableTools);
@@ -93,7 +97,8 @@ export function AssistantFormDialog({
           defaultModelId: defaultModelId ?? undefined,
           // Explicit null clears the restriction back to all tools.
           enabledTools: tools,
-          accent
+          accent,
+          matchQuestionLanguage
         },
         {
           onSuccess: () => {
@@ -112,7 +117,8 @@ export function AssistantFormDialog({
         systemPrompt: systemPrompt.trim() || undefined,
         defaultModelId: defaultModelId ?? undefined,
         enabledTools: tools ?? undefined,
-        accent
+        accent,
+        matchQuestionLanguage
       },
       {
         onSuccess: () => {
@@ -183,6 +189,23 @@ export function AssistantFormDialog({
               onChange={(event) => setSystemPrompt(event.target.value)}
               placeholder={t("How this assistant should work, and in what order to use its tools.")}
               className="min-h-32 text-sm"
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="assistant-match-language" className="cursor-pointer">
+                {t("Reply in the question's language")}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("When on, answers match the language of the question — for example, Chinese questions get Chinese replies.")}
+              </p>
+            </div>
+            <Switch
+              id="assistant-match-language"
+              checked={matchQuestionLanguage}
+              onCheckedChange={setMatchQuestionLanguage}
+              className="mt-0.5 shrink-0"
             />
           </div>
 

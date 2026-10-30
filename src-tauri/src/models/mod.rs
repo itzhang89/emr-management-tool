@@ -1235,6 +1235,8 @@ pub struct ChatAssistant {
     pub enabled_tools: Option<Vec<String>>,
     /// Avatar colour token, chosen by the UI.
     pub accent: Option<String>,
+    /// When true, the model is instructed to answer in the question's language.
+    pub match_question_language: bool,
     pub sort_order: i64,
     pub built_in: bool,
     pub created_at: DateTime<Utc>,
@@ -1364,6 +1366,9 @@ pub struct CreateChatAssistantRequest {
     pub default_model_id: Option<String>,
     pub enabled_tools: Option<Vec<String>>,
     pub accent: Option<String>,
+    /// Defaults to true when omitted so new assistants match the question language.
+    #[serde(default = "default_true")]
+    pub match_question_language: bool,
 }
 
 /// Upsert the Chat assistant that owns sessions for one DBHub connection.
@@ -1388,6 +1393,7 @@ pub struct UpdateChatAssistantRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled_tools: Option<Option<Vec<String>>>,
     pub accent: Option<String>,
+    pub match_question_language: Option<bool>,
     pub sort_order: Option<i64>,
 }
 

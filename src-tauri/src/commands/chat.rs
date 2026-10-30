@@ -32,6 +32,7 @@ pub async fn create_chat_assistant(request: CreateChatAssistantRequest) -> AppRe
         request.default_model_id.as_deref(),
         request.enabled_tools.as_deref(),
         request.accent.as_deref(),
+        request.match_question_language,
     )
     .await
 }
@@ -64,6 +65,7 @@ pub async fn update_chat_assistant(request: UpdateChatAssistantRequest) -> AppRe
             // "explicitly null" (allow every tool again).
             enabled_tools: request.enabled_tools.as_ref().map(|tools| tools.as_deref()),
             accent: request.accent.as_deref(),
+            match_question_language: request.match_question_language,
             sort_order: request.sort_order,
         },
     )

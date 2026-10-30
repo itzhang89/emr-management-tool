@@ -196,9 +196,31 @@ pub async fn resolve_model(
         base_url: candidate.base_url,
         provider_id: candidate.provider_id,
         model_id: candidate.model_id,
-        system_prompt: assistant.system_prompt,
+        system_prompt: compose_system_prompt(
+            assistant.system_prompt.as_deref(),
+            assistant.match_question_language,
+        ),
         enabled_tools: assistant.enabled_tools,
     })
+}
+
+/// Instruction appended when the assistant should mirror the question's language.
+const MATCH_QUESTION_LANGUAGE_PROMPT: &str = "Always reply in the same language the user wrote \
+their question in. For example, answer Chinese questions in Chinese and English questions in \
+English.";
+
+/// Combines the assistant's own instructions with the optional language-matching rule.
+pub(crate) fn compose_system_prompt(
+    base: Option<&str>,
+    match_question_language: bool,
+) -> Option<String> {
+    let base = base.map(str::trim).filter(|text| !text.is_empty());
+    match (base, match_question_language) {
+        (Some(prompt), true) => Some(format!("{prompt}\n\n{MATCH_QUESTION_LANGUAGE_PROMPT}")),
+        (None, true) => Some(MATCH_QUESTION_LANGUAGE_PROMPT.to_string()),
+        (Some(prompt), false) => Some(prompt.to_string()),
+        (None, false) => None,
+    }
 }
 
 /// Everything needed to talk to a provider for one session: the model chosen by
@@ -1350,5 +1372,29 @@ mod tests {
     fn a_round_with_no_text_reports_none_rather_than_empty() {
         let events = vec![StreamEvent::Done { stop_reason: None }];
         assert_eq!(collected_text(&events), None);
+    }
+
+    #[test]
+    fn compose_system_prompt_appends_the_language_rule_when_enabled() {
+        let composed = compose_system_prompt(Some("Be concise."), true).unwrap();
+        assert!(composed.starts_with("Be concise."));
+        assert!(composed.contains(MATCH_QUESTION_LANGUAGE_PROMPT));
+    }
+
+    #[test]
+    fn compose_system_prompt_is_just_the_language_rule_without_a_base() {
+        assert_eq!(
+            compose_system_prompt(None, true).as_deref(),
+            Some(MATCH_QUESTION_LANGUAGE_PROMPT)
+        );
+    }
+
+    #[test]
+    fn compose_system_prompt_leaves_the_base_alone_when_disabled() {
+        assert_eq!(
+            compose_system_prompt(Some("Be concise."), false).as_deref(),
+            Some("Be concise.")
+        );
+        assert_eq!(compose_system_prompt(None, false), None);
     }
 }

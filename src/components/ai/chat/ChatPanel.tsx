@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { LoaderCircle, PanelLeftClose, PanelLeftOpen, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,8 +39,15 @@ import {
   useEnsureDbhubChatAssistant,
   useUpdateChatSession
 } from "@/hooks/useChat";
-import { cn } from "@/lib/utils";
 import type { ChatAssistant, ChatMessage, ChatSession } from "@/types/domain";
+
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_DEFAULT_WIDTH = 260;
+
+function clampSidebarWidth(width: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width));
+}
 
 /**
  * The model this conversation runs on: its own stored choice, else the
@@ -105,6 +112,7 @@ export function ChatPanel({
     modelRef ? (providerIdByModelRef.get(modelRef) ?? null) : null;
 
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const sessionList = sessions.data ?? [];
@@ -486,6 +494,31 @@ export function ChatPanel({
     onConfigureModels(effectiveProviderId ?? undefined);
   };
 
+  const beginSidebarResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX));
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const nudgeSidebarWidth = (delta: number) => {
+    setSidebarWidth((current) => clampSidebarWidth(current + delta));
+  };
+
   const handleRegenerate = async (message: ChatMessage) => {
     try {
       await conversation.regenerate(message.id);
@@ -534,33 +567,56 @@ export function ChatPanel({
   const effectiveModelId = resolveEffectiveModelId(activeSession, activeAssistant, modelOptions);
 
   return (
-    <div
-      className={cn(
-        // overflow-hidden so a long transcript cannot stretch the grid and push
-        // its scrollbar onto the page.
-        "grid min-h-0 min-w-0 flex-1 gap-3 overflow-hidden",
-        sidebarVisible ? "lg:grid-cols-[minmax(180px,20%)_minmax(0,1fr)]" : "grid-cols-1"
-      )}
-    >
-      {sidebarVisible && (
-        <AssistantSidebar
-          assistants={assistantList}
-          sessions={sessionList}
-          activeSessionId={activeSession?.id ?? null}
-          onSelectSession={setActiveSessionId}
-          onAddAssistant={() => setAssistantDialog({ open: true, assistant: null })}
-          onEditAssistant={(assistant) => setAssistantDialog({ open: true, assistant })}
-          onDeleteAssistant={(assistant) =>
-            setDeleteTarget({ kind: "assistant", id: assistant.id, name: assistant.name })
-          }
-          onNewSession={startSession}
-          onDeleteSession={(session: ChatSession) =>
-            setDeleteTarget({ kind: "session", id: session.id, name: session.title })
-          }
-        />
-      )}
+    <div className="flex min-h-0 min-w-0 flex-1 gap-0 overflow-hidden">
+      {sidebarVisible ? (
+        <>
+          <div
+            className="flex min-h-0 shrink-0 flex-col overflow-hidden"
+            style={{ width: sidebarWidth }}
+          >
+            <AssistantSidebar
+              assistants={assistantList}
+              sessions={sessionList}
+              activeSessionId={activeSession?.id ?? null}
+              onSelectSession={setActiveSessionId}
+              onAddAssistant={() => setAssistantDialog({ open: true, assistant: null })}
+              onEditAssistant={(assistant) => setAssistantDialog({ open: true, assistant })}
+              onDeleteAssistant={(assistant) =>
+                setDeleteTarget({ kind: "assistant", id: assistant.id, name: assistant.name })
+              }
+              onNewSession={startSession}
+              onDeleteSession={(session: ChatSession) =>
+                setDeleteTarget({ kind: "session", id: session.id, name: session.title })
+              }
+            />
+          </div>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t("Resize assistant sidebar")}
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            className="group relative w-2 shrink-0 cursor-col-resize touch-none"
+            onMouseDown={beginSidebarResize}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                nudgeSidebarWidth(-16);
+              }
+              if (event.key === "ArrowRight") {
+                event.preventDefault();
+                nudgeSidebarWidth(16);
+              }
+            }}
+          >
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-primary/50 group-focus-visible:bg-primary" />
+          </div>
+        </>
+      ) : null}
 
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border">
+      <div className="ml-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border">
         <div className="flex shrink-0 items-center gap-2 border-b p-2">
           <Tooltip>
             <TooltipTrigger asChild>

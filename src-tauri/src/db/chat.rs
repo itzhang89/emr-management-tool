@@ -155,6 +155,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             default_model_id text,
             enabled_tools text,
             accent text,
+            match_question_language integer not null default 1,
             sort_order integer not null default 0,
             built_in integer not null default 0,
             created_at text not null,
@@ -215,7 +216,29 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .map_err(|error| AppError::storage(error.to_string()))?;
     }
 
+    // Columns added after the table shipped. `create table if not exists` leaves
+    // an existing database unchanged, so later columns arrive here.
+    if !assistant_column_exists(pool, "match_question_language").await? {
+        sqlx::query(
+            "alter table chat_assistants add column match_question_language integer not null default 1",
+        )
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+
     seed_built_in_assistants(pool).await
+}
+
+/// Whether `chat_assistants` already has a column — guards the alter above.
+async fn assistant_column_exists(pool: &SqlitePool, column: &str) -> AppResult<bool> {
+    let columns = sqlx::query("pragma table_info(chat_assistants)")
+        .fetch_all(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == column))
 }
 
 /// Drops chat tables that predate the current layout, so the `create table if
@@ -418,6 +441,7 @@ pub async fn list_assistants(pool: &SqlitePool) -> AppResult<Vec<ChatAssistant>>
                     .as_deref()
                     .and_then(|json| serde_json::from_str(json).ok()),
                 accent: row.get("accent"),
+                match_question_language: row.get::<i64, _>("match_question_language") != 0,
                 sort_order: row.get("sort_order"),
                 built_in: row.get::<i64, _>("built_in") != 0,
                 created_at: parse_timestamp(&row.get::<String, _>("created_at")),
@@ -434,6 +458,7 @@ pub async fn create_assistant(
     default_model_id: Option<&str>,
     enabled_tools: Option<&[String]>,
     accent: Option<&str>,
+    match_question_language: bool,
 ) -> AppResult<String> {
     let name = name.trim();
     if name.is_empty() {
@@ -451,8 +476,8 @@ pub async fn create_assistant(
 
     sqlx::query(
         "insert into chat_assistants
-            (id, name, system_prompt, default_model_id, enabled_tools, accent, sort_order, built_in, created_at, updated_at)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+            (id, name, system_prompt, default_model_id, enabled_tools, accent, match_question_language, sort_order, built_in, created_at, updated_at)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?9)",
     )
     .bind(&id)
     .bind(name)
@@ -460,6 +485,7 @@ pub async fn create_assistant(
     .bind(default_model_id)
     .bind(encode_tools(enabled_tools)?)
     .bind(accent)
+    .bind(if match_question_language { 1_i64 } else { 0 })
     .bind(next_order)
     .bind(&now)
     .execute(pool)
@@ -488,6 +514,7 @@ pub struct AssistantPatch<'a> {
     pub default_model_id: Option<&'a str>,
     pub enabled_tools: Option<Option<&'a [String]>>,
     pub accent: Option<&'a str>,
+    pub match_question_language: Option<bool>,
     pub sort_order: Option<i64>,
 }
 
@@ -537,6 +564,14 @@ pub async fn update_assistant(
     if let Some(accent) = patch.accent {
         sqlx::query("update chat_assistants set accent = ?1 where id = ?2")
             .bind(accent)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+    if let Some(match_question_language) = patch.match_question_language {
+        sqlx::query("update chat_assistants set match_question_language = ?1 where id = ?2")
+            .bind(if match_question_language { 1_i64 } else { 0 })
             .bind(id)
             .execute(pool)
             .await
@@ -1613,6 +1648,7 @@ mod tests {
             None,
             Some(&["analyze_job_failure".to_string()]),
             Some("amber"),
+            true,
         )
         .await
         .unwrap();
@@ -1657,6 +1693,7 @@ mod tests {
             None,
             Some(&["find_job".to_string()]),
             None,
+            true,
         )
         .await
         .unwrap();
@@ -2007,7 +2044,7 @@ mod tests {
     #[tokio::test]
     async fn deleting_an_assistant_takes_its_sessions_and_messages() {
         let pool = test_pool().await;
-        let assistant_id = create_assistant(&pool, "Throwaway", None, None, None, None)
+        let assistant_id = create_assistant(&pool, "Throwaway", None, None, None, None, true)
             .await
             .unwrap();
         let session_id = create_session(&pool, &assistant_id, None, None)
@@ -2128,7 +2165,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(create_assistant(&pool, "   ", None, None, None, None)
+        assert!(create_assistant(&pool, "   ", None, None, None, None, true)
             .await
             .is_err());
 

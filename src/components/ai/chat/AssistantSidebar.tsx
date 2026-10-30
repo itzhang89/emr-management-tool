@@ -60,7 +60,7 @@ export function AssistantSidebar({
   }, [assistants, sessions, filter]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-2 border-r pr-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 pr-1">
       <div className="flex items-center justify-between gap-1">
         <Button type="button" variant="ghost" size="sm" onClick={onAddAssistant}>
           <Plus className="mr-1 size-3.5" />

@@ -68,6 +68,7 @@ function assistant(overrides: Partial<ChatAssistant> = {}): ChatAssistant {
     defaultModelId: null,
     enabledTools: null,
     accent: "blue",
+    matchQuestionLanguage: true,
     sortOrder: 0,
     builtIn: true,
     createdAt: "2026-08-29T00:00:00Z",

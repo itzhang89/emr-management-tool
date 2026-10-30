@@ -908,6 +908,8 @@ export interface ChatAssistant {
   /** null means every MCP tool is available. */
   enabledTools?: string[] | null;
   accent?: string | null;
+  /** When true, replies match the language of the question. Defaults to true. */
+  matchQuestionLanguage: boolean;
   sortOrder: number;
   /** The seeded "EMR failure analysis" assistant, which cannot be deleted. */
   builtIn: boolean;
@@ -986,6 +988,8 @@ export interface CreateChatAssistantRequest {
   defaultModelId?: string;
   enabledTools?: string[];
   accent?: string;
+  /** Defaults to true when omitted. */
+  matchQuestionLanguage?: boolean;
 }
 
 /** Upsert the assistant that owns Chat sessions for one DBHub connection. */
@@ -1004,6 +1008,7 @@ export interface UpdateChatAssistantRequest {
   defaultModelId?: string;
   enabledTools?: string[] | null;
   accent?: string;
+  matchQuestionLanguage?: boolean;
   sortOrder?: number;
 }
 
