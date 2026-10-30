@@ -10,11 +10,12 @@ import {
   DialogHeader,
   DialogTitle
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AboutDialog } from "@/components/help/AboutDialog";
 import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
+import { UpdateAvailableIcon } from "@/components/icons/UpdateAvailableIcon";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useT, type Translator } from "@/i18n";
-import { t as translateNow } from "@/i18n/translate";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { formatModShortcut, getPageNavigationIndex, isAccountSwitchKey, isImeComposing, isPageCycleNextKey, isPageCyclePreviousKey, isShortcutsHelpKey, isSidebarToggleKey } from "@/lib/keyboardShortcut";
@@ -26,7 +27,7 @@ import { OVERVIEW_TAB } from "@/pages/DbHubPage";
 import type { LogTabIntent } from "@/pages/JobHistoryPage";
 import { DbHubSubNav } from "@/components/layout/DbHubSubNav";
 import { PageLoader } from "@/components/layout/PageLoader";
-import { appUpdater } from "@/services/appUpdater";
+import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
 import { getReleaseInfo } from "@/services/releaseInfo";
 import { bindHelpMenuEvents } from "@/services/helpMenuEvents";
 import { getAdjacentPageId, getNavigationIndex, getPageIdByNavigationIndex } from "@/services/pageNavigation";
@@ -49,6 +50,8 @@ const AiAssistantPage = lazy(() =>
   import("@/pages/AiAssistantPage").then((module) => ({ default: module.AiAssistantPage }))
 );
 
+type AvailableUpdate = Extract<UpdateCheckResult, { status: "available" }>;
+
 export function AppShell() {
   const t = useT();
   const releaseInfo = getReleaseInfo();
@@ -58,6 +61,8 @@ export function AppShell() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
+  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   // Which DBHub tab the sidebar's second level points at. Undefined unless the
   // user navigated there through the sub-nav; the page keeps its own state
   // otherwise.
@@ -167,15 +172,36 @@ export function AppShell() {
     };
   }, []);
 
+  // Check once after launch; only surface a button when a newer build exists.
   useEffect(() => {
-    void appUpdater.checkAndInstallSilently({
-      onInstalled: () => {
-        // Fires long after mount, so it reads the locale at fire time instead of
-        // closing over the mount-time translator.
-        toast.success(translateNow("Update installed. Restart the app to use the new version."));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await appUpdater.checkForUpdate();
+        if (cancelled || result.status !== "available") return;
+        setAvailableUpdate(result);
+      } catch {
+        // Startup checks stay silent — the user can still update from About.
       }
-    });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const installAvailableUpdate = useCallback(async () => {
+    if (!availableUpdate || installingUpdate) return;
+    setInstallingUpdate(true);
+    try {
+      await availableUpdate.install();
+      setAvailableUpdate(null);
+      toast.success(t("Update installed. Restart the app to use the new version."));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to install update.");
+    } finally {
+      setInstallingUpdate(false);
+    }
+  }, [availableUpdate, installingUpdate, t]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -406,17 +432,38 @@ export function AppShell() {
           )}
           {/* Which build is on screen matters most when it is not a stable one,
               so the channel is named whenever it differs. The title carries it
-              either way. */}
-          {!sidebarCollapsed ? (
-            <p
-              className="px-3 pt-2 text-[11px] leading-4 text-muted-foreground"
-              title={`${t("Version:")} ${releaseInfo.version} · ${t(releaseInfo.channelLabel)}`}
-              data-testid="sidebar-version"
-            >
-              {t("Version:")} {releaseInfo.version}
-              {releaseInfo.channelLabel === "Stable" ? null : ` · ${t(releaseInfo.channelLabel)}`}
-            </p>
-          ) : null}
+              either way. The update control stays visible until the user installs. */}
+          {sidebarCollapsed ? (
+            availableUpdate ? (
+              <div className="flex justify-center pt-2">
+                <UpdateAvailableButton
+                  version={availableUpdate.version}
+                  installing={installingUpdate}
+                  onInstall={installAvailableUpdate}
+                  t={t}
+                />
+              </div>
+            ) : null
+          ) : (
+            <div className="flex items-center gap-1 px-3 pt-2">
+              <p
+                className="min-w-0 flex-1 truncate text-[11px] leading-4 text-muted-foreground"
+                title={`${t("Version:")} ${releaseInfo.version} · ${t(releaseInfo.channelLabel)}`}
+                data-testid="sidebar-version"
+              >
+                {t("Version:")} {releaseInfo.version}
+                {releaseInfo.channelLabel === "Stable" ? null : ` · ${t(releaseInfo.channelLabel)}`}
+              </p>
+              {availableUpdate ? (
+                <UpdateAvailableButton
+                  version={availableUpdate.version}
+                  installing={installingUpdate}
+                  onInstall={installAvailableUpdate}
+                  t={t}
+                />
+              ) : null}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -500,6 +547,44 @@ export function AppShell() {
       <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
       <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
     </div>
+  );
+}
+
+function UpdateAvailableButton({
+  version,
+  installing,
+  onInstall,
+  t
+}: {
+  version: string;
+  installing: boolean;
+  onInstall: () => void;
+  t: Translator;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-6 shrink-0"
+          disabled={installing}
+          aria-label={
+            installing
+              ? t("Installing...")
+              : t("Version {version} is available.", { version })
+          }
+          data-testid="sidebar-update-button"
+          onClick={onInstall}
+        >
+          <UpdateAvailableIcon className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {installing ? t("Installing...") : t("Version {version} is available.", { version })}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

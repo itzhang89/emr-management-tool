@@ -5,7 +5,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SettingsPage } from "./SettingsPage";
 
 const mocks = vi.hoisted(() => ({
-  checkForUpdate: vi.fn(),
   toastInfo: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
@@ -57,10 +56,6 @@ const mocks = vi.hoisted(() => ({
       canImport: true
     }
   ]
-}));
-
-vi.mock("@/services/appUpdater", () => ({
-  appUpdater: { checkForUpdate: mocks.checkForUpdate }
 }));
 
 const release = vi.hoisted(() => ({ canUseAutoUpdater: false }));
@@ -126,54 +121,12 @@ describe("SettingsPage updates", () => {
     });
   });
 
-  it("shows why automatic updates are unavailable for the current build", async () => {
-    const user = userEvent.setup();
-    mocks.checkForUpdate.mockResolvedValue({
-      status: "unavailable",
-      reason: "Automatic updates are currently available only for Windows stable builds."
-    });
-
-    renderSettingsPage();
-    await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
-
-    expect(mocks.checkForUpdate).toHaveBeenCalledOnce();
-    expect(mocks.toastInfo).toHaveBeenCalledWith("Automatic updates are currently available only for Windows stable builds.");
-  });
-
-  it("renders update guidance as a tooltip on a single update button", async () => {
-    const user = userEvent.setup();
-    mocks.checkForUpdate.mockResolvedValue({ status: "no-update" });
-
+  it("shows the running version without a check-for-updates control", () => {
     renderSettingsPage();
 
-    expect(screen.queryByRole("heading", { name: "Application Updates" })).not.toBeInTheDocument();
     expect(screen.getByText("v0.1.0")).toBeInTheDocument();
-
-    await user.hover(screen.getByRole("button", { name: /Check for Updates/i }));
-
-    expect(await screen.findAllByText("Stable · Manual updates only")).not.toHaveLength(0);
-  });
-
-  it("lets the user install an available update from the update button", async () => {
-    const user = userEvent.setup();
-    const install = vi.fn().mockResolvedValue(undefined);
-    mocks.checkForUpdate.mockResolvedValue({
-      status: "available",
-      version: "0.2.0",
-      notes: "Bug fixes",
-      install
-    });
-
-    renderSettingsPage();
-    await user.click(screen.getByRole("button", { name: /Check for Updates/i }));
-
-    expect(screen.getByText(/v0\.1\.0/)).toBeInTheDocument();
-    expect(screen.getByText("v0.2.0")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Install 0.2.0/i }));
-
-    expect(install).toHaveBeenCalledOnce();
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("Update installed. Restart the app to use the new version.");
+    expect(screen.queryByRole("button", { name: /Check for Updates/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Automatic updates" })).not.toBeInTheDocument();
   });
 
   it("opens the add-account dialog from the + button with an empty region by default", async () => {
@@ -328,39 +281,6 @@ describe("SettingsPage updates", () => {
     expect(within(dialog).getByText(/This profile has no region/i)).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("AKIANONE")).toBeInTheDocument();
     expect(within(dialog).getByPlaceholderText("eu-central-1")).toHaveValue("");
-  });
-
-  describe("automatic updates toggle", () => {
-    beforeEach(() => {
-      release.canUseAutoUpdater = true;
-    });
-
-    it("defaults automatic updates to on and persists toggling it off", async () => {
-      const user = userEvent.setup();
-      renderSettingsPage();
-
-      const toggle = screen.getByRole("switch", { name: "Automatic updates" });
-      expect(toggle).toBeChecked();
-
-      await user.click(toggle);
-
-      expect(toggle).not.toBeChecked();
-      expect(window.localStorage.getItem("emr-eks:auto-update")).toBe("false");
-    });
-
-    it("reflects a previously disabled preference on mount", () => {
-      window.localStorage.setItem("emr-eks:auto-update", "false");
-      renderSettingsPage();
-
-      expect(screen.getByRole("switch", { name: "Automatic updates" })).not.toBeChecked();
-    });
-
-    it("disables the toggle when the current build cannot auto-update", () => {
-      release.canUseAutoUpdater = false;
-      renderSettingsPage();
-
-      expect(screen.getByRole("switch", { name: "Automatic updates" })).toBeDisabled();
-    });
   });
 
   describe("beta updates toggle", () => {

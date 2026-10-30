@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Download, FileDown, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CheckCircle2, FileDown, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,6 @@ import {
   useSetActiveAwsAccount
 } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
-import { appUpdater, type UpdateCheckResult } from "@/services/appUpdater";
-import { readAutoUpdatePreference, writeAutoUpdatePreference } from "@/services/autoUpdatePreferences";
 import { readBetaUpdatePreference, writeBetaUpdatePreference } from "@/services/updateChannelPreferences";
 import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
 import type { CredentialFormValues } from "@/services/credentialValidation";
@@ -42,16 +40,8 @@ type AccountDialogState =
 export function SettingsPage() {
   const t = useT();
   const releaseInfo = getReleaseInfo();
-  const [availableUpdate, setAvailableUpdate] = useState<Extract<UpdateCheckResult, { status: "available" }> | null>(null);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [installingUpdate, setInstallingUpdate] = useState(false);
-  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(() => readAutoUpdatePreference());
   const [betaUpdatesEnabled, setBetaUpdatesEnabled] = useState(() => readBetaUpdatePreference());
   const autoUpdateAvailable = releaseInfo.canUseAutoUpdater;
-
-  useEffect(() => {
-    writeAutoUpdatePreference(autoUpdateEnabled);
-  }, [autoUpdateEnabled]);
 
   useEffect(() => {
     writeBetaUpdatePreference(betaUpdatesEnabled);
@@ -112,48 +102,6 @@ export function SettingsPage() {
     );
   };
 
-  const checkForUpdates = async () => {
-    setCheckingUpdate(true);
-    setAvailableUpdate(null);
-    try {
-      const result = await appUpdater.checkForUpdate();
-      if (result.status === "unavailable") {
-        toast.info(result.reason);
-      } else if (result.status === "no-update") {
-        toast.success("You are already using the latest version.");
-      } else {
-        setAvailableUpdate(result);
-        toast.success(`Version ${result.version} is available.`);
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "Failed to check for updates."));
-    } finally {
-      setCheckingUpdate(false);
-    }
-  };
-
-  const installUpdate = async () => {
-    if (!availableUpdate) return;
-
-    setInstallingUpdate(true);
-    try {
-      await availableUpdate.install();
-      toast.success("Update installed. Restart the app to use the new version.");
-    } catch (error) {
-      toast.error(errorMessage(error, "Failed to install update."));
-    } finally {
-      setInstallingUpdate(false);
-    }
-  };
-  const updateButtonLabel = availableUpdate
-    ? installingUpdate
-      ? "Installing..."
-      : `Install ${availableUpdate.version}`
-    : checkingUpdate
-      ? "Checking..."
-      : "Check for Updates";
-  const updateTooltip = `${releaseInfo.channelLabel} · ${releaseInfo.canUseAutoUpdater ? "Automatic updates enabled" : "Manual updates only"}`;
-
   const activateAccount = (account: AwsAccountSummary) => {
     if (account.isActive || setActiveAccount.isPending) return;
     setActiveAccount.mutate(account.id, {
@@ -172,85 +120,37 @@ export function SettingsPage() {
             <Separator orientation="vertical" className="h-5" />
             <span className="text-sm font-medium text-muted-foreground" aria-live="polite">
               v{releaseInfo.version}
-              {availableUpdate ? (
-                <>
-                  {" → "}
-                  <span className="text-foreground">v{availableUpdate.version}</span>
-                </>
-              ) : null}
             </span>
             {releaseInfo.isDevelopment ? <Badge variant="secondary">Development</Badge> : null}
           </>
         }
         actions={
-          <div className="flex flex-col items-end gap-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={checkingUpdate || installingUpdate}
-                  onClick={availableUpdate ? installUpdate : checkForUpdates}
-                >
-                  {availableUpdate ? <Download data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-                  {updateButtonLabel}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{updateTooltip}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <label
-                  htmlFor="auto-update-toggle"
-                  className={
-                    autoUpdateAvailable
-                      ? "flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
-                      : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
-                  }
-                >
-                  <span>{t("Automatic updates")}</span>
-                  <Switch
-                    id="auto-update-toggle"
-                    checked={autoUpdateEnabled}
-                    onCheckedChange={setAutoUpdateEnabled}
-                    disabled={!autoUpdateAvailable}
-                    aria-label={t("Automatic updates")}
-                  />
-                </label>
-              </TooltipTrigger>
-              <TooltipContent>
-                {autoUpdateAvailable
-                  ? t("Automatically check for and install updates.")
-                  : t("Automatic updates are unavailable for this build.")}
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <label
-                  htmlFor="beta-update-toggle"
-                  className={
-                    autoUpdateAvailable
-                      ? "flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
-                      : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
-                  }
-                >
-                  <span>{t("Beta updates")}</span>
-                  <Switch
-                    id="beta-update-toggle"
-                    checked={betaUpdatesEnabled}
-                    onCheckedChange={setBetaUpdatesEnabled}
-                    disabled={!autoUpdateAvailable}
-                    aria-label={t("Beta updates")}
-                  />
-                </label>
-              </TooltipTrigger>
-              <TooltipContent>
-                {betaUpdatesEnabled
-                  ? t("On: prereleases of the next version are offered as soon as they are published.")
-                  : t("Off: only stable releases are offered. Turn on to preview the next version early.")}
-              </TooltipContent>
-            </Tooltip>
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <label
+                htmlFor="beta-update-toggle"
+                className={
+                  autoUpdateAvailable
+                    ? "flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+                    : "flex cursor-not-allowed items-center gap-2 text-xs text-muted-foreground/60"
+                }
+              >
+                <span>{t("Beta updates")}</span>
+                <Switch
+                  id="beta-update-toggle"
+                  checked={betaUpdatesEnabled}
+                  onCheckedChange={setBetaUpdatesEnabled}
+                  disabled={!autoUpdateAvailable}
+                  aria-label={t("Beta updates")}
+                />
+              </label>
+            </TooltipTrigger>
+            <TooltipContent>
+              {betaUpdatesEnabled
+                ? t("On: prereleases of the next version are offered as soon as they are published.")
+                : t("Off: only stable releases are offered. Turn on to preview the next version early.")}
+            </TooltipContent>
+          </Tooltip>
         }
       />
 

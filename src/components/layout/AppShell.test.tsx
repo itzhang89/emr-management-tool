@@ -142,10 +142,14 @@ vi.mock("@/services/emrService", () => ({
   }
 }));
 
+const updaterMocks = vi.hoisted(() => ({
+  checkForUpdate: vi.fn().mockResolvedValue({ status: "no-update" }),
+  install: vi.fn().mockResolvedValue(undefined)
+}));
+
 vi.mock("@/services/appUpdater", () => ({
   appUpdater: {
-    checkForUpdate: vi.fn(),
-    checkAndInstallSilently: vi.fn().mockResolvedValue("skipped")
+    checkForUpdate: updaterMocks.checkForUpdate
   }
 }));
 
@@ -179,6 +183,8 @@ vi.mock("@/hooks/useLogs", () => ({
 describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    updaterMocks.checkForUpdate.mockResolvedValue({ status: "no-update" });
+    updaterMocks.install.mockResolvedValue(undefined);
     setActiveAccountMutate.mockImplementation((_accountId: string, options?: { onSuccess?: () => void }) => {
       options?.onSuccess?.();
     });
@@ -473,6 +479,37 @@ describe("AppShell", () => {
     // reports — showing it here means a tester can tell which build they are on
     // without leaving the page they are on.
     expect(screen.getByTestId("sidebar-version")).toHaveTextContent(/Version:/);
+  });
+
+  it("checks for updates on launch and only shows the update button when one is available", async () => {
+    const user = userEvent.setup();
+    updaterMocks.checkForUpdate.mockResolvedValue({
+      status: "available",
+      version: "0.2.0",
+      install: updaterMocks.install
+    });
+
+    renderAppShell(new QueryClient());
+
+    const updateButton = await screen.findByTestId("sidebar-update-button");
+    expect(updaterMocks.checkForUpdate).toHaveBeenCalledOnce();
+
+    await user.hover(updateButton);
+    expect(await screen.findAllByText("Version 0.2.0 is available.")).not.toHaveLength(0);
+
+    await user.click(updateButton);
+    expect(updaterMocks.install).toHaveBeenCalledOnce();
+  });
+
+  it("hides the sidebar update button when no newer version exists", async () => {
+    updaterMocks.checkForUpdate.mockResolvedValue({ status: "no-update" });
+
+    renderAppShell(new QueryClient());
+
+    await waitFor(() => {
+      expect(updaterMocks.checkForUpdate).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("sidebar-update-button")).not.toBeInTheDocument();
   });
 
   it("cycles pages with bracket shortcuts", async () => {
