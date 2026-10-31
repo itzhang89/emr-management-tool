@@ -310,7 +310,8 @@ fn tool_description_for(connection: &DbConnection, kind: &str, database: &str) -
     };
     let mode = match effective {
         DbReadOnlyPolicy::Observer => {
-            "Read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN. Writes are refused."
+            "Read-only: SELECT/SHOW/DESCRIBE/EXPLAIN, plus CALL/EXEC of \
+             sp_get* procedures. Other writes and routines are refused."
         }
         DbReadOnlyPolicy::Confirm => {
             "Reads run freely. Statements that change data return needsConfirmation \

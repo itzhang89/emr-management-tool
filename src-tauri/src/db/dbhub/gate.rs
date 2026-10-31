@@ -703,6 +703,8 @@ const VERB_TIERS: &[(&str, StatementTier)] = &[
     // routine that only reads is worth being able to call.
     ("CALL", StatementTier::Confirm),
     ("EXECUTE", StatementTier::Confirm),
+    // SQL Server's short form of EXECUTE — same tier, same routine extraction.
+    ("EXEC", StatementTier::Confirm),
     ("DO", StatementTier::Confirm),
     // Structure, permissions, session, and `INTO` — which is what turns a
     // SELECT into a write. All refused: none has a bounded form worth
@@ -764,22 +766,48 @@ fn routine_after_verb(cleaned: &str) -> Option<String> {
         return None;
     }
 
-    if chars[index] == '`' {
-        let end = skip_quoted(&chars, index, '`');
-        // `skip_quoted` lands past the closing backtick, so the name is what it
-        // wrapped; an unterminated quote yielded the rest of the statement,
-        // which is as much of a name as there is.
-        let inner: String = chars[index + 1..end.saturating_sub(1).max(index + 1)]
-            .iter()
-            .collect();
-        return (!inner.is_empty()).then_some(inner);
-    }
+    // Schema-qualified calls (`dbo.sp_get_x`, `catalog.schema.sp_get_x`) keep
+    // only the last identifier — that is what a name-keyed rule and the
+    // read-like prefix list match on.
+    let mut last: Option<String> = None;
+    loop {
+        if index >= chars.len() {
+            break;
+        }
+        let part = if chars[index] == '`' {
+            let end = skip_quoted(&chars, index, '`');
+            let inner: String = chars[index + 1..end.saturating_sub(1).max(index + 1)]
+                .iter()
+                .collect();
+            index = end;
+            if inner.is_empty() {
+                break;
+            }
+            inner
+        } else if is_word_char(chars[index]) {
+            let start = index;
+            while index < chars.len() && is_word_char(chars[index]) {
+                index += 1;
+            }
+            chars[start..index].iter().collect()
+        } else {
+            break;
+        };
+        last = Some(part);
 
-    let start = index;
-    while index < chars.len() && is_word_char(chars[index]) {
-        index += 1;
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index < chars.len() && chars[index] == '.' {
+            index += 1;
+            while index < chars.len() && chars[index].is_whitespace() {
+                index += 1;
+            }
+            continue;
+        }
+        break;
     }
-    (start < index).then(|| chars[start..index].iter().collect())
+    last
 }
 
 /// Classify one statement: its tier, and the token that decided it.
@@ -811,9 +839,19 @@ fn classify_single(statement: &str) -> Classification {
 
     // What a routine call names, for a name-keyed override to match. Recorded
     // only for routines: a `DROP TABLE sp_x` mentions the same name and must
-    // never be re-tiered by it.
-    if matches!(verb.as_str(), "CALL" | "EXECUTE" | "DO") {
+    // never be re-tiered by it. Read-like prefixes (`sp_get…`) drop to Free so
+    // Observer / AI free-read paths can run them without opening writes.
+    if matches!(verb.as_str(), "CALL" | "EXECUTE" | "EXEC" | "DO") {
         classification.routine = routine_after_verb(&cleaned);
+        if classification
+            .routine
+            .as_deref()
+            .is_some_and(super::sql::is_read_like_routine)
+        {
+            return classification
+                .retiered(StatementTier::Free)
+                .with_matched(String::new());
+        }
     }
 
     // The line between "confirm this" and "refuse this" for a row change: does
@@ -1472,6 +1510,40 @@ mod tests {
         ] {
             assert_eq!(classify(sql).tier, StatementTier::Confirm, "{sql}");
         }
+    }
+
+    #[test]
+    fn sp_get_routine_calls_are_free_reads() {
+        // Read-shaped procedure names are the exception to "CALL is Confirm":
+        // Observer AI and a read-only human session may run them as freely as
+        // SELECT. Anything else stays Confirm.
+        for sql in [
+            "CALL sp_get_orders()",
+            "CALL SP_GET_customer(1)",
+            "CALL dbo.sp_get_orders()",
+            "EXEC sp_get_orders",
+            "EXECUTE sp_get_orders",
+        ] {
+            let class = classify(sql);
+            assert_eq!(class.tier, StatementTier::Free, "{sql}");
+            assert!(
+                class
+                    .routine
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("sp_get_orders")
+                        || name.eq_ignore_ascii_case("sp_get_customer")),
+                "routine for {sql}: {:?}",
+                class.routine
+            );
+            assert_eq!(
+                GatePolicy::read_only(GateActor::Ai).decide(class.clone()).action,
+                GateAction::Allow,
+                "Observer AI may run {sql}"
+            );
+        }
+
+        assert_eq!(classify("CALL sp_rebuild_index()").tier, StatementTier::Confirm);
+        assert_eq!(classify("CALL get_orders()").tier, StatementTier::Confirm);
     }
 
     #[test]

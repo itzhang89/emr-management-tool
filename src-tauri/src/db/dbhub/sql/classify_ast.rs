@@ -70,11 +70,20 @@ pub fn classify_statement(statement: &Statement) -> Option<AstClass> {
 
         Statement::Call(function) => {
             let name = object_name_last(&function.name);
-            AstClass::of(StatementTier::Confirm, "CALL", "CALL").with_routine(name)
+            classify_routine_call("CALL", name)
         }
 
-        Statement::Execute { .. } => {
-            AstClass::of(StatementTier::Confirm, "EXECUTE", "EXECUTE")
+        Statement::Execute {
+            name,
+            immediate,
+            ..
+        } => {
+            // Dynamic SQL is opaque; a named procedure can still be a read.
+            if *immediate {
+                AstClass::of(StatementTier::Confirm, "EXECUTE", "EXECUTE")
+            } else {
+                classify_routine_call("EXECUTE", name.as_ref().and_then(object_name_last))
+            }
         }
 
         Statement::ShowCreate { .. }
@@ -238,6 +247,30 @@ fn object_name_last(name: &sqlparser::ast::ObjectName) -> Option<String> {
     })
 }
 
+/// Routine name prefixes treated as reads when called.
+///
+/// A procedure's body is invisible to the classifier, so `CALL`/`EXEC` defaults
+/// to Confirm. Names that begin with one of these prefixes are the known
+/// read-shaped exception — `sp_get_*` and friends — so Observer AI and a
+/// human on a read-only connection can run them without opening writes.
+const FREE_ROUTINE_PREFIXES: &[&str] = &["sp_get"];
+
+/// Whether this routine name is treated as a free read when called.
+pub fn is_read_like_routine(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    FREE_ROUTINE_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+fn classify_routine_call(verb: &str, routine: Option<String>) -> AstClass {
+    if routine.as_deref().is_some_and(is_read_like_routine) {
+        AstClass::free(verb).with_routine(routine)
+    } else {
+        AstClass::of(StatementTier::Confirm, verb, verb).with_routine(routine)
+    }
+}
+
 /// Whether a statement may have changed what the catalogue lists.
 pub fn statement_changes_schema(statement: &Statement) -> bool {
     matches!(
@@ -324,5 +357,15 @@ mod tests {
         let class = classify_sql("SELECT * INTO orders_backup FROM orders");
         assert_eq!(class.tier, StatementTier::Refuse);
         assert_eq!(class.matched, "INTO");
+    }
+
+    #[test]
+    fn sp_get_calls_are_free_reads() {
+        let class = classify_sql("CALL sp_get_orders(1)");
+        assert_eq!(class.tier, StatementTier::Free);
+        assert_eq!(class.routine.as_deref(), Some("sp_get_orders"));
+
+        let other = classify_sql("CALL sp_rebuild_index()");
+        assert_eq!(other.tier, StatementTier::Confirm);
     }
 }
