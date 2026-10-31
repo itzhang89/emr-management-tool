@@ -7,6 +7,7 @@ import type {
   DbConnectionUpdateInput,
   DbQueryRequest,
   DbQueryCountRequest,
+  ParseDbSqlRequest,
   GateLadderEntry,
   GateOverrides,
   GateRefusal,
@@ -42,6 +43,7 @@ export const dbHubService = {
   runQuery: (request: DbQueryRequest) => tauriClient.runDbQuery(request),
   countQuery: (request: DbQueryCountRequest) => tauriClient.countDbQuery(request),
   cancelQuery: (requestId: string) => tauriClient.cancelDbQuery(requestId),
+  parseSql: (request: ParseDbSqlRequest) => tauriClient.parseDbSql(request),
   refreshCatalog: (connectionId: string) => tauriClient.refreshDbCatalog(connectionId),
   listDatabases: (connectionId: string) => tauriClient.listDbDatabases(connectionId),
   listSchemas: (connectionId: string, database: string) =>
@@ -51,7 +53,9 @@ export const dbHubService = {
     database: string,
     schema: string,
     kinds: SchemaObjectKind[]
-  ) => tauriClient.listDbObjects(connectionId, database, schema, kinds)
+  ) => tauriClient.listDbObjects(connectionId, database, schema, kinds),
+  listColumns: (connectionId: string, database: string, schema: string, table: string) =>
+    tauriClient.listDbColumns(connectionId, database, schema, table)
 };
 
 export type DbHubService = typeof dbHubService;

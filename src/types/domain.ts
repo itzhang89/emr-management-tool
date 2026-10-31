@@ -1124,7 +1124,7 @@ export interface RedactTestResult {
 // --- DBHub: database connections and network profiles ----------------------
 
 /** What wire protocol a connection speaks. Yellowbrick rides Postgres wire. */
-export type DbConnectionKind = "mysql" | "postgres" | "yellowbrick";
+export type DbConnectionKind = "mysql" | "postgres" | "yellowbrick" | "sqlserver";
 
 /** How a connection authenticates — local keychain or AWS Secrets Manager. */
 export type DbAuthMode = "manual" | "aws_secret";
@@ -1132,10 +1132,10 @@ export type DbAuthMode = "manual" | "aws_secret";
 /**
  * How far the AI tools may go on a connection, once it is enabled for them.
  *
- * The field name is narrower than what it holds — `free` is not read-only — and
- * the rename lands with the UI that exposes the choice, because it takes the
- * column and three interfaces with it. Only `observer` is reachable today: the
- * other two are stored and read, but nothing offers them yet.
+ * The field name is narrower than what it holds — `free` is not read-only.
+ * `observer` refuses writes; `confirm` parks them for a one-click run in chat;
+ * `free` runs row changes the human gate would allow (DDL stays refused).
+ * Without `allowWrites`, every mode collapses to observer.
  */
 export type DbReadOnlyPolicy = "observer" | "confirm" | "free";
 
@@ -1437,6 +1437,37 @@ export interface DbQueryCountRequest {
 export interface DbQueryCount {
   count: number;
   durationMs: number;
+}
+
+/**
+ * Ask Rust to split a SQL script (and optionally resolve the caret).
+ * Offsets are CodeMirror UTF-16 document positions.
+ */
+export interface ParseDbSqlRequest {
+  sql: string;
+  /** Connection kind name (`mysql`, `postgres`, …); omit for generic. */
+  dialect?: string;
+  offset?: number;
+}
+
+export interface ParsedDbSqlStatement {
+  start: number;
+  end: number;
+  text: string;
+  parseOk: boolean;
+  parseError?: string;
+}
+
+export interface ParseDbSqlResult {
+  statements: ParsedDbSqlStatement[];
+  /** Index into `statements` for the caret, when an offset was supplied. */
+  atOffset?: number;
+}
+
+/** One column of a relation — what editor completion resolves. */
+export interface DbColumnEntry {
+  name: string;
+  dataType?: string;
 }
 
 /** One entry of the workspace catalog tree (database or table). */

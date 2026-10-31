@@ -1,12 +1,12 @@
 import { SQLDialect } from "@codemirror/lang-sql";
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { autocompletion } from "@codemirror/autocomplete";
-import { useMemo, useRef } from "react";
+import { forwardRef, useMemo, useRef } from "react";
 import { lineNumberToPosition, parseAthenaErrorLine } from "@/services/athenaSqlErrors";
 import { createSqlCompletion, type SqlCatalogContext } from "@/services/athenaSqlCompletion";
 import { analyzeSql, type SqlLintOptions } from "@/services/sqlLint";
 import { useT } from "@/i18n";
-import { SqlEditor } from "@/components/sql/SqlEditor";
+import { SqlEditor, type SqlEditorHandle } from "@/components/sql/SqlEditor";
 
 /**
  * The Athena SQL editor: the shared [`SqlEditor`] plus everything that is
@@ -71,27 +71,37 @@ function createExecutionErrorLinter(getError: () => { message?: string; sql?: st
   });
 }
 
-export function AthenaSqlEditor({
-  value,
-  onChange,
-  onRun,
-  onRunNewTab,
-  selectedDatabase,
-  catalogContext,
-  executionError,
-  className,
-  readOnly = false
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onRun?: (sql: string) => void;
-  onRunNewTab?: (sql: string) => void;
-  selectedDatabase?: string;
-  catalogContext: SqlCatalogContext;
-  executionError?: { message?: string; sql?: string };
-  className?: string;
-  readOnly?: boolean;
-}) {
+export const AthenaSqlEditor = forwardRef<
+  SqlEditorHandle,
+  {
+    value: string;
+    onChange: (value: string) => void;
+    onRun?: (sql: string) => void;
+    onRunNewTab?: (sql: string) => void;
+    onParseWarning?: (message: string) => void;
+    onEmptyRun?: () => void;
+    selectedDatabase?: string;
+    catalogContext: SqlCatalogContext;
+    executionError?: { message?: string; sql?: string };
+    className?: string;
+    readOnly?: boolean;
+  }
+>(function AthenaSqlEditor(
+  {
+    value,
+    onChange,
+    onRun,
+    onRunNewTab,
+    onParseWarning,
+    onEmptyRun,
+    selectedDatabase,
+    catalogContext,
+    executionError,
+    className,
+    readOnly = false
+  },
+  ref
+) {
   const t = useT();
   // Both sources read through refs, so the extensions only need rebuilding
   // when their inputs change — never to stay current between those changes.
@@ -125,10 +135,13 @@ export function AthenaSqlEditor({
 
   return (
     <SqlEditor
+      ref={ref}
       value={value}
       onChange={onChange}
       onRun={onRun}
       onRunNewTab={onRunNewTab}
+      onParseWarning={onParseWarning}
+      onEmptyRun={onEmptyRun}
       dialect={hiveDialect}
       placeholder={t("Write Athena SQL here…")}
       diagnostics={diagnostics}
@@ -137,4 +150,4 @@ export function AthenaSqlEditor({
       readOnly={readOnly}
     />
   );
-}
+});

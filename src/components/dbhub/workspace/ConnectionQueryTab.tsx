@@ -1,4 +1,11 @@
-import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   Braces,
   CalendarClock,
@@ -30,13 +37,20 @@ import {
   useRunDbQuery,
   useSetDbConnectionFlags
 } from "@/hooks/useDbHub";
-import { SqlEditor } from "@/components/sql/SqlEditor";
+import { SqlEditor, type SqlEditorHandle } from "@/components/sql/SqlEditor";
 import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
 import { nextQueryTitle } from "@/components/sql/QueryTabsPanel";
 import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
-import { MySQL, PostgreSQL } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL } from "@codemirror/lang-sql";
+import { autocompletion } from "@codemirror/autocomplete";
 import { ResultPane } from "@/components/sql/result/ResultPane";
+import {
+  createSqlCompletion,
+  GENERIC_SQL_KEYWORDS,
+  type SqlCatalogContext
+} from "@/services/athenaSqlCompletion";
+import { dbHubService } from "@/services/dbHubService";
 import { lastPageOffset, previousPageOffset } from "@/components/sql/result/resultPaging";
 import { orderedRows } from "@/components/sql/result/resultFilter";
 import { AiMark } from "@/components/sql/RunMarks";
@@ -160,6 +174,8 @@ export function ConnectionQueryTab({
   );
   const [catalogCollapsed, setCatalogCollapsed] = useState(false);
   const [catalogPaneWidth, setCatalogPaneWidth] = useState(240);
+  /** Per-editor handles so the toolbar Run uses the same resolve path as Mod-Enter. */
+  const editorHandlesRef = useRef(new Map<string, SqlEditorHandle>());
 
   // Rehydrate once per mount+account: switching AWS accounts swaps the cache
   // key space, so each account's drafts are restored independently. The tree
@@ -229,6 +245,68 @@ export function ConnectionQueryTab({
     : selectedSchema;
 
   const objects = useDbObjects(connection.id, selectedDatabase, activeSchema, objectKinds, active);
+
+  /**
+   * Catalog context for editor completion. MySQL qualifies as `database.table`;
+   * Postgres / Yellowbrick as `schema.table` once a database is selected — the
+   * completion source's "database" slot holds whichever qualifier that dialect
+   * uses, so the shared Athena UX works unchanged.
+   */
+  const catalogContext = useMemo((): SqlCatalogContext => {
+    const isMysql = connection.kind === "mysql";
+    const relationNames = (objects.data ?? [])
+      .filter((entry) => isRelation(entry.kind))
+      .map((entry) => entry.name);
+    const qualifierSelected = isMysql ? selectedDatabase : activeSchema || undefined;
+    return {
+      databases: isMysql
+        ? (databases.data ?? []).map((entry) => entry.name)
+        : schemaList.map((entry) => entry.name),
+      tables: relationNames,
+      selectedDatabase: qualifierSelected,
+      resolveTables: async (qualifier) => {
+        const database = isMysql ? qualifier : (selectedDatabase ?? "");
+        const schema = isMysql ? "" : qualifier;
+        if (!database && !isMysql) return [];
+        const entries = await dbHubService.listObjects(connection.id, database, schema, [
+          "table",
+          "view",
+          "materialized-view",
+          "foreign-table"
+        ]);
+        return entries.filter((entry) => isRelation(entry.kind)).map((entry) => entry.name);
+      },
+      resolveColumns: async (qualifier, table) => {
+        const database = isMysql ? qualifier : (selectedDatabase ?? "");
+        const schema = isMysql ? "" : qualifier;
+        if (!database && !isMysql) return [];
+        const columns = await dbHubService.listColumns(connection.id, database, schema, table);
+        return columns.map((column) => column.name);
+      }
+    };
+  }, [
+    connection.id,
+    connection.kind,
+    databases.data,
+    schemaList,
+    objects.data,
+    selectedDatabase,
+    activeSchema
+  ]);
+
+  const catalogContextRef = useRef(catalogContext);
+  catalogContextRef.current = catalogContext;
+
+  const completion = useMemo(
+    () =>
+      autocompletion({
+        activateOnTyping: true,
+        override: [createSqlCompletion(() => catalogContextRef.current, GENERIC_SQL_KEYWORDS)]
+      }),
+    // Rebuild when the tree selection changes so newly loaded tables appear.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [catalogContext]
+  );
 
   const activeQueryTab = useMemo(
     () => queryTabs.find((tab) => tab.id === activeQueryTabId) ?? queryTabs[0],
@@ -513,15 +591,45 @@ export function ConnectionQueryTab({
    * Which tab a run lands in: a plain run replaces the result on screen and a
    * run-in-new-tab gets a result of its own, both inside the editor that is
    * currently open.
+   *
+   * Without an explicit `statement`, the active editor resolves selection /
+   * statement-at-caret (same path as Mod-Enter). Passing SQL skips resolve —
+   * history / favourites / tree clicks already know what to run.
    */
   const handleRun = (statement?: string) => {
     if (!activeQueryTab) return;
-    void execute(statement ?? activeQueryTab.sql, activeQueryTab.id, { mode: "replace" });
+    if (statement !== undefined) {
+      void execute(statement, activeQueryTab.id, { mode: "replace" });
+      return;
+    }
+    void editorHandlesRef.current.get(activeQueryTab.id)?.requestRun(false);
   };
   const handleRunNewTab = (statement?: string) => {
     if (!activeQueryTab) return;
-    void execute(statement ?? activeQueryTab.sql, activeQueryTab.id, { mode: "new" });
+    if (statement !== undefined) {
+      void execute(statement, activeQueryTab.id, { mode: "new" });
+      return;
+    }
+    void editorHandlesRef.current.get(activeQueryTab.id)?.requestRun(true);
   };
+
+  const handleParseWarning = useCallback(
+    (message: string) => {
+      // Decision 5: human + writable → warn and still send; read-only leaves
+      // the gate to refuse unknowns without a toast that would look like a
+      // soft failure of the run itself.
+      if (!connection.allowWrites) return;
+      toast.warning(
+        t("SQL could not be fully parsed; running the original text."),
+        { description: message }
+      );
+    },
+    [connection.allowWrites, t]
+  );
+
+  const handleEmptyRun = useCallback(() => {
+    toast.message(t("No statement to run."));
+  }, [t]);
 
   /**
    * Open an editor of its own, and put the cursor in it.
@@ -935,11 +1043,19 @@ export function ConnectionQueryTab({
                  undo in one never reaches into another's text. */
               <SqlEditor
                 key={queryTab.id}
+                ref={(handle) => {
+                  if (handle) editorHandlesRef.current.set(queryTab.id, handle);
+                  else editorHandlesRef.current.delete(queryTab.id);
+                }}
                 className="h-full"
                 value={queryTab.sql}
                 onChange={(next) => patchQueryTab(queryTab.id, { sql: next })}
                 dialect={dialectFor(connection.kind)}
+                parseDialect={connection.kind}
+                completion={completion}
                 placeholder={t("Write {kind} SQL here…", { kind: connection.kind })}
+                onParseWarning={handleParseWarning}
+                onEmptyRun={handleEmptyRun}
                 onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
                 onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
               />
@@ -1114,7 +1230,9 @@ export function ConnectionQueryTab({
  * wire, so it reads as Postgres here the same way it does in the driver.
  */
 function dialectFor(kind: DbConnection["kind"]) {
-  return kind === "mysql" ? MySQL : PostgreSQL;
+  if (kind === "mysql") return MySQL;
+  if (kind === "sqlserver") return MSSQL;
+  return PostgreSQL;
 }
 
 /** The chord that shows and hides the catalog, shared with the Glue tab. */

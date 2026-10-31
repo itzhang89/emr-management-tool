@@ -92,7 +92,10 @@ import type {
   DbQueryRequest,
   DbQueryCount,
   DbQueryCountRequest,
+  ParseDbSqlRequest,
+  ParseDbSqlResult,
   DbCatalogEntry,
+  DbColumnEntry,
   SchemaObjectKind,
   SecretSummary,
   CreateSecretInput,
@@ -340,6 +343,7 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<DbQueryCount>("count_db_query", request),
     cancelDbQuery: (requestId: string) =>
       call<boolean>("cancel_db_query", { requestId }),
+    parseDbSql: (request: ParseDbSqlRequest) => call<ParseDbSqlResult>("parse_db_sql", request),
     refreshDbCatalog: (connectionId: string) =>
       call<void>("refresh_db_catalog", { connectionId }),
     listDbDatabases: (connectionId: string) =>
@@ -352,6 +356,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       schema: string,
       kinds: SchemaObjectKind[]
     ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds }),
+    listDbColumns: (connectionId: string, database: string, schema: string, table: string) =>
+      call<DbColumnEntry[]>("list_db_columns", { connectionId, database, schema, table }),
+    confirmAiDbSql: (confirmationId: string) =>
+      call<Record<string, unknown>>("confirm_ai_db_sql", { confirmationId }),
+    dismissAiDbSql: (confirmationId: string) =>
+      call<boolean>("dismiss_ai_db_sql", { confirmationId }),
     // AWS Secrets Manager (active-account scoped).
     listSecrets: () => call<SecretSummary[]>("list_secrets"),
     describeSecret: (secretId: string) => call<SecretSummary>("describe_secret", { secretId }),

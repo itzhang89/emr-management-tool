@@ -176,7 +176,16 @@ function relationCompletions(
   return [...databases, ...tables, ...qualified];
 }
 
-export function createSqlCompletion(getContext: () => SqlCatalogContext): CompletionSource {
+/**
+ * Catalog-driven SQL completion used by Athena and DBHub.
+ *
+ * `keywords` lets each dialect keep its own snippets; the table / column
+ * resolution path is shared so DBHub gets the same UX Athena already proved.
+ */
+export function createSqlCompletion(
+  getContext: () => SqlCatalogContext,
+  keywords: string[] = SQL_KEYWORDS
+): CompletionSource {
   return async (ctx: CompletionContext) => {
     const catalog = getContext();
     const doc = ctx.state.doc.toString();
@@ -283,7 +292,7 @@ export function createSqlCompletion(getContext: () => SqlCatalogContext): Comple
     return {
       from,
       options: [
-        ...toCompletions(filterByPrefix(SQL_KEYWORDS, token), "keyword"),
+        ...toCompletions(filterByPrefix(keywords, token), "keyword"),
         ...toCompletions(filterByPrefix(catalog.databases, token), "namespace"),
         ...(catalog.selectedDatabase
           ? toCompletions(filterByPrefix(catalog.tables, token), "variable")
@@ -293,6 +302,51 @@ export function createSqlCompletion(getContext: () => SqlCatalogContext): Comple
     };
   };
 }
+
+/** Generic SQL keywords for JDBC editors (MySQL / Postgres / Yellowbrick / SQL Server). */
+export const GENERIC_SQL_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "OUTER JOIN",
+  "CROSS JOIN",
+  "ON",
+  "AS",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "IS NULL",
+  "IS NOT NULL",
+  "DISTINCT",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "INSERT INTO",
+  "UPDATE",
+  "DELETE FROM",
+  "CREATE TABLE",
+  "DROP TABLE",
+  "ALTER TABLE",
+  "TRUNCATE",
+  "SHOW TABLES",
+  "SHOW DATABASES",
+  "DESCRIBE",
+  "EXPLAIN",
+  "CALL",
+  "WITH"
+];
 
 export function clearSqlCompletionCache() {
   tableCache.clear();

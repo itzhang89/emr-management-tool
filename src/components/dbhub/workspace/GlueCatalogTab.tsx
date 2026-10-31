@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { CatalogTree } from "@/components/glue/CatalogTree";
 import { AthenaQuerySettingsButton, AthenaQuerySettingsDialog, type AthenaQuerySettingsMode } from "@/components/glue/AthenaQuerySettingsDialog";
 import { AthenaSqlEditor } from "@/components/glue/AthenaSqlEditor";
+import type { SqlEditorHandle } from "@/components/sql/SqlEditor";
 import { AthenaResultPane, isRunning } from "@/components/glue/AthenaResultPane";
 import { DatabaseMetadataPanel } from "@/components/glue/DatabaseMetadataPanel";
 import { FavoriteNameDialog } from "@/components/glue/SqlQueryMenus";
@@ -180,6 +181,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const loadedResultsRef = useRef<Set<string>>(new Set());
   const restoredCatalogAccountRef = useRef<string | undefined>(undefined);
   const shownOutputErrorRef = useRef<string | undefined>(undefined);
+  const editorHandlesRef = useRef(new Map<string, SqlEditorHandle>());
 
   /**
    * The editor in front. Falling back to the first one is what lets the
@@ -718,12 +720,26 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   };
 
   const handleRunQuery = (sqlOverride?: string) => {
-    beginQueryRun(sqlOverride ?? activeQueryTab?.sql ?? "", "active");
+    if (sqlOverride !== undefined) {
+      beginQueryRun(sqlOverride, "active");
+      return;
+    }
+    if (!activeQueryTab) return;
+    void editorHandlesRef.current.get(activeQueryTab.id)?.requestRun(false);
   };
 
   const handleRunQueryInNewTab = (sqlOverride?: string) => {
-    beginQueryRun(sqlOverride ?? activeQueryTab?.sql ?? "", "new-tab");
+    if (sqlOverride !== undefined) {
+      beginQueryRun(sqlOverride, "new-tab");
+      return;
+    }
+    if (!activeQueryTab) return;
+    void editorHandlesRef.current.get(activeQueryTab.id)?.requestRun(true);
   };
+
+  const handleEmptyRun = useCallback(() => {
+    toast.message(t("No statement to run."));
+  }, [t]);
 
   const confirmLocationReminder = () => {
     if (locationReminderDontAsk) {
@@ -1065,11 +1081,16 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
                      undo in one never reaches into another's text. */
                   <AthenaSqlEditor
                     key={tab.id}
+                    ref={(handle) => {
+                      if (handle) editorHandlesRef.current.set(tab.id, handle);
+                      else editorHandlesRef.current.delete(tab.id);
+                    }}
                     className="h-full"
                     value={tab.sql}
                     onChange={(next) => patchQueryTab(tab.id, { sql: next })}
                     onRun={handleRunQuery}
                     onRunNewTab={handleRunQueryInNewTab}
+                    onEmptyRun={handleEmptyRun}
                     selectedDatabase={selectedDatabase}
                     catalogContext={sqlCatalogContext}
                     executionError={sqlExecutionError}

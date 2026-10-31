@@ -61,6 +61,19 @@ const listDbObjects = vi
     }
   );
 const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
+const parseDbSql = vi.fn().mockImplementation(async (request: { sql: string; offset?: number }) => {
+  // Minimal stand-in: one statement covering the trimmed document, caret always
+  // lands on it. Real span math lives in the Rust parser's own tests.
+  const trimmed = request.sql.trim();
+  const start = request.sql.indexOf(trimmed);
+  const end = start + trimmed.length;
+  return {
+    statements: trimmed
+      ? [{ start, end, text: trimmed, parseOk: true }]
+      : [],
+    atOffset: trimmed ? 0 : undefined
+  };
+});
 // Counting re-runs the statement, so it is asked for on its own and never
 // happens as a side effect of a run.
 const countDbQuery = vi.fn().mockResolvedValue({ count: 1, durationMs: 2 });
@@ -174,6 +187,7 @@ vi.mock("@/services/tauriClient", () => ({
     runDbQuery: (...args: unknown[]) => runDbQuery(...args),
     countDbQuery: (...args: unknown[]) => countDbQuery(...args),
     cancelDbQuery: (...args: unknown[]) => cancelDbQuery(...args),
+    parseDbSql: (...args: unknown[]) => parseDbSql(...args),
     refreshDbCatalog: (...args: unknown[]) => refreshDbCatalog(...args),
     setDbConnectionFlags: (...args: unknown[]) => setDbConnectionFlags(...args),
     saveTextFile: (...args: unknown[]) => saveTextFile(...args)

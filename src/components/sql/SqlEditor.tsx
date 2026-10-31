@@ -12,9 +12,19 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { sql, type SQLDialect } from "@codemirror/lang-sql";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { useEffect, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef
+} from "react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import {
+  resolveExecutableSql,
+  type ExecutableSql
+} from "@/services/resolveExecutableSql";
 
 /**
  * The SQL editor every workspace shares: CodeMirror with the app's theme,
@@ -26,6 +36,11 @@ import { cn } from "@/lib/utils";
  * rather than a degraded copy of Athena's. Both are configured through the
  * optional `diagnostics` / `completion` extensions, which are only compiled
  * when supplied.
+ *
+ * Run (Mod-Enter) resolves the executable statement through
+ * [`resolveExecutableSql`]: a non-empty selection wins; otherwise the caret's
+ * statement is selected and run. The toolbar reaches the same path via
+ * [`SqlEditorHandle.requestRun`].
  */
 
 const sqlHighlightStyle = HighlightStyle.define([
@@ -92,38 +107,57 @@ const editorTheme = EditorView.theme({
   }
 });
 
-export function SqlEditor({
-  value,
-  onChange,
-  onRun,
-  onRunNewTab,
-  dialect,
-  placeholder,
-  diagnostics,
-  completion,
-  className,
-  readOnly = false,
-  ariaLabel
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onRun?: (sql: string) => void;
-  onRunNewTab?: (sql: string) => void;
-  dialect: SQLDialect;
-  placeholder?: string;
-  /** Linters and gutters for this dialect. Omitted → nothing is compiled. */
-  diagnostics?: Extension;
-  /** A completion source for this dialect. Omitted → nothing is compiled. */
-  completion?: Extension;
-  className?: string;
-  readOnly?: boolean;
-  /**
-   * The editor is a contenteditable, not a form control: without an explicit
-   * content attribute it has no accessible name, and `getByLabelText` on it
-   * stops resolving.
-   */
-  ariaLabel?: string;
-}) {
+export type SqlEditorHandle = {
+  /** Resolve selection / statement-at-caret and invoke onRun / onRunNewTab. */
+  requestRun: (openNewTab?: boolean) => Promise<void>;
+};
+
+export const SqlEditor = forwardRef<
+  SqlEditorHandle,
+  {
+    value: string;
+    onChange: (value: string) => void;
+    onRun?: (sql: string) => void;
+    onRunNewTab?: (sql: string) => void;
+    /**
+     * Connection kind for the Rust parser (`mysql`, `postgres`, …). When
+     * omitted the generic dialect is used (Athena / Glue).
+     */
+    parseDialect?: string;
+    /**
+     * Fired when the statement under the caret did not fully parse. The
+     * workspace decides whether to warn (human + writable) or stay quiet.
+     */
+    onParseWarning?: (message: string) => void;
+    /** Fired when Run finds nothing executable. */
+    onEmptyRun?: () => void;
+    dialect: SQLDialect;
+    placeholder?: string;
+    diagnostics?: Extension;
+    completion?: Extension;
+    className?: string;
+    readOnly?: boolean;
+    ariaLabel?: string;
+  }
+>(function SqlEditor(
+  {
+    value,
+    onChange,
+    onRun,
+    onRunNewTab,
+    parseDialect,
+    onParseWarning,
+    onEmptyRun,
+    dialect,
+    placeholder,
+    diagnostics,
+    completion,
+    className,
+    readOnly = false,
+    ariaLabel
+  },
+  ref
+) {
   const t = useT();
   const placeholderText = placeholder ?? t("Write SQL here…");
   const ariaLabelText = ariaLabel ?? t("SQL editor");
@@ -132,10 +166,17 @@ export function SqlEditor({
   const onChangeRef = useRef(onChange);
   const onRunRef = useRef(onRun);
   const onRunNewTabRef = useRef(onRunNewTab);
+  const parseDialectRef = useRef(parseDialect);
+  const onParseWarningRef = useRef(onParseWarning);
+  const onEmptyRunRef = useRef(onEmptyRun);
+  const runningRef = useRef(false);
 
   onChangeRef.current = onChange;
   onRunRef.current = onRun;
   onRunNewTabRef.current = onRunNewTab;
+  parseDialectRef.current = parseDialect;
+  onParseWarningRef.current = onParseWarning;
+  onEmptyRunRef.current = onEmptyRun;
 
   const compartments = useMemo(
     () => ({
@@ -146,16 +187,69 @@ export function SqlEditor({
     []
   );
 
+  const applyResolved = (view: EditorView, resolved: ExecutableSql, openNewTab: boolean) => {
+    if (resolved.select) {
+      view.dispatch({
+        selection: {
+          anchor: resolved.select.from,
+          head: resolved.select.to
+        },
+        scrollIntoView: true
+      });
+    }
+    if (!resolved.parseOk) {
+      onParseWarningRef.current?.(
+        resolved.parseError ?? "SQL could not be fully parsed."
+      );
+    }
+    if (openNewTab) {
+      onRunNewTabRef.current?.(resolved.sql);
+    } else {
+      onRunRef.current?.(resolved.sql);
+    }
+  };
+
+  const runFromView = async (view: EditorView, openNewTab: boolean) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    try {
+      const selection = view.state.selection.main;
+      const resolved = await resolveExecutableSql({
+        doc: view.state.doc.toString(),
+        offset: selection.head,
+        selectionFrom: selection.from,
+        selectionTo: selection.to,
+        dialect: parseDialectRef.current
+      });
+      if (!resolved) {
+        onEmptyRunRef.current?.();
+        return;
+      }
+      applyResolved(view, resolved, openNewTab);
+    } finally {
+      runningRef.current = false;
+    }
+  };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestRun: async (openNewTab = false) => {
+        const view = viewRef.current;
+        if (!view) return;
+        await runFromView(view, openNewTab);
+      }
+    }),
+    // runFromView closes over refs; identity is stable for the handle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
   useEffect(() => {
     if (!containerRef.current) return;
 
     const runQuery = (view: EditorView, openNewTab: boolean) => {
-      const sql = view.state.doc.toString();
-      if (openNewTab) {
-        onRunNewTabRef.current?.(sql);
-      } else {
-        onRunRef.current?.(sql);
-      }
+      void runFromView(view, openNewTab);
       return true;
     };
 
@@ -188,8 +282,6 @@ export function SqlEditor({
       syntaxHighlighting(sqlHighlightStyle),
       tooltips({ parent: document.body }),
       editorTheme,
-      // Filled by the effects below when the caller supplies them; an empty
-      // compartment costs nothing and keeps the reconfigure path uniform.
       compartments.diagnostics.of([]),
       compartments.completion.of([]),
       compartments.readOnly.of(EditorState.readOnly.of(readOnly)),
@@ -212,8 +304,6 @@ export function SqlEditor({
       view.destroy();
       viewRef.current = null;
     };
-    // The editor is built once; dialect, placeholder and readOnly arrive
-    // through the compartments below or are fixed for a workspace's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compartments]);
 
@@ -254,4 +344,4 @@ export function SqlEditor({
       )}
     />
   );
-}
+});
