@@ -5,6 +5,7 @@ use crate::models::{
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 pub struct AppState {
     pub settings: Mutex<AwsSettings>,
@@ -24,6 +25,28 @@ pub struct AppState {
     /// connection can have several result tabs in flight, and cancelling one
     /// must not stop the others.
     pub db_query_cancellations: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
+    /// AI tool calls that need a person to click Confirm before they run.
+    /// Keyed by confirmation id; short-lived — see [`PendingAiConfirm::TTL`].
+    pub pending_ai_confirms: Mutex<HashMap<String, PendingAiConfirm>>,
+}
+
+/// One AI statement parked until a person accepts or it expires.
+#[derive(Debug, Clone)]
+pub struct PendingAiConfirm {
+    pub connection_id: String,
+    pub sql: String,
+    pub matched: String,
+    pub reason: String,
+    pub created_at: Instant,
+}
+
+impl PendingAiConfirm {
+    /// How long a parked confirmation stays clickable.
+    pub const TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() > Self::TTL
+    }
 }
 
 /// State for the in-process MCP server. The axum task is spawned inside the
@@ -51,6 +74,7 @@ impl Default for AppState {
             in_process_mcp: crate::mcp::in_process::InProcessClient::new(),
             chat_cancellations: Mutex::new(HashMap::new()),
             db_query_cancellations: Mutex::new(HashMap::new()),
+            pending_ai_confirms: Mutex::new(HashMap::new()),
         }
     }
 }

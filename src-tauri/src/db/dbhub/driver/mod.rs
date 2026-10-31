@@ -27,10 +27,12 @@ use crate::models::{DbConnection, DbConnectionKind};
 use super::session::QueryCancellation;
 use mysql::MysqlDriver;
 use postgres::PostgresDriver;
+use sqlserver::SqlServerDriver;
 use yellowbrick::YellowbrickDriver;
 
 pub mod mysql;
 pub mod postgres;
+pub mod sqlserver;
 pub mod yellowbrick;
 
 /// Hard cap on the rows one page may carry. The workspace pages through a
@@ -263,6 +265,17 @@ pub struct DbCatalogEntry {
     pub kind: Option<SchemaObject>,
 }
 
+/// One column of a relation, for editor completion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbColumnEntry {
+    pub name: String,
+    /// Engine type name (`varchar`, `int4`, …). Absent when the catalogue
+    /// did not return one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+}
+
 /// One database engine, behind the app's four questions.
 #[async_trait]
 pub trait DbDriver: Send + Sync {
@@ -311,6 +324,17 @@ pub trait DbDriver: Send + Sync {
         kinds: &[SchemaObject],
     ) -> AppResult<Vec<DbCatalogEntry>>;
 
+    /// Columns of one relation inside the database this dial reads.
+    ///
+    /// `schema` is empty on MySQL (the dial already names the database).
+    /// Postgres / Yellowbrick pass the schema the tree selected.
+    async fn list_columns(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<Vec<DbColumnEntry>>;
+
     /// Run one **already-gated** read-only statement and return at most `cap`
     /// rows.
     ///
@@ -342,6 +366,7 @@ pub fn driver_for(kind: DbConnectionKind) -> &'static dyn DbDriver {
         DbConnectionKind::Mysql => &MysqlDriver,
         DbConnectionKind::Postgres => &PostgresDriver,
         DbConnectionKind::Yellowbrick => &YellowbrickDriver,
+        DbConnectionKind::SqlServer => &SqlServerDriver,
     }
 }
 
@@ -364,6 +389,24 @@ pub(crate) fn catalog_entries(page: &QueryPage) -> Vec<DbCatalogEntry> {
             Some(DbCatalogEntry {
                 name: name.to_string(),
                 kind,
+            })
+        })
+        .collect()
+}
+
+/// Project a columns page. Drivers select `name` and optional `data_type`.
+pub(crate) fn column_entries(page: &QueryPage) -> Vec<DbColumnEntry> {
+    page.rows
+        .iter()
+        .filter_map(|row| {
+            let name = row.get("name").and_then(|value| value.as_str())?;
+            let data_type = row
+                .get("data_type")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            Some(DbColumnEntry {
+                name: name.to_string(),
+                data_type,
             })
         })
         .collect()
@@ -467,6 +510,7 @@ mod tests {
             DbConnectionKind::Mysql,
             DbConnectionKind::Postgres,
             DbConnectionKind::Yellowbrick,
+            DbConnectionKind::SqlServer,
         ] {
             assert_eq!(driver_for(kind).kind(), kind);
         }

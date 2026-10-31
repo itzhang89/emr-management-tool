@@ -140,14 +140,15 @@ pub(crate) async fn execute(
         }
     }
 
+    let dialect = super::sql::SqlDialect::from_kind(shape.connection.kind);
     let cap = max_rows.clamp(1, MAX_PAGE_ROWS);
-    let pageable = gate::pageable_statement(sql).is_some();
+    let pageable = gate::pageable_statement_with_dialect(sql, dialect).is_some();
     let statement = if offset == 0 {
         sql.to_string()
     } else {
         // Refused here, before any dial: a statement that cannot be wrapped
         // would otherwise be re-run in full and quietly return page one again.
-        let Some(pageable_sql) = gate::pageable_statement(sql) else {
+        let Some(pageable_sql) = gate::pageable_statement_with_dialect(sql, dialect) else {
             return Err(AppError::validation(
                 "Only a single SELECT can be read a page at a time. Refine the query, or add a LIMIT.",
             ));
@@ -159,7 +160,8 @@ pub(crate) async fn execute(
     // cache is the tree's memory of it. Dropped outright rather than patched:
     // a `DROP DATABASE` can invalidate every level at once, and re-reading is
     // cheap next to being subtly out of date.
-    let catalog_changed = decision.session_writable && gate::changes_schema(sql);
+    let catalog_changed =
+        decision.session_writable && gate::changes_schema_with_dialect(sql, dialect);
     if catalog_changed {
         let _ =
             crate::db::dbhub::store::clear_catalog_cache(&shape.pool, &shape.connection.id).await;
@@ -233,7 +235,8 @@ pub(crate) async fn count(
     // The same check paging makes, for the same reason: a statement that
     // cannot become a subquery (`SHOW TABLES`) cannot be counted this way
     // either, and refusing beats counting something else and not saying so.
-    let Some(statement) = gate::pageable_statement(sql) else {
+    let dialect = super::sql::SqlDialect::from_kind(shape.connection.kind);
+    let Some(statement) = gate::pageable_statement_with_dialect(sql, dialect) else {
         return Err(AppError::validation(
             "Only a single SELECT can be counted. Refine the query, or add a LIMIT.",
         ));
@@ -358,10 +361,11 @@ pub async fn run_for_command(
             crate::db::dbhub::store::read_gate_overrides(&shape.pool, &shape.connection.account_id)
                 .await
                 .unwrap_or_default();
+        let dialect = super::sql::SqlDialect::from_kind(shape.connection.kind);
         let decision = gate::GatePolicy::for_connection(shape.connection.allow_writes)
             .with_overrides(shape.connection.gate_overrides.clone())
             .with_global_overrides(global_overrides)
-            .decide(gate::classify(sql));
+            .decide(gate::classify_with_dialect(sql, dialect));
         // The answer the WebView collected, applied where it can only be
         // applied: the command is the one place that knows a person was asked.
         let decision = if confirmed {

@@ -136,11 +136,24 @@ pub struct SqlQueryTextArgs {
 
 /// The tool's own result shape: on success the columns/rows of the page plus
 /// honest truncation flags; on failure a structured error the model can act on.
+///
+/// `status: "needsConfirmation"` is a third outcome — not success, not refusal —
+/// and carries a `confirmationId` the UI uses to run the statement once a
+/// person clicks Confirm. The reason text is always authored here, never by
+/// the model (prompt-injection guard from the gate design).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SqlQueryTextResult {
     pub connection_id: String,
     pub sql: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -161,6 +174,10 @@ impl SqlQueryTextResult {
         Self {
             connection_id: connection_id.to_string(),
             sql: sql.to_string(),
+            status: None,
+            confirmation_id: None,
+            matched: None,
+            reason: None,
             columns: None,
             rows: None,
             returned_rows: 0,
@@ -171,37 +188,73 @@ impl SqlQueryTextResult {
             error: Some(message.to_string()),
         }
     }
+
+    pub fn needs_confirmation(
+        connection_id: &str,
+        sql: &str,
+        confirmation_id: &str,
+        matched: &str,
+        reason: &str,
+    ) -> Self {
+        Self {
+            connection_id: connection_id.to_string(),
+            sql: sql.to_string(),
+            status: Some("needsConfirmation".into()),
+            confirmation_id: Some(confirmation_id.to_string()),
+            matched: Some(matched.to_string()),
+            reason: Some(reason.to_string()),
+            columns: None,
+            rows: None,
+            returned_rows: 0,
+            total_rows_matched: 0,
+            truncated: false,
+            result_text_truncated: false,
+            note: Some(
+                "A Confirm button is shown to the user in chat. Tell them to click it — \
+                 do not invent an approval or rephrase the reason."
+                    .into(),
+            ),
+            error: None,
+        }
+    }
 }
 
-/// The tool's answer for a statement this path cannot carry out itself, if it
-/// cannot — which is exactly one case: a confirmation.
+/// Park a confirmation and return the structured handoff the model / UI share.
 ///
-/// A confirmation is not a refusal. Both are "no", but one of them has a next
-/// step, and naming it is the whole of what handing a statement to a person
-/// means until an approval surface exists. Without this the model would see the
-/// same flat failure an observer mode produces and would have no way to tell the
-/// user what to do about it — which would make the confirm mode a mode that
-/// behaves identically to the one below it.
-///
-/// A refusal is deliberately not handled here: it travels through `execute`,
-/// which produces the error the tool reports, and giving it a second shape would
-/// change what every model sees for a plain refusal.
+/// The reason string is taken from the gate decision (Rust-authored). The
+/// confirmation id is what the WebView posts back when the person clicks.
 fn confirmation_handoff(
+    app: &tauri::AppHandle,
     connection_id: &str,
     sql: &str,
     decision: &gate::GateDecision,
 ) -> Option<SqlQueryTextResult> {
-    if !matches!(decision.action, gate::GateAction::Confirm { .. }) {
+    let gate::GateAction::Confirm { reason } = &decision.action else {
         return None;
+    };
+    use tauri::Manager;
+    let confirmation_id = uuid::Uuid::new_v4().to_string();
+    let state = app.state::<crate::state::AppState>();
+    if let Ok(mut pending) = state.pending_ai_confirms.lock() {
+        // Drop expired entries so a long-lived app does not accumulate them.
+        pending.retain(|_, entry| !entry.is_expired());
+        pending.insert(
+            confirmation_id.clone(),
+            crate::state::PendingAiConfirm {
+                connection_id: connection_id.to_string(),
+                sql: sql.to_string(),
+                matched: decision.matched.clone(),
+                reason: reason.clone(),
+                created_at: std::time::Instant::now(),
+            },
+        );
     }
-    Some(SqlQueryTextResult::refused(
+    Some(SqlQueryTextResult::needs_confirmation(
         connection_id,
         sql,
-        &format!(
-            "`{}` is a statement this connection asks a person to confirm, and this tool has no \
-             way to ask one. Tell the user to run it in that connection's query tab.",
-            decision.matched
-        ),
+        &confirmation_id,
+        &decision.matched,
+        reason,
     ))
 }
 
@@ -226,20 +279,52 @@ fn advertise_one(connection: &DbConnection) -> Option<Tool> {
         .as_deref()
         .map(|db| format!(" Default database: {db}."))
         .unwrap_or_default();
-    let description = format!(
-        "Run ONE read-only SQL statement (SELECT/SHOW/DESCRIBE/EXPLAIN) against \
-         the {kind} connection \"{}\".{database} Any statement that could modify \
-         data is refused. Rows are capped (default 50, max 100) and oversized \
-         text is marked [truncated]. Read-only.",
-        connection.name
+    let description = tool_description_for(connection, kind, &database);
+    // Structural DDL stays out of the model's hands in every mode; only Free
+    // with human writes on can change rows without asking.
+    let read_only = !matches!(
+        (
+            connection.allow_writes,
+            connection.ai_read_only_policy
+        ),
+        (true, crate::models::DbReadOnlyPolicy::Free)
+            | (true, crate::models::DbReadOnlyPolicy::Confirm)
     );
     Some(
         Tool::new(tool_name, description, execute_sql_input_schema()).annotate(
             rmcp::model::ToolAnnotations::new()
-                .read_only(true)
-                .destructive(false)
+                .read_only(read_only)
+                .destructive(!read_only)
                 .open_world(true),
         ),
+    )
+}
+
+fn tool_description_for(connection: &DbConnection, kind: &str, database: &str) -> String {
+    use crate::models::DbReadOnlyPolicy;
+    // AI is capped by the human write switch: without it every mode is observer.
+    let effective = if connection.allow_writes {
+        connection.ai_read_only_policy
+    } else {
+        DbReadOnlyPolicy::Observer
+    };
+    let mode = match effective {
+        DbReadOnlyPolicy::Observer => {
+            "Read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN. Writes are refused."
+        }
+        DbReadOnlyPolicy::Confirm => {
+            "Reads run freely. Statements that change data return needsConfirmation \
+             and wait for the user to click Confirm in chat — do not invent an approval."
+        }
+        DbReadOnlyPolicy::Free => {
+            "Reads and row changes run. Structural DDL (DROP/ALTER/CREATE/…) is always refused \
+             and must be handed to a person."
+        }
+    };
+    format!(
+        "Run ONE SQL statement against the {kind} connection \"{}\".{database} {mode} \
+         Rows are capped (default 50, max 100) and oversized text is marked [truncated].",
+        connection.name
     )
 }
 
@@ -316,8 +401,14 @@ pub async fn sql_query_text(
     // a truncate. Whether a rule written for a person's own typing should grant
     // the AI the same reach is a real question and not one to answer by
     // accident, so this path stays at the strict end until it is answered.
-    let decision = gate::GatePolicy::for_ai(shape.connection.ai_read_only_policy)
-        .decide(gate::classify(&args.sql));
+    let dialect = crate::db::dbhub::sql::SqlDialect::from_kind(shape.connection.kind);
+    // Iron rule: AI ≤ human. Without allow_writes the AI is observer regardless
+    // of the stored mode.
+    let mut policy = gate::GatePolicy::for_ai(shape.connection.ai_read_only_policy);
+    if !shape.connection.allow_writes {
+        policy.reach = gate::Reach::ReadOnly;
+    }
+    let decision = policy.decide(gate::classify_with_dialect(&args.sql, dialect));
 
     // What the gate stopped is worth remembering — a statement the AI keeps
     // reaching for is the clearest signal that a rule is missing — and a
@@ -339,8 +430,9 @@ pub async fn sql_query_text(
     }
 
     // A confirmation is not a refusal, and the model should be able to tell them
-    // apart: this one has a next step, and the tool is where it gets named.
-    if let Some(handoff) = confirmation_handoff(&args.connection_id, &args.sql, &decision) {
+    // apart: this one has a next step (a Confirm button), and the tool is where
+    // it gets named.
+    if let Some(handoff) = confirmation_handoff(app, &args.connection_id, &args.sql, &decision) {
         return Ok(handoff);
     }
 
@@ -361,6 +453,10 @@ pub async fn sql_query_text(
     Ok(SqlQueryTextResult {
         connection_id: args.connection_id.clone(),
         sql: args.sql.clone(),
+        status: None,
+        confirmation_id: None,
+        matched: None,
+        reason: None,
         columns: Some(result.columns),
         rows: Some(
             result
@@ -382,6 +478,88 @@ pub async fn sql_query_text(
         },
         error: None,
     })
+}
+
+/// Accept a parked AI confirmation and run the statement.
+pub async fn confirm_pending_ai_sql(
+    app: &tauri::AppHandle,
+    confirmation_id: &str,
+) -> AppResult<SqlQueryTextResult> {
+    use tauri::Manager;
+
+    let pending = {
+        let state = app.state::<crate::state::AppState>();
+        let mut map = state
+            .pending_ai_confirms
+            .lock()
+            .map_err(|error| AppError::internal(format!("Failed to lock confirms: {error}")))?;
+        map.retain(|_, entry| !entry.is_expired());
+        map.remove(confirmation_id)
+    };
+    let Some(pending) = pending else {
+        return Err(AppError::validation(
+            "That confirmation has expired or was already used.",
+        ));
+    };
+
+    // Re-run through the same path with confirmed:true equivalent: build the
+    // AI policy decision and mark it confirmed so the gate does not ask again.
+    let shape = resolve_shape(app, &pending.connection_id).await?;
+    let (target, _forward) = tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+    let dialect = crate::db::dbhub::sql::SqlDialect::from_kind(shape.connection.kind);
+    let mut policy = gate::GatePolicy::for_ai(shape.connection.ai_read_only_policy);
+    if !shape.connection.allow_writes {
+        policy.reach = gate::Reach::ReadOnly;
+    }
+    let decision = policy
+        .decide(gate::classify_with_dialect(&pending.sql, dialect))
+        .confirmed();
+
+    let result = query::execute(
+        &shape,
+        &target,
+        &pending.sql,
+        50,
+        0,
+        &decision,
+        &QueryCancellation::never(),
+    )
+    .await?;
+
+    let serialized = serde_json::to_string(&result.rows).unwrap_or_default();
+    Ok(SqlQueryTextResult {
+        connection_id: pending.connection_id,
+        sql: pending.sql,
+        status: Some("confirmed".into()),
+        confirmation_id: Some(confirmation_id.to_string()),
+        matched: Some(pending.matched),
+        reason: None,
+        columns: Some(result.columns),
+        rows: Some(
+            result
+                .rows
+                .into_iter()
+                .map(|row| cap_cells(row, CELL_CAP))
+                .collect(),
+        ),
+        returned_rows: result.row_count,
+        total_rows_matched: result.row_count,
+        truncated: result.truncated,
+        result_text_truncated: serialized.len() > RESULT_TEXT_CAP,
+        note: None,
+        error: None,
+    })
+}
+
+/// Drop a parked confirmation without running it.
+pub fn dismiss_pending_ai_sql(app: &tauri::AppHandle, confirmation_id: &str) -> AppResult<bool> {
+    use tauri::Manager;
+    let state = app.state::<crate::state::AppState>();
+    let mut map = state
+        .pending_ai_confirms
+        .lock()
+        .map_err(|error| AppError::internal(format!("Failed to lock confirms: {error}")))?;
+    Ok(map.remove(confirmation_id).is_some())
 }
 
 /// Cap any string cell in the row object so one wide value cannot dominate.
@@ -544,21 +722,39 @@ mod tests {
 
         let confirming =
             gate::GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).decide(gate::classify(sql));
-        let handoff = confirmation_handoff("c1", sql, &confirming).expect("handed over");
-        let message = handoff.error.expect("the refusal carries its reason");
-        assert!(message.contains("query tab"), "{message}");
-        assert!(message.contains("confirm"), "{message}");
+        assert!(
+            matches!(confirming.action, gate::GateAction::Confirm { .. }),
+            "confirm mode raises Confirm"
+        );
+        let reason = match &confirming.action {
+            gate::GateAction::Confirm { reason } => reason.clone(),
+            _ => unreachable!(),
+        };
+        let handoff = SqlQueryTextResult::needs_confirmation(
+            "c1",
+            sql,
+            "cid-1",
+            &confirming.matched,
+            &reason,
+        );
+        assert_eq!(handoff.status.as_deref(), Some("needsConfirmation"));
+        assert_eq!(handoff.confirmation_id.as_deref(), Some("cid-1"));
+        assert!(handoff.error.is_none());
+        assert!(
+            handoff.note.as_deref().unwrap_or("").contains("Confirm"),
+            "{:?}",
+            handoff.note
+        );
 
-        // An observer is not handed over: its refusal travels through `execute`,
-        // so giving it a second shape here would change what every model sees.
+        // An observer is refused, not confirmed — no handoff shape.
         let observing =
             gate::GatePolicy::for_ai(DbReadOnlyPolicy::Observer).decide(gate::classify(sql));
-        assert!(confirmation_handoff("c1", sql, &observing).is_none());
+        assert!(matches!(observing.action, gate::GateAction::Refuse { .. }));
 
         // And a statement that runs is not handed over either.
         let read =
             gate::GatePolicy::for_ai(DbReadOnlyPolicy::Confirm).decide(gate::classify("SELECT 1"));
-        assert!(confirmation_handoff("c1", "SELECT 1", &read).is_none());
+        assert!(matches!(read.action, gate::GateAction::Allow));
     }
 
     #[tokio::test]

@@ -17,7 +17,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, hex_encode, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject,
+    catalog_entries, column_entries, hex_encode, DbCatalogEntry, DbColumnEntry, DbDial, DbDriver,
+    QueryPage, SchemaObject,
     ServerInfo, MAX_PAGE_ROWS,
 };
 
@@ -131,6 +132,15 @@ impl DbDriver for PostgresDriver {
         list_objects(dial, schema, kinds).await
     }
 
+    async fn list_columns(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<Vec<DbColumnEntry>> {
+        list_columns(dial, schema, table).await
+    }
+
     async fn query(
         &self,
         dial: &DbDial<'_>,
@@ -140,6 +150,32 @@ impl DbDriver for PostgresDriver {
     ) -> AppResult<QueryPage> {
         read_page(dial, sql, cap, cancel).await
     }
+}
+
+fn columns_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select column_name as name, data_type as data_type \
+         from information_schema.columns \
+         where table_schema = {} and table_name = {} \
+         order by ordinal_position",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+pub(crate) async fn list_columns(
+    dial: &DbDial<'_>,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<DbColumnEntry>> {
+    let page = read_page(
+        dial,
+        &columns_sql(schema, table),
+        MAX_PAGE_ROWS,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    Ok(column_entries(&page))
 }
 
 /// Build a Postgres connection URL for this dial. A connection that names no

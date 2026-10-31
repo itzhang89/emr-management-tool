@@ -183,9 +183,13 @@ pub fn run() {
             commands::dbhub::run_db_query,
             commands::dbhub::count_db_query,
             commands::dbhub::cancel_db_query,
+            commands::dbhub::parse_db_sql,
             commands::dbhub::list_db_databases,
             commands::dbhub::list_db_schemas,
             commands::dbhub::list_db_objects,
+            commands::dbhub::list_db_columns,
+            commands::dbhub::confirm_ai_db_sql,
+            commands::dbhub::dismiss_ai_db_sql,
             commands::dbhub::refresh_db_catalog,
             commands::appearance::set_app_language,
         ]);

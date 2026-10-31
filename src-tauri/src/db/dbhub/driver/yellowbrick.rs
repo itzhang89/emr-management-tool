@@ -16,7 +16,8 @@ use crate::models::DbConnectionKind;
 use super::super::session::QueryCancellation;
 use super::postgres;
 use super::{
-    catalog_entries, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
+    catalog_entries, DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, QueryPage, SchemaObject,
+    ServerInfo,
     MAX_PAGE_ROWS,
 };
 
@@ -65,6 +66,15 @@ impl DbDriver for YellowbrickDriver {
         // the tolerance for an absent `pg_matviews` this engine is the reason
         // for.
         postgres::list_objects(dial, schema, kinds).await
+    }
+
+    async fn list_columns(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<Vec<DbColumnEntry>> {
+        postgres::list_columns(dial, schema, table).await
     }
 
     async fn query(

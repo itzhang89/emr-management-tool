@@ -178,6 +178,60 @@ pub async fn catalog_schemas_for_command(
     .await
 }
 
+pub async fn catalog_columns_for_command(
+    app: &AppHandle,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<driver::DbColumnEntry>> {
+    let shape = shape_for(app, connection_id, false).await?;
+    // Columns are cached per table: completion asks for them often and a
+    // same-day answer is as good as a fresh one for editor suggestions.
+    let cache_key = table;
+    if let Some((payload, refreshed_at)) = store::read_catalog_cache(
+        &shape.pool,
+        connection_id,
+        "columns",
+        database,
+        schema,
+        cache_key,
+    )
+    .await?
+    {
+        if cache_is_fresh(&refreshed_at) {
+            if let Ok(entries) = serde_json::from_str::<Vec<driver::DbColumnEntry>>(&payload) {
+                return Ok(entries);
+            }
+        }
+    }
+
+    let entries = complete_operation("column catalog request", async {
+        let (target, _forward) =
+            tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        let dial = shape.dial(&target);
+        let dial = dial.reading(database);
+        driver::driver_for(shape.connection.kind)
+            .list_columns(&dial, schema, table)
+            .await
+    })
+    .await?;
+
+    if let Ok(payload) = serde_json::to_string(&entries) {
+        let _ = store::write_catalog_cache(
+            &shape.pool,
+            connection_id,
+            "columns",
+            database,
+            schema,
+            cache_key,
+            &payload,
+        )
+        .await;
+    }
+    Ok(entries)
+}
+
 pub async fn catalog_objects_for_command(
     app: &AppHandle,
     connection_id: &str,

@@ -18,8 +18,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, hex_encode, DbCatalogEntry, DbDial, DbDriver, QueryPage, SchemaObject,
-    ServerInfo, MAX_PAGE_ROWS,
+    catalog_entries, hex_encode, DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, QueryPage,
+    SchemaObject, ServerInfo, MAX_PAGE_ROWS,
 };
 
 /// The engine behind a MySQL connection.
@@ -77,6 +77,17 @@ fn events_sql(schema: &str) -> String {
     format!(
         "select event_name as name, 'event' as kind from information_schema.events          where event_schema = {} order by event_name",
         session::quote_literal(schema)
+    )
+}
+
+fn columns_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select column_name as name, data_type as data_type \
+         from information_schema.columns \
+         where table_schema = {} and table_name = {} \
+         order by ordinal_position",
+        session::quote_literal(schema),
+        session::quote_literal(table)
     )
 }
 
@@ -148,6 +159,27 @@ impl DbDriver for MysqlDriver {
             entries.extend(catalog_entries(&page));
         }
         Ok(entries)
+    }
+
+    async fn list_columns(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<Vec<DbColumnEntry>> {
+        let database = if schema.is_empty() {
+            dial.database().unwrap_or_default()
+        } else {
+            schema
+        };
+        let page = read_page(
+            dial,
+            &columns_sql(database, table),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
+        Ok(super::column_entries(&page))
     }
 
     async fn query(

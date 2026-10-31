@@ -492,67 +492,63 @@ fn refusal_reason(
 /// (a statement may open with `/* */` or `--`), multiple statements (the batch
 /// takes the strictest of them), and the read-flavoured utility statements
 /// (SHOW/DESCRIBE/EXPLAIN/USE).
+///
+/// Prefers an AST reading from [`super::sql`] when the dialect can parse the
+/// fragment; falls back to the text heuristic when it cannot. Failures to
+/// place a statement still land at Refuse.
 pub fn classify(sql: &str) -> Classification {
+    classify_with_dialect(sql, super::sql::SqlDialect::Generic)
+}
+
+/// Like [`classify`], but parse with the connection's dialect so dollar-quotes
+/// (Postgres/Yellowbrick) and MSSQL forms resolve correctly.
+pub fn classify_with_dialect(sql: &str, dialect: super::sql::SqlDialect) -> Classification {
+    let parsed = super::sql::parse_script(sql, dialect);
+    if parsed.statements.is_empty() {
+        return Classification::none().retiered(StatementTier::Refuse);
+    }
+
     let mut worst: Option<Classification> = None;
-    for statement in split_statements(sql) {
-        let classification = classify_single(&statement);
+    for statement in &parsed.statements {
+        let classification = match &statement.ast {
+            Ok(ast) => match super::sql::classify_statement(ast) {
+                Some(class) => {
+                    let mut classification = Classification {
+                        tier: class.tier,
+                        matched: class.matched,
+                        verb: class.verb,
+                        routine: class.routine,
+                    };
+                    // A free SELECT/WITH is not the last word: sqlparser can
+                    // accept the query and leave a dialect write (`INTO(…)`,
+                    // vendor OUTFILE forms) unrecognised. Re-run the write-
+                    // token audit only for those verbs — `SHOW CREATE` also
+                    // contains CREATE as a token and must not be re-tiered.
+                    if classification.tier == StatementTier::Free
+                        && matches!(classification.verb.as_str(), "SELECT" | "WITH")
+                    {
+                        if let Some(token) = first_write_token(&statement.text) {
+                            let tier =
+                                tier_for_verb(&token).unwrap_or(StatementTier::Refuse);
+                            classification =
+                                Classification::of(tier, token, classification.verb);
+                        }
+                    }
+                    classification
+                }
+                // Known parse, unknown shape — heuristic on the fragment.
+                None => classify_single(&statement.text),
+            },
+            // Parse failed — heuristic, which refuses unknowns.
+            Err(_) => classify_single(&statement.text),
+        };
         worst = Some(match worst {
-            // The first statement seeds the batch, so its verb is what a
-            // verb-keyed override sees even when the whole batch is free.
             None => classification,
-            // A run is refused as a whole, so it is as strict as its strictest
-            // statement. Ties keep the earlier one, so the first statement at a
-            // given severity is the one a refusal names.
             Some(current) if classification.tier > current.tier => classification,
             Some(current) => current,
         });
     }
     worst.unwrap_or_else(|| Classification::none().retiered(StatementTier::Refuse))
-}
-
-/// Split on semicolons outside quotes; the pieces keep their comments, which
-/// `classify_single` strips.
-fn split_statements(sql: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut chars = sql.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut in_backtick = false;
-
-    while let Some(char) = chars.next() {
-        match char {
-            '\'' if !in_double && !in_backtick => {
-                in_single = !in_single;
-                current.push(char);
-            }
-            '"' if !in_single && !in_backtick => {
-                in_double = !in_double;
-                current.push(char);
-            }
-            '`' if !in_single && !in_double => {
-                in_backtick = !in_backtick;
-                current.push(char);
-            }
-            '\\' if in_single || in_double => {
-                current.push(char);
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
-            }
-            ';' if !in_single && !in_double && !in_backtick => {
-                parts.push(std::mem::take(&mut current));
-            }
-            _ => current.push(char),
-        }
-    }
-    if !current.trim().is_empty() {
-        parts.push(current);
-    }
-    parts
-        .into_iter()
-        .filter(|part| !strip_comments(part).trim().is_empty())
-        .collect()
 }
 
 /// Remove leading/trailing whitespace and comment lines so the statement's
@@ -608,14 +604,45 @@ fn first_word(cleaned: &str) -> String {
 /// and `DESCRIBE` are not subqueries — and only when there is exactly one of
 /// them, since the wrapper holds a single statement.
 pub fn pageable_statement(sql: &str) -> Option<String> {
-    let statements = split_statements(sql);
-    if statements.len() != 1 {
+    pageable_statement_with_dialect(sql, super::sql::SqlDialect::Generic)
+}
+
+/// Like [`pageable_statement`], honouring the connection dialect.
+pub fn pageable_statement_with_dialect(
+    sql: &str,
+    dialect: super::sql::SqlDialect,
+) -> Option<String> {
+    let parsed = super::sql::parse_script(sql, dialect);
+    if parsed.statements.len() != 1 {
         return None;
     }
-    let cleaned = strip_comments(&statements[0]);
-    match first_word(&cleaned).as_str() {
-        "SELECT" | "WITH" => Some(cleaned.trim().trim_end_matches(';').trim().to_string()),
-        _ => None,
+    let statement = &parsed.statements[0];
+    match &statement.ast {
+        Ok(ast) => {
+            if super::sql::statement_is_pageable(ast) {
+                Some(
+                    statement
+                        .text
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim()
+                        .to_string(),
+                )
+            } else {
+                None
+            }
+        }
+        // Parser refused — fall back to the first-word check so a SELECT the
+        // dialect cannot fully parse can still page when it looks like one.
+        Err(_) => {
+            let cleaned = strip_comments(&statement.text);
+            match first_word(&cleaned).as_str() {
+                "SELECT" | "WITH" => {
+                    Some(cleaned.trim().trim_end_matches(';').trim().to_string())
+                }
+                _ => None,
+            }
+        }
     }
 }
 
@@ -625,12 +652,21 @@ pub fn pageable_statement(sql: &str) -> Option<String> {
 /// tree shows tables. Checked across the whole batch, so a run that creates
 /// and then fills a table still counts.
 pub fn changes_schema(sql: &str) -> bool {
-    split_statements(sql).iter().any(|statement| {
-        let cleaned = strip_comments(statement);
-        matches!(
-            first_word(&cleaned).as_str(),
-            "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT"
-        )
+    changes_schema_with_dialect(sql, super::sql::SqlDialect::Generic)
+}
+
+/// Like [`changes_schema`], honouring the connection dialect.
+pub fn changes_schema_with_dialect(sql: &str, dialect: super::sql::SqlDialect) -> bool {
+    let parsed = super::sql::parse_script(sql, dialect);
+    parsed.statements.iter().any(|statement| match &statement.ast {
+        Ok(ast) => super::sql::statement_changes_schema(ast),
+        Err(_) => {
+            let cleaned = strip_comments(&statement.text);
+            matches!(
+                first_word(&cleaned).as_str(),
+                "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT"
+            )
+        }
     })
 }
 
@@ -1110,6 +1146,21 @@ mod tests {
         assert_read(
             "WITH recent AS (SELECT * FROM orders WHERE created_at > '2026-01-01') \
              SELECT COUNT(*) FROM recent",
+        );
+    }
+
+    #[test]
+    fn show_create_table_is_free() {
+        // Heuristic used to refuse this because it scanned the CREATE token.
+        // The AST path recognises ShowCreate as a read.
+        assert_read("SHOW CREATE TABLE t");
+    }
+
+    #[test]
+    fn delete_where_one_equals_one_is_refused() {
+        assert_eq!(
+            classify("DELETE FROM t WHERE 1 = 1").tier,
+            StatementTier::Refuse
         );
     }
 

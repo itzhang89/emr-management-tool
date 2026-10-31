@@ -13,9 +13,10 @@ use crate::db::dbhub::{self, query};
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    DbCatalogRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput, DbConnectionRef,
-    DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, GateLadderEntry, GateOverrides,
-    GateRefusal, NetworkProfile, NetworkProfileInput, NetworkProfileRef, NetworkProfileTestInput,
+    DbCatalogRequest, DbColumnsRequest, DbConnection, DbConnectionFlagsRequest, DbConnectionInput,
+    DbConnectionRef, DbConnectionTestInput, DbConnectionUpdateInput, DbTestResult, GateLadderEntry,
+    GateOverrides, GateRefusal, NetworkProfile, NetworkProfileInput, NetworkProfileRef,
+    NetworkProfileTestInput, ParseDbSqlRequest, ParseDbSqlResult, ParsedDbSqlStatement,
 };
 use tauri::AppHandle;
 
@@ -886,6 +887,73 @@ pub async fn cancel_db_query(
     }
 }
 
+/// Split a SQL script into statements and optionally resolve the caret.
+///
+/// Offsets are CodeMirror UTF-16 code-unit positions (document positions).
+#[tauri::command]
+pub fn parse_db_sql(request: ParseDbSqlRequest) -> AppResult<ParseDbSqlResult> {
+    let dialect = request
+        .dialect
+        .as_deref()
+        .map(dbhub::sql::SqlDialect::from_name)
+        .unwrap_or(dbhub::sql::SqlDialect::Generic);
+    let parsed = dbhub::sql::parse_script(&request.sql, dialect);
+
+    let statements: Vec<ParsedDbSqlStatement> = parsed
+        .statements
+        .iter()
+        .map(|statement| {
+            let (parse_ok, parse_error) = match &statement.ast {
+                Ok(_) => (true, None),
+                Err(message) => (false, Some(message.clone())),
+            };
+            ParsedDbSqlStatement {
+                start: byte_to_utf16(&request.sql, statement.start),
+                end: byte_to_utf16(&request.sql, statement.end),
+                text: statement.text.clone(),
+                parse_ok,
+                parse_error,
+            }
+        })
+        .collect();
+
+    let at_offset = request.offset.and_then(|utf16| {
+        let byte = utf16_to_byte(&request.sql, utf16);
+        let target = dbhub::sql::statement_at(&parsed, byte)?;
+        parsed
+            .statements
+            .iter()
+            .position(|statement| statement.start == target.start && statement.end == target.end)
+    });
+
+    Ok(ParseDbSqlResult {
+        statements,
+        at_offset,
+    })
+}
+
+fn utf16_to_byte(sql: &str, utf16: usize) -> usize {
+    let mut counted = 0usize;
+    for (byte, ch) in sql.char_indices() {
+        if counted >= utf16 {
+            return byte;
+        }
+        counted += ch.len_utf16();
+    }
+    sql.len()
+}
+
+fn byte_to_utf16(sql: &str, byte: usize) -> usize {
+    let mut counted = 0usize;
+    for (index, ch) in sql.char_indices() {
+        if index >= byte {
+            return counted;
+        }
+        counted += ch.len_utf16();
+    }
+    counted
+}
+
 #[tauri::command]
 pub async fn list_db_databases(
     app: AppHandle,
@@ -939,4 +1007,38 @@ pub async fn list_db_objects(
         &kinds,
     )
     .await
+}
+
+/// Columns of one table/view — what the SQL editor's completion asks for.
+#[tauri::command]
+pub async fn list_db_columns(
+    app: AppHandle,
+    request: DbColumnsRequest,
+) -> AppResult<Vec<crate::db::dbhub::driver::DbColumnEntry>> {
+    dbhub::catalog::catalog_columns_for_command(
+        &app,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &request.table,
+    )
+    .await
+}
+
+/// Accept a parked AI confirmation and run the statement.
+#[tauri::command]
+pub async fn confirm_ai_db_sql(
+    app: AppHandle,
+    request: crate::models::AiSqlConfirmRequest,
+) -> AppResult<crate::mcp::tools::dbhub_sql::SqlQueryTextResult> {
+    crate::mcp::tools::dbhub_sql::confirm_pending_ai_sql(&app, &request.confirmation_id).await
+}
+
+/// Drop a parked AI confirmation without running it.
+#[tauri::command]
+pub fn dismiss_ai_db_sql(
+    app: AppHandle,
+    request: crate::models::AiSqlConfirmRequest,
+) -> AppResult<bool> {
+    crate::mcp::tools::dbhub_sql::dismiss_pending_ai_sql(&app, &request.confirmation_id)
 }

@@ -1551,6 +1551,8 @@ pub enum DbConnectionKind {
     Postgres,
     #[serde(rename = "yellowbrick")]
     Yellowbrick,
+    #[serde(rename = "sqlserver")]
+    SqlServer,
 }
 
 impl DbConnectionKind {
@@ -1559,6 +1561,7 @@ impl DbConnectionKind {
             DbConnectionKind::Mysql => "mysql",
             DbConnectionKind::Postgres => "postgres",
             DbConnectionKind::Yellowbrick => "yellowbrick",
+            DbConnectionKind::SqlServer => "sqlserver",
         }
     }
 }
@@ -2076,6 +2079,43 @@ pub struct DbQueryCountRequest {
     pub sql: String,
 }
 
+/// Ask the SQL parser to split a script and locate the statement at a caret.
+///
+/// Used by the editor to run-at-cursor and to highlight the statement that will
+/// run. `dialect` is a connection kind name (`mysql`, `postgres`, …) or empty
+/// for the generic dialect.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParseDbSqlRequest {
+    pub sql: String,
+    #[serde(default)]
+    pub dialect: Option<String>,
+    /// CodeMirror document position (UTF-16 code units). Absent → only the
+    /// statement list is returned.
+    #[serde(default)]
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParsedDbSqlStatement {
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
+    pub parse_ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParseDbSqlResult {
+    pub statements: Vec<ParsedDbSqlStatement>,
+    /// Index into `statements` for the caret, when an offset was supplied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_offset: Option<usize>,
+}
+
 #[cfg(test)]
 mod dbhub_wire_tests {
     use super::*;
@@ -2253,4 +2293,22 @@ pub struct DbCatalogRequest {
     /// discarded.
     #[serde(default)]
     pub kinds: Vec<String>,
+}
+
+/// Columns of one relation — what editor completion asks for.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbColumnsRequest {
+    pub connection_id: String,
+    pub database: String,
+    #[serde(default)]
+    pub schema: String,
+    pub table: String,
+}
+
+/// Accept or dismiss a parked AI SQL confirmation.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSqlConfirmRequest {
+    pub confirmation_id: String,
 }

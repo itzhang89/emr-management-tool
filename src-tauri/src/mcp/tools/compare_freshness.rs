@@ -308,6 +308,7 @@ fn quote_ident(kind: DbConnectionKind, ident: &str) -> String {
     match kind {
         DbConnectionKind::Mysql => format!("`{ident}`"),
         DbConnectionKind::Postgres | DbConnectionKind::Yellowbrick => format!("\"{ident}\""),
+        DbConnectionKind::SqlServer => format!("[{ident}]"),
     }
 }
 

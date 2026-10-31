@@ -26,6 +26,7 @@ pub mod driver;
 pub mod gate;
 pub mod query;
 pub mod session;
+pub mod sql;
 pub mod store;
 pub mod tunnel;
 

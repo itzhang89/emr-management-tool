@@ -145,6 +145,7 @@ fn kind_from_column(value: &str) -> AppResult<DbConnectionKind> {
         "mysql" => Ok(DbConnectionKind::Mysql),
         "postgres" => Ok(DbConnectionKind::Postgres),
         "yellowbrick" => Ok(DbConnectionKind::Yellowbrick),
+        "sqlserver" => Ok(DbConnectionKind::SqlServer),
         other => Err(AppError::storage(format!(
             "Unknown connection kind in database: {other}"
         ))),
