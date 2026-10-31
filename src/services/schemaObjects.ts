@@ -24,6 +24,14 @@ export function schemaObjectOptions(kind: DbConnectionKind): SchemaObjectOption[
       { kind: "event", label: t("Events") }
     ];
   }
+  if (kind === "sqlserver") {
+    return [
+      { kind: "table", label: t("Tables") },
+      { kind: "view", label: t("Views") },
+      { kind: "procedure", label: t("Procedures") },
+      { kind: "function", label: t("Functions") }
+    ];
+  }
   // Postgres, and Yellowbrick on the same wire.
   return [
     { kind: "table", label: t("Tables") },
@@ -57,7 +65,11 @@ export function isRelation(kind: SchemaObjectKind | undefined): boolean {
  * instead of guessing which names need it.
  */
 export function quoteIdentifier(kind: DbConnectionKind, name: string): string {
-  return kind === "mysql"
-    ? `\`${name.replace(/`/g, "``")}\``
-    : `"${name.replace(/"/g, '""')}"`;
+  if (kind === "mysql") {
+    return `\`${name.replace(/`/g, "``")}\``;
+  }
+  if (kind === "sqlserver") {
+    return `[${name.replace(/]/g, "]]")}]`;
+  }
+  return `"${name.replace(/"/g, '""')}"`;
 }

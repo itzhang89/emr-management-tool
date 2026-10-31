@@ -1,5 +1,6 @@
 import mysqlIcon from "@/assets/db-icons/mysql.png";
 import postgresIcon from "@/assets/db-icons/postgres.png";
+import sqlserverIcon from "@/assets/db-icons/sqlserver.png";
 import yellowbrickIcon from "@/assets/db-icons/yellowbrick.png";
 import { cn } from "@/lib/utils";
 import type { DbConnectionKind } from "@/types/domain";
@@ -21,7 +22,8 @@ import type { DbConnectionKind } from "@/types/domain";
 const BY_KIND: Record<DbConnectionKind, { icon: string; label: string }> = {
   mysql: { icon: mysqlIcon, label: "MySQL" },
   postgres: { icon: postgresIcon, label: "PostgreSQL" },
-  yellowbrick: { icon: yellowbrickIcon, label: "Yellowbrick" }
+  yellowbrick: { icon: yellowbrickIcon, label: "Yellowbrick" },
+  sqlserver: { icon: sqlserverIcon, label: "SQL Server" }
 };
 
 /** What this engine is called, for the places that only need the word. */

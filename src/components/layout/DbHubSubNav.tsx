@@ -31,7 +31,7 @@ export function DbHubSubNav({
   if (collapsed) return null;
 
   // Each connection carries its engine's own glyph — the same `DbKindIcon` the
-  // tab bar and the Overview card use — so the list reads MySQL / PostgreSQL /
+  // tab bar and the Overview card use — so the list reads MySQL / PostgreSQL / SQL Server /
   // Yellowbrick at a glance instead of three identical cylinders.
   const entries: { value: string; label: string; icon: ReactNode }[] = [
     {

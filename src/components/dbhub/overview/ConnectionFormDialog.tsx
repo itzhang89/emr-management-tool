@@ -59,13 +59,15 @@ import { useGetSecretValue, useSecrets } from "@/hooks/useSecrets";
 const KIND_LABELS: Record<DbConnectionKind, string> = {
   mysql: "MySQL",
   postgres: "PostgreSQL",
-  yellowbrick: "Yellowbrick"
+  yellowbrick: "Yellowbrick",
+  sqlserver: "SQL Server"
 };
 
 const DEFAULT_PORTS: Record<DbConnectionKind, number> = {
   mysql: 3306,
   postgres: 5432,
-  yellowbrick: 5432
+  yellowbrick: 5432,
+  sqlserver: 1433
 };
 
 /**

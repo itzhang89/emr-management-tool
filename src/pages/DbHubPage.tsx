@@ -9,8 +9,8 @@ import { useDbConnections } from "@/hooks/useDbHub";
 import { useT } from "@/i18n";
 
 /**
- * DBHub — the hub for every queryable data source (Glue/Athena today, JDBC
- * connections like MySQL/PostgreSQL/Yellowbrick later).
+ * DBHub — the hub for every queryable data source (Glue/Athena today, plus
+ * MySQL / PostgreSQL / Yellowbrick / SQL Server connections).
  *
  * Two fixed tabs: Overview (connection management — cards, network profiles,
  * the add-connection wizard) and Glue Catalog (the Athena workspace, moved
