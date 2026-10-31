@@ -303,6 +303,9 @@ const dbhub: TranslationDictionary = {
   "Write SQL here…": "在此编写 SQL…",
   "SQL editor": "SQL 编辑器",
   "Write Athena SQL here…": "在此编写 Athena SQL…",
+  "No statement to run.": "没有可执行的语句。",
+  "SQL could not be fully parsed; running the original text.":
+    "SQL 未能完整解析，将按原文执行。",
   "No result tabs.": "无结果标签页。",
   "Close {title}": "关闭 {title}",
 
@@ -465,8 +468,9 @@ const dbhub: TranslationDictionary = {
   "AI may": "AI 可以",
   "Observer": "观察者",
   "Reads only.": "只读取。",
-  "Reads now; a change would ask you first. Asking is not built yet.": "现在只读；改动会先询问你。询问功能尚未实现。",
-  "Reads now; changes would run. Not enabled yet.": "现在只读；改动将直接执行。尚未启用。",
+  "Reads freely; changes wait for your Confirm in chat.":
+    "读操作自由执行；改动会在对话中等待你点确认。",
+  "Reads and allowed changes run without asking.": "读操作与允许的改动直接执行，不再询问。",
   "AI set to {mode}": "AI 已设为 {mode}",
 
   // --- ConfirmRunDialog -----------------------------------------------------

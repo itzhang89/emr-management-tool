@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { ChevronRight, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
+import { toast } from "sonner";
 import { CopyJsonButton } from "@/components/ui/CopyJsonButton";
+import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { formatDuration, formatJson } from "@/lib/format";
 import { formatElapsed, useLiveClock } from "@/hooks/useLiveClock";
 import { cn } from "@/lib/utils";
+import { formatAppError } from "@/services/appErrorMessage";
+import { tauriClient } from "@/services/tauriClient";
 import type { ChatToolCall } from "@/types/domain";
 import type { LiveToolCall } from "@/services/chatStream";
 
@@ -56,13 +60,56 @@ export function toolStepFromStored(call: ChatToolCall): ToolStep {
  * performed. This is the same transparency the Audit tab gives external agents,
  * and it reuses that tab's JSON rendering so both read alike.
  */
+function confirmationFromResult(result: Record<string, unknown> | null | undefined): {
+  confirmationId: string;
+  sql: string;
+  reason: string;
+} | null {
+  if (!result || result.status !== "needsConfirmation") return null;
+  const confirmationId = result.confirmationId;
+  const sql = result.sql;
+  if (typeof confirmationId !== "string" || typeof sql !== "string") return null;
+  const reason = typeof result.reason === "string" ? result.reason : "";
+  return { confirmationId, sql, reason };
+}
+
 export function ToolCallStep({ step }: { step: ToolStep }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
+  const [confirmState, setConfirmState] = useState<"idle" | "running" | "done" | "dismissed">(
+    "idle"
+  );
+  const [confirmResult, setConfirmResult] = useState<Record<string, unknown> | null>(null);
   const failed = Boolean(step.error);
   const clock = useLiveClock(step.running && step.startedAt != null);
   const runningMs =
     step.running && step.startedAt != null && clock != null ? clock - step.startedAt : null;
+  const confirmation = confirmationFromResult(step.result);
+  const awaitingConfirm = Boolean(confirmation) && confirmState === "idle";
+
+  const runConfirm = async () => {
+    if (!confirmation) return;
+    setConfirmState("running");
+    try {
+      const result = await tauriClient.confirmAiDbSql(confirmation.confirmationId);
+      setConfirmResult(result);
+      setConfirmState("done");
+      toast.success(t("Statement ran after confirmation."));
+    } catch (error) {
+      setConfirmState("idle");
+      toast.error(formatAppError(error, t("Failed to run the confirmed statement.")));
+    }
+  };
+
+  const dismissConfirm = async () => {
+    if (!confirmation) return;
+    try {
+      await tauriClient.dismissAiDbSql(confirmation.confirmationId);
+      setConfirmState("dismissed");
+    } catch (error) {
+      toast.error(formatAppError(error, t("Failed to dismiss the confirmation.")));
+    }
+  };
 
   return (
     <div className="overflow-hidden rounded-md border bg-muted/25">
@@ -78,7 +125,7 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
             expanded && "rotate-90"
           )}
         />
-        {step.running ? (
+        {step.running || confirmState === "running" ? (
           <LoaderCircle className="size-3 shrink-0 animate-spin text-muted-foreground/70" />
         ) : failed ? (
           <CircleAlert className="size-3 shrink-0 text-destructive/80" />
@@ -96,16 +143,64 @@ export function ToolCallStep({ step }: { step: ToolStep }) {
         <span
           className={cn(
             "shrink-0 text-[10px] uppercase tracking-wide",
-            step.running
+            step.running || confirmState === "running"
               ? "text-muted-foreground/70"
               : failed
                 ? "text-destructive/80"
-                : "text-muted-foreground/50"
+                : awaitingConfirm
+                  ? "text-amber-700 dark:text-amber-400"
+                  : "text-muted-foreground/50"
           )}
         >
-          {step.running ? t("Running") : failed ? t("Failed") : t("Done")}
+          {step.running || confirmState === "running"
+            ? t("Running")
+            : failed
+              ? t("Failed")
+              : awaitingConfirm
+                ? t("Needs confirmation")
+                : confirmState === "done"
+                  ? t("Confirmed")
+                  : confirmState === "dismissed"
+                    ? t("Dismissed")
+                    : t("Done")}
         </span>
       </button>
+
+      {awaitingConfirm && (
+        <div className="space-y-2 border-t px-1.5 py-1.5">
+          <p className="text-xs text-muted-foreground">
+            {confirmation?.reason || t("This statement needs your confirmation before it runs.")}
+          </p>
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
+            {confirmation?.sql}
+          </pre>
+          <div className="flex items-center gap-1.5">
+            <Button type="button" size="sm" className="h-7" onClick={() => void runConfirm()}>
+              {t("Confirm and run")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7"
+              onClick={() => void dismissConfirm()}
+            >
+              {t("Dismiss")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {confirmState === "done" && confirmResult && (
+        <div className="space-y-1 border-t px-1.5 py-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("Result")}
+          </p>
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs leading-relaxed">
+            {formatJson(confirmResult)}
+          </pre>
+        </div>
+      )}
 
       {expanded && (
         <div className="space-y-2 border-t px-1.5 py-1.5">

@@ -32,19 +32,17 @@ function modeLabel(mode: DbReadOnlyPolicy): string {
 }
 
 /**
- * What a mode means, told truthfully.
+ * What a mode means for the SQL tool the AI gets on this connection.
  *
- * The last two say what they do *today* rather than what they are for, because
- * nothing services a confirmation yet: choosing them changes the stored setting
- * and nothing else, and a card that implied otherwise would have someone
- * believing the AI may write when it cannot.
+ * Confirm parks a write in chat until the person clicks the button; Free runs
+ * the same statements the human gate would allow without that extra click.
  */
 function modeHint(mode: DbReadOnlyPolicy): string {
   return mode === "observer"
     ? "Reads only."
     : mode === "confirm"
-      ? "Reads now; a change would ask you first. Asking is not built yet."
-      : "Reads now; changes would run. Not enabled yet.";
+      ? "Reads freely; changes wait for your Confirm in chat."
+      : "Reads and allowed changes run without asking.";
 }
 
 /**
