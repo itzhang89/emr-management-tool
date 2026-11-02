@@ -77,6 +77,27 @@ impl DbDriver for YellowbrickDriver {
         postgres::list_columns(dial, schema, table).await
     }
 
+    async fn describe_table(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<super::DbTableDetail> {
+        // Same catalogues as Postgres; missing views are tolerated upstream.
+        postgres::describe_table(dial, schema, table).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+        comment: Option<&str>,
+        column_comments: &[(String, Option<String>)],
+    ) -> AppResult<()> {
+        postgres::update_table_metadata(dial, schema, table, comment, column_comments).await
+    }
+
     async fn query(
         &self,
         dial: &DbDial<'_>,

@@ -17,9 +17,9 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, column_entries, hex_encode, DbCatalogEntry, DbColumnEntry, DbDial, DbDriver,
-    QueryPage, SchemaObject,
-    ServerInfo, MAX_PAGE_ROWS,
+    catalog_entries, column_entries, hex_encode, json_bool_yes_no, json_i64, json_str,
+    DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, DbTableColumn, DbTableDetail, DbTableIndex,
+    QueryPage, SchemaObject, ServerInfo, MAX_PAGE_ROWS,
 };
 
 /// The engine behind a Postgres connection.
@@ -141,6 +141,26 @@ impl DbDriver for PostgresDriver {
         list_columns(dial, schema, table).await
     }
 
+    async fn describe_table(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<DbTableDetail> {
+        describe_table(dial, schema, table).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+        comment: Option<&str>,
+        column_comments: &[(String, Option<String>)],
+    ) -> AppResult<()> {
+        update_table_metadata(dial, schema, table, comment, column_comments).await
+    }
+
     async fn query(
         &self,
         dial: &DbDial<'_>,
@@ -150,6 +170,317 @@ impl DbDriver for PostgresDriver {
     ) -> AppResult<QueryPage> {
         read_page(dial, sql, cap, cancel).await
     }
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn pg_table_props_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select c.relkind::text as relkind, \
+                obj_description(c.oid) as comment, \
+                c.reltuples::bigint as row_estimate, \
+                pg_catalog.pg_total_relation_size(c.oid)::bigint as data_length, \
+                n.nspname as schema_name \
+         from pg_catalog.pg_class c \
+         join pg_catalog.pg_namespace n on n.oid = c.relnamespace \
+         where n.nspname = {} and c.relname = {} \
+         and c.relkind in ('r','p','v','m','f')",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+fn pg_rich_columns_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select a.attname as name, \
+                pg_catalog.format_type(a.atttypid, a.atttypmod) as data_type, \
+                not a.attnotnull as is_nullable, \
+                pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) as column_default, \
+                col_description(a.attrelid, a.attnum) as comment, \
+                a.attnum::bigint as ordinal, \
+                case when EXISTS ( \
+                    select 1 from pg_catalog.pg_index i \
+                    where i.indrelid = a.attrelid and a.attnum = any(i.indkey) and i.indisprimary \
+                ) then 'PRI' else null end as column_key, \
+                case when a.attidentity <> '' then 'identity' \
+                     when a.attgenerated <> '' then 'generated' \
+                     else null end as extra \
+         from pg_catalog.pg_attribute a \
+         join pg_catalog.pg_class c on c.oid = a.attrelid \
+         join pg_catalog.pg_namespace n on n.oid = c.relnamespace \
+         left join pg_catalog.pg_attrdef ad on ad.adrelid = a.attrelid and ad.adnum = a.attnum \
+         where n.nspname = {} and c.relname = {} \
+           and a.attnum > 0 and not a.attisdropped \
+         order by a.attnum",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+fn pg_indexes_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select i.relname as index_name, \
+                ix.indisunique as is_unique, \
+                a.attname as column_name, \
+                array_position(ix.indkey, a.attnum) as seq, \
+                am.amname as index_type \
+         from pg_catalog.pg_class t \
+         join pg_catalog.pg_namespace n on n.oid = t.relnamespace \
+         join pg_catalog.pg_index ix on t.oid = ix.indrelid \
+         join pg_catalog.pg_class i on i.oid = ix.indexrelid \
+         join pg_catalog.pg_am am on am.oid = i.relam \
+         join pg_catalog.pg_attribute a on a.attrelid = t.oid and a.attnum = any(ix.indkey) \
+         where n.nspname = {} and t.relname = {} \
+         order by i.relname, seq",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+pub(crate) async fn describe_table(
+    dial: &DbDial<'_>,
+    schema: &str,
+    table: &str,
+) -> AppResult<DbTableDetail> {
+    let database = dial.database().unwrap_or("postgres").to_string();
+    let props = read_page(
+        dial,
+        &pg_table_props_sql(schema, table),
+        1,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    let props_row = props.rows.first().cloned();
+
+    let columns_page = read_page(
+        dial,
+        &pg_rich_columns_sql(schema, table),
+        MAX_PAGE_ROWS,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    let columns: Vec<DbTableColumn> = columns_page
+        .rows
+        .iter()
+        .filter_map(|row| {
+            Some(DbTableColumn {
+                name: json_str(row, "name")?,
+                data_type: json_str(row, "data_type").unwrap_or_else(|| "unknown".into()),
+                nullable: json_bool_yes_no(row, "is_nullable")
+                    .or_else(|| row.get("is_nullable").and_then(|v| v.as_bool())),
+                default_value: json_str(row, "column_default"),
+                comment: json_str(row, "comment"),
+                ordinal: json_i64(row, "ordinal"),
+                column_key: json_str(row, "column_key"),
+                extra: json_str(row, "extra"),
+            })
+        })
+        .collect();
+
+    let indexes = match read_page(
+        dial,
+        &pg_indexes_sql(schema, table),
+        MAX_PAGE_ROWS,
+        &QueryCancellation::never(),
+    )
+    .await
+    {
+        Ok(page) => fold_pg_indexes(&page),
+        Err(_) => Vec::new(),
+    };
+
+    let relkind = props_row
+        .as_ref()
+        .and_then(|row| json_str(row, "relkind"))
+        .unwrap_or_default();
+    let (object_kind, table_type) = match relkind.as_str() {
+        "v" => (Some(SchemaObject::View), Some("VIEW".into())),
+        "m" => (
+            Some(SchemaObject::MaterializedView),
+            Some("MATERIALIZED VIEW".into()),
+        ),
+        "f" => (Some(SchemaObject::ForeignTable), Some("FOREIGN TABLE".into())),
+        "p" => (Some(SchemaObject::Table), Some("PARTITIONED TABLE".into())),
+        _ => (Some(SchemaObject::Table), Some("BASE TABLE".into())),
+    };
+
+    let qualified = format!("{}.{}", quote_ident(schema), quote_ident(table));
+    let regclass = format!("{schema}.{table}");
+    let ddl = match relkind.as_str() {
+        "v" | "m" => {
+            let def = read_page(
+                dial,
+                &format!(
+                    "select pg_catalog.pg_get_viewdef({}::regclass, true) as ddl",
+                    session::quote_literal(&regclass)
+                ),
+                1,
+                &QueryCancellation::never(),
+            )
+            .await
+            .ok()
+            .and_then(|page| page.rows.first().and_then(|row| json_str(row, "ddl")));
+            def.map(|body| {
+                let kind = if relkind == "m" {
+                    "MATERIALIZED VIEW"
+                } else {
+                    "VIEW"
+                };
+                format!("CREATE {kind} {qualified} AS\n{body}")
+            })
+        }
+        _ => Some(reconstruct_create_table(&qualified, &columns, &indexes)),
+    };
+
+    Ok(DbTableDetail {
+        database,
+        schema: Some(schema.to_string()),
+        name: table.to_string(),
+        object_kind,
+        table_type,
+        engine: None,
+        collation: None,
+        comment: props_row.as_ref().and_then(|row| json_str(row, "comment")),
+        row_estimate: props_row
+            .as_ref()
+            .and_then(|row| json_i64(row, "row_estimate"))
+            .map(|n| n.max(0)),
+        data_length: props_row.as_ref().and_then(|row| json_i64(row, "data_length")),
+        create_time: None,
+        update_time: None,
+        columns,
+        indexes,
+        ddl,
+        properties: std::collections::BTreeMap::new(),
+    })
+}
+
+fn fold_pg_indexes(page: &QueryPage) -> Vec<DbTableIndex> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_name: std::collections::BTreeMap<String, DbTableIndex> =
+        std::collections::BTreeMap::new();
+    for row in &page.rows {
+        let name = match json_str(row, "index_name") {
+            Some(name) => name,
+            None => continue,
+        };
+        let column = match json_str(row, "column_name") {
+            Some(column) => column,
+            None => continue,
+        };
+        let unique = row
+            .get("is_unique")
+            .and_then(|v| v.as_bool())
+            .or_else(|| json_bool_yes_no(row, "is_unique"))
+            .unwrap_or(false);
+        let index_type = json_str(row, "index_type");
+        if let Some(existing) = by_name.get_mut(&name) {
+            if !existing.columns.contains(&column) {
+                existing.columns.push(column);
+            }
+        } else {
+            order.push(name.clone());
+            by_name.insert(
+                name.clone(),
+                DbTableIndex {
+                    name,
+                    columns: vec![column],
+                    unique,
+                    index_type,
+                },
+            );
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|name| by_name.remove(&name))
+        .collect()
+}
+
+fn reconstruct_create_table(
+    qualified: &str,
+    columns: &[DbTableColumn],
+    indexes: &[DbTableIndex],
+) -> String {
+    let mut lines: Vec<String> = columns
+        .iter()
+        .map(|column| {
+            let mut line = format!("  {} {}", quote_ident(&column.name), column.data_type);
+            if column.nullable == Some(false) {
+                line.push_str(" NOT NULL");
+            }
+            if let Some(default) = column.default_value.as_deref() {
+                line.push_str(" DEFAULT ");
+                line.push_str(default);
+            }
+            line
+        })
+        .collect();
+    if let Some(pk) = indexes.iter().find(|index| {
+        index.unique
+            && (index.name.ends_with("_pkey") || index.name == "PRIMARY")
+    }) {
+        let cols = pk
+            .columns
+            .iter()
+            .map(|name| quote_ident(name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("  PRIMARY KEY ({cols})"));
+    }
+    format!("CREATE TABLE {qualified} (\n{}\n);", lines.join(",\n"))
+}
+
+pub(crate) async fn update_table_metadata(
+    dial: &DbDial<'_>,
+    schema: &str,
+    table: &str,
+    comment: Option<&str>,
+    column_comments: &[(String, Option<String>)],
+) -> AppResult<()> {
+    if !dial.writable {
+        return Err(AppError::validation(
+            "Saving table metadata needs Allow writes on this connection.",
+        ));
+    }
+    let qualified = format!("{}.{}", quote_ident(schema), quote_ident(table));
+    let pool = connect(dial).await?;
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+
+    if let Some(text) = comment {
+        let sql = format!(
+            "comment on table {qualified} is {}",
+            session::quote_literal(text)
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+    }
+
+    for (name, new_comment) in column_comments {
+        let comment_sql = match new_comment {
+            Some(text) => session::quote_literal(text),
+            None => "NULL".to_string(),
+        };
+        let sql = format!(
+            "comment on column {qualified}.{} is {comment_sql}",
+            quote_ident(name)
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+    }
+
+    drop(conn);
+    pool.close().await;
+    Ok(())
 }
 
 fn columns_sql(schema: &str, table: &str) -> String {

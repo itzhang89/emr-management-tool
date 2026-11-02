@@ -42,8 +42,9 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-1.5">
-      <div className="flex min-h-5 shrink-0 items-center gap-px overflow-x-auto rounded-md border bg-muted/30 p-px">
+    <div className="flex h-full min-h-0 flex-col gap-1">
+      {/* Match result-grid cell chrome: mono 10px, tight strip. */}
+      <div className="flex min-h-4 shrink-0 items-center gap-px overflow-x-auto rounded-sm border bg-muted/20 px-px py-px">
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           const running = Boolean(tab.running);
@@ -51,18 +52,18 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
             <div
               key={tab.id}
               className={cn(
-                "flex max-w-[150px] shrink-0 items-center gap-0 rounded-sm border px-0.5 transition-colors",
+                "flex max-w-[140px] shrink-0 items-center gap-0 rounded-sm border px-0.5 transition-colors",
                 isActive
-                  ? "border-primary/60 bg-primary/10 shadow-sm ring-1 ring-primary/20"
+                  ? "border-primary/50 bg-primary/10"
                   : "border-transparent hover:bg-muted/60"
               )}
             >
               <button
                 type="button"
                 className={cn(
-                  "min-w-0 overflow-hidden whitespace-nowrap px-1 text-left text-[10px] [text-overflow:clip]",
+                  "min-w-0 overflow-hidden whitespace-nowrap px-0.5 text-left font-mono text-[10px] leading-none [text-overflow:clip]",
                   isActive
-                    ? "font-semibold text-primary"
+                    ? "font-medium text-primary"
                     : "text-muted-foreground hover:text-foreground",
                   running && !isActive && "text-amber-600 dark:text-amber-400"
                 )}
@@ -77,7 +78,7 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="size-4 shrink-0"
+                  className="size-3.5 shrink-0"
                   aria-label={t("Close {title}", { title: tab.title })}
                   onClick={() => onCloseTab(tab.id)}
                 >
@@ -89,11 +90,13 @@ export function ResultTabsPanel<T extends ResultTabStripItem>({
         })}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border p-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border p-1.5">
         {activeTab ? (
           children(activeTab)
         ) : (
-          <p className="text-xs text-muted-foreground">{emptyLabel ?? t("No result tabs.")}</p>
+          <p className="font-mono text-[10px] text-muted-foreground">
+            {emptyLabel ?? t("No result tabs.")}
+          </p>
         )}
       </div>
     </div>

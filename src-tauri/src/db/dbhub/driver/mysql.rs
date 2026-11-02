@@ -18,7 +18,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::{self, QueryCancellation, CONNECT_TIMEOUT};
 use super::{
-    catalog_entries, hex_encode, DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, QueryPage,
+    catalog_entries, hex_encode, json_bool_yes_no, json_i64, json_str, DbCatalogEntry,
+    DbColumnEntry, DbDial, DbDriver, DbTableColumn, DbTableDetail, DbTableIndex, QueryPage,
     SchemaObject, ServerInfo, MAX_PAGE_ROWS,
 };
 
@@ -167,11 +168,7 @@ impl DbDriver for MysqlDriver {
         schema: &str,
         table: &str,
     ) -> AppResult<Vec<DbColumnEntry>> {
-        let database = if schema.is_empty() {
-            dial.database().unwrap_or_default()
-        } else {
-            schema
-        };
+        let database = mysql_schema(dial, schema);
         let page = read_page(
             dial,
             &columns_sql(database, table),
@@ -180,6 +177,26 @@ impl DbDriver for MysqlDriver {
         )
         .await?;
         Ok(super::column_entries(&page))
+    }
+
+    async fn describe_table(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<DbTableDetail> {
+        describe_table(dial, schema, table).await
+    }
+
+    async fn update_table_metadata(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+        comment: Option<&str>,
+        column_comments: &[(String, Option<String>)],
+    ) -> AppResult<()> {
+        update_table_metadata(dial, schema, table, comment, column_comments).await
     }
 
     async fn query(
@@ -191,6 +208,294 @@ impl DbDriver for MysqlDriver {
     ) -> AppResult<QueryPage> {
         read_page(dial, sql, cap, cancel).await
     }
+}
+
+fn mysql_schema<'a>(dial: &'a DbDial<'_>, schema: &'a str) -> &'a str {
+    if schema.is_empty() {
+        dial.database().unwrap_or_default()
+    } else {
+        schema
+    }
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
+
+/// Render a COLUMN_DEFAULT for MODIFY without wrapping expressions in quotes.
+fn mysql_default_sql(value: &str) -> String {
+    let trimmed = value.trim();
+    let upper = trimmed.to_ascii_uppercase();
+    if trimmed.parse::<f64>().is_ok()
+        || upper == "NULL"
+        || upper.starts_with("CURRENT_TIMESTAMP")
+        || upper.starts_with("CURRENT_DATE")
+        || upper.starts_with("CURRENT_TIME")
+        || upper.starts_with("(")
+    {
+        trimmed.to_string()
+    } else {
+        session::quote_literal(trimmed)
+    }
+}
+
+fn table_props_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select table_type, engine, table_collation, table_comment, table_rows, \
+                data_length, create_time, update_time, table_catalog, version, row_format \
+         from information_schema.tables \
+         where table_schema = {} and table_name = {}",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+fn rich_columns_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select column_name as name, column_type as data_type, is_nullable, \
+                column_default, column_comment as comment, ordinal_position as ordinal, \
+                column_key, extra \
+         from information_schema.columns \
+         where table_schema = {} and table_name = {} \
+         order by ordinal_position",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+fn indexes_sql(schema: &str, table: &str) -> String {
+    format!(
+        "select index_name, non_unique, column_name, seq_in_index, index_type \
+         from information_schema.statistics \
+         where table_schema = {} and table_name = {} \
+         order by index_name, seq_in_index",
+        session::quote_literal(schema),
+        session::quote_literal(table)
+    )
+}
+
+async fn describe_table(
+    dial: &DbDial<'_>,
+    schema: &str,
+    table: &str,
+) -> AppResult<DbTableDetail> {
+    let database = mysql_schema(dial, schema).to_string();
+    let props = read_page(
+        dial,
+        &table_props_sql(&database, table),
+        1,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    let props_row = props.rows.first();
+
+    let columns_page = read_page(
+        dial,
+        &rich_columns_sql(&database, table),
+        MAX_PAGE_ROWS,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    let columns = columns_page
+        .rows
+        .iter()
+        .filter_map(|row| {
+            Some(DbTableColumn {
+                name: json_str(row, "name")?,
+                data_type: json_str(row, "data_type").unwrap_or_else(|| "unknown".into()),
+                nullable: json_bool_yes_no(row, "is_nullable"),
+                default_value: json_str(row, "column_default"),
+                comment: json_str(row, "comment"),
+                ordinal: json_i64(row, "ordinal"),
+                column_key: json_str(row, "column_key"),
+                extra: json_str(row, "extra"),
+            })
+        })
+        .collect();
+
+    let indexes_page = read_page(
+        dial,
+        &indexes_sql(&database, table),
+        MAX_PAGE_ROWS,
+        &QueryCancellation::never(),
+    )
+    .await?;
+    let indexes = fold_mysql_indexes(&indexes_page);
+
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(table));
+    let ddl_page = read_page(
+        dial,
+        &format!("show create table {qualified}"),
+        1,
+        &QueryCancellation::never(),
+    )
+    .await
+    .ok();
+    let ddl = ddl_page.and_then(|page| {
+        let row = page.rows.first()?;
+        // MySQL names the column "Create Table" or "Create View".
+        for key in ["Create Table", "Create View", "create table", "create view"] {
+            if let Some(text) = json_str(row, key) {
+                return Some(text);
+            }
+        }
+        page.columns
+            .iter()
+            .find(|name| name.to_ascii_lowercase().contains("create"))
+            .and_then(|name| json_str(row, name))
+    });
+
+    let mut properties = std::collections::BTreeMap::new();
+    if let Some(row) = props_row {
+        for key in ["table_catalog", "version", "row_format"] {
+            if let Some(value) = json_str(row, key) {
+                properties.insert(key.to_string(), value);
+            }
+        }
+    }
+
+    let table_type = props_row.and_then(|row| json_str(row, "table_type"));
+    let object_kind = match table_type.as_deref() {
+        Some("VIEW") => Some(SchemaObject::View),
+        Some("SYSTEM VIEW") => Some(SchemaObject::View),
+        _ => Some(SchemaObject::Table),
+    };
+
+    Ok(DbTableDetail {
+        database: database.clone(),
+        schema: None,
+        name: table.to_string(),
+        object_kind,
+        table_type,
+        engine: props_row.and_then(|row| json_str(row, "engine")),
+        collation: props_row.and_then(|row| json_str(row, "table_collation")),
+        comment: props_row.and_then(|row| json_str(row, "table_comment")),
+        row_estimate: props_row.and_then(|row| json_i64(row, "table_rows")),
+        data_length: props_row.and_then(|row| json_i64(row, "data_length")),
+        create_time: props_row.and_then(|row| json_str(row, "create_time")),
+        update_time: props_row.and_then(|row| json_str(row, "update_time")),
+        columns,
+        indexes,
+        ddl,
+        properties,
+    })
+}
+
+fn fold_mysql_indexes(page: &QueryPage) -> Vec<DbTableIndex> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_name: std::collections::BTreeMap<String, DbTableIndex> =
+        std::collections::BTreeMap::new();
+    for row in &page.rows {
+        let name = match json_str(row, "index_name") {
+            Some(name) => name,
+            None => continue,
+        };
+        let column = match json_str(row, "column_name") {
+            Some(column) => column,
+            None => continue,
+        };
+        let unique = json_i64(row, "non_unique").map(|value| value == 0).unwrap_or(false);
+        let index_type = json_str(row, "index_type");
+        if let Some(existing) = by_name.get_mut(&name) {
+            existing.columns.push(column);
+        } else {
+            order.push(name.clone());
+            by_name.insert(
+                name.clone(),
+                DbTableIndex {
+                    name,
+                    columns: vec![column],
+                    unique,
+                    index_type,
+                },
+            );
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|name| by_name.remove(&name))
+        .collect()
+}
+
+async fn update_table_metadata(
+    dial: &DbDial<'_>,
+    schema: &str,
+    table: &str,
+    comment: Option<&str>,
+    column_comments: &[(String, Option<String>)],
+) -> AppResult<()> {
+    if !dial.writable {
+        return Err(AppError::validation(
+            "Saving table metadata needs Allow writes on this connection.",
+        ));
+    }
+    let database = mysql_schema(dial, schema).to_string();
+    let qualified = format!("{}.{}", quote_ident(&database), quote_ident(table));
+    let pool = connect(dial).await?;
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+
+    if let Some(text) = comment {
+        let sql = format!(
+            "alter table {qualified} comment = {}",
+            session::quote_literal(text)
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+    }
+
+    // Column comments need the current definition — MySQL's MODIFY replaces
+    // the column, so nullability and default have to travel with the type.
+    if !column_comments.is_empty() {
+        let columns_page = read_page(
+            dial,
+            &rich_columns_sql(&database, table),
+            MAX_PAGE_ROWS,
+            &QueryCancellation::never(),
+        )
+        .await?;
+        let defs: std::collections::HashMap<String, (String, bool, Option<String>)> = columns_page
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let name = json_str(row, "name")?;
+                let data_type = json_str(row, "data_type").unwrap_or_else(|| "text".into());
+                let nullable = json_bool_yes_no(row, "is_nullable").unwrap_or(true);
+                let default = json_str(row, "column_default");
+                Some((name, (data_type, nullable, default)))
+            })
+            .collect();
+        for (name, new_comment) in column_comments {
+            let Some((data_type, nullable, default)) = defs.get(name) else {
+                continue;
+            };
+            let comment_sql = match new_comment {
+                Some(text) => session::quote_literal(text),
+                None => "''".to_string(),
+            };
+            let null_sql = if *nullable { "null" } else { "not null" };
+            let default_sql = match default {
+                Some(value) => format!(" default {}", mysql_default_sql(value)),
+                None => String::new(),
+            };
+            let sql = format!(
+                "alter table {qualified} modify column {} {data_type} {null_sql}{default_sql} comment {comment_sql}",
+                quote_ident(name)
+            );
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *conn)
+                .await
+                .map_err(|error| AppError::validation(session::describe_error(&error)))?;
+        }
+    }
+
+    drop(conn);
+    pool.close().await;
+    Ok(())
 }
 
 /// Build a MySQL connection URL for this dial.

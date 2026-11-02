@@ -93,6 +93,32 @@ export function buildResultTabTitle(sql: string, fallbackIndex = 1): string {
   return `Result ${fallbackIndex}`;
 }
 
+/**
+ * Prefer sqlparser's `primaryTable` (via parse IPC), then the regex heuristic,
+ * then a numbered Result tab. Used by DBHub when opening a fresh result tab.
+ */
+export async function resolveResultTabTitle(options: {
+  sql: string;
+  fallbackIndex: number;
+  dialect?: string;
+  parseSql?: (request: {
+    sql: string;
+    dialect?: string;
+  }) => Promise<{ statements: Array<{ primaryTable?: string }> }>;
+}): Promise<string> {
+  const { sql, fallbackIndex, dialect, parseSql } = options;
+  if (parseSql) {
+    try {
+      const parsed = await parseSql({ sql, dialect });
+      const table = parsed.statements[0]?.primaryTable?.trim();
+      if (table) return formatResultTabTableName(table);
+    } catch {
+      // Fall through to the local heuristic.
+    }
+  }
+  return buildResultTabTitle(sql, fallbackIndex);
+}
+
 export function createQueryResultTab(index: number, partial?: Partial<QueryResultTab>): QueryResultTab {
   return {
     id: crypto.randomUUID(),

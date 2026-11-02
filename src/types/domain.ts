@@ -1456,6 +1456,8 @@ export interface ParsedDbSqlStatement {
   text: string;
   parseOk: boolean;
   parseError?: string;
+  /** First named relation from the AST — preferred Result-tab title. */
+  primaryTable?: string;
 }
 
 export interface ParseDbSqlResult {
@@ -1468,6 +1470,54 @@ export interface ParseDbSqlResult {
 export interface DbColumnEntry {
   name: string;
   dataType?: string;
+}
+
+/** One column in the DBHub table-metadata pane. */
+export interface DbTableColumn {
+  name: string;
+  dataType: string;
+  nullable?: boolean;
+  defaultValue?: string;
+  comment?: string;
+  ordinal?: number;
+  columnKey?: string;
+  extra?: string;
+}
+
+export interface DbTableIndex {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  indexType?: string;
+}
+
+/** Full relation metadata for the workspace metadata tab. */
+export interface DbTableDetail {
+  database: string;
+  schema?: string;
+  name: string;
+  objectKind?: SchemaObjectKind;
+  tableType?: string;
+  engine?: string;
+  collation?: string;
+  comment?: string;
+  rowEstimate?: number;
+  dataLength?: number;
+  createTime?: string;
+  updateTime?: string;
+  columns: DbTableColumn[];
+  indexes: DbTableIndex[];
+  ddl?: string;
+  properties: Record<string, string>;
+}
+
+export interface DbTableMetadataUpdateRequest {
+  connectionId: string;
+  database: string;
+  schema?: string;
+  table: string;
+  comment?: string | null;
+  columnComments: Array<{ name: string; comment?: string | null }>;
 }
 
 /** One entry of the workspace catalog tree (database or table). */

@@ -178,6 +178,66 @@ pub async fn catalog_schemas_for_command(
     .await
 }
 
+pub async fn describe_table_for_command(
+    app: &AppHandle,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> AppResult<driver::DbTableDetail> {
+    let shape = shape_for(app, connection_id, false).await?;
+    complete_operation("table metadata request", async {
+        let (target, _forward) =
+            tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        let base = shape.dial(&target);
+        let dial = base.reading(database);
+        driver::driver_for(shape.connection.kind)
+            .describe_table(&dial, schema, table)
+            .await
+    })
+    .await
+}
+
+pub async fn update_table_metadata_for_command(
+    app: &AppHandle,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+    comment: Option<&str>,
+    column_comments: &[(String, Option<String>)],
+) -> AppResult<driver::DbTableDetail> {
+    let shape = shape_for(app, connection_id, false).await?;
+    if !shape.connection.allow_writes {
+        return Err(crate::error::AppError::validation(
+            "Saving table metadata needs Allow writes on this connection.",
+        ));
+    }
+    complete_operation("table metadata update", async {
+        let (target, _forward) =
+            tunnel::dial_target_for(&shape.pool, app, &shape.connection).await?;
+        let base = shape.dial(&target).writable();
+        let dial = base.reading(database);
+        let driver = driver::driver_for(shape.connection.kind);
+        driver
+            .update_table_metadata(&dial, schema, table, comment, column_comments)
+            .await?;
+        // Drop any cached column list — comments may have changed.
+        let _ = store::write_catalog_cache(
+            &shape.pool,
+            connection_id,
+            "columns",
+            database,
+            schema,
+            table,
+            "[]",
+        )
+        .await;
+        driver.describe_table(&dial, schema, table).await
+    })
+    .await
+}
+
 pub async fn catalog_columns_for_command(
     app: &AppHandle,
     connection_id: &str,

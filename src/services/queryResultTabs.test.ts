@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { buildResultTabTitle, createQueryResultTab, extractPrimaryTableName, formatResultTabTableName } from "./queryResultTabs";
+import { describe, expect, it, vi } from "vitest";
+import {
+  buildResultTabTitle,
+  createQueryResultTab,
+  extractPrimaryTableName,
+  formatResultTabTableName,
+  resolveResultTabTitle
+} from "./queryResultTabs";
 
 describe("queryResultTabs", () => {
   it("prefers table name from select queries", () => {
@@ -36,5 +42,30 @@ describe("queryResultTabs", () => {
     const tab = createQueryResultTab(2);
     expect(tab.title).toBe("Result 2");
     expect(tab.id).toBeTruthy();
+  });
+
+  it("prefers sqlparser primaryTable when resolveResultTabTitle parses", async () => {
+    const parseSql = vi.fn().mockResolvedValue({
+      statements: [{ primaryTable: "orders" }]
+    });
+    await expect(
+      resolveResultTabTitle({
+        sql: "SELECT 1",
+        fallbackIndex: 4,
+        parseSql
+      })
+    ).resolves.toBe("orders");
+    expect(parseSql).toHaveBeenCalled();
+  });
+
+  it("falls back when parse has no primary table", async () => {
+    const parseSql = vi.fn().mockResolvedValue({ statements: [{ primaryTable: undefined }] });
+    await expect(
+      resolveResultTabTitle({
+        sql: "SELECT * FROM customers",
+        fallbackIndex: 2,
+        parseSql
+      })
+    ).resolves.toBe("customers");
   });
 });

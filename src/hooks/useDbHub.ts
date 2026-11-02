@@ -9,7 +9,8 @@ import type {
   GateOverrides,
   NetworkProfileInput,
   NetworkProfileTestInput,
-  SchemaObjectKind
+  SchemaObjectKind,
+  DbTableMetadataUpdateRequest
 } from "@/types/domain";
 import { dbHubService } from "@/services/dbHubService";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -220,9 +221,52 @@ export function useRefreshDbCatalog(connectionId?: string) {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["dbhub-databases"] }),
       queryClient.invalidateQueries({ queryKey: ["dbhub-schemas"] }),
-      queryClient.invalidateQueries({ queryKey: ["dbhub-objects"] })
+      queryClient.invalidateQueries({ queryKey: ["dbhub-objects"] }),
+      queryClient.invalidateQueries({ queryKey: ["dbhub-table-detail"] })
     ]);
   };
+}
+
+/** Full relation metadata for the JDBC workspace's metadata tab. */
+export function useDbTableDetail(
+  connectionId: string | undefined,
+  database: string | undefined,
+  schema: string | undefined,
+  table: string | undefined,
+  enabled = true
+) {
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useQuery({
+    queryKey: ["dbhub-table-detail", accountId, connectionId, database, schema, table],
+    queryFn: () =>
+      dbHubService.getTableDetail(connectionId!, database!, schema ?? "", table!),
+    enabled: Boolean(enabled && accountId && connectionId && database && table)
+  });
+}
+
+export function useUpdateDbTableMetadata(connectionId?: string) {
+  const queryClient = useQueryClient();
+  const activeAccount = useActiveAwsAccount();
+  const accountId = activeAccount.data?.id;
+  return useMutation({
+    mutationFn: (request: DbTableMetadataUpdateRequest) =>
+      dbHubService.updateTableMetadata(request),
+    onSuccess: (detail) => {
+      queryClient.setQueryData(
+        [
+          "dbhub-table-detail",
+          accountId,
+          connectionId,
+          detail.database,
+          detail.schema ?? "",
+          detail.name
+        ],
+        detail
+      );
+      void queryClient.invalidateQueries({ queryKey: ["dbhub-table-detail"] });
+    }
+  });
 }
 
 /**

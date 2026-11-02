@@ -903,9 +903,9 @@ pub fn parse_db_sql(request: ParseDbSqlRequest) -> AppResult<ParseDbSqlResult> {
         .statements
         .iter()
         .map(|statement| {
-            let (parse_ok, parse_error) = match &statement.ast {
-                Ok(_) => (true, None),
-                Err(message) => (false, Some(message.clone())),
+            let (parse_ok, parse_error, primary_table) = match &statement.ast {
+                Ok(ast) => (true, None, dbhub::sql::primary_relation_name(ast)),
+                Err(message) => (false, Some(message.clone()), None),
             };
             ParsedDbSqlStatement {
                 start: byte_to_utf16(&request.sql, statement.start),
@@ -913,6 +913,7 @@ pub fn parse_db_sql(request: ParseDbSqlRequest) -> AppResult<ParseDbSqlResult> {
                 text: statement.text.clone(),
                 parse_ok,
                 parse_error,
+                primary_table,
             }
         })
         .collect();
@@ -1021,6 +1022,45 @@ pub async fn list_db_columns(
         &request.database,
         &request.schema,
         &request.table,
+    )
+    .await
+}
+
+/// Full relation metadata (columns, indexes, DDL) for the metadata tab.
+#[tauri::command]
+pub async fn get_db_table_detail(
+    app: AppHandle,
+    request: crate::models::DbTableDetailRequest,
+) -> AppResult<crate::db::dbhub::driver::DbTableDetail> {
+    dbhub::catalog::describe_table_for_command(
+        &app,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &request.table,
+    )
+    .await
+}
+
+/// Save table / column comments from the metadata pane.
+#[tauri::command]
+pub async fn update_db_table_metadata(
+    app: AppHandle,
+    request: crate::models::DbTableMetadataUpdateRequest,
+) -> AppResult<crate::db::dbhub::driver::DbTableDetail> {
+    let column_comments: Vec<(String, Option<String>)> = request
+        .column_comments
+        .into_iter()
+        .map(|entry| (entry.name, entry.comment))
+        .collect();
+    dbhub::catalog::update_table_metadata_for_command(
+        &app,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &request.table,
+        request.comment.as_deref(),
+        &column_comments,
     )
     .await
 }

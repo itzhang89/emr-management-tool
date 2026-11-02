@@ -23,6 +23,7 @@ import { DbWriteStatusIcon } from "@/components/dbhub/DbWriteStatusIcon";
 import { GateRulesDialog } from "@/components/dbhub/GateRulesDialog";
 import { ConfirmRunDialog } from "@/components/dbhub/workspace/ConfirmRunDialog";
 import { DbAnalyzeDialog } from "@/components/dbhub/workspace/DbAnalyzeDialog";
+import { DbTableMetadataPanel } from "@/components/dbhub/workspace/DbTableMetadataPanel";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -30,6 +31,8 @@ import {
   useDbDatabases,
   useDbSchemas,
   useDbObjects,
+  useDbTableDetail,
+  useUpdateDbTableMetadata,
   useCancelDbQuery,
   useRefreshDbCatalog,
   useDbGateRefusals,
@@ -39,7 +42,7 @@ import {
 } from "@/hooks/useDbHub";
 import { SqlEditor, type SqlEditorHandle } from "@/components/sql/SqlEditor";
 import { SqlQueryToolbar } from "@/components/sql/SqlQueryToolbar";
-import { nextQueryTitle } from "@/components/sql/QueryTabsPanel";
+import { nextQueryTitle, type QueryTabStripItem } from "@/components/sql/QueryTabsPanel";
 import { QueryWorkspaceColumn } from "@/components/sql/QueryWorkspaceColumn";
 import { ResultTabsPanel } from "@/components/sql/ResultTabsPanel";
 import { MSSQL, MySQL, PostgreSQL } from "@codemirror/lang-sql";
@@ -51,6 +54,7 @@ import {
   type SqlCatalogContext
 } from "@/services/athenaSqlCompletion";
 import { dbHubService } from "@/services/dbHubService";
+import { resolveResultTabTitle } from "@/services/queryResultTabs";
 import { lastPageOffset, previousPageOffset } from "@/components/sql/result/resultPaging";
 import { orderedRows } from "@/components/sql/result/resultFilter";
 import { AiMark } from "@/components/sql/RunMarks";
@@ -113,7 +117,24 @@ import type {
  * every change and rehydrated on mount, so switching accounts or leaving the
  * page and coming back restores every draft, the last selection and result-tab
  * metadata (big result bodies are dropped; a rerun restores them).
+ *
+ * Table metadata rides in the editor strip as its own tab (same interaction as
+ * Glue): the info button opens it; selecting an editor tab dismisses it.
  */
+const METADATA_TAB_ID = "db-metadata";
+
+function metadataStripTab(title: string): CachedQueryTab & QueryTabStripItem {
+  return {
+    id: METADATA_TAB_ID,
+    title,
+    sql: "",
+    resultTabs: [],
+    activeResultTabId: undefined,
+    fetchSize: 100,
+    nextResultIndex: 1
+  };
+}
+
 export function ConnectionQueryTab({
   connection,
   active = true,
@@ -142,9 +163,12 @@ export function ConnectionQueryTab({
   const [selectedDatabase, setSelectedDatabase] = useState<string>();
   const [selectedSchema, setSelectedSchema] = useState<string>();
   const [selectedTable, setSelectedTable] = useState<string>();
+  const [metadataTabOpen, setMetadataTabOpen] = useState(false);
+  const [metadataEditMode, setMetadataEditMode] = useState(false);
   const [queryTabs, setQueryTabs] = useState<CachedQueryTab[]>([]);
   const [activeQueryTabId, setActiveQueryTabId] = useState<string>();
   const [hydrated, setHydrated] = useState(false);
+  const updateTableMetadata = useUpdateDbTableMetadata(connection.id);
   const [running, setRunning] = useState(false);
   /** Which result tab the in-flight run belongs to, so only it shows the marker. */
   const [runningTabId, setRunningTabId] = useState<string>();
@@ -245,6 +269,18 @@ export function ConnectionQueryTab({
     : selectedSchema;
 
   const objects = useDbObjects(connection.id, selectedDatabase, activeSchema, objectKinds, active);
+
+  const tableDetail = useDbTableDetail(
+    connection.id,
+    selectedDatabase,
+    activeSchema ?? "",
+    selectedTable,
+    Boolean(active && metadataTabOpen && selectedTable)
+  );
+
+  useEffect(() => {
+    setMetadataEditMode(false);
+  }, [selectedDatabase, selectedSchema, selectedTable]);
 
   /**
    * Catalog context for editor completion. MySQL qualifies as `database.table`;
@@ -416,7 +452,14 @@ export function ConnectionQueryTab({
       if (paging && !existing) return;
 
       const resultTabId = existing?.id ?? crypto.randomUUID();
-      const title = existing?.title ?? `Result ${editor.nextResultIndex}`;
+      const title =
+        existing?.title ??
+        (await resolveResultTabTitle({
+          sql: statement,
+          fallbackIndex: editor.nextResultIndex,
+          dialect: connection.kind,
+          parseSql: (request) => dbHubService.parseSql(request)
+        }));
       const requestId = crypto.randomUUID();
       setRunning(true);
       setRunningTabId(resultTabId);
@@ -774,6 +817,7 @@ export function ConnectionQueryTab({
     // backend's word, not the editor's, and the statement is the honest start.
     if (!isRelation(entry.kind)) {
       setSelectedTable(undefined);
+      setMetadataTabOpen(false);
       if (entry.kind === "procedure") {
         setEditorSql(`CALL ${reference}();`);
       } else if (entry.kind === "function") {
@@ -786,7 +830,39 @@ export function ConnectionQueryTab({
       return;
     }
     setSelectedTable(entry.name);
-    setEditorSql(`SELECT * FROM ${reference} LIMIT 100;`);
+    // While the metadata pane is in front there is no editor to write into —
+    // the click only re-points the pane, matching Glue.
+    if (!metadataTabOpen) {
+      setEditorSql(`SELECT * FROM ${reference} LIMIT 100;`);
+    }
+  };
+
+  const handleShowTableMetadata = (entry: DbCatalogEntry) => {
+    if (!isRelation(entry.kind)) return;
+    setSelectedTable(entry.name);
+    setMetadataEditMode(false);
+    setMetadataTabOpen(true);
+  };
+
+  const handleSaveTableMetadata = async (draft: {
+    comment?: string | null;
+    columnComments: Array<{ name: string; comment?: string | null }>;
+  }) => {
+    if (!selectedDatabase || !selectedTable) return;
+    try {
+      await updateTableMetadata.mutateAsync({
+        connectionId: connection.id,
+        database: selectedDatabase,
+        schema: activeSchema ?? "",
+        table: selectedTable,
+        comment: draft.comment,
+        columnComments: draft.columnComments
+      });
+      setMetadataEditMode(false);
+      toast.success(t("Table metadata updated."));
+    } catch (error) {
+      toast.error(formatAppError(error, t("Failed to update table metadata.")));
+    }
   };
 
   const analyzeFocusLabel =
@@ -994,6 +1070,8 @@ export function ConnectionQueryTab({
           setSelectedTable(undefined);
         }}
         onSelectObject={handleSelectObject}
+        onShowObjectInfo={handleShowTableMetadata}
+        selectedObject={selectedTable}
         onBack={() => {
           // One level at a time: schema → database → every database.
           if (selectedSchema !== undefined) {
@@ -1029,16 +1107,72 @@ export function ConnectionQueryTab({
         {activeQueryTab ? (
           <QueryWorkspaceColumn
             active={active}
-            header={() => connectionHeader}
-            tabs={queryTabs}
-            activeTabId={activeQueryTab.id}
-            onSelectTab={setActiveQueryTabId}
-            onCloseTab={closeQueryTab}
+            header={(tab) => (tab.id === METADATA_TAB_ID ? null : connectionHeader)}
+            tabs={[
+              ...queryTabs.map((tab) => ({
+                ...tab,
+                closable: queryTabs.length > 1
+              })),
+              ...(metadataTabOpen ? [metadataStripTab(t("Table Metadata"))] : [])
+            ]}
+            activeTabId={metadataTabOpen ? METADATA_TAB_ID : activeQueryTab.id}
+            onSelectTab={(tabId) => {
+              if (tabId === METADATA_TAB_ID) {
+                setMetadataTabOpen(true);
+                return;
+              }
+              setMetadataTabOpen(false);
+              setActiveQueryTabId(tabId);
+            }}
+            onCloseTab={(tabId) => {
+              if (tabId === METADATA_TAB_ID) {
+                setMetadataTabOpen(false);
+                setMetadataEditMode(false);
+                return;
+              }
+              closeQueryTab(tabId);
+            }}
             onNewTab={openQueryTab}
             newTabShortcut={NEW_QUERY_TAB_SHORTCUT}
-            onCycleTabs={cycleQueryTabs}
-            onCloseActiveTab={() => closeQueryTab(activeQueryTab.id)}
-            editor={(queryTab) => (
+            onCycleTabs={(delta) => {
+              const ids = [
+                ...queryTabs.map((tab) => tab.id),
+                ...(metadataTabOpen ? [METADATA_TAB_ID] : [])
+              ];
+              if (ids.length < 2) return;
+              const current = metadataTabOpen ? METADATA_TAB_ID : activeQueryTab.id;
+              const index = ids.findIndex((id) => id === current);
+              const next = ids[(index + delta + ids.length) % ids.length];
+              if (next === METADATA_TAB_ID) {
+                setMetadataTabOpen(true);
+                return;
+              }
+              setMetadataTabOpen(false);
+              setActiveQueryTabId(next);
+            }}
+            onCloseActiveTab={() => {
+              if (metadataTabOpen) {
+                setMetadataTabOpen(false);
+                setMetadataEditMode(false);
+                return;
+              }
+              closeQueryTab(activeQueryTab.id);
+            }}
+            editor={(queryTab) =>
+              queryTab.id === METADATA_TAB_ID ? (
+                <div className="h-full min-h-0 overflow-auto rounded-lg border p-3">
+                  <DbTableMetadataPanel
+                    table={tableDetail.data}
+                    loading={tableDetail.isLoading}
+                    error={tableDetail.error}
+                    editMode={metadataEditMode}
+                    onEditModeChange={setMetadataEditMode}
+                    onSave={(draft) => void handleSaveTableMetadata(draft)}
+                    saving={updateTableMetadata.isPending}
+                    canEdit={connection.allowWrites}
+                  />
+                </div>
+              ) : (
               /* Keyed by editor: each tab is its own CodeMirror document, so
                  undo in one never reaches into another's text. */
               <SqlEditor
@@ -1059,8 +1193,12 @@ export function ConnectionQueryTab({
                 onRun={(statement) => void execute(statement, queryTab.id, { mode: "replace" })}
                 onRunNewTab={(statement) => void execute(statement, queryTab.id, { mode: "new" })}
               />
-            )}
-            result={(queryTab) => ({
+              )
+            }
+            result={(queryTab) =>
+              queryTab.id === METADATA_TAB_ID
+                ? null
+                : ({
               onCycle: (delta) => cycleResultTabs(queryTab, delta),
               onCloseActive: () => {
                 if (queryTab.resultTabs.length <= 1) return;
@@ -1265,6 +1403,8 @@ function CatalogPane({
   onSelectDatabase,
   onSelectSchema,
   onSelectObject,
+  onShowObjectInfo,
+  selectedObject,
   onBack,
   onRefresh,
   onCollapse,
@@ -1290,6 +1430,9 @@ function CatalogPane({
   onSelectDatabase: (name: string) => void;
   onSelectSchema: (name: string) => void;
   onSelectObject: (entry: DbCatalogEntry) => void;
+  /** Info button on a relation — opens the metadata tab. */
+  onShowObjectInfo: (entry: DbCatalogEntry) => void;
+  selectedObject?: string;
   /** Step back one level: schema → database → all databases. */
   onBack: () => void;
   onRefresh: () => void | Promise<void>;
@@ -1370,10 +1513,13 @@ function CatalogPane({
 
         {loading ? <SkeletonRows /> : null}
         <ul className="divide-y">
-          {filtered.map((entry) => (
+          {filtered.map((entry) => {
+            const showInfo = inDatabase && !inSchemaList && isRelation(entry.kind);
+            return (
             <li key={entry.name}>
               <CatalogRow
                 name={entry.name}
+                selected={showInfo && selectedObject === entry.name}
                 emphasis={!inDatabase}
                 icon={
                   !inDatabase ? (
@@ -1385,9 +1531,13 @@ function CatalogPane({
                   )
                 }
                 onSelect={() => select(entry)}
+                infoLabel={showInfo ? t("Show table metadata for {name}", { name: entry.name }) : undefined}
+                infoTooltip={showInfo ? t("Table metadata") : undefined}
+                onShowInfo={showInfo ? () => onShowObjectInfo(entry) : undefined}
               />
             </li>
-          ))}
+            );
+          })}
         </ul>
         {!loading && filtered.length === 0 && !errorMessage ? (
           <p className="p-2 text-xs text-muted-foreground">

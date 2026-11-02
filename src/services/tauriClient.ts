@@ -96,6 +96,8 @@ import type {
   ParseDbSqlResult,
   DbCatalogEntry,
   DbColumnEntry,
+  DbTableDetail,
+  DbTableMetadataUpdateRequest,
   SchemaObjectKind,
   SecretSummary,
   CreateSecretInput,
@@ -358,6 +360,10 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     ) => call<DbCatalogEntry[]>("list_db_objects", { connectionId, database, schema, kinds }),
     listDbColumns: (connectionId: string, database: string, schema: string, table: string) =>
       call<DbColumnEntry[]>("list_db_columns", { connectionId, database, schema, table }),
+    getDbTableDetail: (connectionId: string, database: string, schema: string, table: string) =>
+      call<DbTableDetail>("get_db_table_detail", { connectionId, database, schema, table }),
+    updateDbTableMetadata: (request: DbTableMetadataUpdateRequest) =>
+      call<DbTableDetail>("update_db_table_metadata", request),
     confirmAiDbSql: (confirmationId: string) =>
       call<Record<string, unknown>>("confirm_ai_db_sql", { confirmationId }),
     dismissAiDbSql: (confirmationId: string) =>

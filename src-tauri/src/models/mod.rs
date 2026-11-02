@@ -2105,6 +2105,9 @@ pub struct ParsedDbSqlStatement {
     pub parse_ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parse_error: Option<String>,
+    /// First named relation (`FROM` / target table), for Result-tab titles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_table: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2304,6 +2307,40 @@ pub struct DbColumnsRequest {
     #[serde(default)]
     pub schema: String,
     pub table: String,
+}
+
+/// Full table / view metadata for the workspace metadata tab.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTableDetailRequest {
+    pub connection_id: String,
+    pub database: String,
+    #[serde(default)]
+    pub schema: String,
+    pub table: String,
+}
+
+/// Persist table / column comments from the metadata pane.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTableMetadataUpdateRequest {
+    pub connection_id: String,
+    pub database: String,
+    #[serde(default)]
+    pub schema: String,
+    pub table: String,
+    #[serde(default)]
+    pub comment: Option<String>,
+    #[serde(default)]
+    pub column_comments: Vec<DbColumnCommentUpdate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbColumnCommentUpdate {
+    pub name: String,
+    #[serde(default)]
+    pub comment: Option<String>,
 }
 
 /// Accept or dismiss a parked AI SQL confirmation.

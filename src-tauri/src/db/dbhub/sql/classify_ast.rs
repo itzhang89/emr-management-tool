@@ -4,7 +4,8 @@
 //! its heuristic classifier (fail-closed for unknowns).
 
 use sqlparser::ast::{
-    Expr, ObjectNamePart, Query, SetExpr, Statement, Value, ValueWithSpan,
+    Expr, FromTable, ObjectNamePart, Query, SetExpr, Statement, TableFactor, TableObject, Value,
+    ValueWithSpan,
 };
 
 use crate::models::StatementTier;
@@ -247,6 +248,69 @@ fn object_name_last(name: &sqlparser::ast::ObjectName) -> Option<String> {
     })
 }
 
+/// The primary relation a statement names — what a Result tab prefers to show.
+///
+/// For `SELECT` this is the first non-derived `FROM` table (skipping subqueries
+/// until a real name appears). Inserts / updates / deletes / calls name their
+/// target the same way. Returns `None` when there is no useful label
+/// (`SELECT 1`, `SHOW …`).
+pub fn primary_relation_name(statement: &Statement) -> Option<String> {
+    match statement {
+        Statement::Query(query) => primary_relation_from_query(query),
+        Statement::Insert(insert) => match &insert.table {
+            TableObject::TableName(name) => object_name_last(name),
+            TableObject::TableFunction(_) => None,
+            TableObject::TableQuery(query) => primary_relation_from_query(query),
+        },
+        Statement::Update(update) => table_factor_name(&update.table.relation),
+        Statement::Delete(delete) => {
+            let from_tables = match &delete.from {
+                FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => tables,
+            };
+            from_tables
+                .first()
+                .and_then(|entry| table_factor_name(&entry.relation))
+                .or_else(|| delete.tables.first().and_then(object_name_last))
+        }
+        Statement::CreateTable(create) => object_name_last(&create.name),
+        Statement::Drop { names, .. } => names.first().and_then(object_name_last),
+        Statement::Truncate(truncate) => truncate
+            .table_names
+            .first()
+            .and_then(|name| object_name_last(&name.name)),
+        Statement::Call(function) => object_name_last(&function.name),
+        Statement::Execute { name, .. } => name.as_ref().and_then(object_name_last),
+        _ => None,
+    }
+}
+
+fn primary_relation_from_query(query: &Query) -> Option<String> {
+    match query.body.as_ref() {
+        SetExpr::Select(select) => select
+            .from
+            .first()
+            .and_then(|entry| table_factor_name(&entry.relation)),
+        SetExpr::Query(inner) => primary_relation_from_query(inner),
+        SetExpr::SetOperation { left, .. } => match left.as_ref() {
+            SetExpr::Select(select) => select
+                .from
+                .first()
+                .and_then(|entry| table_factor_name(&entry.relation)),
+            SetExpr::Query(inner) => primary_relation_from_query(inner),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn table_factor_name(factor: &TableFactor) -> Option<String> {
+    match factor {
+        TableFactor::Table { name, .. } => object_name_last(name),
+        TableFactor::Derived { subquery, .. } => primary_relation_from_query(subquery),
+        _ => None,
+    }
+}
+
 /// Routine name prefixes treated as reads when called.
 ///
 /// A procedure's body is invisible to the classifier, so `CALL`/`EXEC` defaults
@@ -367,5 +431,17 @@ mod tests {
 
         let other = classify_sql("CALL sp_rebuild_index()");
         assert_eq!(other.tier, StatementTier::Confirm);
+    }
+
+    #[test]
+    fn primary_relation_prefers_from_table() {
+        let stmts = Parser::parse_sql(&MySqlDialect {}, "SELECT * FROM sales.orders LIMIT 10")
+            .expect("parse");
+        assert_eq!(
+            primary_relation_name(&stmts[0]).as_deref(),
+            Some("orders")
+        );
+        let bare = Parser::parse_sql(&MySqlDialect {}, "SELECT 1").expect("parse");
+        assert_eq!(primary_relation_name(&bare[0]), None);
     }
 }

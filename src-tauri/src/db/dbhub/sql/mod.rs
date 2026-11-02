@@ -9,8 +9,8 @@ mod classify_ast;
 mod parse;
 
 pub use classify_ast::{
-    classify_statement, is_read_like_routine, statement_changes_schema, statement_is_pageable,
-    AstClass,
+    classify_statement, is_read_like_routine, primary_relation_name, statement_changes_schema,
+    statement_is_pageable, AstClass,
 };
 pub use parse::{
     parse_script, statement_at, ParseErrorSpan, ParseScript, ParsedStatement, SqlDialect,

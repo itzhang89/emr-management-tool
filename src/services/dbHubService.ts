@@ -14,7 +14,8 @@ import type {
   NetworkProfile,
   NetworkProfileInput,
   NetworkProfileTestInput,
-  SchemaObjectKind
+  SchemaObjectKind,
+  DbTableMetadataUpdateRequest
 } from "@/types/domain";
 
 /**
@@ -55,7 +56,11 @@ export const dbHubService = {
     kinds: SchemaObjectKind[]
   ) => tauriClient.listDbObjects(connectionId, database, schema, kinds),
   listColumns: (connectionId: string, database: string, schema: string, table: string) =>
-    tauriClient.listDbColumns(connectionId, database, schema, table)
+    tauriClient.listDbColumns(connectionId, database, schema, table),
+  getTableDetail: (connectionId: string, database: string, schema: string, table: string) =>
+    tauriClient.getDbTableDetail(connectionId, database, schema, table),
+  updateTableMetadata: (request: DbTableMetadataUpdateRequest) =>
+    tauriClient.updateDbTableMetadata(request)
 };
 
 export type DbHubService = typeof dbHubService;

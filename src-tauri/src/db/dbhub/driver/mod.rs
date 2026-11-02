@@ -276,6 +276,76 @@ pub struct DbColumnEntry {
     pub data_type: Option<String>,
 }
 
+/// One column in the table-metadata pane — richer than completion needs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTableColumn {
+    pub name: String,
+    pub data_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<i64>,
+    /// `PRI` / `UNI` / `MUL` (MySQL) or `PRIMARY KEY` / similar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_key: Option<String>,
+    /// Auto-increment / identity / generated, when the engine reports it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<String>,
+}
+
+/// One index / key, for the metadata pane.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTableIndex {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_type: Option<String>,
+}
+
+/// Full relation metadata for the workspace's metadata tab.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbTableDetail {
+    pub database: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_kind: Option<SchemaObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_estimate: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_length: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<String>,
+    pub columns: Vec<DbTableColumn>,
+    #[serde(default)]
+    pub indexes: Vec<DbTableIndex>,
+    /// `SHOW CREATE` / reconstructed DDL when the engine can supply it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ddl: Option<String>,
+    /// Extra engine-specific properties shown as a key/value list.
+    #[serde(default)]
+    pub properties: std::collections::BTreeMap<String, String>,
+}
+
 /// One database engine, behind the app's four questions.
 #[async_trait]
 pub trait DbDriver: Send + Sync {
@@ -334,6 +404,27 @@ pub trait DbDriver: Send + Sync {
         schema: &str,
         table: &str,
     ) -> AppResult<Vec<DbColumnEntry>>;
+
+    /// Full metadata for the workspace pane: columns, indexes, DDL, comments.
+    async fn describe_table(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<DbTableDetail>;
+
+    /// Persist table / column comments. Requires a writable dial.
+    ///
+    /// Drivers that cannot comment return a validation error. Column entries
+    /// with an empty comment clear the comment where the engine allows it.
+    async fn update_table_metadata(
+        &self,
+        dial: &DbDial<'_>,
+        schema: &str,
+        table: &str,
+        comment: Option<&str>,
+        column_comments: &[(String, Option<String>)],
+    ) -> AppResult<()>;
 
     /// Run one **already-gated** read-only statement and return at most `cap`
     /// rows.
@@ -410,6 +501,43 @@ pub(crate) fn column_entries(page: &QueryPage) -> Vec<DbColumnEntry> {
             })
         })
         .collect()
+}
+
+/// Read a JSON cell as a trimmed string (numbers become their decimal form).
+pub(crate) fn json_str(row: &serde_json::Value, key: &str) -> Option<String> {
+    let value = row.get(key)?;
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        serde_json::Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+pub(crate) fn json_i64(row: &serde_json::Value, key: &str) -> Option<i64> {
+    let value = row.get(key)?;
+    match value {
+        serde_json::Value::Number(number) => number.as_i64(),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+pub(crate) fn json_bool_yes_no(row: &serde_json::Value, key: &str) -> Option<bool> {
+    let text = json_str(row, key)?;
+    match text.to_ascii_uppercase().as_str() {
+        "YES" | "TRUE" | "1" | "T" | "Y" => Some(true),
+        "NO" | "FALSE" | "0" | "F" | "N" => Some(false),
+        _ => None,
+    }
 }
 
 /// A byte string as the `0x…` literal a database client shows for it.

@@ -188,6 +188,8 @@ pub fn run() {
             commands::dbhub::list_db_schemas,
             commands::dbhub::list_db_objects,
             commands::dbhub::list_db_columns,
+            commands::dbhub::get_db_table_detail,
+            commands::dbhub::update_db_table_metadata,
             commands::dbhub::confirm_ai_db_sql,
             commands::dbhub::dismiss_ai_db_sql,
             commands::dbhub::refresh_db_catalog,

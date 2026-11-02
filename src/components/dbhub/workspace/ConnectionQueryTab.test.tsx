@@ -63,13 +63,25 @@ const listDbObjects = vi
 const runDbQuery = vi.fn().mockResolvedValue(page(1, 0, false));
 const parseDbSql = vi.fn().mockImplementation(async (request: { sql: string; offset?: number }) => {
   // Minimal stand-in: one statement covering the trimmed document, caret always
-  // lands on it. Real span math lives in the Rust parser's own tests.
+  // lands on it. Real span math lives in the Rust parser's own tests. Table
+  // names mirror what sqlparser would put on `primaryTable` for Result tabs.
   const trimmed = request.sql.trim();
   const start = request.sql.indexOf(trimmed);
   const end = start + trimmed.length;
+  const fromMatch = trimmed.match(
+    /\bFROM\s+(?:(?:"[^"]+"|`[^`]+`|\w+)\.)*["`]?([A-Za-z_]\w*)["`]?/i
+  );
   return {
     statements: trimmed
-      ? [{ start, end, text: trimmed, parseOk: true }]
+      ? [
+          {
+            start,
+            end,
+            text: trimmed,
+            parseOk: true,
+            primaryTable: fromMatch?.[1]
+          }
+        ]
       : [],
     atOffset: trimmed ? 0 : undefined
   };
@@ -378,22 +390,24 @@ describe("ConnectionQueryTab", () => {
     );
   });
 
-  it("runs into the editor's own result tab, named Result 1", async () => {
+  it("runs into the editor's own result tab, named after the queried table", async () => {
     const user = userEvent.setup();
     renderWorkspace(connection({ kind: "postgres", database: "warehouse" }));
 
     // A fresh editor has no results yet — the strip says where they will go.
     expect(await screen.findByText("Run a query to see results here.")).toBeInTheDocument();
 
-    // Clicking a table writes its SELECT into the editor; running opens the
-    // first result tab, numbered rather than named after the table. The table
-    // arrives with the catalog query, so this waits for it rather than
-    // assuming it landed alongside the editor.
+    // Clicking a table writes its SELECT; running opens a result tab titled
+    // with that table (sqlparser primaryTable), not a bare Result N.
     await user.click(await screen.findByRole("button", { name: "warehouse_rows" }));
     await user.click(screen.getByRole("button", { name: "Run query" }));
 
     await waitFor(() => expect(runDbQuery).toHaveBeenCalled());
-    expect(await screen.findByRole("button", { name: "Result 1" })).toBeInTheDocument();
+    // Catalog row and result tab share the table name; both must be present.
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: "warehouse_rows" }).length).toBeGreaterThan(1);
+    });
+    expect(parseDbSql).toHaveBeenCalled();
   });
 
   it("gives a run-in-new-tab one of its own, and keeps running into it", async () => {

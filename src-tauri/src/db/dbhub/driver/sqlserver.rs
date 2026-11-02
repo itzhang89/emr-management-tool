@@ -12,7 +12,8 @@ use crate::models::DbConnectionKind;
 
 use super::super::session::QueryCancellation;
 use super::{
-    DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, QueryPage, SchemaObject, ServerInfo,
+    DbCatalogEntry, DbColumnEntry, DbDial, DbDriver, DbTableDetail, QueryPage, SchemaObject,
+    ServerInfo,
 };
 
 pub struct SqlServerDriver;
@@ -58,6 +59,26 @@ impl DbDriver for SqlServerDriver {
         _schema: &str,
         _table: &str,
     ) -> AppResult<Vec<DbColumnEntry>> {
+        Err(not_ready())
+    }
+
+    async fn describe_table(
+        &self,
+        _dial: &DbDial<'_>,
+        _schema: &str,
+        _table: &str,
+    ) -> AppResult<DbTableDetail> {
+        Err(not_ready())
+    }
+
+    async fn update_table_metadata(
+        &self,
+        _dial: &DbDial<'_>,
+        _schema: &str,
+        _table: &str,
+        _comment: Option<&str>,
+        _column_comments: &[(String, Option<String>)],
+    ) -> AppResult<()> {
         Err(not_ready())
     }
 
