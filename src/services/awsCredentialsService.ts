@@ -20,6 +20,12 @@ export const awsCredentialsService = {
   deleteAccount: (accountId: string) => tauriClient.deleteAwsAccount({ accountId }),
   testConnection: (credentials: AwsCredentialsInput) => tauriClient.testAwsCredentials(credentials),
   testAccountConnection: (request: TestAwsAccountRequest) => tauriClient.testAwsAccount(request),
+  getAuthStatus: (accountId: string) => tauriClient.getAwsAccountAuthStatus({ accountId }),
+  startSsoLogin: (accountId: string) => tauriClient.startAwsSsoLogin({ accountId }),
+  cancelSsoLogin: (accountId: string) => tauriClient.cancelAwsSsoLogin({ accountId }),
+  signOutSso: (accountId: string) => tauriClient.signOutAwsSso({ accountId }),
+  submitMfaCode: (accountId: string, tokenCode: string) =>
+    tauriClient.submitAwsMfaCode({ accountId, tokenCode }),
   save: (credentials: AwsCredentialsInput) => tauriClient.saveAwsCredentials(credentials),
   clear: () => tauriClient.clearAwsCredentials()
 };

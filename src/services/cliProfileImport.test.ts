@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { cliImportPromptReason, findAccountForProfileKey, shouldPromptCliImport } from "./cliProfileImport";
+import {
+  cliImportPromptReason,
+  findAccountForProfileName,
+  shouldPromptCliImport
+} from "./cliProfileImport";
 
 describe("shouldPromptCliImport", () => {
   it("imports directly when region is set and the name is free", () => {
@@ -18,6 +22,12 @@ describe("shouldPromptCliImport", () => {
       shouldPromptCliImport({ profileName: "dev", region: "us-east-1" }, [{ name: "dev" }])
     ).toBe(true);
   });
+
+  it("treats names as case-insensitive", () => {
+    expect(
+      shouldPromptCliImport({ profileName: "Dev", region: "us-east-1" }, [{ name: "dev" }])
+    ).toBe(true);
+  });
 });
 
 describe("cliImportPromptReason", () => {
@@ -32,28 +42,24 @@ describe("cliImportPromptReason", () => {
   });
 });
 
-describe("findAccountForProfileKey", () => {
-  it("matches the account that already uses the same access key", () => {
-    const account = { name: "prod", accessKeyIdMasked: "AKIA****WXYZ" };
-    expect(findAccountForProfileKey({ accessKeyIdMasked: "AKIA****WXYZ" }, [account])).toBe(account);
+describe("findAccountForProfileName", () => {
+  it("matches the account that already uses the same name", () => {
+    const account = { name: "prod" };
+    expect(findAccountForProfileName({ profileName: "prod" }, [account])).toBe(account);
   });
 
   it("ignores case and surrounding whitespace", () => {
-    const account = { name: "prod", accessKeyIdMasked: " akia****wxyz " };
-    expect(findAccountForProfileKey({ accessKeyIdMasked: "AKIA****WXYZ" }, [account])).toBe(account);
+    const account = { name: " Prod " };
+    expect(findAccountForProfileName({ profileName: "prod" }, [account])).toBe(account);
   });
 
-  it("returns null when no account uses the key", () => {
-    expect(
-      findAccountForProfileKey({ accessKeyIdMasked: "AKIA****WXYZ" }, [
-        { name: "prod", accessKeyIdMasked: "AKIB****1234" }
-      ])
-    ).toBeNull();
+  it("returns null when no account uses the name", () => {
+    expect(findAccountForProfileName({ profileName: "staging" }, [{ name: "prod" }])).toBeNull();
   });
 
-  it("treats a profile without a static key as never imported", () => {
+  it("does not treat the same access key under a different name as a duplicate", () => {
     expect(
-      findAccountForProfileKey({ accessKeyIdMasked: undefined }, [{ name: "prod", accessKeyIdMasked: "AKIA****WXYZ" }])
+      findAccountForProfileName({ profileName: "already-imported" }, [{ name: "prod" }])
     ).toBeNull();
   });
 });

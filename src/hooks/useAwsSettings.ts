@@ -184,3 +184,51 @@ export function useTestAwsAccount() {
     mutationFn: awsCredentialsService.testAccountConnection
   });
 }
+
+export function useAwsAccountAuthStatus(accountId: string | undefined) {
+  return useQuery({
+    queryKey: ["aws-account-auth-status", accountId],
+    queryFn: () => awsCredentialsService.getAuthStatus(accountId!),
+    enabled: Boolean(accountId)
+  });
+}
+
+export function useStartAwsSsoLogin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => awsCredentialsService.startSsoLogin(accountId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
+    }
+  });
+}
+
+export function useCancelAwsSsoLogin() {
+  return useMutation({
+    mutationFn: (accountId: string) => awsCredentialsService.cancelSsoLogin(accountId)
+  });
+}
+
+export function useSignOutAwsSso() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => awsCredentialsService.signOutSso(accountId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
+    }
+  });
+}
+
+export function useSubmitAwsMfaCode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, tokenCode }: { accountId: string; tokenCode: string }) =>
+      awsCredentialsService.submitMfaCode(accountId, tokenCode),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
+    }
+  });
+}

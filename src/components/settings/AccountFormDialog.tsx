@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -25,11 +25,12 @@ import {
 import {
   credentialSchema,
   editAccountSchema,
+  toCreateAccountRequest,
   type CredentialFormValues,
   type EditAccountFormValues,
   type EditAccountSubmitValues
 } from "@/services/credentialValidation";
-import type { AwsAccountSummary } from "@/types/domain";
+import type { AwsAccountSummary, AwsAuthMethod } from "@/types/domain";
 
 type CreateAccountDefaults = Partial<CredentialFormValues> & {
   notice?: string;
@@ -44,6 +45,13 @@ type AccountFormDialogProps = {
   account?: AwsAccountSummary | null;
   createDefaults?: CreateAccountDefaults | null;
 };
+
+const AUTH_OPTIONS: { value: AwsAuthMethod; label: string }[] = [
+  { value: "accessKey", label: "Access Key" },
+  { value: "sso", label: "SSO / Identity Center" },
+  { value: "mfaSession", label: "IAM User + MFA" },
+  { value: "assumeRole", label: "Assume Role" }
+];
 
 export function AccountFormDialog({
   open,
@@ -73,15 +81,25 @@ function CreateAccountDialog({
   const [showSecret, setShowSecret] = useState(false);
   const emptyValues: CredentialFormValues = {
     name: "",
+    authMethod: "accessKey",
     accessKeyId: "",
     secretAccessKey: "",
     region: "",
-    makeActive: true
+    makeActive: true,
+    ssoStartUrl: "",
+    ssoRegion: "",
+    ssoAccountId: "",
+    ssoRoleName: "",
+    mfaSerial: "",
+    roleArn: "",
+    externalId: "",
+    roleSessionName: ""
   };
   const form = useForm<CredentialFormValues>({
     resolver: zodResolver(credentialSchema),
     defaultValues: emptyValues
   });
+  const authMethod = useWatch({ control: form.control, name: "authMethod" });
 
   useEffect(() => {
     if (!open) return;
@@ -90,6 +108,7 @@ function CreateAccountDialog({
       ...emptyValues,
       ...defaults,
       name: defaults?.name ?? "",
+      authMethod: defaults?.authMethod ?? "accessKey",
       accessKeyId: defaults?.accessKeyId ?? "",
       secretAccessKey: defaults?.secretAccessKey ?? "",
       region: defaults?.region?.trim() ? defaults.region : "",
@@ -98,8 +117,16 @@ function CreateAccountDialog({
   }, [open, defaults, form]);
 
   const testConnection = form.handleSubmit(async (values) => {
+    if (values.authMethod !== "accessKey") {
+      toast.message(t("Save the account first, then use Sign in / MFA from the account list."));
+      return;
+    }
     try {
-      const identity = await testCredentials.mutateAsync(values);
+      const identity = await testCredentials.mutateAsync({
+        accessKeyId: values.accessKeyId,
+        secretAccessKey: values.secretAccessKey,
+        region: values.region
+      });
       toast.success(t("Connected to AWS account {account}", { account: identity.account }));
     } catch (error) {
       toast.error(errorMessage(error, "AWS connection test failed."));
@@ -108,8 +135,14 @@ function CreateAccountDialog({
 
   const save = form.handleSubmit(async (values) => {
     try {
-      await createAccount.mutateAsync(values);
-      toast.success(t("AWS account saved."));
+      await createAccount.mutateAsync(toCreateAccountRequest(values));
+      toast.success(
+        values.authMethod === "sso"
+          ? t("SSO account saved. Sign in from the account list.")
+          : values.authMethod === "mfaSession"
+            ? t("MFA account saved. Enter an MFA code when prompted.")
+            : t("AWS account saved.")
+      );
       onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to save AWS account."));
@@ -118,13 +151,13 @@ function CreateAccountDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t(defaults?.title ?? "Add AWS Account")}</DialogTitle>
           <DialogDescription>
             {t(
               defaults?.description ??
-                "Create a named access-key account for EMR, CloudWatch, and S3."
+                "Choose an authentication method, then fill in the required fields."
             )}
           </DialogDescription>
         </DialogHeader>
@@ -136,34 +169,100 @@ function CreateAccountDialog({
             <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
             <FieldError>{form.formState.errors.name?.message}</FieldError>
           </Field>
-          <Field label={t("Access Key ID")}>
-            <Input placeholder="AKIA..." {...form.register("accessKeyId")} aria-invalid={Boolean(form.formState.errors.accessKeyId)} />
-            <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
+          <Field label={t("Authentication")}>
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              {...form.register("authMethod")}
+            >
+              {AUTH_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.label)}
+                </option>
+              ))}
+            </select>
           </Field>
-          <Field label={t("Secret Access Key")}>
-            <div className="relative">
-              <Input
-                type={showSecret ? "text" : "password"}
-                placeholder="••••••••••••••••"
-                className="pr-10"
-                {...form.register("secretAccessKey")}
-                aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-0 top-0 h-10 w-10 text-muted-foreground hover:text-foreground"
-                aria-label={
-                  showSecret ? t("Hide secret access key") : t("Show secret access key")
-                }
-                onClick={() => setShowSecret((visible) => !visible)}
-              >
-                {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </Button>
-            </div>
-            <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
-          </Field>
+
+          {(authMethod === "accessKey" || authMethod === "mfaSession" || authMethod === "assumeRole") && (
+            <>
+              <Field label={t("Access Key ID")}>
+                <Input placeholder="AKIA..." {...form.register("accessKeyId")} aria-invalid={Boolean(form.formState.errors.accessKeyId)} />
+                <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
+              </Field>
+              <Field label={t("Secret Access Key")}>
+                <div className="relative">
+                  <Input
+                    type={showSecret ? "text" : "password"}
+                    placeholder="••••••••••••••••"
+                    className="pr-10"
+                    {...form.register("secretAccessKey")}
+                    aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-10 w-10 text-muted-foreground hover:text-foreground"
+                    aria-label={showSecret ? t("Hide secret access key") : t("Show secret access key")}
+                    onClick={() => setShowSecret((visible) => !visible)}
+                  >
+                    {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </Button>
+                </div>
+                <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
+              </Field>
+            </>
+          )}
+
+          {authMethod === "sso" && (
+            <>
+              <Field label={t("SSO start URL")}>
+                <Input placeholder="https://my-sso.awsapps.com/start" {...form.register("ssoStartUrl")} />
+                <FieldError>{form.formState.errors.ssoStartUrl?.message}</FieldError>
+              </Field>
+              <Field label={t("SSO region")}>
+                <Input placeholder="us-east-1" {...form.register("ssoRegion")} />
+              </Field>
+              <Field label={t("SSO account ID")}>
+                <Input placeholder="123456789012" {...form.register("ssoAccountId")} />
+                <FieldError>{form.formState.errors.ssoAccountId?.message}</FieldError>
+              </Field>
+              <Field label={t("SSO role name")}>
+                <Input placeholder="AdministratorAccess" {...form.register("ssoRoleName")} />
+                <FieldError>{form.formState.errors.ssoRoleName?.message}</FieldError>
+              </Field>
+            </>
+          )}
+
+          {authMethod === "mfaSession" ? (
+            <p className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+              {t(
+                "IAM User + MFA uses sts:GetSessionToken. API calls still run as that IAM user (ASIA temporary keys). If EMR permissions are on a role, choose Assume Role and set MFA there instead."
+              )}
+            </p>
+          ) : null}
+
+          {(authMethod === "mfaSession" || authMethod === "assumeRole") && (
+            <Field label={t("MFA serial / ARN")}>
+              <Input placeholder="arn:aws:iam::123456789012:mfa/user" {...form.register("mfaSerial")} />
+              <FieldError>{form.formState.errors.mfaSerial?.message}</FieldError>
+            </Field>
+          )}
+
+          {authMethod === "assumeRole" && (
+            <>
+              <Field label={t("Role ARN")}>
+                <Input placeholder="arn:aws:iam::123456789012:role/MyRole" {...form.register("roleArn")} />
+                <FieldError>{form.formState.errors.roleArn?.message}</FieldError>
+              </Field>
+              <Field label={t("External ID (optional)")}>
+                <Input {...form.register("externalId")} />
+              </Field>
+              <Field label={t("Role session name (optional)")}>
+                <Input placeholder="emr-management-tool" {...form.register("roleSessionName")} />
+              </Field>
+            </>
+          )}
+
           <Field label={t("Region")}>
             <Controller
               control={form.control}
@@ -180,10 +279,12 @@ function CreateAccountDialog({
             <FieldError>{form.formState.errors.region?.message}</FieldError>
           </Field>
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={testCredentials.isPending} onClick={testConnection}>
-              <ShieldCheck data-icon="inline-start" />
-              {testCredentials.isPending ? t("Testing...") : t("Test Connection")}
-            </Button>
+            {authMethod === "accessKey" ? (
+              <Button type="button" variant="outline" disabled={testCredentials.isPending} onClick={testConnection}>
+                <ShieldCheck data-icon="inline-start" />
+                {testCredentials.isPending ? t("Testing...") : t("Test Connection")}
+              </Button>
+            ) : null}
             <Button type="submit" disabled={createAccount.isPending}>
               <Save data-icon="inline-start" />
               {createAccount.isPending ? t("Saving...") : t("Save Account")}
@@ -208,12 +309,21 @@ function EditAccountDialog({
   const updateAccount = useUpdateAwsAccount();
   const testAccount = useTestAwsAccount();
   const [secretUnlocked, setSecretUnlocked] = useState(false);
+  const authMethod = account?.authMethod ?? "accessKey";
   const form = useForm<EditAccountFormValues>({
     resolver: zodResolver(editAccountSchema),
     defaultValues: {
       name: "",
       region: "us-east-1",
-      secretAccessKey: ""
+      secretAccessKey: "",
+      ssoStartUrl: "",
+      ssoRegion: "",
+      ssoAccountId: "",
+      ssoRoleName: "",
+      mfaSerial: "",
+      roleArn: "",
+      externalId: "",
+      roleSessionName: ""
     }
   });
 
@@ -223,7 +333,15 @@ function EditAccountDialog({
     form.reset({
       name: account.name,
       region: account.region,
-      secretAccessKey: ""
+      secretAccessKey: "",
+      ssoStartUrl: account.ssoStartUrl ?? "",
+      ssoRegion: "",
+      ssoAccountId: account.ssoAccountId ?? "",
+      ssoRoleName: account.ssoRoleName ?? "",
+      mfaSerial: account.mfaSerial ?? "",
+      roleArn: account.roleArn ?? "",
+      externalId: "",
+      roleSessionName: ""
     });
   }, [open, account, form]);
 
@@ -250,7 +368,15 @@ function EditAccountDialog({
         accountId: account.id,
         name: parsed.name,
         region: parsed.region,
-        secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined
+        secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined,
+        ssoStartUrl: parsed.ssoStartUrl,
+        ssoRegion: parsed.ssoRegion,
+        ssoAccountId: parsed.ssoAccountId,
+        ssoRoleName: parsed.ssoRoleName,
+        mfaSerial: parsed.mfaSerial,
+        roleArn: parsed.roleArn,
+        externalId: parsed.externalId,
+        roleSessionName: parsed.roleSessionName
       });
       toast.success(t("AWS account updated."));
       onOpenChange(false);
@@ -261,11 +387,13 @@ function EditAccountDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Edit AWS Account")}</DialogTitle>
           <DialogDescription>
-            {t("Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key. To replace the full key pair, delete the account and add a new one.")}
+            {authMethod === "sso"
+              ? t("Update the display name, region, and SSO settings. Sign in again after changing SSO fields.")
+              : t("Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key.")}
           </DialogDescription>
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={save}>
@@ -273,37 +401,62 @@ function EditAccountDialog({
             <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
             <FieldError>{form.formState.errors.name?.message}</FieldError>
           </Field>
-          <Field label={t("Access Key ID")}>
-            <Input
-              value={account?.accessKeyIdMasked ?? ""}
-              readOnly
-              disabled
-              aria-label={t("Access Key ID (read-only)")}
-            />
+          <Field label={t("Authentication")}>
+            <Input value={AUTH_OPTIONS.find((option) => option.value === authMethod)?.label ?? authMethod} readOnly disabled />
           </Field>
-          <Field label={t("Secret Access Key")}>
-            {secretUnlocked ? (
-              <Input
-                type="password"
-                placeholder={t("Enter new secret to update")}
-                {...form.register("secretAccessKey")}
-                aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
-              />
-            ) : (
-              <div className="flex gap-2">
-                <Input
-                  value="••••••••••••••••"
-                  readOnly
-                  disabled
-                  aria-label={t("Secret Access Key (masked)")}
-                />
-                <Button type="button" variant="outline" onClick={() => setSecretUnlocked(true)}>
-                  {t("Change")}
-                </Button>
-              </div>
-            )}
-            <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
-          </Field>
+
+          {(authMethod === "accessKey" || authMethod === "mfaSession" || authMethod === "assumeRole") && (
+            <>
+              <Field label={t("Access Key ID")}>
+                <Input value={account?.accessKeyIdMasked ?? ""} readOnly disabled aria-label={t("Access Key ID (read-only)")} />
+              </Field>
+              <Field label={t("Secret Access Key")}>
+                {secretUnlocked ? (
+                  <Input
+                    type="password"
+                    placeholder={t("Enter new secret to update")}
+                    {...form.register("secretAccessKey")}
+                    aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
+                  />
+                ) : (
+                  <div className="flex gap-2">
+                    <Input value="••••••••••••••••" readOnly disabled aria-label={t("Secret Access Key (masked)")} />
+                    <Button type="button" variant="outline" onClick={() => setSecretUnlocked(true)}>
+                      {t("Change")}
+                    </Button>
+                  </div>
+                )}
+                <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
+              </Field>
+            </>
+          )}
+
+          {authMethod === "sso" && (
+            <>
+              <Field label={t("SSO start URL")}>
+                <Input {...form.register("ssoStartUrl")} />
+              </Field>
+              <Field label={t("SSO account ID")}>
+                <Input {...form.register("ssoAccountId")} />
+              </Field>
+              <Field label={t("SSO role name")}>
+                <Input {...form.register("ssoRoleName")} />
+              </Field>
+            </>
+          )}
+
+          {(authMethod === "mfaSession" || authMethod === "assumeRole") && (
+            <Field label={t("MFA serial / ARN")}>
+              <Input {...form.register("mfaSerial")} />
+            </Field>
+          )}
+
+          {authMethod === "assumeRole" && (
+            <Field label={t("Role ARN")}>
+              <Input {...form.register("roleArn")} />
+            </Field>
+          )}
+
           <Field label={t("Region")}>
             <Controller
               control={form.control}

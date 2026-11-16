@@ -33,6 +33,9 @@ const settings: TranslationDictionary = {
   "Show secret access key": "显示私有访问密钥",
   "Test Connection": "测试连接",
   "Testing...": "测试中...",
+  "An account named “{name}” already exists.": "已存在名为“{name}”的账户。",
+  "IAM User + MFA uses sts:GetSessionToken. API calls still run as that IAM user (ASIA temporary keys). If EMR permissions are on a role, choose Assume Role and set MFA there instead.":
+    "「IAM 用户 + MFA」使用 sts:GetSessionToken。API 调用仍以该 IAM 用户身份执行（ASIA 临时密钥）。若 EMR 权限挂在角色上，请改用「Assume Role」并在其中配置 MFA。",
   "This access key is already configured as “{name}”.": "此访问密钥已配置为“{name}”。",
   "This permanently removes the account and its stored credentials from this app. This cannot be undone.":
     "这将从此应用中永久移除该账户及其保存的凭证。此操作无法撤销。",

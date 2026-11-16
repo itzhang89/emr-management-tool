@@ -46,7 +46,7 @@ function formatAwsAccessDenied(service: string | undefined, context?: AwsErrorCo
       if (context?.operation === "listJobRuns") {
         return "Access denied when listing EMR job runs. Grant emr-containers:ListJobRuns for the selected virtual cluster.";
       }
-      return "Access denied for EMR on EKS. Check IAM permissions for emr-containers actions on this account.";
+      return "Access denied for EMR on EKS. If this account uses IAM User + MFA, GetSessionToken still calls AWS as that IAM user — grant emr-containers permissions to the user (with MFA), or recreate the account as Assume Role with MFA when a role is required.";
     case "cloudwatchlogs":
       return "Access denied for CloudWatch Logs. Check IAM permissions for logs:FilterLogEvents and related actions.";
     case "sts":

@@ -19,11 +19,25 @@ export interface AwsIdentity {
   userId: string;
 }
 
+export type AwsAuthMethod = "accessKey" | "sso" | "mfaSession" | "assumeRole";
+
+export type AwsAuthStatusKind = "signedIn" | "needsLogin" | "needsMfa" | "expired";
+
 export interface AwsAccount {
   id: string;
   name: string;
   region: AwsRegion;
+  authMethod?: AwsAuthMethod;
   accessKeyIdMasked: string;
+  ssoStartUrl?: string;
+  ssoRegion?: string;
+  ssoAccountId?: string;
+  ssoRoleName?: string;
+  mfaSerial?: string;
+  roleArn?: string;
+  externalId?: string;
+  roleSessionName?: string;
+  sessionExpiresAt?: string;
   identity?: AwsIdentity;
   isActive: boolean;
   createdAt: string;
@@ -34,19 +48,43 @@ export interface AwsAccountSummary {
   id: string;
   name: string;
   region: AwsRegion;
+  authMethod?: AwsAuthMethod;
   accessKeyIdMasked: string;
+  ssoStartUrl?: string;
+  ssoAccountId?: string;
+  ssoRoleName?: string;
+  mfaSerial?: string;
+  roleArn?: string;
+  sessionExpiresAt?: string;
   identity?: AwsIdentity;
   isActive: boolean;
+}
+
+export interface AwsAccountAuthStatus {
+  accountId: string;
+  authMethod: AwsAuthMethod;
+  status: AwsAuthStatusKind;
+  sessionExpiresAt?: string;
+  message?: string;
 }
 
 export interface AwsAccountCredentialsInput {
   id?: string;
   name: string;
-  accessKeyId: string;
-  secretAccessKey: string;
+  authMethod?: AwsAuthMethod;
+  accessKeyId?: string;
+  secretAccessKey?: string;
   sessionToken?: string;
   region: AwsRegion;
   makeActive: boolean;
+  ssoStartUrl?: string;
+  ssoRegion?: string;
+  ssoAccountId?: string;
+  ssoRoleName?: string;
+  mfaSerial?: string;
+  roleArn?: string;
+  externalId?: string;
+  roleSessionName?: string;
 }
 
 export interface AwsAccountUpdateInput {
@@ -54,12 +92,33 @@ export interface AwsAccountUpdateInput {
   name: string;
   region: AwsRegion;
   secretAccessKey?: string;
+  ssoStartUrl?: string;
+  ssoRegion?: string;
+  ssoAccountId?: string;
+  ssoRoleName?: string;
+  mfaSerial?: string;
+  roleArn?: string;
+  externalId?: string;
+  roleSessionName?: string;
 }
 
 export interface TestAwsAccountRequest {
   accountId: string;
   region: AwsRegion;
   secretAccessKey?: string;
+}
+
+export interface AwsSsoLoginResult {
+  accountId: string;
+  verificationUri: string;
+  identity?: AwsIdentity;
+  sessionExpiresAt?: string;
+}
+
+export interface AwsMfaCodeResult {
+  accountId: string;
+  identity: AwsIdentity;
+  sessionExpiresAt: string;
 }
 
 export interface AwsCliProfileSummary {

@@ -3,11 +3,14 @@ import type {
   ApplicationTemplate,
   AppError,
   AwsAccount,
+  AwsAccountAuthStatus,
   AwsAccountCredentialsInput,
   AwsAccountSummary,
   AwsAccountUpdateInput,
   AwsCliProfileCredentials,
   AwsCliProfileSummary,
+  AwsMfaCodeResult,
+  AwsSsoLoginResult,
   TestAwsAccountRequest,
   AwsCommandContext,
   AwsCredentialsInput,
@@ -133,6 +136,14 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     importAwsCliProfile: (request: ImportAwsCliProfileRequest) => call<AwsAccount>("import_aws_cli_profile", request),
     loadAwsCliProfile: (request: { profileName: string }) =>
       call<AwsCliProfileCredentials>("load_aws_cli_profile", request),
+    getAwsAccountAuthStatus: (request: { accountId: string }) =>
+      call<AwsAccountAuthStatus>("get_aws_account_auth_status", request),
+    startAwsSsoLogin: (request: { accountId: string }) =>
+      call<AwsSsoLoginResult>("start_aws_sso_login", request),
+    cancelAwsSsoLogin: (request: { accountId: string }) => call<void>("cancel_aws_sso_login", request),
+    signOutAwsSso: (request: { accountId: string }) => call<AwsAccountSummary>("sign_out_aws_sso", request),
+    submitAwsMfaCode: (request: { accountId: string; tokenCode: string }) =>
+      call<AwsMfaCodeResult>("submit_aws_mfa_code", request),
     listVirtualClusters: (request: ListVirtualClustersRequest) =>
       call<ListVirtualClustersResponse>("list_virtual_clusters", request),
     listJobRuns: (request: {

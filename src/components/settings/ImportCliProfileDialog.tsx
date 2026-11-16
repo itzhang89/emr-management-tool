@@ -13,7 +13,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAwsCliProfiles } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
-import { findAccountForProfileKey } from "@/services/cliProfileImport";
+import { findAccountForProfileName } from "@/services/cliProfileImport";
 import type { AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
 
 type ImportCliProfileDialogProps = {
@@ -56,7 +56,7 @@ export function ImportCliProfileDialog({
             </p>
           ) : null}
           {cliProfiles.data?.map((profile) => {
-            const importedAs = findAccountForProfileKey(profile, accounts);
+            const importedAs = findAccountForProfileName(profile, accounts);
             const alreadyImported = Boolean(importedAs);
             return (
               <div
@@ -113,7 +113,7 @@ export function ImportCliProfileDialog({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {t("This access key is already configured as “{name}”.", {
+                      {t("An account named “{name}” already exists.", {
                         name: importedAs?.name ?? ""
                       })}
                     </TooltipContent>

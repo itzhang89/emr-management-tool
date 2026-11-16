@@ -76,6 +76,7 @@ vi.mock("@/services/releaseInfo", () => ({
 vi.mock("sonner", () => ({
   toast: {
     info: mocks.toastInfo,
+    message: mocks.toastInfo,
     success: mocks.toastSuccess,
     error: mocks.toastError
   }
@@ -92,7 +93,11 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useSetActiveAwsAccount: () => ({ mutate: mocks.setActiveMutate, isPending: false }),
   useTestAwsCredentials: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTestAwsAccount: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useActiveAwsAccount: () => ({ data: mocks.accounts[0], isLoading: false, error: null })
+  useActiveAwsAccount: () => ({ data: mocks.accounts[0], isLoading: false, error: null }),
+  useStartAwsSsoLogin: () => ({ mutate: vi.fn(), isPending: false }),
+  useCancelAwsSsoLogin: () => ({ mutate: vi.fn(), isPending: false }),
+  useSignOutAwsSso: () => ({ mutate: vi.fn(), isPending: false }),
+  useSubmitAwsMfaCode: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 describe("SettingsPage updates", () => {
@@ -229,12 +234,13 @@ describe("SettingsPage updates", () => {
     expect(within(dialog).getByText("ready-profile")).toBeInTheDocument();
   });
 
-  it("marks a profile whose access key is already configured and blocks re-importing it", async () => {
+  it("marks a profile whose name matches an account and blocks re-importing it", async () => {
     const user = userEvent.setup();
 
     renderSettingsPage();
     const dialog = await openImportDialog(user);
-    const row = within(dialog).getByText("already-imported").closest("div.rounded-md") as HTMLElement;
+    // CLI profile "prod" shares the account display name "prod".
+    const row = within(dialog).getByText("prod", { selector: "p" }).closest("div.rounded-md") as HTMLElement;
 
     expect(within(row).getByText("Imported")).toBeInTheDocument();
     expect(within(row).getByText(/Already imported as “prod”/)).toBeInTheDocument();
@@ -245,26 +251,35 @@ describe("SettingsPage updates", () => {
     expect(mocks.loadMutateAsync).not.toHaveBeenCalled();
   });
 
-  it("opens the add form when importing a duplicate-named CLI profile", async () => {
+  it("allows importing a profile that reuses an access key under a different name", async () => {
     const user = userEvent.setup();
-    mocks.loadMutateAsync.mockResolvedValue({
-      profileName: "prod",
-      accessKeyId: "AKIADUP",
-      secretAccessKey: "secret-dup",
-      region: "eu-central-1"
-    });
 
     renderSettingsPage();
     const dialog = await openImportDialog(user);
-    const importButtons = within(dialog).getAllByRole("button", { name: /Import/i });
-    await user.click(importButtons[1]);
+    const row = within(dialog).getByText("already-imported").closest("div.rounded-md") as HTMLElement;
 
-    expect(mocks.loadMutateAsync).toHaveBeenCalledWith("prod");
+    expect(within(row).queryByText("Imported")).not.toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /Import/i })).toBeEnabled();
+  });
+
+  it("blocks importing a CLI profile whose name already matches an account", async () => {
+    const user = userEvent.setup();
+
+    renderSettingsPage();
+    const dialog = await openImportDialog(user);
+    const rows = within(dialog).getAllByText("prod");
+    const profileRow = rows
+      .map((node) => node.closest("div.rounded-md"))
+      .find((node): node is HTMLElement =>
+        Boolean(node instanceof HTMLElement && within(node).queryByRole("button", { name: /Import/i }))
+      );
+
+    expect(profileRow).toBeTruthy();
+    expect(within(profileRow!).getByText("Imported")).toBeInTheDocument();
+    expect(within(profileRow!).getByRole("button", { name: /Import/i })).toBeDisabled();
+    await user.click(within(profileRow!).getByRole("button", { name: /Import/i }));
     expect(mocks.importMutate).not.toHaveBeenCalled();
-    expect(await screen.findByRole("heading", { name: "Import AWS CLI Profile" })).toBeInTheDocument();
-    expect(screen.getByText(/already exists/i)).toBeInTheDocument();
-    expect(screen.getByDisplayValue("AKIADUP")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("eu-central-1")).toBeInTheDocument();
+    expect(mocks.loadMutateAsync).not.toHaveBeenCalled();
   });
 
   it("opens the add form when importing a CLI profile without a region", async () => {

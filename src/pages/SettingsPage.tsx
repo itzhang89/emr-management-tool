@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, FileDown, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, FileDown, LogIn, LogOut, Pencil, Plus, Shield, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,17 +12,21 @@ import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
 import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
 import { ImportCliProfileDialog } from "@/components/settings/ImportCliProfileDialog";
 import { LanguageCard } from "@/components/settings/LanguageCard";
+import { MfaCodeDialog } from "@/components/settings/MfaCodeDialog";
 import {
   useAwsAccounts,
+  useCancelAwsSsoLogin,
   useDeleteAwsAccount,
   useImportAwsCliProfile,
   useLoadAwsCliProfile,
-  useSetActiveAwsAccount
+  useSetActiveAwsAccount,
+  useSignOutAwsSso,
+  useStartAwsSsoLogin
 } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
 import { readBetaUpdatePreference, writeBetaUpdatePreference } from "@/services/updateChannelPreferences";
 import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
-import type { CredentialFormValues } from "@/services/credentialValidation";
+import { authMethodLabel, type CredentialFormValues } from "@/services/credentialValidation";
 import { getReleaseInfo } from "@/services/releaseInfo";
 import type { AppError, AwsAccountSummary, AwsCliProfileSummary } from "@/types/domain";
 
@@ -49,12 +53,16 @@ export function SettingsPage() {
 
   const [accountDialog, setAccountDialog] = useState<AccountDialogState | null>(null);
   const [accountPendingDelete, setAccountPendingDelete] = useState<AwsAccountSummary | null>(null);
+  const [mfaAccount, setMfaAccount] = useState<AwsAccountSummary | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const accounts = useAwsAccounts();
   const importCliProfile = useImportAwsCliProfile();
   const loadCliProfile = useLoadAwsCliProfile();
   const setActiveAccount = useSetActiveAwsAccount();
   const deleteAccount = useDeleteAwsAccount();
+  const startSsoLogin = useStartAwsSsoLogin();
+  const cancelSsoLogin = useCancelAwsSsoLogin();
+  const signOutSso = useSignOutAwsSso();
 
   const openImportDialog = async (profile: AwsCliProfileSummary) => {
     const notice = cliImportPromptReason(profile, accounts.data ?? []);
@@ -110,6 +118,27 @@ export function SettingsPage() {
     });
   };
 
+  const handleSsoSignIn = (account: AwsAccountSummary) => {
+    toast.message(t("Opening the system browser for SSO sign-in..."));
+    startSsoLogin.mutate(account.id, {
+      onSuccess: (result) => {
+        toast.success(
+          result.identity
+            ? t("Signed in as {arn}", { arn: result.identity.arn })
+            : t("SSO sign-in completed.")
+        );
+      },
+      onError: (error) => toast.error(errorMessage(error, "SSO sign-in failed."))
+    });
+  };
+
+  const handleSsoSignOut = (account: AwsAccountSummary) => {
+    signOutSso.mutate(account.id, {
+      onSuccess: () => toast.success(t("Signed out of {name}.", { name: account.name })),
+      onError: (error) => toast.error(errorMessage(error, "SSO sign-out failed."))
+    });
+  };
+
   return (
     <div className="flex w-full min-w-0 flex-col gap-6 overflow-auto">
       <PageHeader
@@ -159,9 +188,8 @@ export function SettingsPage() {
           <div className="space-y-1">
             <CardTitle className="text-base 2xl:text-lg">Configured Accounts</CardTitle>
             <CardDescription className="text-xs 2xl:text-sm">
-              Double-click an account to make it active. Use Edit to change the name or region. Access Key stays fixed;
-              unlock Secret only when rotating the secret for the same key. Use the import icon to bring in local AWS CLI
-              profiles.
+              Double-click an account to make it active. Supports Access Key, SSO, MFA session, and Assume Role. Use the
+              import icon for local AWS CLI static profiles.
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
@@ -215,6 +243,9 @@ export function SettingsPage() {
               <div className="min-w-0 space-y-0.5 2xl:space-y-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <p className="truncate text-sm font-medium 2xl:text-base">{account.name}</p>
+                  <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]">
+                    {authMethodLabel(account.authMethod)}
+                  </Badge>
                   {account.isActive ? (
                     <Badge className="px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide 2xl:text-[11px]">
                       Active
@@ -230,6 +261,66 @@ export function SettingsPage() {
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1" onDoubleClick={(event) => event.stopPropagation()}>
+                {account.authMethod === "sso" ? (
+                  account.identity ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 2xl:size-10"
+                          aria-label={`Sign out ${account.name}`}
+                          disabled={signOutSso.isPending}
+                          onClick={() => handleSsoSignOut(account)}
+                        >
+                          <LogOut className="size-4 2xl:size-[18px]" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Sign out</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-9 2xl:size-10"
+                          aria-label={`Sign in ${account.name}`}
+                          disabled={startSsoLogin.isPending}
+                          onClick={() => {
+                            if (startSsoLogin.isPending) {
+                              cancelSsoLogin.mutate(account.id);
+                              return;
+                            }
+                            handleSsoSignIn(account);
+                          }}
+                        >
+                          <LogIn className="size-4 2xl:size-[18px]" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Sign in with SSO</TooltipContent>
+                    </Tooltip>
+                  )
+                ) : null}
+                {(account.authMethod === "mfaSession" || account.authMethod === "assumeRole") && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-9 2xl:size-10"
+                        aria-label={`Enter MFA for ${account.name}`}
+                        onClick={() => setMfaAccount(account)}
+                      >
+                        <Shield className="size-4 2xl:size-[18px]" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Enter MFA code</TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -284,18 +375,6 @@ export function SettingsPage() {
 
       <LanguageCard />
 
-      <Card>
-        <CardHeader className="p-4 2xl:p-5">
-          <CardTitle className="flex items-center gap-2 text-base 2xl:text-lg">
-            <KeyRound className="size-4 2xl:size-[18px]" />
-            Future Authentication
-          </CardTitle>
-          <CardDescription className="text-xs 2xl:text-sm">
-            AWS Profile, SSO, and Assume Role are reserved for later versions.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-
       <ImportCliProfileDialog
         open={importDialogOpen}
         pending={importCliProfile.isPending || loadCliProfile.isPending}
@@ -329,6 +408,14 @@ export function SettingsPage() {
             },
             onError: (error) => toast.error(errorMessage(error, "Failed to delete account."))
           });
+        }}
+      />
+      <MfaCodeDialog
+        open={Boolean(mfaAccount)}
+        accountId={mfaAccount?.id ?? null}
+        accountName={mfaAccount?.name}
+        onOpenChange={(open) => {
+          if (!open) setMfaAccount(null);
         }}
       />
     </div>
