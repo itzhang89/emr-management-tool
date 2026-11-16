@@ -55,8 +55,11 @@ pub async fn list_virtual_clusters(
         }
 
         let response = operation.send().await.map_err(|error| {
-            let app_error =
-                AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error);
+            let app_error = runtime.annotate_aws_error(AppError::aws_for_account_sdk(
+                "emr-containers",
+                runtime.account.id.clone(),
+                error,
+            ));
             diagnostics::log_aws_failure(
                 "emr-containers",
                 "ListVirtualClusters",
@@ -278,7 +281,11 @@ pub async fn start_job_run(
         operation = operation.configuration_overrides(overrides);
     }
     let response = operation.send().await.map_err(|error| {
-        AppError::aws_for_account_sdk("emr-containers", runtime.account.id.clone(), error)
+        runtime.annotate_aws_error(AppError::aws_for_account_sdk(
+            "emr-containers",
+            runtime.account.id.clone(),
+            error,
+        ))
     })?;
     let now = Utc::now();
     let job = JobRunSummary {

@@ -153,6 +153,24 @@ impl AppError {
         }
     }
 
+    /// Auth step the UI must complete before AWS calls can proceed.
+    pub fn auth_required(
+        code: &'static str,
+        account_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: "auth".into(),
+            code: code.into(),
+            message: message.into().into(),
+            service: None,
+            request_id: None,
+            retryable: false,
+            account_id: Some(account_id.into().into()),
+            details: None,
+        }
+    }
+
     /// A run the user stopped. Its own code because the UI shows it as a
     /// cancelled result rather than as an error it should apologise for.
     pub fn cancelled(message: impl Into<String>) -> Self {

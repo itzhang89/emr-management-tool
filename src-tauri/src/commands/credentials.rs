@@ -1,3 +1,7 @@
+use crate::aws::auth::{
+    assume_role, auth_status, has_usable_sso_session, resolve_sdk_config, sso_sign_out,
+    start_device_login, submit_mfa_code,
+};
 use crate::aws::cli_profiles::{discover_aws_cli_profiles, load_aws_cli_profile_credentials};
 use crate::aws::credentials::{
     aws_config_from_credentials, clear_account_credentials,
@@ -7,29 +11,20 @@ use crate::aws::credentials::{
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsAccount, AwsAccountCredentialsInput, AwsAccountSummary, AwsAccountUpdateInput,
-    AwsCliProfileCredentials, AwsCliProfileSummary, AwsCredentialsInput, AwsIdentity, AwsSettings,
-    ImportAwsCliProfileRequest, TestAwsAccountRequest,
+    AwsAccount, AwsAccountAuthStatus, AwsAccountCredentialsInput, AwsAccountSummary,
+    AwsAccountUpdateInput, AwsAuthMethod, AwsCliProfileCredentials, AwsCliProfileSummary,
+    AwsCredentialsInput, AwsIdentity, AwsMfaCodeRequest, AwsMfaCodeResult, AwsSettings,
+    AwsSsoLoginRequest, AwsSsoLoginResult, ImportAwsCliProfileRequest, TestAwsAccountRequest,
 };
 use crate::state::AppState;
 use chrono::Utc;
 use tauri::{AppHandle, State};
+use tokio_util::sync::CancellationToken;
 
 #[tauri::command]
 pub async fn test_aws_credentials(request: AwsCredentialsInput) -> AppResult<AwsIdentity> {
     let config = aws_config_from_credentials(&request).await;
-    let client = aws_sdk_sts::Client::new(&config);
-    let identity = client
-        .get_caller_identity()
-        .send()
-        .await
-        .map_err(|error| AppError::aws_sdk("sts", error))?;
-
-    Ok(AwsIdentity {
-        account: identity.account().unwrap_or_default().to_string(),
-        arn: identity.arn().unwrap_or_default().to_string(),
-        user_id: identity.user_id().unwrap_or_default().to_string(),
-    })
+    identity_from_config(&config).await
 }
 
 #[tauri::command]
@@ -53,7 +48,32 @@ pub async fn create_aws_account(
     if request.region.trim().is_empty() {
         return Err(AppError::validation("Region is required."));
     }
-    ensure_access_key_unused(&request.access_key_id, request.id.as_deref()).await?;
+
+    let account_id = request
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("aws-{}", uuid::Uuid::new_v4()));
+
+    match request.auth_method {
+        AwsAuthMethod::AccessKey => create_access_key_account(&app, request, account_id).await,
+        AwsAuthMethod::Sso => create_sso_account(&app, request, account_id).await,
+        AwsAuthMethod::MfaSession => create_mfa_account(&app, request, account_id).await,
+        AwsAuthMethod::AssumeRole => create_assume_role_account(&app, request, account_id).await,
+    }
+}
+
+async fn create_access_key_account(
+    app: &AppHandle,
+    request: AwsAccountCredentialsInput,
+    account_id: String,
+) -> AppResult<AwsAccount> {
+    if request.access_key_id.trim().is_empty() {
+        return Err(AppError::validation("Access Key ID is required."));
+    }
+    if request.secret_access_key.trim().is_empty() {
+        return Err(AppError::validation("Secret Access Key is required."));
+    }
+    ensure_account_name_unused(request.name.trim(), request.id.as_deref()).await?;
 
     let identity = test_aws_credentials(AwsCredentialsInput {
         access_key_id: request.access_key_id.clone(),
@@ -63,26 +83,157 @@ pub async fn create_aws_account(
     })
     .await?;
 
-    let account_id = request
-        .id
-        .unwrap_or_else(|| format!("aws-{}", uuid::Uuid::new_v4()));
-    let account = build_account(
+    let account = build_account_base(
         account_id,
         request.name.trim().to_string(),
         request.region,
-        &request.access_key_id,
+        AwsAuthMethod::AccessKey,
+        mask_access_key(&request.access_key_id),
         Some(identity),
         request.make_active,
     );
 
     save_account_with_credentials(
-        &app,
+        app,
         account,
         &request.access_key_id,
         &request.secret_access_key,
         request.session_token.as_deref(),
     )
     .await
+}
+
+async fn create_sso_account(
+    app: &AppHandle,
+    request: AwsAccountCredentialsInput,
+    account_id: String,
+) -> AppResult<AwsAccount> {
+    let start_url = required_opt(request.sso_start_url.as_deref(), "SSO start URL is required.")?;
+    let sso_region = required_opt(
+        request
+            .sso_region
+            .as_deref()
+            .or(Some(request.region.as_str())),
+        "SSO region is required.",
+    )?;
+    let sso_account_id =
+        required_opt(request.sso_account_id.as_deref(), "SSO account ID is required.")?;
+    let sso_role_name =
+        required_opt(request.sso_role_name.as_deref(), "SSO role name is required.")?;
+    ensure_account_name_unused(request.name.trim(), request.id.as_deref()).await?;
+
+    let mut account = build_account_base(
+        account_id,
+        request.name.trim().to_string(),
+        request.region,
+        AwsAuthMethod::Sso,
+        format!("sso:{sso_account_id}/{sso_role_name}"),
+        None,
+        request.make_active,
+    );
+    account.sso_start_url = Some(start_url);
+    account.sso_region = Some(sso_region);
+    account.sso_account_id = Some(sso_account_id);
+    account.sso_role_name = Some(sso_role_name);
+
+    persist_account(app, account).await
+}
+
+async fn create_mfa_account(
+    app: &AppHandle,
+    request: AwsAccountCredentialsInput,
+    account_id: String,
+) -> AppResult<AwsAccount> {
+    if request.access_key_id.trim().is_empty() {
+        return Err(AppError::validation("Access Key ID is required."));
+    }
+    if request.secret_access_key.trim().is_empty() {
+        return Err(AppError::validation("Secret Access Key is required."));
+    }
+    let mfa_serial = required_opt(request.mfa_serial.as_deref(), "MFA serial / ARN is required.")?;
+    ensure_account_name_unused(request.name.trim(), request.id.as_deref()).await?;
+
+    let mut account = build_account_base(
+        account_id,
+        request.name.trim().to_string(),
+        request.region,
+        AwsAuthMethod::MfaSession,
+        mask_access_key(&request.access_key_id),
+        None,
+        request.make_active,
+    );
+    account.mfa_serial = Some(mfa_serial);
+
+    save_account_with_credentials(
+        app,
+        account,
+        &request.access_key_id,
+        &request.secret_access_key,
+        None,
+    )
+    .await
+}
+
+async fn create_assume_role_account(
+    app: &AppHandle,
+    request: AwsAccountCredentialsInput,
+    account_id: String,
+) -> AppResult<AwsAccount> {
+    if request.access_key_id.trim().is_empty() {
+        return Err(AppError::validation("Access Key ID is required."));
+    }
+    if request.secret_access_key.trim().is_empty() {
+        return Err(AppError::validation("Secret Access Key is required."));
+    }
+    let role_arn = required_opt(request.role_arn.as_deref(), "Role ARN is required.")?;
+    ensure_account_name_unused(request.name.trim(), request.id.as_deref()).await?;
+
+    let mut account = build_account_base(
+        account_id.clone(),
+        request.name.trim().to_string(),
+        request.region.clone(),
+        AwsAuthMethod::AssumeRole,
+        mask_access_key(&request.access_key_id),
+        None,
+        request.make_active,
+    );
+    account.role_arn = Some(role_arn.clone());
+    account.external_id = trim_opt(request.external_id);
+    account.role_session_name = trim_opt(request.role_session_name);
+    account.mfa_serial = trim_opt(request.mfa_serial);
+
+    let saved = save_account_with_credentials(
+        app,
+        account,
+        &request.access_key_id,
+        &request.secret_access_key,
+        None,
+    )
+    .await?;
+
+    if saved
+        .mfa_serial
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Ok(saved);
+    }
+
+    match assume_role(app, &saved, None).await {
+        Ok(result) => {
+            let pool = repository::pool().await?;
+            let mut account = repository::get_aws_account(&pool, &saved.id)
+                .await?
+                .ok_or_else(|| AppError::validation("AWS account was not found after create."))?;
+            account.identity = Some(result.identity);
+            account.session_expires_at = Some(result.session_expires_at);
+            account.updated_at = Utc::now();
+            repository::upsert_aws_account(&pool, &account).await?;
+            Ok(account)
+        }
+        Err(_) => Ok(saved),
+    }
 }
 
 #[tauri::command]
@@ -99,7 +250,13 @@ pub async fn import_aws_cli_profile(
         return Err(AppError::validation("AWS CLI profile name is required."));
     }
     let profile = load_aws_cli_profile_credentials(&request.profile_name)?;
-    ensure_access_key_unused(&profile.access_key_id, None).await?;
+    let account_name = request
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(profile.profile_name.as_str());
+    ensure_account_name_unused(account_name, None).await?;
     let region = request
         .region
         .as_deref()
@@ -120,33 +277,29 @@ pub async fn import_aws_cli_profile(
         })?
         .to_string();
 
-    let identity = test_aws_credentials(AwsCredentialsInput {
-        access_key_id: profile.access_key_id.clone(),
-        secret_access_key: profile.secret_access_key.clone(),
-        session_token: profile.session_token.clone(),
-        region: region.clone(),
-    })
-    .await?;
-
-    let account_id = format!("aws-profile-{}", sanitize_profile_id(&profile.profile_name));
-    let account = build_account(
-        account_id,
-        request
-            .name
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(profile.profile_name),
-        region,
-        &profile.access_key_id,
-        Some(identity),
-        request.make_active,
-    );
-
-    save_account_with_credentials(
-        &app,
-        account,
-        &profile.access_key_id,
-        &profile.secret_access_key,
-        profile.session_token.as_deref(),
+    create_aws_account(
+        app,
+        AwsAccountCredentialsInput {
+            id: Some(format!(
+                "aws-profile-{}",
+                sanitize_profile_id(&profile.profile_name)
+            )),
+            name: account_name.to_string(),
+            auth_method: AwsAuthMethod::AccessKey,
+            access_key_id: profile.access_key_id,
+            secret_access_key: profile.secret_access_key,
+            session_token: profile.session_token,
+            region,
+            make_active: request.make_active,
+            sso_start_url: None,
+            sso_region: None,
+            sso_account_id: None,
+            sso_role_name: None,
+            mfa_serial: None,
+            role_arn: None,
+            external_id: None,
+            role_session_name: None,
+        },
     )
     .await
 }
@@ -173,16 +326,11 @@ pub async fn load_aws_cli_profile(
 
 async fn save_account_with_credentials(
     app: &AppHandle,
-    mut account: AwsAccount,
+    account: AwsAccount,
     access_key_id: &str,
     secret_access_key: &str,
     session_token: Option<&str>,
 ) -> AppResult<AwsAccount> {
-    let pool = repository::pool().await?;
-    let now = Utc::now();
-    account.created_at = now;
-    account.updated_at = now;
-
     save_account_credentials(
         app,
         &account.id,
@@ -190,6 +338,16 @@ async fn save_account_with_credentials(
         secret_access_key,
         session_token,
     )?;
+    persist_account(app, account).await
+}
+
+async fn persist_account(app: &AppHandle, mut account: AwsAccount) -> AppResult<AwsAccount> {
+    let pool = repository::pool().await?;
+    let now = Utc::now();
+    if account.created_at.timestamp() == 0 {
+        account.created_at = now;
+    }
+    account.updated_at = now;
 
     if account.is_active {
         let accounts = repository::list_aws_accounts(&pool).await?;
@@ -201,8 +359,15 @@ async fn save_account_with_credentials(
         account.is_active = true;
     }
 
-    repository::upsert_aws_account(&pool, &account).await?;
+    // Preserve created_at when upserting an already-timed account.
+    if let Some(existing) = repository::get_aws_account(&pool, &account.id).await? {
+        account.created_at = existing.created_at;
+    } else {
+        account.created_at = now;
+    }
 
+    repository::upsert_aws_account(&pool, &account).await?;
+    let _ = app;
     Ok(account)
 }
 
@@ -233,6 +398,7 @@ pub async fn rename_aws_account(request: serde_json::Value) -> AppResult<AwsAcco
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::validation("Account name is required."))?;
 
+    ensure_account_name_unused(name, Some(account_id)).await?;
     let pool = repository::pool().await?;
     let mut account = repository::get_aws_account(&pool, account_id)
         .await?
@@ -257,12 +423,7 @@ pub async fn update_aws_account(
         return Err(AppError::validation("Region is required."));
     }
 
-    let secret_access_key = request
-        .secret_access_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-
+    ensure_account_name_unused(name, Some(request.account_id.as_str())).await?;
     let pool = repository::pool().await?;
     let mut account = repository::get_aws_account(&pool, &request.account_id)
         .await?
@@ -270,31 +431,88 @@ pub async fn update_aws_account(
             AppError::validation(format!("AWS account {} was not found.", request.account_id))
         })?;
 
-    let stored = read_account_credentials(&app, &account.id)?;
-    let credentials = AwsCredentialsInput {
-        access_key_id: stored.access_key_id.clone(),
-        secret_access_key: secret_access_key
-            .unwrap_or(stored.secret_access_key.as_str())
-            .to_string(),
-        session_token: stored.session_token.clone(),
-        region: region.to_string(),
-    };
-    let identity = test_aws_credentials(credentials.clone()).await?;
-
-    if let Some(secret) = secret_access_key {
-        save_account_credentials(
-            &app,
-            &account.id,
-            &stored.access_key_id,
-            secret,
-            stored.session_token.as_deref(),
-        )?;
-    }
-
     account.name = name.to_string();
     account.region = region.to_string();
-    account.identity = Some(identity);
     account.updated_at = Utc::now();
+
+    match account.auth_method {
+        AwsAuthMethod::AccessKey | AwsAuthMethod::MfaSession | AwsAuthMethod::AssumeRole => {
+            let secret_access_key = request
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let stored = read_account_credentials(&app, &account.id)?;
+            if let Some(secret) = secret_access_key {
+                // Keep imported STS token only for AccessKey accounts. MFA /
+                // AssumeRole temporary sessions live under separate secret keys.
+                let imported_token = matches!(account.auth_method, AwsAuthMethod::AccessKey)
+                    .then(|| stored.session_token.as_deref())
+                    .flatten();
+                save_account_credentials(
+                    &app,
+                    &account.id,
+                    &stored.access_key_id,
+                    secret,
+                    imported_token,
+                )?;
+            }
+
+            if matches!(account.auth_method, AwsAuthMethod::AccessKey) {
+                let credentials = AwsCredentialsInput {
+                    access_key_id: stored.access_key_id.clone(),
+                    secret_access_key: secret_access_key
+                        .unwrap_or(stored.secret_access_key.as_str())
+                        .to_string(),
+                    session_token: stored.session_token.clone(),
+                    region: region.to_string(),
+                };
+                account.identity = Some(test_aws_credentials(credentials).await?);
+            }
+
+            if matches!(account.auth_method, AwsAuthMethod::MfaSession) {
+                if let Some(serial) = trim_opt(request.mfa_serial.clone()) {
+                    account.mfa_serial = Some(serial);
+                }
+            }
+
+            if matches!(account.auth_method, AwsAuthMethod::AssumeRole) {
+                if let Some(role_arn) = trim_opt(request.role_arn) {
+                    account.role_arn = Some(role_arn);
+                }
+                if request.external_id.is_some() {
+                    account.external_id = trim_opt(request.external_id);
+                }
+                if request.role_session_name.is_some() {
+                    account.role_session_name = trim_opt(request.role_session_name);
+                }
+                if request.mfa_serial.is_some() {
+                    account.mfa_serial = trim_opt(request.mfa_serial);
+                }
+            }
+        }
+        AwsAuthMethod::Sso => {
+            if let Some(start_url) = trim_opt(request.sso_start_url) {
+                account.sso_start_url = Some(start_url);
+            }
+            if let Some(sso_region) = trim_opt(request.sso_region) {
+                account.sso_region = Some(sso_region);
+            }
+            if let Some(sso_account_id) = trim_opt(request.sso_account_id) {
+                account.sso_account_id = Some(sso_account_id);
+            }
+            if let Some(sso_role_name) = trim_opt(request.sso_role_name) {
+                account.sso_role_name = Some(sso_role_name);
+            }
+            if let (Some(account_id), Some(role_name)) = (
+                account.sso_account_id.as_deref(),
+                account.sso_role_name.as_deref(),
+            ) {
+                account.access_key_id_masked = format!("sso:{account_id}/{role_name}");
+            }
+        }
+    }
+
     repository::upsert_aws_account(&pool, &account).await?;
     Ok(AwsAccountSummary::from(account))
 }
@@ -310,27 +528,191 @@ pub async fn test_aws_account(
     }
 
     let pool = repository::pool().await?;
-    let account = repository::get_aws_account(&pool, &request.account_id)
+    let mut account = repository::get_aws_account(&pool, &request.account_id)
         .await?
         .ok_or_else(|| {
             AppError::validation(format!("AWS account {} was not found.", request.account_id))
         })?;
+    account.region = region.to_string();
 
-    let stored = read_account_credentials(&app, &account.id)?;
-    let secret_access_key = request
-        .secret_access_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(stored.secret_access_key.as_str());
+    match account.auth_method {
+        AwsAuthMethod::AccessKey => {
+            let stored = read_account_credentials(&app, &account.id)?;
+            let secret_access_key = request
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(stored.secret_access_key.as_str());
+            test_aws_credentials(AwsCredentialsInput {
+                access_key_id: stored.access_key_id,
+                secret_access_key: secret_access_key.to_string(),
+                session_token: stored.session_token,
+                region: region.to_string(),
+            })
+            .await
+        }
+        AwsAuthMethod::Sso => {
+            if !has_usable_sso_session(&app, &account.id)? {
+                return Err(AppError::auth_required(
+                    "SsoLoginRequired",
+                    account.id,
+                    "Sign in with AWS IAM Identity Center before testing this account.",
+                ));
+            }
+            let (config, _) = resolve_sdk_config(&app, &account).await?;
+            identity_from_config(&config).await
+        }
+        AwsAuthMethod::MfaSession | AwsAuthMethod::AssumeRole => {
+            let (config, _) = resolve_sdk_config(&app, &account).await?;
+            identity_from_config(&config).await
+        }
+    }
+}
 
-    test_aws_credentials(AwsCredentialsInput {
-        access_key_id: stored.access_key_id,
-        secret_access_key: secret_access_key.to_string(),
-        session_token: stored.session_token,
-        region: region.to_string(),
-    })
-    .await
+#[tauri::command]
+pub async fn get_aws_account_auth_status(
+    app: AppHandle,
+    request: serde_json::Value,
+) -> AppResult<AwsAccountAuthStatus> {
+    let account_id = request
+        .get("accountId")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| AppError::validation("accountId is required."))?;
+    let pool = repository::pool().await?;
+    let account = repository::get_aws_account(&pool, account_id)
+        .await?
+        .ok_or_else(|| AppError::validation(format!("AWS account {account_id} was not found.")))?;
+    auth_status(&app, &account)
+}
+
+#[tauri::command]
+pub async fn start_aws_sso_login(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AwsSsoLoginRequest,
+) -> AppResult<AwsSsoLoginResult> {
+    let pool = repository::pool().await?;
+    let account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "AWS account {} was not found.",
+                request.account_id
+            ))
+        })?;
+    if account.auth_method != AwsAuthMethod::Sso {
+        return Err(AppError::validation(
+            "SSO login is only available for SSO accounts.",
+        ));
+    }
+
+    let cancel = CancellationToken::new();
+    {
+        let mut map = state
+            .sso_login_cancellations
+            .lock()
+            .map_err(|_| AppError::internal("SSO login lock was poisoned."))?;
+        if let Some(existing) = map.insert(account.id.clone(), cancel.clone()) {
+            existing.cancel();
+        }
+    }
+
+    let result = start_device_login(&app, &account, cancel).await;
+    {
+        let mut map = state
+            .sso_login_cancellations
+            .lock()
+            .map_err(|_| AppError::internal("SSO login lock was poisoned."))?;
+        map.remove(&account.id);
+    }
+    let result = result?;
+
+    let mut account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| AppError::validation("AWS account was not found after SSO login."))?;
+    account.identity = result.identity.clone();
+    account.session_expires_at = result.session_expires_at;
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn cancel_aws_sso_login(
+    state: State<'_, AppState>,
+    request: AwsSsoLoginRequest,
+) -> AppResult<()> {
+    let mut map = state
+        .sso_login_cancellations
+        .lock()
+        .map_err(|_| AppError::internal("SSO login lock was poisoned."))?;
+    if let Some(token) = map.remove(&request.account_id) {
+        token.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sign_out_aws_sso(
+    app: AppHandle,
+    request: AwsSsoLoginRequest,
+) -> AppResult<AwsAccountSummary> {
+    let pool = repository::pool().await?;
+    let mut account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "AWS account {} was not found.",
+                request.account_id
+            ))
+        })?;
+    if account.auth_method != AwsAuthMethod::Sso {
+        return Err(AppError::validation(
+            "SSO sign-out is only available for SSO accounts.",
+        ));
+    }
+    sso_sign_out(&app, &account.id)?;
+    account.identity = None;
+    account.session_expires_at = None;
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+    Ok(AwsAccountSummary::from(account))
+}
+
+#[tauri::command]
+pub async fn submit_aws_mfa_code(
+    app: AppHandle,
+    request: AwsMfaCodeRequest,
+) -> AppResult<AwsMfaCodeResult> {
+    let pool = repository::pool().await?;
+    let mut account = repository::get_aws_account(&pool, &request.account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!(
+                "AWS account {} was not found.",
+                request.account_id
+            ))
+        })?;
+
+    let result = match account.auth_method {
+        AwsAuthMethod::MfaSession => submit_mfa_code(&app, &account, &request.token_code).await?,
+        AwsAuthMethod::AssumeRole => {
+            assume_role(&app, &account, Some(request.token_code.as_str())).await?
+        }
+        _ => {
+            return Err(AppError::validation(
+                "MFA codes are only used for MFA session or AssumeRole accounts.",
+            ));
+        }
+    };
+
+    account.identity = Some(result.identity.clone());
+    account.session_expires_at = Some(result.session_expires_at);
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -345,8 +727,6 @@ pub async fn delete_aws_account(
     let pool = repository::pool().await?;
     let _ = clear_account_credentials(&app, account_id);
 
-    // DBHub rows belong to this account — cascade them (and their secrets)
-    // with it. Best-effort secret cleanup must never block the row deletion.
     if let Ok((connection_ids, profile_ids)) =
         crate::db::dbhub::delete_all_for_account(&pool, account_id).await
     {
@@ -437,11 +817,33 @@ impl From<AwsAccount> for AwsAccountSummary {
             id: account.id,
             name: account.name,
             region: account.region,
+            auth_method: account.auth_method,
             access_key_id_masked: account.access_key_id_masked,
+            sso_start_url: account.sso_start_url,
+            sso_account_id: account.sso_account_id,
+            sso_role_name: account.sso_role_name,
+            mfa_serial: account.mfa_serial,
+            role_arn: account.role_arn,
+            session_expires_at: account.session_expires_at,
             identity: account.identity,
             is_active: account.is_active,
         }
     }
+}
+
+async fn identity_from_config(config: &aws_config::SdkConfig) -> AppResult<AwsIdentity> {
+    let client = aws_sdk_sts::Client::new(config);
+    let identity = client
+        .get_caller_identity()
+        .send()
+        .await
+        .map_err(|error| AppError::aws_sdk("sts", error))?;
+
+    Ok(AwsIdentity {
+        account: identity.account().unwrap_or_default().to_string(),
+        arn: identity.arn().unwrap_or_default().to_string(),
+        user_id: identity.user_id().unwrap_or_default().to_string(),
+    })
 }
 
 fn mask_access_key(access_key_id: &str) -> String {
@@ -452,11 +854,12 @@ fn mask_access_key(access_key_id: &str) -> String {
     format!("{}****{}", &trimmed[..4], &trimmed[trimmed.len() - 4..])
 }
 
-fn build_account(
+fn build_account_base(
     id: String,
     name: String,
     region: String,
-    access_key_id: &str,
+    auth_method: AwsAuthMethod,
+    access_key_id_masked: String,
     identity: Option<AwsIdentity>,
     is_active: bool,
 ) -> AwsAccount {
@@ -465,7 +868,17 @@ fn build_account(
         id,
         name,
         region,
-        access_key_id_masked: mask_access_key(access_key_id),
+        auth_method,
+        access_key_id_masked,
+        sso_start_url: None,
+        sso_region: None,
+        sso_account_id: None,
+        sso_role_name: None,
+        mfa_serial: None,
+        role_arn: None,
+        external_id: None,
+        role_session_name: None,
+        session_expires_at: None,
         identity,
         is_active,
         created_at: now,
@@ -486,27 +899,50 @@ fn sanitize_profile_id(profile_name: &str) -> String {
         .collect()
 }
 
-/// Rejects a second account for an access key that is already configured.
-/// `skip_account_id` lets an edit of an existing account keep its own key.
-async fn ensure_access_key_unused(
-    access_key_id: &str,
+fn required_opt(value: Option<&str>, message: &str) -> AppResult<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| AppError::validation(message.to_string()))
+}
+
+fn trim_opt(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// Account display names are the uniqueness key across all auth methods.
+/// Access keys are intentionally not unique: the same key may back Access Key,
+/// MFA session, and Assume Role accounts under different names.
+async fn ensure_account_name_unused(
+    name: &str,
     skip_account_id: Option<&str>,
 ) -> AppResult<()> {
-    let masked = mask_access_key(access_key_id);
+    let normalized = normalize_account_name(name);
+    if normalized.is_empty() {
+        return Err(AppError::validation("Account name is required."));
+    }
+
     let pool = repository::pool().await?;
     let existing = repository::list_aws_accounts(&pool)
         .await?
         .into_iter()
         .find(|account| {
-            account.access_key_id_masked == masked
+            normalize_account_name(&account.name) == normalized
                 && skip_account_id.is_none_or(|id| account.id != id)
         });
 
     match existing {
         Some(account) => Err(AppError::validation(format!(
-            "Access key {masked} is already configured as account \"{}\". Delete that account first if you want to re-import it.",
+            "An account named \"{}\" already exists. Choose a different name.",
             account.name
         ))),
         None => Ok(()),
     }
+}
+
+fn normalize_account_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
 }

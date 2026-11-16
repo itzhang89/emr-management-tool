@@ -28,6 +28,8 @@ pub struct AppState {
     /// AI tool calls that need a person to click Confirm before they run.
     /// Keyed by confirmation id; short-lived — see [`PendingAiConfirm::TTL`].
     pub pending_ai_confirms: Mutex<HashMap<String, PendingAiConfirm>>,
+    /// In-flight AWS SSO device-authorization logins, keyed by account id.
+    pub sso_login_cancellations: Mutex<HashMap<String, tokio_util::sync::CancellationToken>>,
 }
 
 /// One AI statement parked until a person accepts or it expires.
@@ -75,6 +77,7 @@ impl Default for AppState {
             chat_cancellations: Mutex::new(HashMap::new()),
             db_query_cancellations: Mutex::new(HashMap::new()),
             pending_ai_confirms: Mutex::new(HashMap::new()),
+            sso_login_cancellations: Mutex::new(HashMap::new()),
         }
     }
 }

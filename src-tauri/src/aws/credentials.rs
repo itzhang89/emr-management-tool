@@ -45,14 +45,8 @@ pub async fn aws_config_from_account(
     app: &AppHandle,
     account: &AwsAccount,
 ) -> AppResult<aws_config::SdkConfig> {
-    let credentials = read_account_credentials(app, &account.id)?;
-    Ok(aws_config_from_credentials(&AwsCredentialsInput {
-        access_key_id: credentials.access_key_id,
-        secret_access_key: credentials.secret_access_key,
-        session_token: credentials.session_token,
-        region: account.region.clone(),
-    })
-    .await)
+    let (config, _) = crate::aws::auth::resolve_sdk_config(app, account).await?;
+    Ok(config)
 }
 
 pub fn credential_key(account_id: &str, secret_name: &str) -> String {
@@ -76,9 +70,10 @@ pub fn save_account_credentials(
         &credential_key(account_id, "secret_key"),
         secret_access_key,
     )?;
+    // Long-term / imported STS token only — never the MFA/AssumeRole temp token.
     write_optional_secret(
         app,
-        &credential_key(account_id, "session_token"),
+        &credential_key(account_id, "imported_session_token"),
         session_token,
     )?;
     Ok(())
@@ -88,18 +83,29 @@ pub fn read_account_credentials(
     app: &AppHandle,
     account_id: &str,
 ) -> AppResult<StoredAwsCredentials> {
+    let imported = read_optional_secret(app, &credential_key(account_id, "imported_session_token"))?;
+    // Legacy fallback: only reuse `session_token` when there is no temp MFA/role
+    // session, otherwise that shared key may hold GetSessionToken material.
+    let has_temp_session =
+        read_optional_secret(app, &credential_key(account_id, "session_access_key"))?
+            .is_some_and(|value| !value.trim().is_empty());
+    let session_token = match imported {
+        Some(value) if !value.trim().is_empty() => Some(value),
+        _ if !has_temp_session => {
+            read_optional_secret(app, &credential_key(account_id, "session_token"))?
+        }
+        _ => None,
+    };
+
     Ok(StoredAwsCredentials {
         access_key_id: read_secret(app, &credential_key(account_id, "access_key"))?,
         secret_access_key: read_secret(app, &credential_key(account_id, "secret_key"))?,
-        session_token: read_optional_secret(app, &credential_key(account_id, "session_token"))?,
+        session_token,
     })
 }
 
 pub fn clear_account_credentials(app: &AppHandle, account_id: &str) -> AppResult<()> {
-    for secret_name in ["access_key", "secret_key", "session_token"] {
-        delete_secret(app, &credential_key(account_id, secret_name))?;
-    }
-    Ok(())
+    crate::aws::auth::wipe_account_secrets(app, account_id)
 }
 
 pub fn save_credentials(app: &AppHandle, credentials: &AwsCredentialsInput) -> AppResult<()> {

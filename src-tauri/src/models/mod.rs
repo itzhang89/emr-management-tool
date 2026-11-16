@@ -27,13 +27,43 @@ pub struct AwsSettings {
     pub identity: Option<AwsIdentity>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum AwsAuthMethod {
+    #[default]
+    AccessKey,
+    Sso,
+    MfaSession,
+    AssumeRole,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AwsAccount {
     pub id: String,
     pub name: String,
     pub region: String,
+    #[serde(default)]
+    pub auth_method: AwsAuthMethod,
     pub access_key_id_masked: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_start_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_role_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfa_serial: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_arn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_session_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<DateTime<Utc>>,
     pub identity: Option<AwsIdentity>,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
@@ -46,9 +76,44 @@ pub struct AwsAccountSummary {
     pub id: String,
     pub name: String,
     pub region: String,
+    #[serde(default)]
+    pub auth_method: AwsAuthMethod,
     pub access_key_id_masked: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_start_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sso_role_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfa_serial: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_arn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<DateTime<Utc>>,
     pub identity: Option<AwsIdentity>,
     pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AwsAuthStatusKind {
+    SignedIn,
+    NeedsLogin,
+    NeedsMfa,
+    Expired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsAccountAuthStatus {
+    pub account_id: String,
+    pub auth_method: AwsAuthMethod,
+    pub status: AwsAuthStatusKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_expires_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,11 +206,31 @@ pub struct SecretValueResponse {
 pub struct AwsAccountCredentialsInput {
     pub id: Option<String>,
     pub name: String,
+    #[serde(default)]
+    pub auth_method: AwsAuthMethod,
+    #[serde(default)]
     pub access_key_id: String,
+    #[serde(default)]
     pub secret_access_key: String,
     pub session_token: Option<String>,
     pub region: String,
     pub make_active: bool,
+    #[serde(default)]
+    pub sso_start_url: Option<String>,
+    #[serde(default)]
+    pub sso_region: Option<String>,
+    #[serde(default)]
+    pub sso_account_id: Option<String>,
+    #[serde(default)]
+    pub sso_role_name: Option<String>,
+    #[serde(default)]
+    pub mfa_serial: Option<String>,
+    #[serde(default)]
+    pub role_arn: Option<String>,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub role_session_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +241,22 @@ pub struct AwsAccountUpdateInput {
     pub region: String,
     #[serde(default)]
     pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub sso_start_url: Option<String>,
+    #[serde(default)]
+    pub sso_region: Option<String>,
+    #[serde(default)]
+    pub sso_account_id: Option<String>,
+    #[serde(default)]
+    pub sso_role_name: Option<String>,
+    #[serde(default)]
+    pub mfa_serial: Option<String>,
+    #[serde(default)]
+    pub role_arn: Option<String>,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub role_session_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +266,36 @@ pub struct TestAwsAccountRequest {
     pub region: String,
     #[serde(default)]
     pub secret_access_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsSsoLoginRequest {
+    pub account_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsSsoLoginResult {
+    pub account_id: String,
+    pub verification_uri: String,
+    pub identity: Option<AwsIdentity>,
+    pub session_expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsMfaCodeRequest {
+    pub account_id: String,
+    pub token_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwsMfaCodeResult {
+    pub account_id: String,
+    pub identity: AwsIdentity,
+    pub session_expires_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

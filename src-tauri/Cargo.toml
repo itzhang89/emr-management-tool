@@ -23,8 +23,11 @@ aws-sdk-emrcontainers = { version = "1.107.0", default-features = false, feature
 aws-sdk-glue = { version = "1.110.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-s3 = { version = "1.135.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "sigv4a"] }
 aws-sdk-sts = { version = "1.106.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-sso = { version = "1.102.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-ssooidc = { version = "1.104.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-secretsmanager = { version = "1.108.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-types = "1.3.16"
+open = "5"
 chrono = { version = "0.4.45", features = ["serde"] }
 dirs = "6.0.0"
 flate2 = "1.1.9"

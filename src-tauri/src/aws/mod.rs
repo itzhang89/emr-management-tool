@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod cli_profiles;
 pub mod credentials;
 pub mod runtime;
