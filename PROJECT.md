@@ -367,26 +367,20 @@ Read Only:
 
 #### AWS Credentials
 
-Current supported authentication:
+Supported authentication (one method per account; no runtime fallback chain):
 
-Access Key
-
-Fields:
-
-* Access Key ID
-* Secret Access Key
-* Region
+* Access Key — long-term IAM access key / secret (optional session token)
+* SSO / IAM Identity Center — in-app OIDC device authorization via the system browser
+* IAM User + MFA — long-term keys + MFA serial; `GetSessionToken` after TOTP entry
+* Assume Role — base access keys + role ARN (optional external ID / MFA)
 
 Features:
 
-* Test Connection
-* Save Credential
-
-Future versions may support:
-
-* AWS Profile
-* SSO
-* Assume Role
+* Test Connection (Access Key immediately; SSO/MFA after session is established)
+* Save Credential / multi-account switching
+* SSO Sign in / Sign out
+* MFA code prompt for MFA session and MFA-backed Assume Role
+* Import static AWS CLI profiles (Access Key only)
 
 ---
 
@@ -474,8 +468,6 @@ Never call Tauri APIs directly from UI components.
 
 ### Phase 3
 
-* SSO Authentication
-* Multiple AWS Accounts
 * Job Metrics Dashboard
 * Spark History Integration
 
