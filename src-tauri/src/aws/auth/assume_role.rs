@@ -1,6 +1,7 @@
 use super::mfa::session_from_sts;
 use super::session::{
-    read_cached_session, save_cached_session, sdk_config_from_session, sdk_config_from_static,
+    clear_cached_session, read_cached_session, save_cached_session, sdk_config_from_session,
+    sdk_config_from_static,
 };
 use crate::aws::credentials::read_account_credentials;
 use crate::error::{AppError, AppResult};
@@ -49,6 +50,22 @@ pub async fn resolve_assume_role_config(
         .ok_or_else(|| AppError::internal("AssumeRole session was not cached."))?;
     let config = sdk_config_from_session(&session, &account.region).await;
     Ok((config, Some(result.session_expires_at)))
+}
+
+/// Re-assume the role without MFA. Fails when the account requires an MFA code.
+pub async fn force_refresh_session(
+    app: &AppHandle,
+    account: &AwsAccount,
+) -> AppResult<AwsMfaCodeResult> {
+    if requires_mfa(account) {
+        return Err(AppError::auth_required(
+            "MfaCodeRequired",
+            account.id.clone(),
+            "Enter an MFA code to refresh the assumed-role session.",
+        ));
+    }
+    clear_cached_session(app, &account.id)?;
+    assume_role(app, account, None).await
 }
 
 pub async fn assume_role(

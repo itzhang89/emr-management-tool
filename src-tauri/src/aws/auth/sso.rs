@@ -4,7 +4,7 @@ use super::session::{
     write_sso_client, write_sso_tokens, CachedSession, SESSION_SKEW,
 };
 use crate::error::{AppError, AppResult};
-use crate::models::{AwsAccount, AwsIdentity, AwsSsoLoginResult};
+use crate::models::{AwsAccount, AwsIdentity, AwsMfaCodeResult, AwsSsoLoginResult};
 use aws_config::BehaviorVersion;
 use aws_types::region::Region;
 use chrono::{Duration, TimeZone, Utc};
@@ -232,6 +232,23 @@ pub async fn resolve_sso_config(
     let session = fetch_role_credentials(app, account, &access_token).await?;
     let config = sdk_config_from_session(&session, &account.region).await;
     Ok((config, Some(session.expires_at)))
+}
+
+/// Drop the cached role session and mint a fresh one (OIDC refresh when needed).
+pub async fn force_refresh_session(
+    app: &AppHandle,
+    account: &AwsAccount,
+) -> AppResult<AwsMfaCodeResult> {
+    clear_cached_session(app, &account.id)?;
+    let access_token = ensure_access_token(app, account).await?;
+    let session = fetch_role_credentials(app, account, &access_token).await?;
+    let config = sdk_config_from_session(&session, &account.region).await;
+    let identity = caller_identity(&config).await?;
+    Ok(AwsMfaCodeResult {
+        account_id: account.id.clone(),
+        identity,
+        session_expires_at: session.expires_at,
+    })
 }
 
 pub async fn caller_identity(config: &aws_config::SdkConfig) -> AppResult<AwsIdentity> {

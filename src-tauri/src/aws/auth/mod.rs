@@ -4,9 +4,9 @@ mod session;
 pub mod sso;
 
 use crate::aws::credentials::read_account_credentials;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::{
-    AwsAccount, AwsAccountAuthStatus, AwsAuthMethod, AwsAuthStatusKind,
+    AwsAccount, AwsAccountAuthStatus, AwsAuthMethod, AwsAuthStatusKind, AwsMfaCodeResult,
 };
 use chrono::Utc;
 use session::{
@@ -18,6 +18,38 @@ pub use assume_role::{assume_role, resolve_assume_role_config};
 pub use mfa::{resolve_mfa_config, submit_mfa_code};
 pub use session::{clear_all_auth_secrets as clear_account_auth_secrets, clear_cached_session};
 pub use sso::{has_usable_sso_session, sign_out as sso_sign_out, start_device_login};
+
+/// True when the account can renew temporary credentials without a TOTP / browser login.
+pub fn can_silent_refresh(account: &AwsAccount) -> bool {
+    match account.auth_method {
+        AwsAuthMethod::Sso => true,
+        AwsAuthMethod::AssumeRole => !account
+            .mfa_serial
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty()),
+        AwsAuthMethod::MfaSession | AwsAuthMethod::AccessKey => false,
+    }
+}
+
+/// Force-mint a new temporary session for SSO or AssumeRole (no MFA).
+pub async fn refresh_session(
+    app: &AppHandle,
+    account: &AwsAccount,
+) -> AppResult<AwsMfaCodeResult> {
+    match account.auth_method {
+        AwsAuthMethod::Sso => sso::force_refresh_session(app, account).await,
+        AwsAuthMethod::AssumeRole => assume_role::force_refresh_session(app, account).await,
+        AwsAuthMethod::MfaSession => Err(AppError::auth_required(
+            "MfaCodeRequired",
+            account.id.clone(),
+            "Enter an MFA code to refresh this session.",
+        )),
+        AwsAuthMethod::AccessKey => Err(AppError::validation(
+            "Access Key accounts do not use temporary sessions.",
+        )),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAwsAuth {

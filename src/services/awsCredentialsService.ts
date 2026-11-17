@@ -24,6 +24,7 @@ export const awsCredentialsService = {
   startSsoLogin: (accountId: string) => tauriClient.startAwsSsoLogin({ accountId }),
   cancelSsoLogin: (accountId: string) => tauriClient.cancelAwsSsoLogin({ accountId }),
   signOutSso: (accountId: string) => tauriClient.signOutAwsSso({ accountId }),
+  refreshSession: (accountId: string) => tauriClient.refreshAwsAccountSession({ accountId }),
   submitMfaCode: (accountId: string, tokenCode: string) =>
     tauriClient.submitAwsMfaCode({ accountId, tokenCode }),
   save: (credentials: AwsCredentialsInput) => tauriClient.saveAwsCredentials(credentials),

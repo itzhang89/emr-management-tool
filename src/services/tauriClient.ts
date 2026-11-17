@@ -142,6 +142,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
       call<AwsSsoLoginResult>("start_aws_sso_login", request),
     cancelAwsSsoLogin: (request: { accountId: string }) => call<void>("cancel_aws_sso_login", request),
     signOutAwsSso: (request: { accountId: string }) => call<AwsAccountSummary>("sign_out_aws_sso", request),
+    refreshAwsAccountSession: (request: { accountId: string }) =>
+      call<AwsMfaCodeResult>("refresh_aws_account_session", request),
     submitAwsMfaCode: (request: { accountId: string; tokenCode: string }) =>
       call<AwsMfaCodeResult>("submit_aws_mfa_code", request),
     listVirtualClusters: (request: ListVirtualClustersRequest) =>

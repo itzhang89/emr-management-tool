@@ -221,6 +221,29 @@ export function useSignOutAwsSso() {
   });
 }
 
+export function useRefreshAwsAccountSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (accountId: string) => awsCredentialsService.refreshSession(accountId),
+    onSuccess: (result) => {
+      queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
+        if (!accounts) return accounts;
+        return accounts.map((account) =>
+          account.id === result.accountId
+            ? {
+                ...account,
+                identity: result.identity,
+                sessionExpiresAt: result.sessionExpiresAt
+              }
+            : account
+        );
+      });
+      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
+    }
+  });
+}
+
 export function useSubmitAwsMfaCode() {
   const queryClient = useQueryClient();
   return useMutation({

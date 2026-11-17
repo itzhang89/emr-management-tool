@@ -57,6 +57,7 @@ pub fn run() {
             commands::credentials::start_aws_sso_login,
             commands::credentials::cancel_aws_sso_login,
             commands::credentials::sign_out_aws_sso,
+            commands::credentials::refresh_aws_account_session,
             commands::credentials::submit_aws_mfa_code,
             commands::emr::list_virtual_clusters,
             commands::emr::list_job_runs,

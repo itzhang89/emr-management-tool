@@ -1,6 +1,7 @@
 use crate::aws::auth::{
-    assume_role, auth_status, clear_account_auth_secrets, clear_cached_session,
-    has_usable_sso_session, resolve_sdk_config, sso_sign_out, start_device_login, submit_mfa_code,
+    assume_role, auth_status, can_silent_refresh, clear_account_auth_secrets, clear_cached_session,
+    has_usable_sso_session, refresh_session, resolve_sdk_config, sso_sign_out, start_device_login,
+    submit_mfa_code,
 };
 use crate::aws::cli_profiles::{discover_aws_cli_profiles, load_aws_cli_profile_credentials};
 use crate::aws::credentials::{
@@ -654,6 +655,47 @@ pub async fn sign_out_aws_sso(
     account.updated_at = Utc::now();
     repository::upsert_aws_account(&pool, &account).await?;
     Ok(AwsAccountSummary::from(account))
+}
+
+#[tauri::command]
+pub async fn refresh_aws_account_session(
+    app: AppHandle,
+    request: serde_json::Value,
+) -> AppResult<AwsMfaCodeResult> {
+    let account_id = request
+        .get("accountId")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| AppError::validation("accountId is required."))?;
+    let pool = repository::pool().await?;
+    let mut account = repository::get_aws_account(&pool, account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::validation(format!("AWS account {account_id} was not found."))
+        })?;
+
+    if !can_silent_refresh(&account) {
+        let code = match account.auth_method {
+            AwsAuthMethod::MfaSession | AwsAuthMethod::AssumeRole => "MfaCodeRequired",
+            AwsAuthMethod::Sso => "SsoLoginRequired",
+            AwsAuthMethod::AccessKey => {
+                return Err(AppError::validation(
+                    "Access Key accounts do not use temporary sessions.",
+                ));
+            }
+        };
+        return Err(AppError::auth_required(
+            code,
+            account.id.clone(),
+            "This account requires interactive authentication to refresh the session.",
+        ));
+    }
+
+    let result = refresh_session(&app, &account).await?;
+    account.identity = Some(result.identity.clone());
+    account.session_expires_at = Some(result.session_expires_at);
+    account.updated_at = Utc::now();
+    repository::upsert_aws_account(&pool, &account).await?;
+    Ok(result)
 }
 
 #[tauri::command]
