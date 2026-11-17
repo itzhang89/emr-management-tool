@@ -156,7 +156,7 @@ describe("SettingsPage updates", () => {
     await user.click(screen.getByRole("button", { name: /Add account/i }));
 
     const dialog = screen.getByRole("dialog");
-    const secretInput = within(dialog).getByPlaceholderText("••••••••••••••••");
+    const secretInput = within(dialog).getByPlaceholderText("Secret key paired with the access key");
     await user.type(secretInput, "super-secret");
     expect(secretInput).toHaveAttribute("type", "password");
 

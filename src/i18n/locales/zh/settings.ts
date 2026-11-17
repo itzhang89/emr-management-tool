@@ -16,6 +16,35 @@ const settings: TranslationDictionary = {
   "Account name cannot be changed after creation.": "账户名称创建后不可更改。",
   "Account name is locked. You can change authentication method, credentials, and region.":
     "账户名称已锁定。你可以更改认证方式、凭证和区域。",
+  "AKIAxxxxxxxx (IAM user access key ID)": "AKIAxxxxxxxx（IAM 用户访问密钥 ID）",
+  "arn:aws:iam::123456789012:mfa/username": "arn:aws:iam::123456789012:mfa/用户名",
+  "arn:aws:iam::123456789012:role/MyRole": "arn:aws:iam::123456789012:role/角色名",
+  "Current {masked} — enter a new Access Key ID to replace":
+    "当前 {masked} — 输入新的访问密钥 ID 以替换",
+  "e.g. ap-southeast-1 (Identity Center region)": "例如 ap-southeast-1（Identity Center 区域）",
+  "e.g. prod-analytics (unique, cannot rename later)": "例如 prod-analytics（唯一，创建后不可改名）",
+  "Enter new secret (leave blank with Access Key ID empty to keep)":
+    "输入新的私有密钥（与访问密钥 ID 都留空则保持原凭证）",
+  "{duration} left": "剩余 {duration}",
+  "External ID required by the role trust policy": "角色信任策略要求的 External ID",
+  "https://my-org.awsapps.com/start": "https://my-org.awsapps.com/start",
+  "Permission set / role name, e.g. AdministratorAccess":
+    "权限集 / 角色名，例如 AdministratorAccess",
+  "Secret key paired with the access key": "与访问密钥配对的私有密钥",
+  "Session expired": "会话已过期",
+  "Session for {name} expired. Enter an MFA code to continue.":
+    "{name} 的会话已过期，请输入 MFA 验证码以继续。",
+  "Session for {name} expires soon. Enter an MFA code to refresh.":
+    "{name} 的会话即将过期，请输入 MFA 验证码以刷新。",
+  "Session name shown in CloudTrail, e.g. emr-management-tool":
+    "CloudTrail 中显示的会话名，例如 emr-management-tool",
+  "Session refresh failed for {name}.": "{name} 的会话刷新失败。",
+  "Session refresh failed for {name}. Sign in with SSO again.":
+    "{name} 的会话刷新失败，请重新进行 SSO 登录。",
+  "Session refreshed for {name}.": "已刷新 {name} 的会话。",
+  "Session refreshed for {name} · {duration} left": "已刷新 {name} 的会话 · 剩余 {duration}",
+  "Session: {duration} left": "会话剩余 {duration}",
+  "12-digit AWS account ID, e.g. 123456789012": "12 位 AWS 账户 ID，例如 123456789012",
   "Already imported as “{name}”.": "已导入为“{name}”。",
   "Connected to AWS account {account}": "已连接到 AWS 账户 {account}",
   "Delete AWS account?": "删除 AWS 账户？",

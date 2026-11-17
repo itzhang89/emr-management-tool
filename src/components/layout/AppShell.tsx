@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AboutDialog } from "@/components/help/AboutDialog";
 import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { UpdateAvailableIcon } from "@/components/icons/UpdateAvailableIcon";
+import { SessionExpiryLabel } from "@/components/settings/SessionExpiryLabel";
 import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useT, type Translator } from "@/i18n";
 import { Separator } from "@/components/ui/separator";
@@ -389,6 +390,12 @@ export function AppShell() {
                 <div className="truncate text-xs text-muted-foreground">
                   {activeAccount?.region ?? t("Configure Settings first")}
                 </div>
+                {activeAccount?.authMethod && activeAccount.authMethod !== "accessKey" ? (
+                  <SessionExpiryLabel
+                    expiresAt={activeAccount.sessionExpiresAt}
+                    className="mt-0.5 block truncate"
+                  />
+                ) : null}
               </>
             )}
           </button>

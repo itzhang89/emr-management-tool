@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSubmitAwsMfaCode } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
+import { getSessionRemaining } from "@/services/authSessionDisplay";
 
 type MfaCodeDialogProps = {
   open: boolean;
@@ -41,7 +42,15 @@ export function MfaCodeDialog({
     if (!accountId) return;
     try {
       const result = await submitMfa.mutateAsync({ accountId, tokenCode });
-      toast.success(t("Temporary credentials ready for {account}", { account: result.identity.account }));
+      const remaining = getSessionRemaining(result.sessionExpiresAt);
+      const base = t("Temporary credentials ready for {account}", {
+        account: result.identity.account
+      });
+      toast.success(
+        remaining && remaining.tone !== "expired"
+          ? `${base} · ${t("{duration} left", { duration: remaining.durationLabel })}`
+          : base
+      );
       onOpenChange(false);
       onSuccess?.();
     } catch (error) {

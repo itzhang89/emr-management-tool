@@ -166,7 +166,11 @@ function CreateAccountDialog({
         ) : null}
         <form className="flex flex-col gap-4" onSubmit={save}>
           <Field label={t("Account Name")}>
-            <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
+            <Input
+              placeholder={t("e.g. prod-analytics (unique, cannot rename later)")}
+              {...form.register("name")}
+              aria-invalid={Boolean(form.formState.errors.name)}
+            />
             <FieldError>{form.formState.errors.name?.message}</FieldError>
           </Field>
           <Field label={t("Authentication")}>
@@ -185,14 +189,18 @@ function CreateAccountDialog({
           {(authMethod === "accessKey" || authMethod === "mfaSession" || authMethod === "assumeRole") && (
             <>
               <Field label={t("Access Key ID")}>
-                <Input placeholder="AKIA..." {...form.register("accessKeyId")} aria-invalid={Boolean(form.formState.errors.accessKeyId)} />
+                <Input
+                  placeholder={t("AKIAxxxxxxxx (IAM user access key ID)")}
+                  {...form.register("accessKeyId")}
+                  aria-invalid={Boolean(form.formState.errors.accessKeyId)}
+                />
                 <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
               </Field>
               <Field label={t("Secret Access Key")}>
                 <div className="relative">
                   <Input
                     type={showSecret ? "text" : "password"}
-                    placeholder="••••••••••••••••"
+                    placeholder={t("Secret key paired with the access key")}
                     className="pr-10"
                     {...form.register("secretAccessKey")}
                     aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
@@ -216,18 +224,24 @@ function CreateAccountDialog({
           {authMethod === "sso" && (
             <>
               <Field label={t("SSO start URL")}>
-                <Input placeholder="https://my-sso.awsapps.com/start" {...form.register("ssoStartUrl")} />
+                <Input
+                  placeholder={t("https://my-org.awsapps.com/start")}
+                  {...form.register("ssoStartUrl")}
+                />
                 <FieldError>{form.formState.errors.ssoStartUrl?.message}</FieldError>
               </Field>
               <Field label={t("SSO region")}>
-                <Input placeholder="us-east-1" {...form.register("ssoRegion")} />
+                <Input placeholder={t("e.g. ap-southeast-1 (Identity Center region)")} {...form.register("ssoRegion")} />
               </Field>
               <Field label={t("SSO account ID")}>
-                <Input placeholder="123456789012" {...form.register("ssoAccountId")} />
+                <Input placeholder={t("12-digit AWS account ID, e.g. 123456789012")} {...form.register("ssoAccountId")} />
                 <FieldError>{form.formState.errors.ssoAccountId?.message}</FieldError>
               </Field>
               <Field label={t("SSO role name")}>
-                <Input placeholder="AdministratorAccess" {...form.register("ssoRoleName")} />
+                <Input
+                  placeholder={t("Permission set / role name, e.g. AdministratorAccess")}
+                  {...form.register("ssoRoleName")}
+                />
                 <FieldError>{form.formState.errors.ssoRoleName?.message}</FieldError>
               </Field>
             </>
@@ -243,7 +257,10 @@ function CreateAccountDialog({
 
           {(authMethod === "mfaSession" || authMethod === "assumeRole") && (
             <Field label={t("MFA serial / ARN")}>
-              <Input placeholder="arn:aws:iam::123456789012:mfa/user" {...form.register("mfaSerial")} />
+              <Input
+                placeholder={t("arn:aws:iam::123456789012:mfa/username")}
+                {...form.register("mfaSerial")}
+              />
               <FieldError>{form.formState.errors.mfaSerial?.message}</FieldError>
             </Field>
           )}
@@ -251,14 +268,20 @@ function CreateAccountDialog({
           {authMethod === "assumeRole" && (
             <>
               <Field label={t("Role ARN")}>
-                <Input placeholder="arn:aws:iam::123456789012:role/MyRole" {...form.register("roleArn")} />
+                <Input
+                  placeholder={t("arn:aws:iam::123456789012:role/MyRole")}
+                  {...form.register("roleArn")}
+                />
                 <FieldError>{form.formState.errors.roleArn?.message}</FieldError>
               </Field>
               <Field label={t("External ID (optional)")}>
-                <Input {...form.register("externalId")} />
+                <Input placeholder={t("External ID required by the role trust policy")} {...form.register("externalId")} />
               </Field>
               <Field label={t("Role session name (optional)")}>
-                <Input placeholder="emr-management-tool" {...form.register("roleSessionName")} />
+                <Input
+                  placeholder={t("Session name shown in CloudTrail, e.g. emr-management-tool")}
+                  {...form.register("roleSessionName")}
+                />
               </Field>
             </>
           )}
@@ -448,7 +471,13 @@ function EditAccountDialog({
                 <>
                   <Field label={t("Access Key ID")}>
                     <Input
-                      placeholder={account?.accessKeyIdMasked || "AKIA..."}
+                      placeholder={
+                        account?.accessKeyIdMasked
+                          ? t("Current {masked} — enter a new Access Key ID to replace", {
+                              masked: account.accessKeyIdMasked
+                            })
+                          : t("AKIAxxxxxxxx (IAM user access key ID)")
+                      }
                       {...form.register("accessKeyId")}
                       aria-invalid={Boolean(form.formState.errors.accessKeyId)}
                     />
@@ -459,8 +488,8 @@ function EditAccountDialog({
                       type="password"
                       placeholder={
                         switchingFromSso
-                          ? t("Secret Access Key")
-                          : t("Enter new secret to update")
+                          ? t("Secret key paired with the access key")
+                          : t("Enter new secret (leave blank with Access Key ID empty to keep)")
                       }
                       {...form.register("secretAccessKey")}
                       aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
@@ -503,15 +532,24 @@ function EditAccountDialog({
           {authMethod === "sso" && (
             <>
               <Field label={t("SSO start URL")}>
-                <Input {...form.register("ssoStartUrl")} />
+                <Input
+                  placeholder={t("https://my-org.awsapps.com/start")}
+                  {...form.register("ssoStartUrl")}
+                />
                 <FieldError>{form.formState.errors.ssoStartUrl?.message}</FieldError>
               </Field>
               <Field label={t("SSO account ID")}>
-                <Input {...form.register("ssoAccountId")} />
+                <Input
+                  placeholder={t("12-digit AWS account ID, e.g. 123456789012")}
+                  {...form.register("ssoAccountId")}
+                />
                 <FieldError>{form.formState.errors.ssoAccountId?.message}</FieldError>
               </Field>
               <Field label={t("SSO role name")}>
-                <Input {...form.register("ssoRoleName")} />
+                <Input
+                  placeholder={t("Permission set / role name, e.g. AdministratorAccess")}
+                  {...form.register("ssoRoleName")}
+                />
                 <FieldError>{form.formState.errors.ssoRoleName?.message}</FieldError>
               </Field>
             </>
@@ -527,7 +565,10 @@ function EditAccountDialog({
 
           {(authMethod === "mfaSession" || authMethod === "assumeRole") && (
             <Field label={t("MFA serial / ARN")}>
-              <Input {...form.register("mfaSerial")} />
+              <Input
+                placeholder={t("arn:aws:iam::123456789012:mfa/username")}
+                {...form.register("mfaSerial")}
+              />
               <FieldError>{form.formState.errors.mfaSerial?.message}</FieldError>
             </Field>
           )}
@@ -535,14 +576,23 @@ function EditAccountDialog({
           {authMethod === "assumeRole" && (
             <>
               <Field label={t("Role ARN")}>
-                <Input {...form.register("roleArn")} />
+                <Input
+                  placeholder={t("arn:aws:iam::123456789012:role/MyRole")}
+                  {...form.register("roleArn")}
+                />
                 <FieldError>{form.formState.errors.roleArn?.message}</FieldError>
               </Field>
               <Field label={t("External ID (optional)")}>
-                <Input {...form.register("externalId")} />
+                <Input
+                  placeholder={t("External ID required by the role trust policy")}
+                  {...form.register("externalId")}
+                />
               </Field>
               <Field label={t("Role session name (optional)")}>
-                <Input {...form.register("roleSessionName")} />
+                <Input
+                  placeholder={t("Session name shown in CloudTrail, e.g. emr-management-tool")}
+                  {...form.register("roleSessionName")}
+                />
               </Field>
             </>
           )}

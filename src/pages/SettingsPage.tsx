@@ -13,6 +13,7 @@ import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
 import { ImportCliProfileDialog } from "@/components/settings/ImportCliProfileDialog";
 import { LanguageCard } from "@/components/settings/LanguageCard";
 import { MfaCodeDialog } from "@/components/settings/MfaCodeDialog";
+import { SessionExpiryLabel } from "@/components/settings/SessionExpiryLabel";
 import {
   useAwsAccounts,
   useCancelAwsSsoLogin,
@@ -24,6 +25,7 @@ import {
   useStartAwsSsoLogin
 } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
+import { getSessionRemaining } from "@/services/authSessionDisplay";
 import { readBetaUpdatePreference, writeBetaUpdatePreference } from "@/services/updateChannelPreferences";
 import { cliImportPromptReason, shouldPromptCliImport } from "@/services/cliProfileImport";
 import { authMethodLabel, type CredentialFormValues } from "@/services/credentialValidation";
@@ -122,10 +124,14 @@ export function SettingsPage() {
     toast.message(t("Opening the system browser for SSO sign-in..."));
     startSsoLogin.mutate(account.id, {
       onSuccess: (result) => {
+        const remaining = getSessionRemaining(result.sessionExpiresAt);
+        const base = result.identity
+          ? t("Signed in as {arn}", { arn: result.identity.arn })
+          : t("SSO sign-in completed.");
         toast.success(
-          result.identity
-            ? t("Signed in as {arn}", { arn: result.identity.arn })
-            : t("SSO sign-in completed.")
+          remaining && remaining.tone !== "expired"
+            ? `${base} · ${t("{duration} left", { duration: remaining.durationLabel })}`
+            : base
         );
       },
       onError: (error) => toast.error(errorMessage(error, "SSO sign-in failed."))
@@ -258,6 +264,9 @@ export function SettingsPage() {
                 </p>
                 {account.identity ? (
                   <p className="truncate text-[11px] text-muted-foreground/80 2xl:text-xs">{account.identity.arn}</p>
+                ) : null}
+                {account.authMethod && account.authMethod !== "accessKey" ? (
+                  <SessionExpiryLabel expiresAt={account.sessionExpiresAt} />
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-1" onDoubleClick={(event) => event.stopPropagation()}>
