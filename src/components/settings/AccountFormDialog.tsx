@@ -308,12 +308,13 @@ function EditAccountDialog({
   const t = useT();
   const updateAccount = useUpdateAwsAccount();
   const testAccount = useTestAwsAccount();
-  const [secretUnlocked, setSecretUnlocked] = useState(false);
-  const authMethod = account?.authMethod ?? "accessKey";
+  const originalAuthMethod = account?.authMethod ?? "accessKey";
   const form = useForm<EditAccountFormValues>({
     resolver: zodResolver(editAccountSchema),
     defaultValues: {
       name: "",
+      authMethod: "accessKey",
+      accessKeyId: "",
       region: "us-east-1",
       secretAccessKey: "",
       ssoStartUrl: "",
@@ -323,15 +324,25 @@ function EditAccountDialog({
       mfaSerial: "",
       roleArn: "",
       externalId: "",
-      roleSessionName: ""
+      roleSessionName: "",
+      credentialsUnlocked: false,
+      originalAuthMethod: "accessKey"
     }
   });
+  const authMethod = useWatch({ control: form.control, name: "authMethod" }) ?? originalAuthMethod;
+  const credentialsUnlocked =
+    useWatch({ control: form.control, name: "credentialsUnlocked" }) ?? false;
+  const switchingFromSso = originalAuthMethod === "sso" && authMethod !== "sso";
+  const showCredentialEditors =
+    authMethod === "accessKey" || authMethod === "mfaSession" || authMethod === "assumeRole";
+  const credentialsEditable = credentialsUnlocked || switchingFromSso;
 
   useEffect(() => {
     if (!open || !account) return;
-    setSecretUnlocked(false);
     form.reset({
       name: account.name,
+      authMethod: account.authMethod ?? "accessKey",
+      accessKeyId: "",
       region: account.region,
       secretAccessKey: "",
       ssoStartUrl: account.ssoStartUrl ?? "",
@@ -341,9 +352,17 @@ function EditAccountDialog({
       mfaSerial: account.mfaSerial ?? "",
       roleArn: account.roleArn ?? "",
       externalId: "",
-      roleSessionName: ""
+      roleSessionName: "",
+      credentialsUnlocked: false,
+      originalAuthMethod: account.authMethod ?? "accessKey"
     });
   }, [open, account, form]);
+
+  useEffect(() => {
+    if (switchingFromSso) {
+      form.setValue("credentialsUnlocked", true);
+    }
+  }, [switchingFromSso, form]);
 
   const testConnection = form.handleSubmit(async (values) => {
     if (!account) return;
@@ -352,7 +371,7 @@ function EditAccountDialog({
       const identity = await testAccount.mutateAsync({
         accountId: account.id,
         region: parsed.region,
-        secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined
+        secretAccessKey: credentialsEditable ? parsed.secretAccessKey : undefined
       });
       toast.success(t("Connected to AWS account {account}", { account: identity.account }));
     } catch (error) {
@@ -366,9 +385,11 @@ function EditAccountDialog({
     try {
       await updateAccount.mutateAsync({
         accountId: account.id,
-        name: parsed.name,
+        name: account.name,
+        authMethod: parsed.authMethod,
         region: parsed.region,
-        secretAccessKey: secretUnlocked ? parsed.secretAccessKey : undefined,
+        accessKeyId: credentialsEditable ? parsed.accessKeyId : undefined,
+        secretAccessKey: credentialsEditable ? parsed.secretAccessKey : undefined,
         ssoStartUrl: parsed.ssoStartUrl,
         ssoRegion: parsed.ssoRegion,
         ssoAccountId: parsed.ssoAccountId,
@@ -391,43 +412,91 @@ function EditAccountDialog({
         <DialogHeader>
           <DialogTitle>{t("Edit AWS Account")}</DialogTitle>
           <DialogDescription>
-            {authMethod === "sso"
-              ? t("Update the display name, region, and SSO settings. Sign in again after changing SSO fields.")
-              : t("Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key.")}
+            {t(
+              "Account name is locked. You can change authentication method, credentials, and region."
+            )}
           </DialogDescription>
         </DialogHeader>
         <form className="flex flex-col gap-4" onSubmit={save}>
           <Field label={t("Account Name")}>
-            <Input placeholder="Production analytics" {...form.register("name")} aria-invalid={Boolean(form.formState.errors.name)} />
-            <FieldError>{form.formState.errors.name?.message}</FieldError>
+            <Input
+              value={account?.name ?? ""}
+              readOnly
+              disabled
+              aria-label={t("Account Name (locked)")}
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("Account name cannot be changed after creation.")}
+            </p>
           </Field>
           <Field label={t("Authentication")}>
-            <Input value={AUTH_OPTIONS.find((option) => option.value === authMethod)?.label ?? authMethod} readOnly disabled />
+            <select
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              {...form.register("authMethod")}
+            >
+              {AUTH_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.label)}
+                </option>
+              ))}
+            </select>
           </Field>
 
-          {(authMethod === "accessKey" || authMethod === "mfaSession" || authMethod === "assumeRole") && (
+          {showCredentialEditors && (
             <>
-              <Field label={t("Access Key ID")}>
-                <Input value={account?.accessKeyIdMasked ?? ""} readOnly disabled aria-label={t("Access Key ID (read-only)")} />
-              </Field>
-              <Field label={t("Secret Access Key")}>
-                {secretUnlocked ? (
-                  <Input
-                    type="password"
-                    placeholder={t("Enter new secret to update")}
-                    {...form.register("secretAccessKey")}
-                    aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
-                  />
-                ) : (
-                  <div className="flex gap-2">
-                    <Input value="••••••••••••••••" readOnly disabled aria-label={t("Secret Access Key (masked)")} />
-                    <Button type="button" variant="outline" onClick={() => setSecretUnlocked(true)}>
-                      {t("Change")}
-                    </Button>
-                  </div>
-                )}
-                <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
-              </Field>
+              {credentialsEditable ? (
+                <>
+                  <Field label={t("Access Key ID")}>
+                    <Input
+                      placeholder={account?.accessKeyIdMasked || "AKIA..."}
+                      {...form.register("accessKeyId")}
+                      aria-invalid={Boolean(form.formState.errors.accessKeyId)}
+                    />
+                    <FieldError>{form.formState.errors.accessKeyId?.message}</FieldError>
+                  </Field>
+                  <Field label={t("Secret Access Key")}>
+                    <Input
+                      type="password"
+                      placeholder={
+                        switchingFromSso
+                          ? t("Secret Access Key")
+                          : t("Enter new secret to update")
+                      }
+                      {...form.register("secretAccessKey")}
+                      aria-invalid={Boolean(form.formState.errors.secretAccessKey)}
+                    />
+                    <FieldError>{form.formState.errors.secretAccessKey?.message}</FieldError>
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label={t("Access Key ID")}>
+                    <div className="flex gap-2">
+                      <Input
+                        value={account?.accessKeyIdMasked ?? ""}
+                        readOnly
+                        disabled
+                        aria-label={t("Access Key ID (masked)")}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => form.setValue("credentialsUnlocked", true)}
+                      >
+                        {t("Change")}
+                      </Button>
+                    </div>
+                  </Field>
+                  <Field label={t("Secret Access Key")}>
+                    <Input
+                      value="••••••••••••••••"
+                      readOnly
+                      disabled
+                      aria-label={t("Secret Access Key (masked)")}
+                    />
+                  </Field>
+                </>
+              )}
             </>
           )}
 
@@ -435,26 +504,47 @@ function EditAccountDialog({
             <>
               <Field label={t("SSO start URL")}>
                 <Input {...form.register("ssoStartUrl")} />
+                <FieldError>{form.formState.errors.ssoStartUrl?.message}</FieldError>
               </Field>
               <Field label={t("SSO account ID")}>
                 <Input {...form.register("ssoAccountId")} />
+                <FieldError>{form.formState.errors.ssoAccountId?.message}</FieldError>
               </Field>
               <Field label={t("SSO role name")}>
                 <Input {...form.register("ssoRoleName")} />
+                <FieldError>{form.formState.errors.ssoRoleName?.message}</FieldError>
               </Field>
             </>
           )}
 
+          {authMethod === "mfaSession" ? (
+            <p className="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+              {t(
+                "IAM User + MFA uses sts:GetSessionToken. API calls still run as that IAM user (ASIA temporary keys). If EMR permissions are on a role, choose Assume Role and set MFA there instead."
+              )}
+            </p>
+          ) : null}
+
           {(authMethod === "mfaSession" || authMethod === "assumeRole") && (
             <Field label={t("MFA serial / ARN")}>
               <Input {...form.register("mfaSerial")} />
+              <FieldError>{form.formState.errors.mfaSerial?.message}</FieldError>
             </Field>
           )}
 
           {authMethod === "assumeRole" && (
-            <Field label={t("Role ARN")}>
-              <Input {...form.register("roleArn")} />
-            </Field>
+            <>
+              <Field label={t("Role ARN")}>
+                <Input {...form.register("roleArn")} />
+                <FieldError>{form.formState.errors.roleArn?.message}</FieldError>
+              </Field>
+              <Field label={t("External ID (optional)")}>
+                <Input {...form.register("externalId")} />
+              </Field>
+              <Field label={t("Role session name (optional)")}>
+                <Input {...form.register("roleSessionName")} />
+              </Field>
+            </>
           )}
 
           <Field label={t("Region")}>

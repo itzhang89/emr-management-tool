@@ -177,7 +177,7 @@ describe("SettingsPage updates", () => {
     expect(mocks.setActiveMutate).toHaveBeenCalledWith("acct-2", expect.any(Object));
   });
 
-  it("opens edit dialog with read-only access key and masked secret", async () => {
+  it("opens edit dialog with locked account name and masked credentials", async () => {
     const user = userEvent.setup();
 
     renderSettingsPage();
@@ -185,9 +185,11 @@ describe("SettingsPage updates", () => {
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: "Edit AWS Account" })).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/Access Key ID \(read-only\)/i)).toHaveValue("AKIA****");
+    expect(within(dialog).getByLabelText(/Account Name \(locked\)/i)).toBeDisabled();
+    expect(within(dialog).getByLabelText(/Access Key ID \(masked\)/i)).toHaveValue("AKIA****");
     expect(within(dialog).getByLabelText(/Secret Access Key \(masked\)/i)).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: /^Change$/i })).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("Access Key")).toBeEnabled();
   });
 
   it("asks for confirmation before deleting an account", async () => {

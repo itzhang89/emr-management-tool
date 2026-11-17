@@ -237,8 +237,13 @@ pub struct AwsAccountCredentialsInput {
 #[serde(rename_all = "camelCase")]
 pub struct AwsAccountUpdateInput {
     pub account_id: String,
+    /// Must match the existing account name. Names are the uniqueness key and cannot be renamed.
     pub name: String,
     pub region: String,
+    #[serde(default)]
+    pub auth_method: Option<AwsAuthMethod>,
+    #[serde(default)]
+    pub access_key_id: Option<String>,
     #[serde(default)]
     pub secret_access_key: Option<String>,
     #[serde(default)]

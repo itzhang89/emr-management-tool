@@ -89,8 +89,11 @@ export interface AwsAccountCredentialsInput {
 
 export interface AwsAccountUpdateInput {
   accountId: string;
+  /** Must match the existing account name; names are immutable. */
   name: string;
   region: AwsRegion;
+  authMethod?: AwsAuthMethod;
+  accessKeyId?: string;
   secretAccessKey?: string;
   ssoStartUrl?: string;
   ssoRegion?: string;

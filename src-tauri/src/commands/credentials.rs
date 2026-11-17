@@ -1,6 +1,6 @@
 use crate::aws::auth::{
-    assume_role, auth_status, has_usable_sso_session, resolve_sdk_config, sso_sign_out,
-    start_device_login, submit_mfa_code,
+    assume_role, auth_status, clear_account_auth_secrets, clear_cached_session,
+    has_usable_sso_session, resolve_sdk_config, sso_sign_out, start_device_login, submit_mfa_code,
 };
 use crate::aws::cli_profiles::{discover_aws_cli_profiles, load_aws_cli_profile_credentials};
 use crate::aws::credentials::{
@@ -386,27 +386,10 @@ pub async fn set_active_aws_account(request: serde_json::Value) -> AppResult<Aws
 }
 
 #[tauri::command]
-pub async fn rename_aws_account(request: serde_json::Value) -> AppResult<AwsAccountSummary> {
-    let account_id = request
-        .get("accountId")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| AppError::validation("accountId is required."))?;
-    let name = request
-        .get("name")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| AppError::validation("Account name is required."))?;
-
-    ensure_account_name_unused(name, Some(account_id)).await?;
-    let pool = repository::pool().await?;
-    let mut account = repository::get_aws_account(&pool, account_id)
-        .await?
-        .ok_or_else(|| AppError::validation(format!("AWS account {account_id} was not found.")))?;
-    account.name = name.to_string();
-    account.updated_at = Utc::now();
-    repository::upsert_aws_account(&pool, &account).await?;
-    Ok(AwsAccountSummary::from(account))
+pub async fn rename_aws_account(_request: serde_json::Value) -> AppResult<AwsAccountSummary> {
+    Err(AppError::validation(
+        "Account name cannot be changed. Delete the account and create a new one with a different name.",
+    ))
 }
 
 #[tauri::command]
@@ -423,7 +406,6 @@ pub async fn update_aws_account(
         return Err(AppError::validation("Region is required."));
     }
 
-    ensure_account_name_unused(name, Some(request.account_id.as_str())).await?;
     let pool = repository::pool().await?;
     let mut account = repository::get_aws_account(&pool, &request.account_id)
         .await?
@@ -431,85 +413,78 @@ pub async fn update_aws_account(
             AppError::validation(format!("AWS account {} was not found.", request.account_id))
         })?;
 
-    account.name = name.to_string();
+    // Display name is the uniqueness key across auth methods and is immutable.
+    if normalize_account_name(name) != normalize_account_name(&account.name) {
+        return Err(AppError::validation(
+            "Account name cannot be changed. Delete the account and create a new one with a different name.",
+        ));
+    }
+
+    let previous_method = account.auth_method;
+    let target_method = request.auth_method.unwrap_or(previous_method);
+    let method_changed = target_method != previous_method;
+    let new_access_key = trim_opt(request.access_key_id.clone());
+    let new_secret = trim_opt(request.secret_access_key.clone());
+    let credentials_touched = new_access_key.is_some() || new_secret.is_some();
+
     account.region = region.to_string();
     account.updated_at = Utc::now();
+    account.auth_method = target_method;
 
-    match account.auth_method {
+    if method_changed {
+        clear_method_specific_fields(&mut account);
+        account.identity = None;
+        account.session_expires_at = None;
+        clear_cached_session(&app, &account.id)?;
+    }
+
+    match target_method {
         AwsAuthMethod::AccessKey | AwsAuthMethod::MfaSession | AwsAuthMethod::AssumeRole => {
-            let secret_access_key = request
-                .secret_access_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let stored = read_account_credentials(&app, &account.id)?;
-            if let Some(secret) = secret_access_key {
-                // Keep imported STS token only for AccessKey accounts. MFA /
-                // AssumeRole temporary sessions live under separate secret keys.
-                let imported_token = matches!(account.auth_method, AwsAuthMethod::AccessKey)
-                    .then(|| stored.session_token.as_deref())
+            if method_changed || credentials_touched {
+                let (access_key_id, secret_access_key, imported_token) =
+                    resolve_static_credentials_for_update(
+                        &app,
+                        &account.id,
+                        previous_method,
+                        method_changed,
+                        new_access_key,
+                        new_secret,
+                    )?;
+                clear_cached_session(&app, &account.id)?;
+                let session_token = matches!(target_method, AwsAuthMethod::AccessKey)
+                    .then_some(imported_token)
                     .flatten();
                 save_account_credentials(
                     &app,
                     &account.id,
-                    &stored.access_key_id,
-                    secret,
-                    imported_token,
+                    &access_key_id,
+                    &secret_access_key,
+                    session_token.as_deref(),
                 )?;
-            }
+                account.access_key_id_masked = mask_access_key(&access_key_id);
+                account.identity = None;
+                account.session_expires_at = None;
 
-            if matches!(account.auth_method, AwsAuthMethod::AccessKey) {
-                let credentials = AwsCredentialsInput {
-                    access_key_id: stored.access_key_id.clone(),
-                    secret_access_key: secret_access_key
-                        .unwrap_or(stored.secret_access_key.as_str())
-                        .to_string(),
-                    session_token: stored.session_token.clone(),
-                    region: region.to_string(),
-                };
-                account.identity = Some(test_aws_credentials(credentials).await?);
-            }
-
-            if matches!(account.auth_method, AwsAuthMethod::MfaSession) {
-                if let Some(serial) = trim_opt(request.mfa_serial.clone()) {
-                    account.mfa_serial = Some(serial);
+                if matches!(target_method, AwsAuthMethod::AccessKey) {
+                    account.identity = Some(
+                        test_aws_credentials(AwsCredentialsInput {
+                            access_key_id,
+                            secret_access_key,
+                            session_token,
+                            region: region.to_string(),
+                        })
+                        .await?,
+                    );
                 }
             }
 
-            if matches!(account.auth_method, AwsAuthMethod::AssumeRole) {
-                if let Some(role_arn) = trim_opt(request.role_arn) {
-                    account.role_arn = Some(role_arn);
-                }
-                if request.external_id.is_some() {
-                    account.external_id = trim_opt(request.external_id);
-                }
-                if request.role_session_name.is_some() {
-                    account.role_session_name = trim_opt(request.role_session_name);
-                }
-                if request.mfa_serial.is_some() {
-                    account.mfa_serial = trim_opt(request.mfa_serial);
-                }
-            }
+            apply_key_based_auth_fields(&mut account, target_method, &request)?;
         }
         AwsAuthMethod::Sso => {
-            if let Some(start_url) = trim_opt(request.sso_start_url) {
-                account.sso_start_url = Some(start_url);
+            if method_changed {
+                clear_account_auth_secrets(&app, &account.id)?;
             }
-            if let Some(sso_region) = trim_opt(request.sso_region) {
-                account.sso_region = Some(sso_region);
-            }
-            if let Some(sso_account_id) = trim_opt(request.sso_account_id) {
-                account.sso_account_id = Some(sso_account_id);
-            }
-            if let Some(sso_role_name) = trim_opt(request.sso_role_name) {
-                account.sso_role_name = Some(sso_role_name);
-            }
-            if let (Some(account_id), Some(role_name)) = (
-                account.sso_account_id.as_deref(),
-                account.sso_role_name.as_deref(),
-            ) {
-                account.access_key_id_masked = format!("sso:{account_id}/{role_name}");
-            }
+            apply_sso_auth_fields(&mut account, &request, method_changed)?;
         }
     }
 
@@ -911,6 +886,168 @@ fn trim_opt(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn clear_method_specific_fields(account: &mut AwsAccount) {
+    account.sso_start_url = None;
+    account.sso_region = None;
+    account.sso_account_id = None;
+    account.sso_role_name = None;
+    account.mfa_serial = None;
+    account.role_arn = None;
+    account.external_id = None;
+    account.role_session_name = None;
+}
+
+fn apply_key_based_auth_fields(
+    account: &mut AwsAccount,
+    method: AwsAuthMethod,
+    request: &AwsAccountUpdateInput,
+) -> AppResult<()> {
+    match method {
+        AwsAuthMethod::AccessKey => {
+            account.mfa_serial = None;
+            account.role_arn = None;
+            account.external_id = None;
+            account.role_session_name = None;
+            account.sso_start_url = None;
+            account.sso_region = None;
+            account.sso_account_id = None;
+            account.sso_role_name = None;
+        }
+        AwsAuthMethod::MfaSession => {
+            let serial = trim_opt(request.mfa_serial.clone()).or_else(|| account.mfa_serial.clone());
+            account.mfa_serial = Some(required_opt(
+                serial.as_deref(),
+                "MFA serial / ARN is required.",
+            )?);
+            account.role_arn = None;
+            account.external_id = None;
+            account.role_session_name = None;
+            account.sso_start_url = None;
+            account.sso_region = None;
+            account.sso_account_id = None;
+            account.sso_role_name = None;
+        }
+        AwsAuthMethod::AssumeRole => {
+            let role_arn = trim_opt(request.role_arn.clone()).or_else(|| account.role_arn.clone());
+            account.role_arn = Some(required_opt(role_arn.as_deref(), "Role ARN is required.")?);
+            if request.external_id.is_some() {
+                account.external_id = trim_opt(request.external_id.clone());
+            }
+            if request.role_session_name.is_some() {
+                account.role_session_name = trim_opt(request.role_session_name.clone());
+            }
+            if request.mfa_serial.is_some() {
+                account.mfa_serial = trim_opt(request.mfa_serial.clone());
+            }
+            account.sso_start_url = None;
+            account.sso_region = None;
+            account.sso_account_id = None;
+            account.sso_role_name = None;
+        }
+        AwsAuthMethod::Sso => {}
+    }
+    Ok(())
+}
+
+fn apply_sso_auth_fields(
+    account: &mut AwsAccount,
+    request: &AwsAccountUpdateInput,
+    method_changed: bool,
+) -> AppResult<()> {
+    let start_url = trim_opt(request.sso_start_url.clone()).or_else(|| account.sso_start_url.clone());
+    let sso_region = trim_opt(request.sso_region.clone())
+        .or_else(|| account.sso_region.clone())
+        .or_else(|| Some(account.region.clone()));
+    let sso_account_id =
+        trim_opt(request.sso_account_id.clone()).or_else(|| account.sso_account_id.clone());
+    let sso_role_name =
+        trim_opt(request.sso_role_name.clone()).or_else(|| account.sso_role_name.clone());
+
+    if method_changed
+        || request.sso_start_url.is_some()
+        || request.sso_region.is_some()
+        || request.sso_account_id.is_some()
+        || request.sso_role_name.is_some()
+        || account.sso_start_url.is_none()
+    {
+        account.sso_start_url = Some(required_opt(
+            start_url.as_deref(),
+            "SSO start URL is required.",
+        )?);
+        account.sso_region = Some(required_opt(sso_region.as_deref(), "SSO region is required.")?);
+        account.sso_account_id = Some(required_opt(
+            sso_account_id.as_deref(),
+            "SSO account ID is required.",
+        )?);
+        account.sso_role_name = Some(required_opt(
+            sso_role_name.as_deref(),
+            "SSO role name is required.",
+        )?);
+    }
+
+    if let (Some(account_id), Some(role_name)) = (
+        account.sso_account_id.as_deref(),
+        account.sso_role_name.as_deref(),
+    ) {
+        account.access_key_id_masked = format!("sso:{account_id}/{role_name}");
+    }
+    account.mfa_serial = None;
+    account.role_arn = None;
+    account.external_id = None;
+    account.role_session_name = None;
+    Ok(())
+}
+
+fn resolve_static_credentials_for_update(
+    app: &AppHandle,
+    account_id: &str,
+    previous_method: AwsAuthMethod,
+    method_changed: bool,
+    new_access_key: Option<String>,
+    new_secret: Option<String>,
+) -> AppResult<(String, String, Option<String>)> {
+    match (new_access_key, new_secret) {
+        (Some(access_key_id), Some(secret_access_key)) => {
+            Ok((access_key_id, secret_access_key, None))
+        }
+        (Some(_), None) => Err(AppError::validation(
+            "Secret Access Key is required when changing the Access Key ID.",
+        )),
+        (None, Some(secret_access_key)) => {
+            let stored = read_account_credentials(app, account_id).map_err(|_| {
+                AppError::validation(
+                    "Stored access key was not found. Enter both Access Key ID and Secret Access Key.",
+                )
+            })?;
+            Ok((
+                stored.access_key_id,
+                secret_access_key,
+                stored.session_token,
+            ))
+        }
+        (None, None) if method_changed => {
+            if matches!(previous_method, AwsAuthMethod::Sso) {
+                return Err(AppError::validation(
+                    "Access Key ID and Secret Access Key are required when switching away from SSO.",
+                ));
+            }
+            let stored = read_account_credentials(app, account_id).map_err(|_| {
+                AppError::validation(
+                    "Stored access key was not found. Enter both Access Key ID and Secret Access Key.",
+                )
+            })?;
+            Ok((
+                stored.access_key_id,
+                stored.secret_access_key,
+                stored.session_token,
+            ))
+        }
+        (None, None) => Err(AppError::internal(
+            "resolve_static_credentials_for_update called without credential changes.",
+        )),
+    }
 }
 
 /// Account display names are the uniqueness key across all auth methods.

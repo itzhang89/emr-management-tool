@@ -9,8 +9,13 @@ const settings: TranslationDictionary = {
   "AWS account saved.": "AWS 账户已保存。",
   "AWS account updated.": "AWS 账户已更新。",
   "Access Key ID": "访问密钥 ID",
+  "Access Key ID (masked)": "访问密钥 ID（已隐藏）",
   "Access Key ID (read-only)": "访问密钥 ID（只读）",
   "Account Name": "账户名称",
+  "Account Name (locked)": "账户名称（已锁定）",
+  "Account name cannot be changed after creation.": "账户名称创建后不可更改。",
+  "Account name is locked. You can change authentication method, credentials, and region.":
+    "账户名称已锁定。你可以更改认证方式、凭证和区域。",
   "Already imported as “{name}”.": "已导入为“{name}”。",
   "Connected to AWS account {account}": "已连接到 AWS 账户 {account}",
   "Delete AWS account?": "删除 AWS 账户？",
@@ -41,6 +46,8 @@ const settings: TranslationDictionary = {
     "这将从此应用中永久移除该账户及其保存的凭证。此操作无法撤销。",
   "Update the display name and region. Access Key cannot be changed here; unlock Secret only when rotating the secret for the same key. To replace the full key pair, delete the account and add a new one.":
     "更新显示名称和区域。访问密钥无法在此更改；仅在为同一密钥轮换私有密钥时才解锁「私有访问密钥」。若要更换整个密钥对，请删除该账户并添加新账户。",
+  "Update the display name, region, and SSO settings. Sign in again after changing SSO fields.":
+    "更新显示名称、区域和 SSO 设置。更改 SSO 字段后请重新登录。",
   "Automatic updates": "自动更新",
   "Automatically check for and install updates.": "自动检查并安装更新。",
   "Automatic updates are unavailable for this build.": "此构建不支持自动更新。",
