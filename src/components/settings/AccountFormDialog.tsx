@@ -332,7 +332,7 @@ function EditAccountDialog({
   const updateAccount = useUpdateAwsAccount();
   const testAccount = useTestAwsAccount();
   const originalAuthMethod = account?.authMethod ?? "accessKey";
-  const form = useForm<EditAccountFormValues>({
+  const form = useForm<EditAccountFormValues, unknown, EditAccountSubmitValues>({
     resolver: zodResolver(editAccountSchema),
     defaultValues: {
       name: "",
@@ -389,12 +389,11 @@ function EditAccountDialog({
 
   const testConnection = form.handleSubmit(async (values) => {
     if (!account) return;
-    const parsed = values as EditAccountSubmitValues;
     try {
       const identity = await testAccount.mutateAsync({
         accountId: account.id,
-        region: parsed.region,
-        secretAccessKey: credentialsEditable ? parsed.secretAccessKey : undefined
+        region: values.region,
+        secretAccessKey: credentialsEditable ? values.secretAccessKey : undefined
       });
       toast.success(t("Connected to AWS account {account}", { account: identity.account }));
     } catch (error) {
@@ -404,23 +403,22 @@ function EditAccountDialog({
 
   const save = form.handleSubmit(async (values) => {
     if (!account) return;
-    const parsed = values as EditAccountSubmitValues;
     try {
       await updateAccount.mutateAsync({
         accountId: account.id,
         name: account.name,
-        authMethod: parsed.authMethod,
-        region: parsed.region,
-        accessKeyId: credentialsEditable ? parsed.accessKeyId : undefined,
-        secretAccessKey: credentialsEditable ? parsed.secretAccessKey : undefined,
-        ssoStartUrl: parsed.ssoStartUrl,
-        ssoRegion: parsed.ssoRegion,
-        ssoAccountId: parsed.ssoAccountId,
-        ssoRoleName: parsed.ssoRoleName,
-        mfaSerial: parsed.mfaSerial,
-        roleArn: parsed.roleArn,
-        externalId: parsed.externalId,
-        roleSessionName: parsed.roleSessionName
+        authMethod: values.authMethod,
+        region: values.region,
+        accessKeyId: credentialsEditable ? values.accessKeyId : undefined,
+        secretAccessKey: credentialsEditable ? values.secretAccessKey : undefined,
+        ssoStartUrl: values.ssoStartUrl,
+        ssoRegion: values.ssoRegion,
+        ssoAccountId: values.ssoAccountId,
+        ssoRoleName: values.ssoRoleName,
+        mfaSerial: values.mfaSerial,
+        roleArn: values.roleArn,
+        externalId: values.externalId,
+        roleSessionName: values.roleSessionName
       });
       toast.success(t("AWS account updated."));
       onOpenChange(false);
