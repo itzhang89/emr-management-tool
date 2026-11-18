@@ -1,13 +1,21 @@
+use crate::commands::dialogs::DialogSlot;
 use crate::error::{AppError, AppResult};
 use crate::models::SaveTextFileRequest;
 
 #[tauri::command]
 pub async fn save_text_file(request: SaveTextFileRequest) -> AppResult<Option<String>> {
     let suggested_name = sanitize_file_name(&request.suggested_name);
-    let path = rfd::AsyncFileDialog::new()
-        .set_file_name(&suggested_name)
-        .save_file()
-        .await;
+    let path = {
+        // A second concurrent panel makes AppKit hand back a nil panel, which
+        // aborts the process — see `dialogs`.
+        let Some(_dialog) = DialogSlot::try_acquire() else {
+            return Ok(None);
+        };
+        rfd::AsyncFileDialog::new()
+            .set_file_name(&suggested_name)
+            .save_file()
+            .await
+    };
 
     let Some(path) = path else {
         return Ok(None);
@@ -41,11 +49,18 @@ fn sanitize_file_name(value: &str) -> String {
 
 #[tauri::command]
 pub async fn open_text_file() -> AppResult<Option<String>> {
-    let file = rfd::AsyncFileDialog::new()
-        .add_filter("JSON", &["json"])
-        .add_filter("Text", &["txt"])
-        .pick_file()
-        .await;
+    let file = {
+        // A second concurrent panel makes AppKit hand back a nil panel, which
+        // aborts the process — see `dialogs`.
+        let Some(_dialog) = DialogSlot::try_acquire() else {
+            return Ok(None);
+        };
+        rfd::AsyncFileDialog::new()
+            .add_filter("JSON", &["json"])
+            .add_filter("Text", &["txt"])
+            .pick_file()
+            .await
+    };
 
     let Some(file) = file else {
         return Ok(None);

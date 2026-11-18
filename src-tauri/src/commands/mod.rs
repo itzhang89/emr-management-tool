@@ -4,6 +4,7 @@ pub mod chat;
 pub mod credentials;
 pub mod dbhub;
 pub mod diagnostics;
+pub mod dialogs;
 pub mod emr;
 pub mod files;
 pub mod glue;

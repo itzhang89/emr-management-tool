@@ -1,6 +1,7 @@
 use crate::aws::runtime::runtime_for_context;
 use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
+use crate::commands::dialogs::DialogSlot;
 use crate::emr_log_path::{job_id_from_prefix, parse_emr_log_path};
 use crate::error::{AppError, AppResult};
 use crate::models::{
@@ -370,10 +371,17 @@ pub async fn download_s3_object_to_disk(
         .filter(|name| !name.is_empty())
         .unwrap_or("s3-object")
         .to_string();
-    let path = rfd::AsyncFileDialog::new()
-        .set_file_name(&suggested_name)
-        .save_file()
-        .await;
+    let path = {
+        // A second concurrent panel makes AppKit hand back a nil panel, which
+        // aborts the process — see `dialogs`.
+        let Some(_dialog) = DialogSlot::try_acquire() else {
+            return Ok(None);
+        };
+        rfd::AsyncFileDialog::new()
+            .set_file_name(&suggested_name)
+            .save_file()
+            .await
+    };
 
     let Some(path) = path else {
         return Ok(None);
@@ -395,7 +403,14 @@ pub async fn prepare_s3_upload_from_disk(
         return Err(AppError::validation("Bucket is required."));
     }
 
-    let file = rfd::AsyncFileDialog::new().pick_file().await;
+    let file = {
+        // A second concurrent panel makes AppKit hand back a nil panel, which
+        // aborts the process — see `dialogs`.
+        let Some(_dialog) = DialogSlot::try_acquire() else {
+            return Ok(None);
+        };
+        rfd::AsyncFileDialog::new().pick_file().await
+    };
     let Some(file) = file else {
         return Ok(None);
     };
