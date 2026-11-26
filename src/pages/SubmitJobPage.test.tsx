@@ -7,6 +7,7 @@ import { SubmitJobPage } from "@/pages/SubmitJobPage";
 import { formatSourceJobPayload } from "@/services/startJobPayload";
 import { writeSubmitJobFormCache, writeSubmitJobLastTemplate } from "@/services/submitJobFormStorage";
 import type { StartJobPayloadJson } from "@/services/startJobPayload";
+import type { AccountTemplateVariables } from "@/types/domain";
 
 const mocks = vi.hoisted(() => {
   const defaultJobConfigTemplate = {
@@ -33,7 +34,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     defaultJobConfigTemplate,
-    accountVariables: {} as Record<string, string>,
+    accountVariables: {} as AccountTemplateVariables,
     startJobRun: vi.fn(),
     createJobConfigTemplate: vi.fn(),
     toastError: vi.fn(),
@@ -234,7 +235,7 @@ describe("SubmitJobPage", () => {
   });
 
   it("uses the account value before the template form value", async () => {
-    mocks.accountVariables = { ENV: "account-prod" };
+    mocks.accountVariables = { ENV: { value: "account-prod", description: "Account environment" } };
     const template = mocks.jobConfigTemplates[0];
     template.customVariables = [{ ...template.customVariables[0], required: true }];
     template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ENV}", "${AWS_REGION}"]');

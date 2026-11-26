@@ -5,6 +5,7 @@ import { DeleteVariableButton } from "@/components/templates/DeleteVariableButto
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAccountTemplateVariables, useSaveAccountTemplateVariables } from "@/hooks/useAccountTemplateVariables";
 import { useT } from "@/i18n";
 import {
@@ -23,7 +24,9 @@ const envErrors = {
 };
 
 function makeRows(variables: AccountTemplateVariables) {
-  return Object.entries(variables).map(([name, value]) => ({ id: crypto.randomUUID(), name, value }));
+  return Object.entries(variables).map(([name, { value, description = "" }]) => ({
+    id: crypto.randomUUID(), name, value, description
+  }));
 }
 
 export function AccountTemplateVariablesEditor({ accountId }: { accountId: string }) {
@@ -60,7 +63,8 @@ function AccountTemplateVariablesForm({
   const [envDraft, setEnvDraft] = useState(savedEnv);
   const [envError, setEnvError] = useState<string>();
   const rowsDirty = rows.length !== savedRows.length || rows.some(
-    (row, index) => row.name !== savedRows[index].name || row.value !== savedRows[index].value
+    (row, index) => row.name !== savedRows[index].name || row.value !== savedRows[index].value ||
+      row.description !== savedRows[index].description
   );
   const dirty = mode === "env" ? envDraft !== savedEnv : rowsDirty;
 
@@ -76,7 +80,8 @@ function AccountTemplateVariablesForm({
         toast.error(t("Variable {name} appears more than once.", { name }));
         return;
       }
-      variables[name] = row.value;
+      const description = row.description.trim();
+      variables[name] = description ? { value: row.value, description } : { value: row.value };
     }
     return variables;
   };
@@ -112,7 +117,9 @@ function AccountTemplateVariablesForm({
     if (!variables) return;
     try {
       await save.mutateAsync(variables);
-      const normalizedRows = mode === "env" ? makeRows(variables) : rows.map((row) => ({ ...row, name: row.name.trim() }));
+      const normalizedRows = mode === "env" ? makeRows(variables) : rows.map((row) => ({
+        ...row, name: row.name.trim(), description: row.description.trim()
+      }));
       const normalizedEnv = formatAccountTemplateVariablesEnv(variables);
       setSavedRows(normalizedRows);
       setRows(normalizedRows);
@@ -154,7 +161,9 @@ function AccountTemplateVariablesForm({
               }}
             />
             {envError ? <p id="account-env-error" role="alert" className="text-sm text-destructive">{envError}</p> : null}
-            <p className="text-sm text-muted-foreground">{t("Use KEY=value, one variable per line. Lines starting with # are comments.")}</p>
+            <p className="text-sm text-muted-foreground">
+              {t("Use KEY=value, one variable per line. Add an optional description as KEY=value  # description. Lines starting with # are comments.")}
+            </p>
           </div>
         ) : (
           <>
@@ -163,18 +172,25 @@ function AccountTemplateVariablesForm({
             ) : null}
             <div className="max-h-[50vh] space-y-2 overflow-auto">
               {rows.map((row, index) => (
-                <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2" key={row.id}>
-                  <Input
-                    aria-label={t("Variable name {index}", { index: index + 1 })}
-                    placeholder={t("Variable name")}
-                    value={row.name}
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    onChange={(event) => {
-                      const name = event.target.value;
-                      setRows((current) => current.map((item) => item.id === row.id ? { ...item, name } : item));
-                    }}
-                  />
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_auto] gap-2" key={row.id}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Input
+                        aria-label={t("Variable name {index}", { index: index + 1 })}
+                        placeholder={t("Variable name")}
+                        value={row.name}
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        onChange={(event) => {
+                          const name = event.target.value;
+                          setRows((current) => current.map((item) => item.id === row.id ? { ...item, name } : item));
+                        }}
+                      />
+                    </TooltipTrigger>
+                    {row.description.trim() && (
+                      <TooltipContent className="max-w-xs break-words">{row.description.trim()}</TooltipContent>
+                    )}
+                  </Tooltip>
                   <Textarea
                     rows={1}
                     className="min-h-9"
@@ -184,6 +200,15 @@ function AccountTemplateVariablesForm({
                     onChange={(event) => {
                       const value = event.target.value;
                       setRows((current) => current.map((item) => item.id === row.id ? { ...item, value } : item));
+                    }}
+                  />
+                  <Input
+                    aria-label={t("Variable description {index}", { index: index + 1 })}
+                    placeholder={t("Optional description")}
+                    value={row.description}
+                    onChange={(event) => {
+                      const description = event.target.value;
+                      setRows((current) => current.map((item) => item.id === row.id ? { ...item, description } : item));
                     }}
                   />
                   <DeleteVariableButton
@@ -197,7 +222,7 @@ function AccountTemplateVariablesForm({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setRows((current) => [...current, { id: crypto.randomUUID(), name: "", value: "" }])}
+              onClick={() => setRows((current) => [...current, { id: crypto.randomUUID(), name: "", value: "", description: "" }])}
             >
               <Plus /> {t("Add Variable")}
             </Button>

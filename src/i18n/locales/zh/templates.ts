@@ -23,6 +23,7 @@ const templates: TranslationDictionary = {
   "Loading account template variables…": "正在加载账号模板变量…",
   "Variable name {index}": "第 {index} 个变量的名称",
   "Variable value {index}": "第 {index} 个变量的值",
+  "Variable description {index}": "第 {index} 个变量的描述",
   "Remove variable {index}": "移除第 {index} 个变量",
   "Delete variable “{name}”?": "确认删除变量「{name}」？",
   "Delete this variable?": "确认删除此变量？",
@@ -51,7 +52,7 @@ const templates: TranslationDictionary = {
   "Invalid or reserved variable name.": "变量名无效或为内置保留名称。",
   "This variable is already defined.": "此变量已定义。",
   "Check the quoted value.": "请检查变量值的引号。",
-  "Use KEY=value, one variable per line. Lines starting with # are comments.": "每行用 KEY=value 定义一个变量，以 # 开头的行为注释。",
+  "Use KEY=value, one variable per line. Add an optional description as KEY=value  # description. Lines starting with # are comments.": "每行用 KEY=value 定义一个变量，可以用 KEY=value  # 描述 添加可选描述。以 # 开头的行为注释。",
   // Templates page shell.
   "Application Config": "应用配置",
   "Resource Templates": "资源配置模板",

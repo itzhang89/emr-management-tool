@@ -4,18 +4,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { AccountTemplateVariables } from "@/types/domain";
 
 const setActiveAccountMutate = vi.fn();
 const saveAccountVariables = vi.fn();
-const accountVariablesById: Record<string, Record<string, string>> = {
-  "acct-test": { ENV: "test" },
-  "acct-prod": { ENV: "prod" }
+const accountVariablesById: Record<string, AccountTemplateVariables> = {
+  "acct-test": { ENV: { value: "test" } },
+  "acct-prod": { ENV: { value: "prod" } }
 };
 
 vi.mock("@/hooks/useAccountTemplateVariables", () => ({
   useAccountTemplateVariables: (accountId: string) => ({ data: accountVariablesById[accountId] }),
   useSaveAccountTemplateVariables: (accountId: string) => ({
-    mutateAsync: (variables: Record<string, string>) => saveAccountVariables(accountId, variables),
+    mutateAsync: (variables: AccountTemplateVariables) => saveAccountVariables(accountId, variables),
     isPending: false
   })
 }));
@@ -341,27 +342,32 @@ describe("AppShell", () => {
     await user.click(panel.getByRole("button", { name: "Add Variable" }));
     await user.type(panel.getByRole("textbox", { name: "Variable name 2" }), "BUCKET");
     await user.type(panel.getByRole("textbox", { name: "Variable value 2" }), "test-jobs");
+    await user.type(panel.getByRole("textbox", { name: "Variable description 2" }), "Job output bucket");
     await user.click(panel.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith(
-      "acct-test", { ENV: "testing", BUCKET: "test-jobs" }
+      "acct-test", { ENV: { value: "testing" }, BUCKET: { value: "test-jobs", description: "Job output bucket" } }
     ));
+    await user.hover(panel.getByRole("textbox", { name: "Variable name 2" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Job output bucket");
+    await user.unhover(panel.getByRole("textbox", { name: "Variable name 2" }));
 
     await user.click(panel.getByRole("button", { name: ".env" }));
     const env = panel.getByRole("textbox", { name: "Edit variables as .env" });
-    expect(env).toHaveValue("ENV=testing\nBUCKET=test-jobs");
+    expect(env).toHaveValue("ENV=testing\nBUCKET=test-jobs  # Job output bucket");
     fireEvent.change(env, { target: { value: "BUCKET=test-jobs\ndate=reserved" } });
     await user.click(panel.getByRole("button", { name: "Save" }));
     expect(panel.getByRole("alert")).toHaveTextContent("Line 2: Invalid or reserved variable name.");
     expect(saveAccountVariables).toHaveBeenCalledTimes(1);
 
-    fireEvent.change(env, { target: { value: '# changed\nBUCKET="new # bucket"' } });
+    fireEvent.change(env, { target: { value: '# changed\nBUCKET="new # bucket"  # Updated bucket description' } });
     await user.click(panel.getByRole("button", { name: "Form" }));
     expect(panel.queryByRole("textbox", { name: "Variable name 2" })).not.toBeInTheDocument();
     expect(panel.getByRole("textbox", { name: "Variable value 1" })).toHaveValue("new # bucket");
+    expect(panel.getByRole("textbox", { name: "Variable description 1" })).toHaveValue("Updated bucket description");
     await user.click(panel.getByRole("button", { name: ".env" }));
     await user.click(panel.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith(
-      "acct-test", { BUCKET: "new # bucket" }
+      "acct-test", { BUCKET: { value: "new # bucket", description: "Updated bucket description" } }
     ));
     await user.click(panel.getByRole("button", { name: "Form" }));
     await user.click(panel.getByRole("button", { name: "Remove variable 1" }));

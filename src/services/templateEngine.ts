@@ -99,7 +99,7 @@ export function buildVariableMap(
       variables[definition.name] = "";
     }
   }
-  for (const [name, value] of Object.entries(context.accountVariables ?? {})) {
+  for (const [name, { value }] of Object.entries(context.accountVariables ?? {})) {
     if (!isBuiltinTemplateVariable(name)) variables[name] = value;
   }
 

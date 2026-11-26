@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -530,7 +530,16 @@ pub struct TemplateAccountRequest {
 #[serde(rename_all = "camelCase")]
 pub struct AccountTemplateVariablesRequest {
     pub account_id: String,
-    pub variables: std::collections::BTreeMap<String, String>,
+    pub variables: AccountTemplateVariables,
+}
+
+pub type AccountTemplateVariables = BTreeMap<String, AccountTemplateVariable>;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AccountTemplateVariable {
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

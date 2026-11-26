@@ -81,7 +81,7 @@ describe("templateEngine", () => {
         region: "cn-north-1"
       },
       customVariables: {},
-      accountVariables: { AWS_USERNAME: "override" }
+      accountVariables: { AWS_USERNAME: { value: "override" } }
     }).name).toBe("Daily ETL-tester-alice-123456789012-cn-north-1");
   });
 
@@ -105,7 +105,7 @@ describe("templateEngine", () => {
         virtualClusterId: "vc-123",
         submitUser: "tester",
         customVariables: { ENV: "dev" },
-        accountVariables: { ENTRY_POINT: value, ENV: "prod" }
+        accountVariables: { ENTRY_POINT: { value }, ENV: { value: "prod", description: "Production environment" } }
       }
     );
     expect(resolved.jobDriver.sparkSubmitJobDriver.entryPoint).toBe(value);

@@ -9,29 +9,38 @@ describe("account template variables .env format", () => {
     const text = [
       "# a comment",
       "export SPACE = ' leading and trailing ' # comment",
-      'HASH="a#b=c"',
-      "EMPTY=",
+      'HASH="a#b=c"  # Keep # in the value',
+      "EMPTY=  # Blank on purpose",
+      "PLAIN=plain  # Unquoted description",
       "REFERENCE=\${SPACE}",
       "MULTILINE='first  ",
-      "second'"
+      "second'  # Multiline value"
     ].join("\r\n");
     expect(parseAccountTemplateVariablesEnv(text)).toEqual({
-      SPACE: " leading and trailing ",
-      HASH: "a#b=c",
-      EMPTY: "",
-      REFERENCE: "${SPACE}",
-      MULTILINE: "first  \nsecond"
+      SPACE: { value: " leading and trailing ", description: "comment" },
+      HASH: { value: "a#b=c", description: "Keep # in the value" },
+      EMPTY: { value: "", description: "Blank on purpose" },
+      PLAIN: { value: "plain", description: "Unquoted description" },
+      REFERENCE: { value: "${SPACE}" },
+      MULTILINE: { value: "first  \nsecond", description: "Multiline value" }
     });
   });
 
   it("round-trips account values without trimming or interpreting them", () => {
-    const variables = { PATH: 'C:\\jobs\\new "folder"', TEXT: " \tfirst\nsecond\r ", EMPTY: "" };
+    const variables = {
+      PATH: { value: 'C:\\jobs\\new "folder"', description: "Windows # path" },
+      TEXT: { value: " \tfirst\nsecond\r ", description: "Escaped value" },
+      EMPTY: { value: "" }
+    };
     expect(parseAccountTemplateVariablesEnv(formatAccountTemplateVariablesEnv(variables))).toEqual(variables);
   });
 
   it.each([
     ["# comment\nMISSING", "assignment"],
     ["# comment\nsubmitUser=override", "name"],
+    ["# comment\nAWS_USERNAME=override", "name"],
+    ["# comment\nAWS_ACCOUNT_ID=override", "name"],
+    ["# comment\nAWS_REGION=override", "name"],
     ["BUCKET=test\nBUCKET=prod", "duplicate"],
     ['BUCKET=test\nBAD="incomplete', "quote"]
   ])("reports a malformed entry on the correct line", (text, reason) => {

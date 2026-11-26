@@ -26,6 +26,8 @@ export function parseAccountTemplateVariablesEnv(text: string): AccountTemplateV
     if (!isAccountTemplateVariableName(name)) throw new AccountVariablesEnvError(lineNumber, "name");
     if (Object.hasOwn(variables, name)) throw new AccountVariablesEnvError(lineNumber, "duplicate");
 
+    let value: string;
+    let comment: string;
     if (raw.startsWith('"') || raw.startsWith("'")) {
       const pattern = raw.startsWith('"') ? /^"((?:[^"\\]|\\[\s\S])*)"/ : /^'([^']*)'/;
       let quoted = raw;
@@ -34,21 +36,30 @@ export function parseAccountTemplateVariablesEnv(text: string): AccountTemplateV
         quoted += `\n${lines[++index]}`;
         match = pattern.exec(quoted);
       }
-      if (!match || !/^\s*(?:#.*)?$/.test(quoted.slice(match[0].length))) {
+      comment = match ? quoted.slice(match[0].length).trimStart() : "";
+      if (!match || (comment && !comment.startsWith("#"))) {
         throw new AccountVariablesEnvError(lineNumber, "quote");
       }
-      variables[name] = raw.startsWith('"')
+      value = raw.startsWith('"')
         ? match[1].replace(/\\(?:["\\bnfrt]|u[\da-fA-F]{4})/g, (escape) => JSON.parse(`"${escape}"`) as string)
         : match[1];
     } else {
-      variables[name] = raw.split("#", 1)[0].trim();
+      const commentStart = raw.indexOf("#");
+      value = (commentStart === -1 ? raw : raw.slice(0, commentStart)).trim();
+      comment = commentStart === -1 ? "" : raw.slice(commentStart);
     }
+    const description = comment.slice(1).trim();
+    variables[name] = description ? { value, description } : { value };
   }
   return variables;
 }
 
 export function formatAccountTemplateVariablesEnv(variables: AccountTemplateVariables) {
   return Object.entries(variables)
-    .map(([name, value]) => `${name}=${/^[a-zA-Z0-9_.:/@+-]*$/.test(value) ? value : JSON.stringify(value)}`)
+    .map(([name, { value, description }]) => {
+      const serializedValue = /^[a-zA-Z0-9_.:/@+-]*$/.test(value) ? value : JSON.stringify(value);
+      const comment = description?.trim().replace(/[\r\n]+/g, " ");
+      return `${name}=${serializedValue}${comment ? `  # ${comment}` : ""}`;
+    })
     .join("\n");
 }

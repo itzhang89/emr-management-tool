@@ -291,7 +291,12 @@ export interface TemplateVariableDefinition {
 }
 
 export type JobConfigTemplateScope = "private" | "shared";
-export type AccountTemplateVariables = Record<string, string>;
+export interface AccountTemplateVariable {
+  value: string;
+  description?: string;
+}
+
+export type AccountTemplateVariables = Record<string, AccountTemplateVariable>;
 
 export interface JobConfigTemplate {
   id: string;

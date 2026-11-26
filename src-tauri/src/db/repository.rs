@@ -1,8 +1,8 @@
 use crate::db::app_data_dir;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ApplicationTemplate, AwsAccount, JobConfigTemplate, JobConfigTemplateScope, JobRunSummary,
-    ResourceTemplate,
+    AccountTemplateVariable, AccountTemplateVariables, ApplicationTemplate, AwsAccount,
+    JobConfigTemplate, JobConfigTemplateScope, JobRunSummary, ResourceTemplate,
 };
 use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -293,26 +293,46 @@ fn job_config_template_payload(
     serde_json::to_string(&stored).map_err(|error| AppError::storage(error.to_string()))
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StoredAccountTemplateVariable {
+    Current(AccountTemplateVariable),
+    Legacy(String),
+}
+
 pub async fn list_account_template_variables(
     pool: &SqlitePool,
     account_id: &str,
-) -> AppResult<BTreeMap<String, String>> {
+) -> AppResult<AccountTemplateVariables> {
     let payload: Option<String> =
         sqlx::query_scalar("select payload from account_template_variables where account_id = ?1")
             .bind(account_id)
             .fetch_optional(pool)
             .await
             .map_err(|error| AppError::storage(error.to_string()))?;
-    payload
-        .map(from_payload)
-        .transpose()
-        .map(Option::unwrap_or_default)
+    let Some(payload) = payload else {
+        return Ok(AccountTemplateVariables::new());
+    };
+    let variables = from_payload::<BTreeMap<String, StoredAccountTemplateVariable>>(payload)?;
+    Ok(variables
+        .into_iter()
+        .map(|(name, stored)| {
+            let variable = match stored {
+                StoredAccountTemplateVariable::Current(variable) => variable,
+                StoredAccountTemplateVariable::Legacy(value) => AccountTemplateVariable {
+                    value,
+                    description: None,
+                },
+            };
+            (name, variable)
+        })
+        .collect())
 }
 
 pub async fn save_account_template_variables(
     pool: &SqlitePool,
     account_id: &str,
-    variables: &BTreeMap<String, String>,
+    variables: &AccountTemplateVariables,
 ) -> AppResult<()> {
     let payload =
         serde_json::to_string(variables).map_err(|error| AppError::storage(error.to_string()))?;
@@ -935,32 +955,41 @@ mod tests {
             .await
             .unwrap();
         migrate(&pool).await.unwrap();
-        for (account, environment) in [("acct-a", "dev"), ("acct-b", "prod")] {
+        for account in ["acct-a", "acct-b"] {
             sqlx::query("insert into aws_accounts (id, name, region, payload) values (?1, ?1, 'us-east-1', '{}')")
                 .bind(account)
                 .execute(&pool)
                 .await
                 .unwrap();
-            save_account_template_variables(
-                &pool,
-                account,
-                &[("ENV".into(), environment.into())].into(),
-            )
+        }
+        sqlx::query("insert into account_template_variables (account_id, payload) values ('acct-a', ?1)")
+            .bind(r#"{"ENV":"dev"}"#)
+            .execute(&pool)
             .await
             .unwrap();
-        }
+        save_account_template_variables(
+            &pool,
+            "acct-b",
+            &[(
+                "ENV".into(),
+                crate::models::AccountTemplateVariable {
+                    value: "prod".into(),
+                    description: Some("Production environment".into()),
+                },
+            )]
+            .into(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(
-            list_account_template_variables(&pool, "acct-a")
-                .await
-                .unwrap()["ENV"],
-            "dev"
-        );
+        let legacy = list_account_template_variables(&pool, "acct-a").await.unwrap();
+        assert_eq!(legacy["ENV"].value, "dev");
+        assert_eq!(legacy["ENV"].description, None);
         assert_eq!(
             list_account_template_variables(&pool, "acct-b")
                 .await
-                .unwrap()["ENV"],
-            "prod"
+                .unwrap()["ENV"].description.as_deref(),
+            Some("Production environment")
         );
         delete_aws_account(&pool, "acct-a").await.unwrap();
         assert!(list_account_template_variables(&pool, "acct-a")
@@ -970,7 +999,7 @@ mod tests {
         assert_eq!(
             list_account_template_variables(&pool, "acct-b")
                 .await
-                .unwrap()["ENV"],
+                .unwrap()["ENV"].value,
             "prod"
         );
     }

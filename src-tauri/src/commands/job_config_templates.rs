@@ -1,14 +1,13 @@
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AccountTemplateVariablesRequest, JobConfigTemplateMutationRequest,
+    AccountTemplateVariables, AccountTemplateVariablesRequest, JobConfigTemplateMutationRequest,
     JobConfigTemplateSaveRequest, JobConfigTemplateScope, JobConfigTemplatesResponse,
     TemplateAccountRequest,
 };
 use crate::state::default_job_config_templates;
 use chrono::Utc;
 use sqlx::SqlitePool;
-use std::collections::BTreeMap;
 
 const BUILTIN_VARIABLES: &[&str] = &[
     "template_name",
@@ -131,7 +130,7 @@ async fn active_account_variables_pool(account_id: &str) -> AppResult<SqlitePool
 #[tauri::command]
 pub async fn list_account_template_variables(
     request: TemplateAccountRequest,
-) -> AppResult<BTreeMap<String, String>> {
+) -> AppResult<AccountTemplateVariables> {
     let pool = active_account_variables_pool(&request.account_id).await?;
     repository::list_account_template_variables(&pool, &request.account_id).await
 }
@@ -139,7 +138,7 @@ pub async fn list_account_template_variables(
 #[tauri::command]
 pub async fn save_account_template_variables(
     request: AccountTemplateVariablesRequest,
-) -> AppResult<BTreeMap<String, String>> {
+) -> AppResult<AccountTemplateVariables> {
     for name in request.variables.keys() {
         if name.is_empty()
             || !name
