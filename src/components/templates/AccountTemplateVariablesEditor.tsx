@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { DeleteVariableButton } from "@/components/templates/DeleteVariableButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -185,15 +186,11 @@ function AccountTemplateVariablesForm({
                       setRows((current) => current.map((item) => item.id === row.id ? { ...item, value } : item));
                     }}
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t("Remove variable {index}", { index: index + 1 })}
-                    onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}
-                  >
-                    <Trash2 />
-                  </Button>
+                  <DeleteVariableButton
+                    name={row.name}
+                    label={t("Remove variable {index}", { index: index + 1 })}
+                    onDelete={() => setRows((current) => current.filter((item) => item.id !== row.id))}
+                  />
                 </div>
               ))}
             </div>

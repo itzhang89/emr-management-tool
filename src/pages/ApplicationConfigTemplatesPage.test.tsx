@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -190,6 +190,11 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(nameRow).toHaveClass("grid-cols-[2.75rem_minmax(0,1fr)_9.5rem_minmax(0,1fr)_auto]");
     expect(screen.getByRole("button", { name: /Remove VAR_1/i })).toHaveClass("size-8");
     expect(screen.getByText("Required").closest("label")?.parentElement).toHaveClass("shrink-0");
+
+    await user.click(screen.getByRole("button", { name: /Remove VAR_1/i }));
+    const confirmation = within(screen.getByRole("dialog", { name: "Delete variable “VAR_1”?" }));
+    await user.click(confirmation.getByRole("button", { name: "Delete" }));
+    expect(screen.queryByPlaceholderText("Variable name")).not.toBeInTheDocument();
   });
 
   it("shows boolean output format options for boolean variables", async () => {

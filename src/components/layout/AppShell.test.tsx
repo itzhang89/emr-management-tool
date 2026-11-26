@@ -365,6 +365,13 @@ describe("AppShell", () => {
     ));
     await user.click(panel.getByRole("button", { name: "Form" }));
     await user.click(panel.getByRole("button", { name: "Remove variable 1" }));
+    const dialogName = "Delete variable “BUCKET”?";
+    const confirmation = within(screen.getByRole("dialog", { name: dialogName }));
+    await user.click(confirmation.getByRole("button", { name: "Cancel" }));
+    expect(panel.getByRole("textbox", { name: "Variable name 1" })).toHaveValue("BUCKET");
+    await user.click(panel.getByRole("button", { name: "Remove variable 1" }));
+    await user.click(within(screen.getByRole("dialog", { name: dialogName })).getByRole("button", { name: "Delete" }));
+    expect(panel.queryByRole("textbox", { name: "Variable name 1" })).not.toBeInTheDocument();
     await user.click(panel.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith("acct-test", {}));
   });

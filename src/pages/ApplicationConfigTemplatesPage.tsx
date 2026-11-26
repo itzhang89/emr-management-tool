@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DeleteVariableButton } from "@/components/templates/DeleteVariableButton";
 import { JsonTemplateEditor } from "@/components/templates/JsonTemplateEditor";
 import {
   Dialog,
@@ -622,16 +623,12 @@ function VariableRow({
           >
             <ArrowDown className="size-4" />
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
+          <DeleteVariableButton
+            name={variable.name}
             className="size-8"
-            aria-label={t("Remove {name}", { name: variable.name })}
-            onClick={onRemove}
-          >
-            <Trash2 className="size-4" />
-          </Button>
+            label={t("Remove {name}", { name: variable.name })}
+            onDelete={onRemove}
+          />
         </div>
       </div>
 

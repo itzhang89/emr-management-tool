@@ -24,6 +24,8 @@ const templates: TranslationDictionary = {
   "Variable name {index}": "第 {index} 个变量的名称",
   "Variable value {index}": "第 {index} 个变量的值",
   "Remove variable {index}": "移除第 {index} 个变量",
+  "Delete variable “{name}”?": "确认删除变量「{name}」？",
+  "Delete this variable?": "确认删除此变量？",
   "Value": "值",
   "Using account values for {names}.": "{names} 使用当前账号配置的值。",
   "Missing template variables: {names}. Set them in Templates → Account Variables or provide template values.": "缺少模板变量 {names}。请在「模板 → 账号变量」中配置，或为模板提供变量值。",
