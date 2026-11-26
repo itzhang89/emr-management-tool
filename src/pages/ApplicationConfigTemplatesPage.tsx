@@ -9,6 +9,7 @@ import { DeleteVariableButton } from "@/components/templates/DeleteVariableButto
 import { JsonTemplateEditor } from "@/components/templates/JsonTemplateEditor";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -81,6 +82,7 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
   const t = useT();
   const templates = useJobConfigTemplates();
   const [editing, setEditing] = useState<Editing>();
+  const [confirmUnshare, setConfirmUnshare] = useState<() => Promise<void>>();
   const createTemplate = useCreateJobConfigTemplate();
   const importJobConfigTemplate = useImportJobConfigTemplate();
   const updateTemplate = useUpdateJobConfigTemplate();
@@ -105,14 +107,25 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
     }
   };
 
-  const changeTemplateSharing = async (id: string, shared: boolean) => {
-    if (!shared && !window.confirm(t("Stop sharing? This template will belong to the current account."))) {
-      return;
-    }
+  const changeTemplateSharing = async (id: string, scope: "shared" | "private") => {
     try {
-      await setTemplateScope.mutateAsync({ id, scope: shared ? "shared" : "private" });
+      await setTemplateScope.mutateAsync({ id, scope });
     } catch (error) {
       toast.error(formatAppError(error, t("Failed to change template sharing.")));
+    }
+  };
+
+  const saveTemplate = async (template: JobConfigTemplate) => {
+    try {
+      if (editing?.template) {
+        await updateTemplate.mutateAsync(template);
+      } else {
+        await createTemplate.mutateAsync(template);
+      }
+      toast.success(t("Application config template saved."));
+      setEditing(undefined);
+    } catch (error) {
+      toast.error(formatAppError(error, "Failed to save template."));
     }
   };
 
@@ -186,7 +199,13 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
                   <Switch
                     checked={template.scope === "shared"}
                     disabled={setTemplateScope.isPending}
-                    onCheckedChange={(shared) => void changeTemplateSharing(template.id, shared)}
+                    onCheckedChange={(shared) => {
+                      if (shared) {
+                        void changeTemplateSharing(template.id, "shared");
+                      } else {
+                        setConfirmUnshare(() => () => changeTemplateSharing(template.id, "private"));
+                      }
+                    }}
                   />
                   {t("Share with all accounts")}
                 </Label>
@@ -262,19 +281,34 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
         saving={createTemplate.isPending || updateTemplate.isPending}
         onOpenChange={(open) => !open && setEditing(undefined)}
         onSave={async (template) => {
-          try {
-            if (editing?.template) {
-              await updateTemplate.mutateAsync(template);
-            } else {
-              await createTemplate.mutateAsync(template);
-            }
-            toast.success(t("Application config template saved."));
-            setEditing(undefined);
-          } catch (error) {
-            toast.error(formatAppError(error, "Failed to save template."));
+          if (editing?.template?.scope === "shared" && template.scope === "private") {
+            setConfirmUnshare(() => () => saveTemplate(template));
+            return;
           }
+          await saveTemplate(template);
         }}
       />
+      <Dialog open={Boolean(confirmUnshare)} onOpenChange={(open) => !open && setConfirmUnshare(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("Stop sharing?")}</DialogTitle>
+            <DialogDescription>{t("This template will belong to the current account.")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">{t("Cancel")}</Button>
+            </DialogClose>
+            <Button
+              onClick={() => {
+                setConfirmUnshare(undefined);
+                void confirmUnshare?.();
+              }}
+            >
+              {t("Stop sharing")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -446,10 +480,6 @@ function JobConfigTemplateDialog({
               }
               if (customVariables.some((variable) => !variable.name.trim())) {
                 toast.error("Each variable needs a name.");
-                return;
-              }
-              if (template?.scope === "shared" && scope === "private" &&
-                  !window.confirm(t("Stop sharing? This template will belong to the current account."))) {
                 return;
               }
               void onSave({

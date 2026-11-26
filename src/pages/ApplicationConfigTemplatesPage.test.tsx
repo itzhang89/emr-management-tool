@@ -6,9 +6,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 import type { JobConfigTemplate } from "@/types/domain";
 
-const { createTemplate, importTemplate, setTemplateScope, listTemplates, deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
+const { createTemplate, importTemplate, updateTemplate, setTemplateScope, listTemplates, deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
   createTemplate: vi.fn(),
   importTemplate: vi.fn(),
+  updateTemplate: vi.fn(),
   setTemplateScope: vi.fn(),
   listTemplates: vi.fn<() => JobConfigTemplate[]>(),
   deleteTemplate: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("@/hooks/useJobConfigTemplates", () => ({
   useJobConfigTemplates: () => ({ data: listTemplates() }),
   useCreateJobConfigTemplate: () => ({ mutateAsync: createTemplate, isPending: false }),
   useImportJobConfigTemplate: () => ({ mutateAsync: importTemplate, isPending: false }),
-  useUpdateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateJobConfigTemplate: () => ({ mutateAsync: updateTemplate, isPending: false }),
   useSetJobConfigTemplateScope: () => ({ mutateAsync: setTemplateScope, isPending: false }),
   useDeleteJobConfigTemplate: () => ({ mutateAsync: deleteTemplate, isPending: false }),
   useDuplicateJobConfigTemplate: () => ({ mutate: vi.fn(), isPending: false })
@@ -100,22 +101,66 @@ describe("ApplicationConfigTemplatesPage", () => {
     { scope: "shared", nextScope: "private" }
   ] as const)("can change a $scope template to $nextScope from its card", async ({ scope, nextScope }) => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    listTemplates.mockReturnValue([example, { ...example, id: "custom", builtIn: false, name: "Daily ETL", scope }]);
+    const customTemplate = { ...example, id: "custom", builtIn: false, name: "Daily ETL", scope };
+    listTemplates.mockReturnValue([example, customTemplate]);
+    setTemplateScope.mockImplementationOnce(async () => {
+      listTemplates.mockReturnValue([example, { ...customTemplate, scope: nextScope }]);
+    });
     renderPage();
 
     const share = screen.getByRole("switch", { name: "Share with all accounts" });
     expect(share).toHaveAttribute("aria-checked", String(scope === "shared"));
-    if (scope === "shared") {
-      await user.click(share);
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("belong to the current account"));
-      expect(setTemplateScope).not.toHaveBeenCalled();
-      confirm.mockReturnValue(true);
-    }
     await user.click(share);
+    if (scope === "shared") {
+      let confirmation = within(screen.getByRole("dialog", { name: "Stop sharing?" }));
+      expect(confirmation.getByText("This template will belong to the current account.")).toBeInTheDocument();
+      await user.click(confirmation.getByRole("button", { name: "Cancel" }));
+      expect(setTemplateScope).not.toHaveBeenCalled();
+      expect(share).toBeChecked();
+
+      await user.click(share);
+      confirmation = within(screen.getByRole("dialog", { name: "Stop sharing?" }));
+      await user.click(confirmation.getByRole("button", { name: "Stop sharing" }));
+      expect(share).not.toBeChecked();
+      expect(screen.getByText("Current account")).toBeInTheDocument();
+    }
 
     expect(setTemplateScope).toHaveBeenCalledWith({ id: "custom", scope: nextScope });
-    confirm.mockRestore();
+  });
+
+  it("saves edits when stopping sharing from the editor after confirmation", async () => {
+    const user = userEvent.setup();
+    const sharedTemplate = { ...example, id: "custom", builtIn: false, name: "Daily ETL", scope: "shared" } as const;
+    listTemplates.mockReturnValue([example, sharedTemplate]);
+    updateTemplate.mockImplementationOnce(async (template: JobConfigTemplate) => {
+      listTemplates.mockReturnValue([example, template]);
+    });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Edit Daily ETL" }));
+    const editor = within(screen.getByRole("dialog", { name: "Edit application config template" }));
+    await user.click(editor.getByRole("switch", { name: "Share with all accounts" }));
+    const description = editor.getByDisplayValue("Starter template");
+    await user.clear(description);
+    await user.type(description, "Updated details");
+    await user.click(editor.getByRole("button", { name: "Save" }));
+
+    let confirmation = within(screen.getByRole("dialog", { name: "Stop sharing?" }));
+    await user.click(confirmation.getByRole("button", { name: "Cancel" }));
+    expect(updateTemplate).not.toHaveBeenCalled();
+    expect(editor.getByDisplayValue("Updated details")).toBeInTheDocument();
+
+    await user.click(editor.getByRole("button", { name: "Save" }));
+    confirmation = within(screen.getByRole("dialog", { name: "Stop sharing?" }));
+    await user.click(confirmation.getByRole("button", { name: "Stop sharing" }));
+
+    expect(updateTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      id: sharedTemplate.id,
+      scope: "private",
+      description: "Updated details"
+    }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Share with all accounts" })).not.toBeChecked();
   });
 
   it("can create a job config template shared with all accounts", async () => {
