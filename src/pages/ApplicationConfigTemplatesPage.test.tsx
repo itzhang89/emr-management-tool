@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
 
-const { deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
+const { createTemplate, deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
+  createTemplate: vi.fn(),
   deleteTemplate: vi.fn(),
   openTextFile: vi.fn(),
   toastError: vi.fn()
@@ -27,7 +28,7 @@ vi.mock("@/hooks/useJobConfigTemplates", () => ({
       }
     ]
   }),
-  useCreateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCreateJobConfigTemplate: () => ({ mutateAsync: createTemplate, isPending: false }),
   useUpdateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteJobConfigTemplate: () => ({ mutateAsync: deleteTemplate, isPending: false }),
   useDuplicateJobConfigTemplate: () => ({ mutate: vi.fn(), isPending: false })
@@ -75,6 +76,19 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
     expect(screen.getByText("example")).toBeInTheDocument();
     expect(screen.getByText(/1 variable/i)).toBeInTheDocument();
+  });
+
+  it("can create a job config template shared with all accounts", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Template" }));
+    const share = screen.getByRole("switch", { name: "Share with all accounts" });
+    expect(share).not.toBeChecked();
+    await user.click(share);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(createTemplate).toHaveBeenCalledWith(expect.objectContaining({ scope: "shared" }));
   });
 
   it("disables browser autocapitalization for template editor text inputs", async () => {

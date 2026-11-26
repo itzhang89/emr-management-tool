@@ -6,6 +6,19 @@ import { AppShell } from "./AppShell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const setActiveAccountMutate = vi.fn();
+const saveAccountVariables = vi.fn();
+const accountVariablesById: Record<string, Record<string, string>> = {
+  "acct-test": { ENV: "test" },
+  "acct-prod": { ENV: "prod" }
+};
+
+vi.mock("@/hooks/useAccountTemplateVariables", () => ({
+  useAccountTemplateVariables: (accountId: string) => ({ data: accountVariablesById[accountId] }),
+  useSaveAccountTemplateVariables: (accountId: string) => ({
+    mutateAsync: (variables: Record<string, string>) => saveAccountVariables(accountId, variables),
+    isPending: false
+  })
+}));
 
 function renderAppShell(queryClient: QueryClient) {
   return render(
@@ -279,9 +292,11 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "Templates" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Templates" }));
 
-    expect(await screen.findByRole("heading", { name: "Templates" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Application Config" })).toHaveAttribute("data-state", "active");
-    expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
+    const appConfig = await screen.findByRole("tab", { name: "Application Config" });
+    expect(appConfig).toHaveAttribute("data-state", "active");
+    expect(screen.queryByRole("heading", { name: "Templates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application Config" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).queryByText("Application and resource templates")).not.toBeInTheDocument();
   });
 
   it("switches Resource Templates inside the Templates page", async () => {
@@ -293,7 +308,57 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("tab", { name: "Resource Templates" }));
 
     expect(screen.getByRole("tab", { name: "Resource Templates" })).toHaveAttribute("data-state", "active");
-    expect(screen.getByRole("heading", { name: "Resource Templates" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resource Template" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Resource Templates" })).not.toBeInTheDocument();
+  });
+
+  it("shows copyable built-ins and manages only the active account's template variables", async () => {
+    const user = userEvent.setup();
+    const copy = vi.spyOn(navigator.clipboard, "writeText");
+    renderAppShell(new QueryClient());
+
+    await user.click(screen.getByRole("button", { name: "Templates" }));
+    await user.click(await screen.findByRole("tab", { name: "Account Variables" }));
+    const panel = within(screen.getByRole("tabpanel", { name: "Account Variables" }));
+    expect(panel.getByText(/Current account: Test/)).toBeInTheDocument();
+    expect(panel.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(panel.getByRole("heading", { name: "Built-in variables" })).toBeInTheDocument();
+    await user.click(panel.getByRole("button", { name: "Copy value of submitUser" }));
+    expect(copy).toHaveBeenCalledWith("tester");
+
+    const environment = panel.getByRole("textbox", { name: "Variable value 1" });
+    expect(environment).toHaveValue("test");
+    await user.clear(environment);
+    await user.type(environment, "testing");
+    await user.click(panel.getByRole("button", { name: "Add Variable" }));
+    await user.type(panel.getByRole("textbox", { name: "Variable name 2" }), "BUCKET");
+    await user.type(panel.getByRole("textbox", { name: "Variable value 2" }), "test-jobs");
+    await user.click(panel.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith(
+      "acct-test", { ENV: "testing", BUCKET: "test-jobs" }
+    ));
+
+    await user.click(panel.getByRole("button", { name: ".env" }));
+    const env = panel.getByRole("textbox", { name: "Edit variables as .env" });
+    expect(env).toHaveValue("ENV=testing\nBUCKET=test-jobs");
+    fireEvent.change(env, { target: { value: "BUCKET=test-jobs\ndate=reserved" } });
+    await user.click(panel.getByRole("button", { name: "Save" }));
+    expect(panel.getByRole("alert")).toHaveTextContent("Line 2: Invalid or reserved variable name.");
+    expect(saveAccountVariables).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(env, { target: { value: '# changed\nBUCKET="new # bucket"' } });
+    await user.click(panel.getByRole("button", { name: "Form" }));
+    expect(panel.queryByRole("textbox", { name: "Variable name 2" })).not.toBeInTheDocument();
+    expect(panel.getByRole("textbox", { name: "Variable value 1" })).toHaveValue("new # bucket");
+    await user.click(panel.getByRole("button", { name: ".env" }));
+    await user.click(panel.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith(
+      "acct-test", { BUCKET: "new # bucket" }
+    ));
+    await user.click(panel.getByRole("button", { name: "Form" }));
+    await user.click(panel.getByRole("button", { name: "Remove variable 1" }));
+    await user.click(panel.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saveAccountVariables).toHaveBeenLastCalledWith("acct-test", {}));
   });
 
   it("opens the account dialog from the account summary and switches accounts", async () => {

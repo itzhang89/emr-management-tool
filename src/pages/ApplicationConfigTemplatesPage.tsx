@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -27,8 +28,11 @@ import {
   useJobConfigTemplates,
   useUpdateJobConfigTemplate
 } from "@/hooks/useJobConfigTemplates";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useAccountTemplateVariables } from "@/hooks/useAccountTemplateVariables";
 import { useTemplates } from "@/hooks/useTemplates";
 import { useT } from "@/i18n";
+import { formatAppError } from "@/services/appErrorMessage";
 import { defaultExamplePayload } from "@/services/jobConfigExamples";
 import { buildKnownTemplateVariables } from "@/services/jsonTemplateVariables";
 import {
@@ -62,10 +66,15 @@ const TEMPLATE_EDITOR_TEXT_INPUT_PROPS = {
 
 type TemplateEditorSnapshot = Pick<
   JobConfigTemplate,
-  "name" | "description" | "payloadTemplate" | "customVariables" | "defaultResourceTemplateId"
+  "name" | "description" | "payloadTemplate" | "customVariables" | "defaultResourceTemplateId" | "scope"
 >;
 
 export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?: boolean }) {
+  const accountId = useActiveAwsAccount().data?.id;
+  return <AccountTemplatesPanel key={accountId} accountId={accountId} embedded={embedded} />;
+}
+
+function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; embedded: boolean }) {
   const t = useT();
   const templates = useJobConfigTemplates();
   const [editing, setEditing] = useState<Editing>();
@@ -73,7 +82,13 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
   const updateTemplate = useUpdateJobConfigTemplate();
   const deleteTemplate = useDeleteJobConfigTemplate();
   const duplicateTemplate = useDuplicateJobConfigTemplate();
-  const items = templates.data ?? [];
+  const [filter, setFilter] = useState("all");
+  const accountVariables = useAccountTemplateVariables(accountId).data;
+  const items = (templates.data ?? []).filter((template) => {
+    if (filter === "all") return true;
+    if (template.builtIn) return filter === "builtIn";
+    return (template.scope ?? "private") === filter;
+  });
 
   const importTemplate = async (raw: string) => {
     try {
@@ -87,17 +102,26 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
+      {!embedded ? (
         <div>
-          {embedded ? (
-            <h2 className="text-2xl font-semibold tracking-tight">{t("Application Config")}</h2>
-          ) : (
-            <h1 className="text-2xl font-semibold tracking-tight">{t("Application Config")}</h1>
-          )}
+          <h1 className="text-2xl font-semibold tracking-tight">{t("Application Config")}</h1>
           <p className="text-sm text-muted-foreground">
             {t("Manage full EMR submit JSON templates with variable substitution.")}
           </p>
         </div>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Select value={filter} onValueChange={setFilter}>
+          <SelectTrigger className="w-fit" aria-label={t("Filter by template scope")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t("All templates")}</SelectItem>
+            <SelectItem value="private">{t("Current account")}</SelectItem>
+            <SelectItem value="shared">{t("Shared across accounts")}</SelectItem>
+            <SelectItem value="builtIn">{t("Built-in")}</SelectItem>
+          </SelectContent>
+        </Select>
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -123,7 +147,11 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CardTitle>{template.name}</CardTitle>
-                {template.builtIn ? <Badge variant="secondary">{t("Built-in")}</Badge> : null}
+                {template.builtIn ? <Badge variant="secondary">{t("Built-in")}</Badge> : (
+                  <Badge variant="secondary">
+                    {template.scope === "shared" ? t("Shared across accounts") : t("Current account")}
+                  </Badge>
+                )}
               </div>
               <CardDescription>{template.description ?? t("No description")}</CardDescription>
             </CardHeader>
@@ -182,11 +210,14 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
                       toast.error("Built-in example templates are for reference and cannot be deleted.");
                       return;
                     }
+                    if (template.scope === "shared" && !window.confirm(t("Delete this shared template from all accounts?"))) {
+                      return;
+                    }
                     try {
                       await deleteTemplate.mutateAsync(template.id);
                       toast.success(t("Application config template deleted."));
                     } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Failed to delete template.");
+                      toast.error(formatAppError(error, "Failed to delete template."));
                     }
                   }}
                 >
@@ -200,6 +231,8 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
 
       <JobConfigTemplateDialog
         editing={editing}
+        accountVariableNames={Object.keys(accountVariables ?? {})}
+        saving={createTemplate.isPending || updateTemplate.isPending}
         onOpenChange={(open) => !open && setEditing(undefined)}
         onSave={async (template) => {
           try {
@@ -211,7 +244,7 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
             toast.success(t("Application config template saved."));
             setEditing(undefined);
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to save template.");
+            toast.error(formatAppError(error, "Failed to save template."));
           }
         }}
       />
@@ -221,10 +254,14 @@ export function ApplicationConfigTemplatesPage({ embedded = false }: { embedded?
 
 function JobConfigTemplateDialog({
   editing,
+  accountVariableNames,
+  saving,
   onOpenChange,
   onSave
 }: {
   editing: Editing;
+  accountVariableNames: string[];
+  saving: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (template: JobConfigTemplate) => Promise<void>;
 }) {
@@ -233,19 +270,19 @@ function JobConfigTemplateDialog({
   const template = editing?.template;
   const now = new Date().toISOString();
   const [name, setName] = useState("");
+  const [scope, setScope] = useState<NonNullable<JobConfigTemplate["scope"]>>("private");
   const [description, setDescription] = useState("");
   const [payloadTemplate, setPayloadTemplate] = useState(defaultExamplePayload());
   const [customVariables, setCustomVariables] = useState<TemplateVariableDefinition[]>([]);
   const [defaultResourceTemplateId, setDefaultResourceTemplateId] = useState<string>();
   const [resetSnapshot, setResetSnapshot] = useState<TemplateEditorSnapshot>(() => createEditorSnapshot());
   const [variableEditorKey, setVariableEditorKey] = useState(0);
-  const customVariableNamesKey = customVariables
-    .map((variable) => variable.name.trim())
+  const knownVariableNamesKey = [...customVariables.map((variable) => variable.name.trim()), ...accountVariableNames]
     .filter(Boolean)
     .join("\0");
   const knownVariables = useMemo(
-    () => buildKnownTemplateVariables(customVariableNamesKey ? customVariableNamesKey.split("\0") : []),
-    [customVariableNamesKey]
+    () => buildKnownTemplateVariables(knownVariableNamesKey ? knownVariableNamesKey.split("\0") : []),
+    [knownVariableNamesKey]
   );
 
   useEffect(() => {
@@ -257,6 +294,7 @@ function JobConfigTemplateDialog({
 
   const applyEditorSnapshot = (snapshot: TemplateEditorSnapshot) => {
     setName(snapshot.name);
+    setScope(snapshot.scope ?? "private");
     setDescription(snapshot.description ?? "");
     setPayloadTemplate(snapshot.payloadTemplate);
     setCustomVariables(snapshot.customVariables);
@@ -299,6 +337,18 @@ function JobConfigTemplateDialog({
           <Field label={t("Description")}>
             <Input value={description} onChange={(event) => setDescription(event.target.value)} {...TEMPLATE_EDITOR_TEXT_INPUT_PROPS} />
           </Field>
+          {!template?.builtIn ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Switch id="job-template-shared" checked={scope === "shared"}
+                  onCheckedChange={(checked) => setScope(checked ? "shared" : "private")} />
+                <Label htmlFor="job-template-shared">{t("Share with all accounts")}</Label>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {t("All local accounts can use and edit a shared template.")}
+              </p>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between">
             <Label>{t("Payload JSON")}</Label>
             <div className="flex gap-2">
@@ -327,7 +377,7 @@ function JobConfigTemplateDialog({
                   if (!content) return;
                   try {
                     const imported = parseImportedJobConfigTemplate(content);
-                    const snapshot = createEditorSnapshot(imported);
+                    const snapshot = createEditorSnapshot({ ...imported, scope });
                     applyEditorSnapshot(snapshot);
                     setResetSnapshot(snapshot);
                     setVariableEditorKey((key) => key + 1);
@@ -359,6 +409,7 @@ function JobConfigTemplateDialog({
             {t("Cancel")}
           </Button>
           <Button
+            disabled={saving}
             onClick={() => {
               try {
                 JSON.parse(payloadTemplate);
@@ -370,7 +421,12 @@ function JobConfigTemplateDialog({
                 toast.error("Each variable needs a name.");
                 return;
               }
+              if (template?.scope === "shared" && scope === "private" &&
+                  !window.confirm(t("Stop sharing? This template will belong to the current account."))) {
+                return;
+              }
               void onSave({
+                scope,
                 id: template?.id ?? crypto.randomUUID(),
                 name,
                 description,
@@ -886,6 +942,7 @@ function stripEditorId(variable: EditableVariable): TemplateVariableDefinition {
 function createEditorSnapshot(template?: Partial<TemplateEditorSnapshot>): TemplateEditorSnapshot {
   return {
     name: template?.name ?? "",
+    scope: template?.scope ?? "private",
     description: template?.description ?? "",
     payloadTemplate: template?.payloadTemplate ?? defaultExamplePayload(),
     customVariables: template?.customVariables ?? [],

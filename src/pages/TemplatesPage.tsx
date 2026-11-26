@@ -1,6 +1,9 @@
 import { Copy, Edit2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { PersistMount } from "@/components/layout/PersistMount";
+import { AccountTemplateVariablesEditor } from "@/components/templates/AccountTemplateVariablesEditor";
+import { BuiltinTemplateVariables } from "@/components/templates/BuiltinTemplateVariables";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PageHeader } from "@/components/layout/PageHeader";
+import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useT } from "@/i18n";
 import { useCreateTemplate, useDeleteTemplate, useDuplicateTemplate, useTemplates, useUpdateTemplate } from "@/hooks/useTemplates";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
@@ -24,23 +27,51 @@ type Editing = { template?: ResourceTemplate } | undefined;
 
 export function TemplatesPage() {
   const t = useT();
+  const [tab, setTab] = useState("appConfig");
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader pageId="templates" />
+    <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+      <TabsList aria-label={t("Templates")}>
+        <TabsTrigger value="appConfig">{t("Application Config")}</TabsTrigger>
+        <TabsTrigger value="resources">{t("Resource Templates")}</TabsTrigger>
+        <TabsTrigger value="accountVariables">{t("Account Variables")}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="appConfig">
+        <ApplicationConfigTemplatesPage embedded />
+      </TabsContent>
+      <TabsContent value="resources">
+        <ResourceTemplatesPanel />
+      </TabsContent>
+      <TabsContent value="accountVariables" forceMount hidden={tab !== "accountVariables"}>
+        <PersistMount visible={tab === "accountVariables"}>
+          <AccountVariablesPanel />
+        </PersistMount>
+      </TabsContent>
+    </Tabs>
+  );
+}
 
-      <Tabs defaultValue="appConfig" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="appConfig">{t("Application Config")}</TabsTrigger>
-          <TabsTrigger value="resources">{t("Resource Templates")}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="appConfig">
-          <ApplicationConfigTemplatesPage embedded />
-        </TabsContent>
-        <TabsContent value="resources">
-          <ResourceTemplatesPanel />
-        </TabsContent>
-      </Tabs>
+function AccountVariablesPanel() {
+  const t = useT();
+  const activeAccount = useActiveAwsAccount();
+  const account = activeAccount.data;
+
+  if (activeAccount.isLoading) {
+    return <p role="status" className="text-sm text-muted-foreground">{t("Loading…")}</p>;
+  }
+  if (activeAccount.isError) {
+    return <p role="alert" className="text-sm text-destructive">{t("Could not load AWS accounts.")}</p>;
+  }
+  if (!account) {
+    return <p className="text-sm text-muted-foreground">{t("Activate an AWS account to manage its template variables.")}</p>;
+  }
+  return (
+    <div key={account.id} className="max-w-3xl space-y-6">
+      <p className="text-sm text-muted-foreground">
+        {t("Current account: {name}", { name: account.name })} · {account.region}
+      </p>
+      <BuiltinTemplateVariables accountId={account.id} />
+      <AccountTemplateVariablesEditor accountId={account.id} />
     </div>
   );
 }
@@ -57,11 +88,7 @@ function ResourceTemplatesPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("Resource Templates")}</h2>
-          <p className="text-sm text-muted-foreground">{t("Manage reusable Spark driver and executor sizing presets.")}</p>
-        </div>
+      <div className="flex justify-end">
         <Button onClick={() => setEditing({})}>
           <Plus data-icon="inline-start" />
           {t("Resource Template")}

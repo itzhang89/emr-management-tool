@@ -33,7 +33,7 @@ export function scanTemplateVariables(text: string): TemplateVariableMatch[] {
 
 export function buildKnownTemplateVariables(customNames: string[]): string[] {
   const custom = customNames.map((n) => n.trim()).filter(Boolean);
-  return [...BUILTIN_TEMPLATE_VARIABLES, ...custom];
+  return [...new Set([...BUILTIN_TEMPLATE_VARIABLES, ...custom])];
 }
 
 export function diagnoseUnknownTemplateVariables(

@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => {
             }
           }
         }`,
-    customVariables: [{ name: "ENV", type: "text", description: "Runtime environment name" }],
+    customVariables: [{ name: "ENV", type: "text", description: "Runtime environment name", required: false }],
     defaultResourceTemplateId: "tiny",
     createdAt: "",
     updatedAt: ""
@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     defaultJobConfigTemplate,
+    accountVariables: {} as Record<string, string>,
     startJobRun: vi.fn(),
     createJobConfigTemplate: vi.fn(),
     toastError: vi.fn(),
@@ -72,6 +73,10 @@ vi.mock("@/components/templates/JsonTemplateEditor", () => ({
   }) => (
     <textarea aria-label="payload json" value={value} onChange={(event) => onChange(event.target.value)} />
   )
+}));
+
+vi.mock("@/hooks/useAccountTemplateVariables", () => ({
+  useAccountTemplateVariables: () => ({ data: mocks.accountVariables })
 }));
 
 vi.mock("@/hooks/useAwsSettings", () => ({
@@ -146,6 +151,7 @@ describe("SubmitJobPage", () => {
     vi.clearAllMocks();
     localStorage.clear();
     mocks.jobConfigTemplates = [{ ...mocks.defaultJobConfigTemplate }];
+    mocks.accountVariables = {};
     mocks.createJobConfigTemplate.mockImplementation(async (template) => {
       mocks.jobConfigTemplates.push(template);
       return mocks.jobConfigTemplates;
@@ -225,6 +231,36 @@ describe("SubmitJobPage", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("staging")).toBeInTheDocument();
     });
+  });
+
+  it("uses the account value before the template form value", async () => {
+    mocks.accountVariables = { ENV: "account-prod" };
+    const template = mocks.jobConfigTemplates[0];
+    template.customVariables = [{ ...template.customVariables[0], required: true }];
+    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ENV}"]');
+    writeSubmitJobFormCache("acct-test", template.id, {
+      resourceTemplateId: "tiny",
+      customVariables: { ENV: "cached-dev" }
+    });
+    renderPage();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(mocks.startJobRun).toHaveBeenCalledWith(expect.objectContaining({
+      accountId: "acct-test",
+      arguments: ["account-prod"]
+    }));
+  });
+
+  it("identifies a missing variable and blocks the job", async () => {
+    const template = mocks.jobConfigTemplates[0];
+    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ACCOUNT_BUCKET}"]');
+    renderPage();
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Submit" }));
+
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("Missing template variables: ACCOUNT_BUCKET"));
+    expect(mocks.startJobRun).not.toHaveBeenCalled();
   });
 
   it("keeps submit job auto refresh off by default and enables it after a successful submit", async () => {

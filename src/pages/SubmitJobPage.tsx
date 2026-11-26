@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n";
+import { useAccountTemplateVariables } from "@/hooks/useAccountTemplateVariables";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { useStartJobRun } from "@/hooks/useEmr";
 import { useSubmitJobSubmissionHistory } from "@/hooks/useSubmitJobAutoRefresh";
@@ -41,6 +42,7 @@ import {
 import { parameterizeSourcePayloadForTemplate } from "@/services/parameterizeEntryPointArguments";
 import {
   getDefaultCustomVariableValues,
+  MissingTemplateVariablesError,
   resolveTemplatePayload,
   toStartJobRunRequest,
   validateSubmitPayload
@@ -52,7 +54,7 @@ import {
   writeSubmitJobLastTemplate
 } from "@/services/submitJobFormStorage";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { JobConfigTemplate, JobRunSummary, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest } from "@/types/domain";
+import type { JobConfigTemplate, JobRunSummary, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest, TemplateVariableDefinition } from "@/types/domain";
 
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
@@ -61,15 +63,21 @@ const FORM_PANE_MIN_PX = 220;
 const HISTORY_PANE_MIN_PX = 140;
 const SPLITTER_PX = 8;
 
-export function SubmitJobPage({
+type SubmitJobPageProps = {
+  onOpenLogs?: (job: JobRunSummary) => void;
+  onOpenAiAssistant?: () => void;
+};
+
+export function SubmitJobPage(props: SubmitJobPageProps) {
+  const accountId = useActiveAwsAccount().data?.id;
+  return <AccountSubmitJobPage key={accountId} accountId={accountId} {...props} />;
+}
+
+function AccountSubmitJobPage({
+  accountId,
   onOpenLogs,
   onOpenAiAssistant
-}: {
-  onOpenLogs?: (job: JobRunSummary) => void;
-  /** When provided, FAILED rows in Recent Submissions gain the same "Analyze"
-      action as Job History, opening the AI assistant for failure analysis. */
-  onOpenAiAssistant?: () => void;
-}) {
+}: SubmitJobPageProps & { accountId?: string }) {
   const t = useT();
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
@@ -77,8 +85,8 @@ export function SubmitJobPage({
   const pendingSourceSubmit = useSessionStore((state) => state.pendingSourceSubmit);
   const setPendingSourceSubmit = useSessionStore((state) => state.setPendingSourceSubmit);
   const virtualClusterId = useEffectiveVirtualClusterId();
-  const activeAccount = useActiveAwsAccount();
-  const accountId = activeAccount.data?.id;
+  const accountVariablesQuery = useAccountTemplateVariables(accountId);
+  const accountVariables = accountVariablesQuery.data;
   const startJobRun = useStartJobRun();
   const {
     autoRefresh: submissionAutoRefresh,
@@ -94,6 +102,7 @@ export function SubmitJobPage({
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [resourceTemplateId, setResourceTemplateId] = useState("tiny");
+  const [restoredTemplateId, setRestoredTemplateId] = useState<string>();
   const [customVariables, setCustomVariables] = useState<Record<string, string | number | boolean | string[]>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [cloneRequest, setCloneRequest] = useState<StartJobRunRequest>();
@@ -115,13 +124,25 @@ export function SubmitJobPage({
   const templates = jobConfigTemplates.data ?? [];
   const resources = resourceTemplates.data?.resourceTemplates ?? [];
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
+  const { formVariables, accountVariableNames } = useMemo(() => {
+    const formVariables: TemplateVariableDefinition[] = [];
+    const accountVariableNames: string[] = [];
+    for (const variable of selectedTemplate?.customVariables ?? []) {
+      if (accountVariables && Object.hasOwn(accountVariables, variable.name)) {
+        accountVariableNames.push(variable.label ?? variable.name);
+      } else {
+        formVariables.push(variable);
+      }
+    }
+    return { formVariables, accountVariableNames };
+  }, [accountVariables, selectedTemplate]);
   const selectedResources =
     resources.find((template) => template.id === resourceTemplateId)?.resources ??
     resources.find((template) => template.id === "tiny")?.resources ??
     defaultResources();
 
   useEffect(() => {
-    if (selectedTemplateId || templates.length === 0) return;
+    if (templates.length === 0 || templates.some((template) => template.id === selectedTemplateId)) return;
     const lastTemplateId = accountId ? readSubmitJobLastTemplate(accountId) : undefined;
     if (lastTemplateId && templates.some((template) => template.id === lastTemplateId)) {
       setSelectedTemplateId(lastTemplateId);
@@ -134,20 +155,32 @@ export function SubmitJobPage({
     if (!selectedTemplate) return;
     const defaults = getDefaultCustomVariableValues(selectedTemplate);
     const cached = accountId ? readSubmitJobFormCache(accountId, selectedTemplate.id) : undefined;
-    setCustomVariables(cached?.customVariables ? { ...defaults, ...cached.customVariables } : defaults);
+    for (const variable of selectedTemplate.customVariables) {
+      const cachedValue = cached?.customVariables?.[variable.name];
+      const defaultValue = defaults[variable.name];
+      if (
+        cachedValue !== undefined &&
+        typeof cachedValue === typeof defaultValue &&
+        (!Array.isArray(defaultValue) || Array.isArray(cachedValue))
+      ) {
+        defaults[variable.name] = cachedValue;
+      }
+    }
+    setCustomVariables(defaults);
+    setRestoredTemplateId(selectedTemplate.id);
     setResourceTemplateId(
       cached?.resourceTemplateId ?? selectedTemplate.defaultResourceTemplateId ?? "tiny"
     );
-  }, [accountId, selectedTemplate?.id]);
+  }, [accountId, selectedTemplate?.id, selectedTemplate?.updatedAt]);
 
   useEffect(() => {
-    if (!accountId || !selectedTemplateId || cloneRequest) return;
+    if (!accountId || !selectedTemplateId || selectedTemplateId !== restoredTemplateId || cloneRequest) return;
     writeSubmitJobFormCache(accountId, selectedTemplateId, {
       resourceTemplateId,
       customVariables
     });
     writeSubmitJobLastTemplate(accountId, selectedTemplateId);
-  }, [accountId, cloneRequest, customVariables, resourceTemplateId, selectedTemplateId]);
+  }, [accountId, cloneRequest, customVariables, resourceTemplateId, restoredTemplateId, selectedTemplateId]);
 
   useEffect(() => {
     if (!clonedJobRequest) return;
@@ -204,19 +237,39 @@ export function SubmitJobPage({
     });
   }, [mode, resourceTemplateId, selectedResources, virtualClusterId]);
 
-  const resolvedPayload = useMemo(() => {
-    if (cloneRequest || !selectedTemplate || !virtualClusterId) return undefined;
-    try {
-      return resolveTemplatePayload(selectedTemplate, {
-        templateName: selectedTemplate.name,
-        virtualClusterId,
-        submitUser: submitUserQuery.data ?? "user",
-        customVariables
-      });
-    } catch {
-      return undefined;
+  const resolution = useMemo(() => {
+    if (cloneRequest || !selectedTemplate || !virtualClusterId || selectedTemplate.id !== restoredTemplateId) return {};
+    if (!accountVariables) {
+      return {
+        error: accountVariablesQuery.isError
+          ? t("Could not load account template variables.")
+          : t("Loading account template variables…")
+      };
     }
-  }, [cloneRequest, customVariables, selectedTemplate, submitUserQuery.data, virtualClusterId]);
+    try {
+      return {
+        payload: resolveTemplatePayload(selectedTemplate, {
+          templateName: selectedTemplate.name,
+          virtualClusterId,
+          submitUser: submitUserQuery.data ?? "user",
+          customVariables,
+          accountVariables
+        })
+      };
+    } catch (error) {
+      return {
+        error: error instanceof MissingTemplateVariablesError
+          ? t("Missing template variables: {names}. Set them in Templates → Account Variables or provide template values.", {
+              names: error.variables.join(", ")
+            })
+          : t("Could not resolve template JSON.")
+      };
+    }
+  }, [
+    accountVariables, accountVariablesQuery.isError, cloneRequest, customVariables, restoredTemplateId,
+    selectedTemplate, submitUserQuery.data, t, virtualClusterId
+  ]);
+  const { payload: resolvedPayload, error: resolutionError } = resolution;
 
   const previewPayload = useMemo(() => {
     if (cloneRequest) return cloneRequest;
@@ -245,6 +298,7 @@ export function SubmitJobPage({
           selectedTemplate,
           resolvedPayload,
           selectedResources,
+          formVariables,
           customVariables
         });
       }
@@ -252,7 +306,7 @@ export function SubmitJobPage({
         toast.error("Complete the template selections before submitting.");
         return;
       }
-      const job = await startJobRun.mutateAsync(request);
+      const job = await startJobRun.mutateAsync({ ...request, accountId: request.accountId ?? accountId });
       toast.success(t("Submitted {name}", { name: job.name }));
       setCloneRequest(undefined);
       enableAfterSubmit();
@@ -260,15 +314,18 @@ export function SubmitJobPage({
       toast.error(errorMessage(error, "Failed to submit job."));
     }
   }, [
+    accountId,
     cloneRequest,
     customVariables,
     enableAfterSubmit,
+    formVariables,
     mode,
     resolvedPayload,
     selectedResources,
     selectedTemplate,
     sourceJson,
-    startJobRun
+    startJobRun,
+    t
   ]);
 
   const validateAndSubmit = useCallback(() => {
@@ -295,12 +352,12 @@ export function SubmitJobPage({
       return;
     }
     if (!selectedTemplate || !resolvedPayload) {
-      toast.error("Select a job config template and virtual cluster.");
+      toast.error(resolutionError ?? "Select a job config template and virtual cluster.");
       return;
     }
     const validation = validateSubmitPayload(
       applyResourceOverride(resolvedPayload, selectedResources),
-      selectedTemplate.customVariables,
+      formVariables,
       customVariables
     );
     if (!validation.ok) {
@@ -311,7 +368,7 @@ export function SubmitJobPage({
       return;
     }
     void submit();
-  }, [cloneRequest, customVariables, mode, resolvedPayload, selectedResources, selectedTemplate, sourceJson, submit]);
+  }, [cloneRequest, customVariables, formVariables, mode, resolutionError, resolvedPayload, selectedResources, selectedTemplate, sourceJson, submit]);
 
   const enterSourceMode = useCallback(() => {
     if (previewPayload) {
@@ -593,13 +650,19 @@ export function SubmitJobPage({
                       </SelectContent>
                     </Select>
                   </Field>
-                  {selectedTemplate ? (
+                  {selectedTemplate && (formVariables.length > 0 || accountVariableNames.length === 0) ? (
                     <TemplateVariableFields
-                      variables={selectedTemplate.customVariables ?? []}
+                      variables={formVariables}
                       values={customVariables}
                       onChange={setCustomVariables}
                     />
                   ) : null}
+                  {accountVariableNames.length > 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t("Using account values for {names}.", { names: accountVariableNames.join(", ") })}
+                    </p>
+                  ) : null}
+                  {resolutionError ? <p role="status" className="text-sm text-muted-foreground">{resolutionError}</p> : null}
                 </div>
               ) : (
                 <div className="min-h-0 flex-1 overflow-hidden">
@@ -779,12 +842,14 @@ function buildSubmitRequest({
   selectedTemplate,
   resolvedPayload,
   selectedResources,
+  formVariables,
   customVariables
 }: {
   cloneRequest?: StartJobRunRequest;
   selectedTemplate?: JobConfigTemplate;
   resolvedPayload?: ResolvedJobPayload;
   selectedResources: SparkResourceConfig;
+  formVariables: TemplateVariableDefinition[];
   customVariables: Record<string, string | number | boolean | string[]>;
 }) {
   if (cloneRequest) {
@@ -795,7 +860,7 @@ function buildSubmitRequest({
   }
   const validation = validateSubmitPayload(
     applyResourceOverride(resolvedPayload, selectedResources),
-    selectedTemplate.customVariables,
+    formVariables,
     customVariables
   );
   if (!validation.ok) {
