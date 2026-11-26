@@ -104,7 +104,9 @@ vi.mock("@/hooks/useJobConfigTemplates", () => ({
   }),
   useSubmitUser: () => ({ data: "tester" }),
   useCreateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useImportJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSetJobConfigTemplateScope: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDuplicateJobConfigTemplate: () => ({ mutate: vi.fn(), isPending: false })
 }));

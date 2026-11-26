@@ -6,8 +6,8 @@ use crate::models::{
 };
 use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Row, SqlitePool};
-use std::collections::BTreeMap;
+use sqlx::{Executor, Row, Sqlite, SqlitePool};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 
 pub const JOB_HISTORY_RETENTION_DAYS: i64 = 30;
@@ -185,6 +185,49 @@ pub async fn create_job_config_template(
     account_id: &str,
     template: &JobConfigTemplate,
 ) -> AppResult<()> {
+    insert_job_config_template(pool, account_id, template).await
+}
+
+pub async fn import_job_config_template(
+    pool: &SqlitePool,
+    account_id: &str,
+    mut template: JobConfigTemplate,
+) -> AppResult<()> {
+    template.scope = JobConfigTemplateScope::Private;
+    let mut tx = pool
+        .begin_with("begin immediate")
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    let names: HashSet<String> = sqlx::query_scalar(
+        "select name from job_config_templates
+         where scope = 'shared' or (scope = 'private' and account_id = ?1)",
+    )
+    .bind(account_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .into_iter()
+    .collect();
+    if names.contains(&template.name) {
+        let base = format!("{}_Imported", template.name);
+        template.name = base.clone();
+        let mut index = 2;
+        while names.contains(&template.name) {
+            template.name = format!("{base}_{index}");
+            index += 1;
+        }
+    }
+    insert_job_config_template(&mut *tx, account_id, &template).await?;
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))
+}
+
+async fn insert_job_config_template<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
+    account_id: &str,
+    template: &JobConfigTemplate,
+) -> AppResult<()> {
     let (scope, owner) = template_storage_scope(account_id, template.scope);
     let payload = job_config_template_payload(account_id, template)?;
     let result = sqlx::query(
@@ -200,7 +243,7 @@ pub async fn create_job_config_template(
     .bind(&template.id)
     .bind(&template.name)
     .bind(payload)
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
     if result.rows_affected() == 0 {
@@ -213,6 +256,44 @@ pub async fn create_job_config_template(
 
 pub async fn update_job_config_template(
     pool: &SqlitePool,
+    account_id: &str,
+    template: &JobConfigTemplate,
+) -> AppResult<()> {
+    write_job_config_template(pool, account_id, template).await
+}
+
+pub async fn set_job_config_template_scope(
+    pool: &SqlitePool,
+    account_id: &str,
+    id: &str,
+    scope: JobConfigTemplateScope,
+) -> AppResult<()> {
+    let mut tx = pool
+        .begin_with("begin immediate")
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    let payload = sqlx::query_scalar(
+        "select payload from job_config_templates where id = ?1
+         and (scope = 'shared' or (scope = 'private' and account_id = ?2))",
+    )
+    .bind(id)
+    .bind(account_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?
+    .ok_or_else(|| AppError::validation("Template was not found."))?;
+    let mut template: JobConfigTemplate = from_payload(payload)?;
+    template.id = id.to_string();
+    template.scope = scope;
+    template.updated_at = Utc::now();
+    write_job_config_template(&mut *tx, account_id, &template).await?;
+    tx.commit()
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))
+}
+
+async fn write_job_config_template<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
     account_id: &str,
     template: &JobConfigTemplate,
 ) -> AppResult<()> {
@@ -242,7 +323,7 @@ pub async fn update_job_config_template(
     .bind(payload)
     .bind(&template.id)
     .bind(account_id)
-    .execute(pool)
+    .execute(executor)
     .await
     .map_err(|error| AppError::storage(error.to_string()))?;
     if result.rows_affected() == 0 {
@@ -802,10 +883,69 @@ mod tests {
     use std::collections::HashMap;
 
     #[tokio::test]
+    async fn imports_keep_the_original_name_until_it_conflicts_with_a_visible_template() {
+        use super::{
+            create_job_config_template, import_job_config_template, list_job_config_templates,
+            seed_job_config_template, JobConfigTemplateScope,
+        };
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        migrate(&pool).await.unwrap();
+
+        let mut template = crate::state::default_job_config_templates().remove(0);
+        seed_job_config_template(&pool, "acct-a", &template)
+            .await
+            .unwrap();
+        template.built_in = false;
+        template.name = "Daily ETL".into();
+        template.id = "private-in-b".into();
+        create_job_config_template(&pool, "acct-b", &template)
+            .await
+            .unwrap();
+        template.id = "shared-in-b".into();
+        template.name = "Shared job".into();
+        template.scope = JobConfigTemplateScope::Shared;
+        create_job_config_template(&pool, "acct-b", &template)
+            .await
+            .unwrap();
+
+        for (id, name) in [
+            ("new", "Daily ETL"),
+            ("duplicate", "Daily ETL"),
+            ("repeated", "Daily ETL"),
+            ("built-in", "example"),
+            ("shared-name", "Shared job"),
+        ] {
+            template.id = id.into();
+            template.name = name.into();
+            import_job_config_template(&pool, "acct-a", template.clone())
+                .await
+                .unwrap();
+        }
+
+        let templates = list_job_config_templates(&pool, "acct-a").await.unwrap();
+        for (id, expected) in [
+            ("new", "Daily ETL"),
+            ("duplicate", "Daily ETL_Imported"),
+            ("repeated", "Daily ETL_Imported_2"),
+            ("built-in", "example_Imported"),
+            ("shared-name", "Shared job_Imported"),
+        ] {
+            let imported = templates.iter().find(|template| template.id == id).unwrap();
+            assert_eq!(imported.name, expected);
+            assert_eq!(imported.scope, JobConfigTemplateScope::Private);
+        }
+    }
+
+    #[tokio::test]
     async fn shared_job_config_moves_between_scopes_without_copying() {
         use super::{
             create_job_config_template, delete_job_config_template, list_job_config_templates,
-            update_job_config_template, JobConfigTemplateScope,
+            set_job_config_template_scope, update_job_config_template, JobConfigTemplateScope,
         };
 
         let pool = SqlitePoolOptions::new()
@@ -833,10 +973,14 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        template.scope = JobConfigTemplateScope::Shared;
-        update_job_config_template(&pool, "acct-a", &template)
-            .await
-            .unwrap();
+        set_job_config_template_scope(
+            &pool,
+            "acct-a",
+            &template.id,
+            JobConfigTemplateScope::Shared,
+        )
+        .await
+        .unwrap();
         let mut shared = list_job_config_templates(&pool, "acct-b")
             .await
             .unwrap()
@@ -862,8 +1006,7 @@ mod tests {
             shared.name
         );
 
-        shared.scope = JobConfigTemplateScope::Private;
-        update_job_config_template(&pool, "acct-b", &shared)
+        set_job_config_template_scope(&pool, "acct-b", &shared.id, JobConfigTemplateScope::Private)
             .await
             .unwrap();
         assert!(list_job_config_templates(&pool, "acct-a")
@@ -875,6 +1018,7 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(private.id, template.id);
+        assert_eq!(private.name, "Edited from B");
         assert_eq!(private.account_id.as_deref(), Some("acct-b"));
         assert!(delete_job_config_template(&pool, "acct-a", &private.id)
             .await

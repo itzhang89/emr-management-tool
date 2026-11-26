@@ -59,7 +59,7 @@ export function buildImportedJobConfigTemplate(payload: JobConfigTemplateExport)
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
-    name: payload.name.endsWith(" (Imported)") ? payload.name : `${payload.name} (Imported)`,
+    name: payload.name,
     description: payload.description,
     payloadTemplate: payload.payloadTemplate,
     customVariables: payload.customVariables,

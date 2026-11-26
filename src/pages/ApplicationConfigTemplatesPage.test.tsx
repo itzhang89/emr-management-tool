@@ -4,32 +4,24 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ApplicationConfigTemplatesPage } from "@/pages/ApplicationConfigTemplatesPage";
+import type { JobConfigTemplate } from "@/types/domain";
 
-const { createTemplate, deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
+const { createTemplate, importTemplate, setTemplateScope, listTemplates, deleteTemplate, openTextFile, toastError } = vi.hoisted(() => ({
   createTemplate: vi.fn(),
+  importTemplate: vi.fn(),
+  setTemplateScope: vi.fn(),
+  listTemplates: vi.fn<() => JobConfigTemplate[]>(),
   deleteTemplate: vi.fn(),
   openTextFile: vi.fn(),
   toastError: vi.fn()
 }));
 
 vi.mock("@/hooks/useJobConfigTemplates", () => ({
-  useJobConfigTemplates: () => ({
-    data: [
-      {
-        id: "daily-etl",
-        name: "example",
-        description: "Starter template",
-        payloadTemplate: "{}",
-        customVariables: [{ name: "ENV", type: "enum", options: ["dev", "prod"] }],
-        defaultResourceTemplateId: "tiny",
-        builtIn: true,
-        createdAt: "",
-        updatedAt: ""
-      }
-    ]
-  }),
+  useJobConfigTemplates: () => ({ data: listTemplates() }),
   useCreateJobConfigTemplate: () => ({ mutateAsync: createTemplate, isPending: false }),
+  useImportJobConfigTemplate: () => ({ mutateAsync: importTemplate, isPending: false }),
   useUpdateJobConfigTemplate: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSetJobConfigTemplateScope: () => ({ mutateAsync: setTemplateScope, isPending: false }),
   useDeleteJobConfigTemplate: () => ({ mutateAsync: deleteTemplate, isPending: false }),
   useDuplicateJobConfigTemplate: () => ({ mutate: vi.fn(), isPending: false })
 }));
@@ -54,9 +46,22 @@ vi.mock("sonner", () => ({
   }
 }));
 
+const example: JobConfigTemplate = {
+  id: "daily-etl",
+  name: "example",
+  description: "Starter template",
+  payloadTemplate: "{}",
+  customVariables: [{ name: "ENV", type: "enum", options: ["dev", "prod"] }],
+  defaultResourceTemplateId: "tiny",
+  builtIn: true,
+  createdAt: "",
+  updatedAt: ""
+};
+
 describe("ApplicationConfigTemplatesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listTemplates.mockReturnValue([example]);
   });
 
   function renderPage() {
@@ -76,6 +81,41 @@ describe("ApplicationConfigTemplatesPage", () => {
     expect(screen.getByRole("heading", { name: "Application Config" })).toBeInTheDocument();
     expect(screen.getByText("example")).toBeInTheDocument();
     expect(screen.getByText(/1 variable/i)).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Share with all accounts" })).not.toBeInTheDocument();
+  });
+
+  it("passes the original name to the import mutation for conflict resolution", async () => {
+    const user = userEvent.setup();
+    openTextFile.mockResolvedValueOnce(JSON.stringify({ name: "example", payloadTemplate: "{}" }));
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(importTemplate).toHaveBeenCalledWith(expect.objectContaining({ name: "example" }));
+    expect(createTemplate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { scope: "private", nextScope: "shared" },
+    { scope: "shared", nextScope: "private" }
+  ] as const)("can change a $scope template to $nextScope from its card", async ({ scope, nextScope }) => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    listTemplates.mockReturnValue([example, { ...example, id: "custom", builtIn: false, name: "Daily ETL", scope }]);
+    renderPage();
+
+    const share = screen.getByRole("switch", { name: "Share with all accounts" });
+    expect(share).toHaveAttribute("aria-checked", String(scope === "shared"));
+    if (scope === "shared") {
+      await user.click(share);
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("belong to the current account"));
+      expect(setTemplateScope).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+    }
+    await user.click(share);
+
+    expect(setTemplateScope).toHaveBeenCalledWith({ id: "custom", scope: nextScope });
+    confirm.mockRestore();
   });
 
   it("can create a job config template shared with all accounts", async () => {

@@ -12,6 +12,7 @@ const templates: TranslationDictionary = {
   "Current account": "当前账号",
   "Shared across accounts": "跨账号共享",
   "Share with all accounts": "与所有账号共享",
+  "Failed to change template sharing.": "无法更改模板共享状态。",
   "All local accounts can use and edit a shared template.": "本应用中的所有账号都可以使用和编辑共享模板。",
   "Stop sharing? This template will belong to the current account.": "停止共享？此模板将归当前账号所有。",
   "Delete this shared template from all accounts?": "从所有账号中删除此共享模板？",
@@ -82,6 +83,7 @@ const templates: TranslationDictionary = {
   // Application config templates.
   "Manage full EMR submit JSON templates with variable substitution.": "管理支持变量替换的完整 EMR 提交 JSON 模板。",
   "Application config template imported.": "应用配置模板已导入。",
+  "Failed to import template.": "无法导入模板。",
   "Application config template saved.": "应用配置模板已保存。",
   "Application config template deleted.": "应用配置模板已删除。",
   "Import": "导入",

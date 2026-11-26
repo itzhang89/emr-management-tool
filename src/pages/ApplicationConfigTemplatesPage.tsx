@@ -26,7 +26,9 @@ import {
   useCreateJobConfigTemplate,
   useDeleteJobConfigTemplate,
   useDuplicateJobConfigTemplate,
+  useImportJobConfigTemplate,
   useJobConfigTemplates,
+  useSetJobConfigTemplateScope,
   useUpdateJobConfigTemplate
 } from "@/hooks/useJobConfigTemplates";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
@@ -80,7 +82,9 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
   const templates = useJobConfigTemplates();
   const [editing, setEditing] = useState<Editing>();
   const createTemplate = useCreateJobConfigTemplate();
+  const importJobConfigTemplate = useImportJobConfigTemplate();
   const updateTemplate = useUpdateJobConfigTemplate();
+  const setTemplateScope = useSetJobConfigTemplateScope();
   const deleteTemplate = useDeleteJobConfigTemplate();
   const duplicateTemplate = useDuplicateJobConfigTemplate();
   const [filter, setFilter] = useState("all");
@@ -94,10 +98,21 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
   const importTemplate = async (raw: string) => {
     try {
       const payload = parseImportedJobConfigTemplate(raw);
-      await createTemplate.mutateAsync(buildImportedJobConfigTemplate(payload));
+      await importJobConfigTemplate.mutateAsync(buildImportedJobConfigTemplate(payload));
       toast.success(t("Application config template imported."));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to import template.");
+      toast.error(formatAppError(error, t("Failed to import template.")));
+    }
+  };
+
+  const changeTemplateSharing = async (id: string, shared: boolean) => {
+    if (!shared && !window.confirm(t("Stop sharing? This template will belong to the current account."))) {
+      return;
+    }
+    try {
+      await setTemplateScope.mutateAsync({ id, scope: shared ? "shared" : "private" });
+    } catch (error) {
+      toast.error(formatAppError(error, t("Failed to change template sharing.")));
     }
   };
 
@@ -126,6 +141,7 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
         <div className="flex gap-2">
           <Button
             variant="outline"
+            disabled={importJobConfigTemplate.isPending}
             onClick={async () => {
               const content = await openTextFile();
               if (!content) return;
@@ -165,6 +181,16 @@ function AccountTemplatesPanel({ accountId, embedded }: { accountId?: string; em
                   ? ` · ${t("default resource {id}", { id: template.defaultResourceTemplateId })}`
                   : ""}
               </div>
+              {!template.builtIn && (
+                <Label className="w-fit">
+                  <Switch
+                    checked={template.scope === "shared"}
+                    disabled={setTemplateScope.isPending}
+                    onCheckedChange={(shared) => void changeTemplateSharing(template.id, shared)}
+                  />
+                  {t("Share with all accounts")}
+                </Label>
+              )}
               <div className="flex gap-2">
                 <Button
                   variant="ghost"

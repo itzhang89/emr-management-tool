@@ -35,8 +35,16 @@ export function useCreateJobConfigTemplate() {
   return useTemplateMutation(jobConfigTemplateService.create);
 }
 
+export function useImportJobConfigTemplate() {
+  return useTemplateMutation(jobConfigTemplateService.import);
+}
+
 export function useUpdateJobConfigTemplate() {
   return useTemplateMutation(jobConfigTemplateService.update);
+}
+
+export function useSetJobConfigTemplateScope() {
+  return useTemplateMutation(jobConfigTemplateService.setScope);
 }
 
 export function useDeleteJobConfigTemplate() {

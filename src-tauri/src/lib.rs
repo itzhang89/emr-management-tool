@@ -74,6 +74,7 @@ pub fn run() {
             commands::job_config_templates::list_job_config_templates,
             commands::job_config_templates::create_job_config_template,
             commands::job_config_templates::update_job_config_template,
+            commands::job_config_templates::set_job_config_template_scope,
             commands::job_config_templates::delete_job_config_template,
             commands::job_config_templates::duplicate_job_config_template,
             commands::job_config_templates::list_account_template_variables,

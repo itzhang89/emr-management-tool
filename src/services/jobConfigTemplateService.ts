@@ -13,8 +13,12 @@ export const jobConfigTemplateService = {
   list: async (accountId: string) => unwrapTemplates(await tauriClient.listJobConfigTemplates({ accountId })),
   create: async (accountId: string, template: JobConfigTemplate) =>
     unwrapTemplates(await tauriClient.createJobConfigTemplate({ accountId, template })),
+  import: async (accountId: string, template: JobConfigTemplate) =>
+    unwrapTemplates(await tauriClient.createJobConfigTemplate({ accountId, template, resolveImportName: true })),
   update: async (accountId: string, template: JobConfigTemplate) =>
     unwrapTemplates(await tauriClient.updateJobConfigTemplate({ accountId, template })),
+  setScope: async (accountId: string, request: { id: string; scope: NonNullable<JobConfigTemplate["scope"]> }) =>
+    unwrapTemplates(await tauriClient.setJobConfigTemplateScope({ accountId, ...request })),
   delete: async (accountId: string, id: string) =>
     unwrapTemplates(await tauriClient.deleteJobConfigTemplate({ accountId, id })),
   duplicate: async (accountId: string, id: string) =>

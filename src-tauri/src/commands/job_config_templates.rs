@@ -2,8 +2,8 @@ use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
     AccountTemplateVariables, AccountTemplateVariablesRequest, JobConfigTemplateMutationRequest,
-    JobConfigTemplateSaveRequest, JobConfigTemplateScope, JobConfigTemplatesResponse,
-    TemplateAccountRequest,
+    JobConfigTemplateSaveRequest, JobConfigTemplateScope, JobConfigTemplateScopeRequest,
+    JobConfigTemplatesResponse, TemplateAccountRequest,
 };
 use crate::state::default_job_config_templates;
 use chrono::Utc;
@@ -35,13 +35,18 @@ async fn templates_for_account(
     pool: &SqlitePool,
     account_id: &str,
 ) -> AppResult<JobConfigTemplatesResponse> {
+    prepare_account_templates(pool, account_id).await?;
+    Ok(JobConfigTemplatesResponse {
+        job_config_templates: repository::list_job_config_templates(pool, account_id).await?,
+    })
+}
+
+async fn prepare_account_templates(pool: &SqlitePool, account_id: &str) -> AppResult<()> {
     repository::migrate_job_config_templates_to_account(pool, account_id).await?;
     for template in default_job_config_templates() {
         repository::seed_job_config_template(pool, account_id, &template).await?;
     }
-    Ok(JobConfigTemplatesResponse {
-        job_config_templates: repository::list_job_config_templates(pool, account_id).await?,
-    })
+    Ok(())
 }
 
 #[tauri::command]
@@ -69,6 +74,15 @@ pub async fn create_job_config_template(
     let now = Utc::now();
     request.template.created_at = now;
     request.template.updated_at = now;
+    if request.resolve_import_name {
+        prepare_account_templates(&pool, &request.account_id).await?;
+        repository::import_job_config_template(&pool, &request.account_id, request.template)
+            .await?;
+        return Ok(JobConfigTemplatesResponse {
+            job_config_templates: repository::list_job_config_templates(&pool, &request.account_id)
+                .await?,
+        });
+    }
     repository::create_job_config_template(&pool, &request.account_id, &request.template).await?;
     templates_for_account(&pool, &request.account_id).await
 }
@@ -80,6 +94,21 @@ pub async fn update_job_config_template(
     let pool = account_pool(&request.account_id).await?;
     request.template.updated_at = Utc::now();
     repository::update_job_config_template(&pool, &request.account_id, &request.template).await?;
+    templates_for_account(&pool, &request.account_id).await
+}
+
+#[tauri::command]
+pub async fn set_job_config_template_scope(
+    request: JobConfigTemplateScopeRequest,
+) -> AppResult<JobConfigTemplatesResponse> {
+    let pool = account_pool(&request.account_id).await?;
+    repository::set_job_config_template_scope(
+        &pool,
+        &request.account_id,
+        &request.id,
+        request.scope,
+    )
+    .await?;
     templates_for_account(&pool, &request.account_id).await
 }
 

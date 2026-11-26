@@ -518,6 +518,16 @@ pub struct JobConfigTemplateMutationRequest {
 pub struct JobConfigTemplateSaveRequest {
     pub account_id: String,
     pub template: JobConfigTemplate,
+    #[serde(default)]
+    pub resolve_import_name: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobConfigTemplateScopeRequest {
+    pub account_id: String,
+    pub id: String,
+    pub scope: JobConfigTemplateScope,
 }
 
 #[derive(Debug, Deserialize)]

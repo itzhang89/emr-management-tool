@@ -175,10 +175,12 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     duplicateTemplate: (request: { id: string; type: "application" | "resource" }) => call("duplicate_template", request),
     listJobConfigTemplates: (request: { accountId: string }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("list_job_config_templates", request),
-    createJobConfigTemplate: (request: { accountId: string; template: JobConfigTemplate }) =>
+    createJobConfigTemplate: (request: { accountId: string; template: JobConfigTemplate; resolveImportName?: boolean }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("create_job_config_template", request),
     updateJobConfigTemplate: (request: { accountId: string; template: JobConfigTemplate }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("update_job_config_template", request),
+    setJobConfigTemplateScope: (request: { accountId: string; id: string; scope: NonNullable<JobConfigTemplate["scope"]> }) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("set_job_config_template_scope", request),
     deleteJobConfigTemplate: (request: { accountId: string; id: string }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("delete_job_config_template", request),
     duplicateJobConfigTemplate: (request: { accountId: string; id: string }) =>
