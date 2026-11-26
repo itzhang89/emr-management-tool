@@ -66,6 +66,22 @@ describe("templateEngine", () => {
     expect(resolved.jobDriver.sparkSubmitJobDriver.entryPointArguments).toEqual(["--env=dev"]);
   });
 
+  it("renders account-only values and safely substitutes JSON strings", () => {
+    const value = 's3://bucket/quote"and\\slash';
+    const resolved = resolveTemplatePayload(
+      { ...template, payloadTemplate: template.payloadTemplate.replace("s3://bucket/app.jar", "${ENTRY_POINT}") },
+      {
+        templateName: "Daily ETL",
+        virtualClusterId: "vc-123",
+        submitUser: "tester",
+        customVariables: { ENV: "dev" },
+        accountVariables: { ENTRY_POINT: value, ENV: "prod" }
+      }
+    );
+    expect(resolved.jobDriver.sparkSubmitJobDriver.entryPoint).toBe(value);
+    expect(resolved.jobDriver.sparkSubmitJobDriver.entryPointArguments).toEqual(["--env=prod"]);
+  });
+
   it("formats date variables with custom patterns", () => {
     const output = replaceTemplateVariables(
       "${date:YYYY/MM/DD}",

@@ -76,6 +76,8 @@ pub fn run() {
             commands::job_config_templates::update_job_config_template,
             commands::job_config_templates::delete_job_config_template,
             commands::job_config_templates::duplicate_job_config_template,
+            commands::job_config_templates::list_account_template_variables,
+            commands::job_config_templates::save_account_template_variables,
             commands::system::get_submit_user,
             commands::logs::list_job_log_streams,
             commands::logs::get_job_logs,

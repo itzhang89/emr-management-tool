@@ -1,6 +1,6 @@
 use crate::models::{
-    ApplicationTemplate, AwsIdentity, AwsSettings, JobConfigTemplate, JobRunSummary,
-    ResourceTemplate, SparkResourceConfig, TemplateVariableDefinition,
+    ApplicationTemplate, AwsIdentity, AwsSettings, JobConfigTemplate, JobConfigTemplateScope,
+    JobRunSummary, ResourceTemplate, SparkResourceConfig, TemplateVariableDefinition,
 };
 use chrono::Utc;
 use std::collections::HashMap;
@@ -157,6 +157,7 @@ pub fn default_job_config_templates() -> Vec<JobConfigTemplate> {
     vec![JobConfigTemplate {
         id: "daily-etl".to_string(),
         account_id: None,
+        scope: JobConfigTemplateScope::Private,
         name: "example".to_string(),
         description: Some(
             "Reference template showing how to configure an EMR submit payload.".to_string(),

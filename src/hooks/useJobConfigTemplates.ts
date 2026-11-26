@@ -1,58 +1,50 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { JobConfigTemplate } from "@/types/domain";
 import { useActiveAwsAccount } from "@/hooks/useAwsSettings";
 import { jobConfigTemplateService } from "@/services/jobConfigTemplateService";
 import { tauriClient } from "@/services/tauriClient";
+import type { JobConfigTemplate } from "@/types/domain";
 
-function useActiveAccountId() {
-  const activeAccount = useActiveAwsAccount();
-  return activeAccount.data?.id;
-}
+const templatesKey = ["jobConfigTemplates"] as const;
 
 export function useJobConfigTemplates() {
-  const accountId = useActiveAccountId();
-
+  const accountId = useActiveAwsAccount().data?.id;
   return useQuery({
-    queryKey: ["jobConfigTemplates", accountId],
-    queryFn: jobConfigTemplateService.list,
+    queryKey: [...templatesKey, accountId],
+    queryFn: () => jobConfigTemplateService.list(accountId!),
     enabled: Boolean(accountId)
   });
 }
 
-export function useCreateJobConfigTemplate() {
-  const accountId = useActiveAccountId();
+function useTemplateMutation<T>(mutate: (accountId: string, value: T) => Promise<JobConfigTemplate[]>) {
+  const accountId = useActiveAwsAccount().data?.id;
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (template: JobConfigTemplate) => jobConfigTemplateService.create(template),
-    onSuccess: (response) => queryClient.setQueryData(["jobConfigTemplates", accountId], response)
+    mutationFn: (value: T) => {
+      if (!accountId) throw new Error("No active AWS account.");
+      return mutate(accountId, value);
+    },
+    onSuccess: async () => {
+      // Remove inactive snapshots so switching accounts cannot show stale sharing state.
+      queryClient.removeQueries({ queryKey: templatesKey, type: "inactive" });
+      await queryClient.invalidateQueries({ queryKey: templatesKey });
+    }
   });
+}
+
+export function useCreateJobConfigTemplate() {
+  return useTemplateMutation(jobConfigTemplateService.create);
 }
 
 export function useUpdateJobConfigTemplate() {
-  const accountId = useActiveAccountId();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (template: JobConfigTemplate) => jobConfigTemplateService.update(template),
-    onSuccess: (response) => queryClient.setQueryData(["jobConfigTemplates", accountId], response)
-  });
+  return useTemplateMutation(jobConfigTemplateService.update);
 }
 
 export function useDeleteJobConfigTemplate() {
-  const accountId = useActiveAccountId();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => jobConfigTemplateService.delete(id),
-    onSuccess: (response) => queryClient.setQueryData(["jobConfigTemplates", accountId], response)
-  });
+  return useTemplateMutation(jobConfigTemplateService.delete);
 }
 
 export function useDuplicateJobConfigTemplate() {
-  const accountId = useActiveAccountId();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => jobConfigTemplateService.duplicate(id),
-    onSuccess: (response) => queryClient.setQueryData(["jobConfigTemplates", accountId], response)
-  });
+  return useTemplateMutation(jobConfigTemplateService.duplicate);
 }
 
 export function useSubmitUser() {

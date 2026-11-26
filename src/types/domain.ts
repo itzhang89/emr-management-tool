@@ -290,9 +290,13 @@ export interface TemplateVariableDefinition {
   required?: boolean;
 }
 
+export type JobConfigTemplateScope = "private" | "shared";
+export type AccountTemplateVariables = Record<string, string>;
+
 export interface JobConfigTemplate {
   id: string;
   accountId?: string;
+  scope?: JobConfigTemplateScope;
   name: string;
   description?: string;
   payloadTemplate: string;
@@ -323,6 +327,7 @@ export interface TemplateResolveContext {
   virtualClusterId: string;
   submitUser: string;
   customVariables: Record<string, string | number | boolean | string[]>;
+  accountVariables?: AccountTemplateVariables;
   now?: Date;
 }
 

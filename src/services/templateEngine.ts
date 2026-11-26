@@ -20,10 +20,20 @@ export const BUILTIN_TEMPLATE_VARIABLES = [
 
 export type BuiltinTemplateVariable = (typeof BUILTIN_TEMPLATE_VARIABLES)[number];
 
+export function isBuiltinTemplateVariable(name: string) {
+  return BUILTIN_TEMPLATE_VARIABLES.some((builtin) => builtin === name);
+}
+
 export const TEMPLATE_VARIABLE_PATTERN = /\$\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/g;
 const EMR_JOB_NAME_PATTERN = /^[.\-_/#A-Za-z0-9]+$/;
 const EMR_JOB_NAME_MESSAGE =
   "Job name can only contain letters, numbers, dot, hyphen, underscore, slash, or #. Replace spaces with hyphens or underscores.";
+
+export class MissingTemplateVariablesError extends Error {
+  constructor(readonly variables: string[]) {
+    super(`Missing template variables: ${variables.join(", ")}.`);
+  }
+}
 
 export function resolveTemplatePayload(
   template: JobConfigTemplate,
@@ -31,8 +41,32 @@ export function resolveTemplatePayload(
 ): ResolvedJobPayload {
   const now = context.now ?? new Date();
   const variables = buildVariableMap(template, context, now);
-  const resolved = replaceTemplateVariables(template.payloadTemplate, variables, now);
-  return JSON.parse(resolved) as ResolvedJobPayload;
+  const missing = new Set<string>();
+  const render = (value: string) => replaceTemplateVariables(value, variables, now, (name) => missing.add(name));
+  const resolveNode = (value: unknown): unknown => {
+    if (typeof value === "string") return render(value);
+    if (Array.isArray(value)) return value.map(resolveNode);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [render(key), resolveNode(entry)]));
+    }
+    return value;
+  };
+  const payload = resolveNode(JSON.parse(template.payloadTemplate));
+  if (missing.size) throw new MissingTemplateVariablesError([...missing]);
+  return payload as ResolvedJobPayload;
+}
+
+export function getBuiltinTemplateVariableValues(
+  context: Pick<TemplateResolveContext, "templateName" | "virtualClusterId" | "submitUser">,
+  now: Date
+): Record<BuiltinTemplateVariable, string> {
+  return {
+    template_name: context.templateName,
+    virtualClusterId: context.virtualClusterId,
+    submitUser: context.submitUser,
+    date: formatWithPattern(now, defaultFormatForVariableType("date")),
+    datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
+  };
 }
 
 export function buildVariableMap(
@@ -40,24 +74,22 @@ export function buildVariableMap(
   context: TemplateResolveContext,
   now: Date
 ): Record<string, string> {
-  const builtins: Record<BuiltinTemplateVariable, string> = {
-    template_name: context.templateName,
-    virtualClusterId: context.virtualClusterId,
-    submitUser: context.submitUser,
-    date: formatWithPattern(now, defaultFormatForVariableType("date")),
-    datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
-  };
-  const variables: Record<string, string> = { ...builtins };
+  const variables: Record<string, string> = Object.assign(Object.create(null), getBuiltinTemplateVariableValues(context, now));
 
   for (const definition of template.customVariables) {
-    const raw = context.customVariables[definition.name];
-    if (raw === undefined || raw === null) {
-      if (definition.defaultValue !== undefined) {
-        variables[definition.name] = stringifyVariableValue(definition.defaultValue, definition, now);
-      }
-      continue;
+    if (isBuiltinTemplateVariable(definition.name)) continue;
+    const raw = Object.hasOwn(context.customVariables, definition.name)
+      ? context.customVariables[definition.name]
+      : undefined;
+    const value = raw ?? definition.defaultValue;
+    if (value !== undefined && value !== null) {
+      variables[definition.name] = stringifyVariableValue(value, definition, now);
+    } else if (!definition.required) {
+      variables[definition.name] = "";
     }
-    variables[definition.name] = stringifyVariableValue(raw, definition, now);
+  }
+  for (const [name, value] of Object.entries(context.accountVariables ?? {})) {
+    if (!isBuiltinTemplateVariable(name)) variables[name] = value;
   }
 
   return variables;
@@ -66,19 +98,25 @@ export function buildVariableMap(
 export function replaceTemplateVariables(
   input: string,
   variables: Record<string, string>,
-  now: Date
+  now: Date,
+  onMissing: (name: string) => void = (name) => { throw new MissingTemplateVariablesError([name]); }
 ): string {
   return input.replace(TEMPLATE_VARIABLE_PATTERN, (_match, key: string, pattern?: string) => {
     if (key === "date" || key === "datetime") {
       return formatWithPattern(now, pattern ?? defaultFormatForVariableType(key === "date" ? "date" : "dateTime"));
     }
-    if (pattern && variables[key]) {
-      const parsed = new Date(variables[key]);
+    if (!Object.hasOwn(variables, key)) {
+      onMissing(key);
+      return "";
+    }
+    const value = variables[key];
+    if (pattern && value) {
+      const parsed = new Date(value);
       if (!Number.isNaN(parsed.getTime())) {
         return formatWithPattern(parsed, pattern);
       }
     }
-    return variables[key] ?? "";
+    return value;
   });
 }
 
@@ -107,7 +145,9 @@ export function validateSubmitPayload(
 
   for (const definition of customVariables) {
     if (!definition.required) continue;
-    const value = customVariableValues[definition.name];
+    const value = Object.hasOwn(customVariableValues, definition.name)
+      ? customVariableValues[definition.name]
+      : undefined;
     if (value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0)) {
       errors.push(`${definition.label ?? definition.name} is required.`);
     }
@@ -189,9 +229,9 @@ function stringifyVariableValue(
 }
 
 export function getDefaultCustomVariableValues(template: JobConfigTemplate) {
-  const values: Record<string, string | number | boolean | string[]> = {};
+  const values: Record<string, string | number | boolean | string[]> = Object.create(null);
   for (const definition of template.customVariables) {
-    if (definition.defaultValue !== undefined) {
+    if (definition.defaultValue != null) {
       values[definition.name] = definition.defaultValue;
     } else if (definition.type === "boolean") {
       values[definition.name] = false;

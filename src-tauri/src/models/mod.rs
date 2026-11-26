@@ -475,11 +475,21 @@ pub struct TemplateVariableDefinition {
     pub required: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JobConfigTemplateScope {
+    #[default]
+    Private,
+    Shared,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobConfigTemplate {
     pub id: String,
     pub account_id: Option<String>,
+    #[serde(default)]
+    pub scope: JobConfigTemplateScope,
     pub name: String,
     pub description: Option<String>,
     pub payload_template: String,
@@ -499,7 +509,28 @@ pub struct JobConfigTemplatesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobConfigTemplateMutationRequest {
+    pub account_id: String,
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobConfigTemplateSaveRequest {
+    pub account_id: String,
+    pub template: JobConfigTemplate,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateAccountRequest {
+    pub account_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountTemplateVariablesRequest {
+    pub account_id: String,
+    pub variables: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

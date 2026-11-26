@@ -1,107 +1,156 @@
 use crate::db::repository;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    JobConfigTemplate, JobConfigTemplateMutationRequest, JobConfigTemplatesResponse,
+    AccountTemplateVariablesRequest, JobConfigTemplateMutationRequest,
+    JobConfigTemplateSaveRequest, JobConfigTemplateScope, JobConfigTemplatesResponse,
+    TemplateAccountRequest,
 };
 use crate::state::default_job_config_templates;
-use tauri::AppHandle;
+use chrono::Utc;
+use sqlx::SqlitePool;
+use std::collections::BTreeMap;
 
-async fn active_account_id() -> AppResult<String> {
+const BUILTIN_VARIABLES: &[&str] = &[
+    "template_name",
+    "virtualClusterId",
+    "submitUser",
+    "date",
+    "datetime",
+];
+
+async fn account_pool(account_id: &str) -> AppResult<SqlitePool> {
     let pool = repository::pool().await?;
-    repository::active_aws_account(&pool)
+    if repository::get_aws_account(&pool, account_id)
         .await?
-        .map(|account| account.id)
-        .ok_or_else(|| AppError::validation("No active AWS account."))
+        .is_none()
+    {
+        return Err(AppError::validation("AWS account was not found."));
+    }
+    Ok(pool)
 }
 
-async fn list_job_config_templates_for_active_account(
-    _app: &AppHandle,
+async fn templates_for_account(
+    pool: &SqlitePool,
+    account_id: &str,
 ) -> AppResult<JobConfigTemplatesResponse> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id().await?;
-    repository::migrate_job_config_templates_to_account(&pool, &account_id).await?;
-    let mut templates = repository::list_job_config_templates(&pool, &account_id).await?;
-    let defaults = default_job_config_templates();
-    for default_template in defaults {
-        match templates
-            .iter()
-            .position(|template| template.id == default_template.id && template.built_in)
-        {
-            Some(index) => {
-                if templates[index].name != default_template.name {
-                    repository::upsert_job_config_template(&pool, &account_id, &default_template)
-                        .await?;
-                    templates[index] = default_template;
-                }
-            }
-            None => {
-                repository::upsert_job_config_template(&pool, &account_id, &default_template)
-                    .await?;
-                templates.push(default_template);
-            }
-        }
+    repository::migrate_job_config_templates_to_account(pool, account_id).await?;
+    for template in default_job_config_templates() {
+        repository::seed_job_config_template(pool, account_id, &template).await?;
     }
-
     Ok(JobConfigTemplatesResponse {
-        job_config_templates: templates,
+        job_config_templates: repository::list_job_config_templates(pool, account_id).await?,
     })
 }
 
 #[tauri::command]
-pub async fn list_job_config_templates(app: AppHandle) -> AppResult<JobConfigTemplatesResponse> {
-    list_job_config_templates_for_active_account(&app).await
+pub async fn list_job_config_templates(
+    request: TemplateAccountRequest,
+) -> AppResult<JobConfigTemplatesResponse> {
+    let pool = account_pool(&request.account_id).await?;
+    templates_for_account(&pool, &request.account_id).await
 }
 
 #[tauri::command]
 pub async fn create_job_config_template(
-    app: AppHandle,
-    request: JobConfigTemplate,
+    mut request: JobConfigTemplateSaveRequest,
 ) -> AppResult<JobConfigTemplatesResponse> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id().await?;
-    repository::upsert_job_config_template(&pool, &account_id, &request).await?;
-    list_job_config_templates_for_active_account(&app).await
+    let pool = account_pool(&request.account_id).await?;
+    if default_job_config_templates()
+        .iter()
+        .any(|template| template.id == request.template.id)
+    {
+        return Err(AppError::validation(
+            "This ID is reserved for a built-in template.",
+        ));
+    }
+    request.template.built_in = false;
+    let now = Utc::now();
+    request.template.created_at = now;
+    request.template.updated_at = now;
+    repository::create_job_config_template(&pool, &request.account_id, &request.template).await?;
+    templates_for_account(&pool, &request.account_id).await
 }
 
 #[tauri::command]
 pub async fn update_job_config_template(
-    app: AppHandle,
-    request: JobConfigTemplate,
+    mut request: JobConfigTemplateSaveRequest,
 ) -> AppResult<JobConfigTemplatesResponse> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id().await?;
-    repository::upsert_job_config_template(&pool, &account_id, &request).await?;
-    list_job_config_templates_for_active_account(&app).await
+    let pool = account_pool(&request.account_id).await?;
+    request.template.updated_at = Utc::now();
+    repository::update_job_config_template(&pool, &request.account_id, &request.template).await?;
+    templates_for_account(&pool, &request.account_id).await
 }
 
 #[tauri::command]
 pub async fn delete_job_config_template(
-    app: AppHandle,
     request: JobConfigTemplateMutationRequest,
 ) -> AppResult<JobConfigTemplatesResponse> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id().await?;
-    repository::delete_template(&pool, "jobConfig", Some(&account_id), &request.id).await?;
-    list_job_config_templates_for_active_account(&app).await
+    let pool = account_pool(&request.account_id).await?;
+    repository::delete_job_config_template(&pool, &request.account_id, &request.id).await?;
+    templates_for_account(&pool, &request.account_id).await
 }
 
 #[tauri::command]
 pub async fn duplicate_job_config_template(
-    app: AppHandle,
     request: JobConfigTemplateMutationRequest,
 ) -> AppResult<JobConfigTemplatesResponse> {
-    let pool = repository::pool().await?;
-    let account_id = active_account_id().await?;
-    let templates = repository::list_job_config_templates(&pool, &account_id).await?;
-    let mut copy = templates
-        .iter()
+    let pool = account_pool(&request.account_id).await?;
+    let mut copy = repository::list_job_config_templates(&pool, &request.account_id)
+        .await?
+        .into_iter()
         .find(|template| template.id == request.id)
-        .cloned()
         .ok_or_else(|| AppError::validation("Template was not found."))?;
     copy.id = uuid::Uuid::new_v4().to_string();
     copy.name = format!("{} Copy", copy.name);
     copy.built_in = false;
-    copy.account_id = Some(account_id.clone());
-    repository::upsert_job_config_template(&pool, &account_id, &copy).await?;
-    list_job_config_templates_for_active_account(&app).await
+    copy.scope = JobConfigTemplateScope::Private;
+    let now = Utc::now();
+    copy.created_at = now;
+    copy.updated_at = now;
+    repository::create_job_config_template(&pool, &request.account_id, &copy).await?;
+    templates_for_account(&pool, &request.account_id).await
+}
+
+async fn active_account_variables_pool(account_id: &str) -> AppResult<SqlitePool> {
+    let pool = repository::pool().await?;
+    if repository::active_aws_account(&pool)
+        .await?
+        .is_some_and(|account| account.id == account_id)
+    {
+        Ok(pool)
+    } else {
+        Err(AppError::validation(
+            "Template variables are available for the active AWS account only.",
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn list_account_template_variables(
+    request: TemplateAccountRequest,
+) -> AppResult<BTreeMap<String, String>> {
+    let pool = active_account_variables_pool(&request.account_id).await?;
+    repository::list_account_template_variables(&pool, &request.account_id).await
+}
+
+#[tauri::command]
+pub async fn save_account_template_variables(
+    request: AccountTemplateVariablesRequest,
+) -> AppResult<BTreeMap<String, String>> {
+    for name in request.variables.keys() {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            || BUILTIN_VARIABLES.contains(&name.as_str())
+        {
+            return Err(AppError::validation(format!(
+                "Invalid or reserved variable name: {name}"
+            )));
+        }
+    }
+    let pool = active_account_variables_pool(&request.account_id).await?;
+    repository::save_account_template_variables(&pool, &request.account_id, &request.variables)
+        .await?;
+    Ok(request.variables)
 }

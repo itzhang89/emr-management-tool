@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type {
+  AccountTemplateVariables,
   ApplicationTemplate,
   AppError,
   AwsAccount,
@@ -172,16 +173,20 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     updateTemplate: (request: ApplicationTemplate | ResourceTemplate) => call("update_template", request),
     deleteTemplate: (request: { id: string; type: "application" | "resource" }) => call("delete_template", request),
     duplicateTemplate: (request: { id: string; type: "application" | "resource" }) => call("duplicate_template", request),
-    listJobConfigTemplates: () =>
-      call<{ jobConfigTemplates: JobConfigTemplate[] }>("list_job_config_templates"),
-    createJobConfigTemplate: (request: JobConfigTemplate) =>
+    listJobConfigTemplates: (request: { accountId: string }) =>
+      call<{ jobConfigTemplates: JobConfigTemplate[] }>("list_job_config_templates", request),
+    createJobConfigTemplate: (request: { accountId: string; template: JobConfigTemplate }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("create_job_config_template", request),
-    updateJobConfigTemplate: (request: JobConfigTemplate) =>
+    updateJobConfigTemplate: (request: { accountId: string; template: JobConfigTemplate }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("update_job_config_template", request),
-    deleteJobConfigTemplate: (request: { id: string }) =>
+    deleteJobConfigTemplate: (request: { accountId: string; id: string }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("delete_job_config_template", request),
-    duplicateJobConfigTemplate: (request: { id: string }) =>
+    duplicateJobConfigTemplate: (request: { accountId: string; id: string }) =>
       call<{ jobConfigTemplates: JobConfigTemplate[] }>("duplicate_job_config_template", request),
+    listAccountTemplateVariables: (request: { accountId: string }) =>
+      call<AccountTemplateVariables>("list_account_template_variables", request),
+    saveAccountTemplateVariables: (request: { accountId: string; variables: AccountTemplateVariables }) =>
+      call<AccountTemplateVariables>("save_account_template_variables", request),
     getSubmitUser: () => call<string>("get_submit_user"),
     listJobLogStreams: (request: JobLogStreamsRequest) => call<JobLogStreamsResponse>("list_job_log_streams", request),
     getJobLogs: (request: JobLogsRequest) => call<JobLogsResponse>("get_job_logs", request),

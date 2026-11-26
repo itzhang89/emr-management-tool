@@ -1,11 +1,13 @@
 use crate::db::app_data_dir;
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    ApplicationTemplate, AwsAccount, JobConfigTemplate, JobRunSummary, ResourceTemplate,
+    ApplicationTemplate, AwsAccount, JobConfigTemplate, JobConfigTemplateScope, JobRunSummary,
+    ResourceTemplate,
 };
 use chrono::{Duration, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
+use std::collections::BTreeMap;
 use std::fs;
 
 pub const JOB_HISTORY_RETENTION_DAYS: i64 = 30;
@@ -109,15 +111,29 @@ pub async fn list_job_config_templates(
     pool: &SqlitePool,
     account_id: &str,
 ) -> AppResult<Vec<JobConfigTemplate>> {
-    let rows =
-        sqlx::query("select payload from job_config_templates where account_id = ?1 order by name")
-            .bind(account_id)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| AppError::storage(error.to_string()))?;
+    let rows = sqlx::query(
+        "select account_id, scope, id, payload from job_config_templates
+         where scope = 'shared' or (scope = 'private' and account_id = ?1)
+         order by name, id",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
 
     rows.into_iter()
-        .map(|row| from_payload(row.get::<String, _>("payload")))
+        .map(|row| {
+            let mut template: JobConfigTemplate = from_payload(row.get::<String, _>("payload"))?;
+            let shared = row.get::<String, _>("scope") == "shared";
+            template.id = row.get("id");
+            template.scope = if shared {
+                JobConfigTemplateScope::Shared
+            } else {
+                JobConfigTemplateScope::Private
+            };
+            template.account_id = (!shared).then(|| row.get("account_id"));
+            Ok(template)
+        })
         .collect()
 }
 
@@ -125,28 +141,34 @@ pub async fn migrate_job_config_templates_to_account(
     pool: &SqlitePool,
     account_id: &str,
 ) -> AppResult<()> {
+    // Older versions left unassigned templates for the first active account.
     sqlx::query(
-        "update job_config_templates set account_id = ?1 where account_id is null or account_id = 'legacy'",
+        "update job_config_templates as legacy
+         set account_id = ?1, scope = 'private',
+             id = case when exists (
+                 select 1 from job_config_templates as existing
+                 where existing.id = legacy.id
+                   and (existing.scope = 'shared' or (existing.scope = 'private' and existing.account_id = ?1))
+             ) then lower(hex(randomblob(16))) else legacy.id end
+         where legacy.scope = 'unassigned'
+           and exists (select 1 from aws_accounts where id = ?1 and is_active = 1)",
     )
-        .bind(account_id)
-        .execute(pool)
-        .await
-        .map_err(|error| AppError::storage(error.to_string()))?;
+    .bind(account_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
 }
 
-pub async fn upsert_job_config_template(
+pub async fn seed_job_config_template(
     pool: &SqlitePool,
     account_id: &str,
     template: &JobConfigTemplate,
 ) -> AppResult<()> {
-    let mut stored = template.clone();
-    stored.account_id = Some(account_id.to_string());
-    let payload =
-        serde_json::to_string(&stored).map_err(|error| AppError::storage(error.to_string()))?;
+    let payload = job_config_template_payload(account_id, template)?;
     sqlx::query(
-        "insert into job_config_templates (account_id, id, name, payload) values (?1, ?2, ?3, ?4)
-         on conflict(account_id, id) do update set name = excluded.name, payload = excluded.payload",
+        "insert into job_config_templates (scope, account_id, id, name, payload)
+         values ('private', ?1, ?2, ?3, ?4) on conflict(scope, account_id, id) do nothing",
     )
     .bind(account_id)
     .bind(&template.id)
@@ -158,12 +180,155 @@ pub async fn upsert_job_config_template(
     Ok(())
 }
 
-pub async fn delete_template(
+pub async fn create_job_config_template(
     pool: &SqlitePool,
-    table: &str,
-    account_id: Option<&str>,
+    account_id: &str,
+    template: &JobConfigTemplate,
+) -> AppResult<()> {
+    let (scope, owner) = template_storage_scope(account_id, template.scope);
+    let payload = job_config_template_payload(account_id, template)?;
+    let result = sqlx::query(
+        "insert into job_config_templates (scope, account_id, id, name, payload)
+         select ?1, ?2, ?3, ?4, ?5
+         where not exists (
+             select 1 from job_config_templates where id = ?3
+               and (?1 = 'shared' or scope = 'shared' or (scope = 'private' and account_id = ?2))
+         )",
+    )
+    .bind(scope)
+    .bind(owner)
+    .bind(&template.id)
+    .bind(&template.name)
+    .bind(payload)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::validation(
+            "A template with this ID already exists.",
+        ));
+    }
+    Ok(())
+}
+
+pub async fn update_job_config_template(
+    pool: &SqlitePool,
+    account_id: &str,
+    template: &JobConfigTemplate,
+) -> AppResult<()> {
+    let (scope, owner) = template_storage_scope(account_id, template.scope);
+    let payload = job_config_template_payload(account_id, template)?;
+    let result = sqlx::query(
+        "update job_config_templates as current
+         set scope = ?1, account_id = ?2, name = ?3,
+             payload = json_set(
+                 ?4, '$.builtIn', json(case when json_extract(current.payload, '$.builtIn') then 'true' else 'false' end),
+                     '$.createdAt', json_extract(current.payload, '$.createdAt')
+             )
+         where current.id = ?5
+           and (current.scope = 'shared' or (current.scope = 'private' and current.account_id = ?6))
+           and (?1 = 'private' or (
+               coalesce(json_extract(current.payload, '$.builtIn'), 0) = 0
+               and not exists (
+                   select 1 from job_config_templates as other
+                   where other.id = current.id
+                     and (other.scope <> current.scope or other.account_id <> current.account_id)
+               )
+           ))",
+    )
+    .bind(scope)
+    .bind(owner)
+    .bind(&template.name)
+    .bind(payload)
+    .bind(&template.id)
+    .bind(account_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::validation(
+            "The template is unavailable, or its ID cannot be shared. Refresh or duplicate the template and try again.",
+        ));
+    }
+    Ok(())
+}
+
+pub async fn delete_job_config_template(
+    pool: &SqlitePool,
+    account_id: &str,
     id: &str,
 ) -> AppResult<()> {
+    let result = sqlx::query(
+        "delete from job_config_templates where id = ?1
+         and (scope = 'shared' or (scope = 'private' and account_id = ?2))
+         and coalesce(json_extract(payload, '$.builtIn'), 0) = 0",
+    )
+    .bind(id)
+    .bind(account_id)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::validation(
+            "The template is unavailable or is a built-in template.",
+        ));
+    }
+    Ok(())
+}
+
+fn template_storage_scope(account_id: &str, scope: JobConfigTemplateScope) -> (&'static str, &str) {
+    match scope {
+        JobConfigTemplateScope::Private => ("private", account_id),
+        JobConfigTemplateScope::Shared => ("shared", ""),
+    }
+}
+
+fn job_config_template_payload(
+    account_id: &str,
+    template: &JobConfigTemplate,
+) -> AppResult<String> {
+    let mut stored = template.clone();
+    stored.account_id =
+        (template.scope == JobConfigTemplateScope::Private).then(|| account_id.to_string());
+    serde_json::to_string(&stored).map_err(|error| AppError::storage(error.to_string()))
+}
+
+pub async fn list_account_template_variables(
+    pool: &SqlitePool,
+    account_id: &str,
+) -> AppResult<BTreeMap<String, String>> {
+    let payload: Option<String> =
+        sqlx::query_scalar("select payload from account_template_variables where account_id = ?1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+    payload
+        .map(from_payload)
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+pub async fn save_account_template_variables(
+    pool: &SqlitePool,
+    account_id: &str,
+    variables: &BTreeMap<String, String>,
+) -> AppResult<()> {
+    let payload =
+        serde_json::to_string(variables).map_err(|error| AppError::storage(error.to_string()))?;
+    sqlx::query(
+        "insert into account_template_variables (account_id, payload) values (?1, ?2)
+         on conflict(account_id) do update set payload = excluded.payload",
+    )
+    .bind(account_id)
+    .bind(payload)
+    .execute(pool)
+    .await
+    .map_err(|error| AppError::storage(error.to_string()))?;
+    Ok(())
+}
+
+pub async fn delete_template(pool: &SqlitePool, table: &str, id: &str) -> AppResult<()> {
     if table == "resource" {
         let templates = list_resource_templates(pool).await?;
         if templates
@@ -179,53 +344,14 @@ pub async fn delete_template(
     let query = match table {
         "application" => "delete from application_templates where id = ?1",
         "resource" => "delete from resource_templates where id = ?1",
-        "jobConfig" => {
-            if let Some(_account_id) = account_id {
-                "delete from job_config_templates where account_id = ?1 and id = ?2 and json_extract(payload, '$.builtIn') = 0"
-            } else {
-                "delete from job_config_templates where id = ?1 and json_extract(payload, '$.builtIn') = 0"
-            }
-        }
         _ => return Err(AppError::validation("Unsupported template type.")),
     };
-    let result = if table == "jobConfig" {
-        if let Some(account_id) = account_id {
-            sqlx::query(query)
-                .bind(account_id)
-                .bind(id)
-                .execute(pool)
-                .await
-                .map_err(|error| AppError::storage(error.to_string()))?
-        } else {
-            sqlx::query(query)
-                .bind(id)
-                .execute(pool)
-                .await
-                .map_err(|error| AppError::storage(error.to_string()))?
-        }
-    } else {
-        sqlx::query(query)
-            .bind(id)
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::storage(error.to_string()))?
-    };
+    let result = sqlx::query(query)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
     if result.rows_affected() == 0 {
-        if table == "jobConfig" {
-            let templates = if let Some(account_id) = account_id {
-                list_job_config_templates(pool, account_id).await?
-            } else {
-                Vec::new()
-            };
-            if templates
-                .iter()
-                .any(|template| template.id == id && template.built_in)
-            {
-                return Err(AppError::validation(
-                    "Built-in job config templates cannot be deleted.",
-                ));
-            }
-        }
         return Err(AppError::validation("Template was not found."));
     }
     Ok(())
@@ -537,20 +663,16 @@ pub async fn active_aws_account(pool: &SqlitePool) -> AppResult<Option<AwsAccoun
 }
 
 async fn migrate(pool: &SqlitePool) -> AppResult<()> {
-    drop_job_config_templates_legacy_layout(pool).await?;
-
     for statement in [
         "create table if not exists application_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists resource_templates (id text primary key, name text not null, payload text not null)",
         "create table if not exists job_history (id text primary key, account_id text, region text, virtual_cluster_id text, created_at text not null, payload text not null)",
         "create table if not exists aws_accounts (id text primary key, name text not null, region text not null, is_active integer not null default 0, payload text not null)",
         "create table if not exists mcp_audit (id text primary key, timestamp text not null, status text not null, tool text not null, client text, duration_ms integer not null, args_json text not null default '{}', result_json text not null default '{}', error text, provider_id text, model_id text)",
-        "create table if not exists job_config_templates (
-            account_id text not null default 'legacy',
-            id text not null,
-            name text not null,
-            payload text not null,
-            primary key (account_id, id)
+        JOB_CONFIG_TEMPLATES_SCHEMA,
+        "create table if not exists account_template_variables (
+            account_id text primary key references aws_accounts(id) on delete cascade,
+            payload text not null
         )",
     ] {
         sqlx::query(statement)
@@ -559,6 +681,7 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
             .map_err(|error| AppError::storage(error.to_string()))?;
     }
 
+    migrate_legacy_job_config_templates(pool).await?;
     crate::db::llm::migrate(pool).await?;
     crate::db::chat::migrate(pool).await?;
     crate::db::redact::migrate(pool).await?;
@@ -568,28 +691,73 @@ async fn migrate(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
-/// Drop a `job_config_templates` written by an earlier, single-column-PK layout
-/// so the `create table if not exists` above lands on the composite key.
-///
-/// The reshape predates the first tagged release and there is no installed base
-/// to preserve, so the table is dropped rather than data-migrated. A database
-/// that already carries the current `primary key (account_id, id)` layout — or
-/// no table at all — is left untouched.
-async fn drop_job_config_templates_legacy_layout(pool: &SqlitePool) -> AppResult<()> {
-    let row = sqlx::query(
-        "select sql from sqlite_master where type = 'table' and name = 'job_config_templates'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|error| AppError::storage(error.to_string()))?;
-    let Some(sql) = row.and_then(|row| row.get::<Option<String>, _>("sql")) else {
-        return Ok(());
-    };
-    if sql.contains("primary key (account_id, id)") {
+const JOB_CONFIG_TEMPLATES_SCHEMA: &str = "create table if not exists job_config_templates (
+    scope text not null check (scope in ('private', 'shared', 'unassigned')),
+    account_id text not null,
+    id text not null,
+    name text not null,
+    payload text not null,
+    primary key (scope, account_id, id),
+    check (scope = 'private' or account_id = '')
+)";
+
+async fn migrate_legacy_job_config_templates(pool: &SqlitePool) -> AppResult<()> {
+    const LAYOUT: &str = "select case
+        when exists (select 1 from pragma_table_info('job_config_templates') where name = 'scope') then 'scoped'
+        when exists (select 1 from pragma_table_info('job_config_templates') where name = 'account_id') then 'account'
+        else 'unscoped'
+    end";
+    let layout: String = sqlx::query_scalar(LAYOUT)
+        .fetch_one(pool)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    if layout == "scoped" {
         return Ok(());
     }
-    sqlx::query("drop table job_config_templates")
-        .execute(pool)
+
+    let mut tx = pool
+        .begin_with("begin immediate")
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    let layout: String = sqlx::query_scalar(LAYOUT)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| AppError::storage(error.to_string()))?;
+    let copy = match layout.as_str() {
+        "account" => {
+            "insert into job_config_templates (scope, account_id, id, name, payload)
+            select case when owner is null then 'unassigned' else 'private' end,
+                   coalesce(owner, ''), id, name, payload
+            from (
+                select case when account_id = 'legacy'
+                             and not exists (select 1 from aws_accounts where id = 'legacy')
+                           then null else account_id end as owner, id, name, payload
+                from job_config_templates_legacy
+            )"
+        }
+        "unscoped" => {
+            "insert into job_config_templates (scope, account_id, id, name, payload)
+            select case when owner is null then 'unassigned' else 'private' end,
+                   coalesce(owner, ''), id, name, payload
+            from (
+                select nullif(json_extract(payload, '$.accountId'), '') as owner, id, name, payload
+                from job_config_templates_legacy
+            )"
+        }
+        _ => return Ok(()),
+    };
+    for statement in [
+        "alter table job_config_templates rename to job_config_templates_legacy",
+        JOB_CONFIG_TEMPLATES_SCHEMA,
+        copy,
+        "drop table job_config_templates_legacy",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| AppError::storage(error.to_string()))?;
+    }
+    tx.commit()
         .await
         .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(())
@@ -612,6 +780,200 @@ mod tests {
     use chrono::{Duration, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
     use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn shared_job_config_moves_between_scopes_without_copying() {
+        use super::{
+            create_job_config_template, delete_job_config_template, list_job_config_templates,
+            update_job_config_template, JobConfigTemplateScope,
+        };
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        migrate(&pool).await.unwrap();
+
+        let mut template = crate::state::default_job_config_templates().remove(0);
+        template.id = "custom".into();
+        template.built_in = false;
+        create_job_config_template(&pool, "acct-a", &template)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_job_config_templates(&pool, "acct-a")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(list_job_config_templates(&pool, "acct-b")
+            .await
+            .unwrap()
+            .is_empty());
+
+        template.scope = JobConfigTemplateScope::Shared;
+        update_job_config_template(&pool, "acct-a", &template)
+            .await
+            .unwrap();
+        let mut shared = list_job_config_templates(&pool, "acct-b")
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(shared.id, template.id);
+        assert_eq!(shared.scope, JobConfigTemplateScope::Shared);
+        assert_eq!(shared.account_id, None);
+        assert_eq!(shared.created_at, template.created_at);
+
+        shared.name = "Edited from B".into();
+        update_job_config_template(&pool, "acct-b", &shared)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_job_config_templates(&pool, "acct-a").await.unwrap()[0].name,
+            shared.name
+        );
+        assert_eq!(
+            list_job_config_templates(&pool, "new-account")
+                .await
+                .unwrap()[0]
+                .name,
+            shared.name
+        );
+
+        shared.scope = JobConfigTemplateScope::Private;
+        update_job_config_template(&pool, "acct-b", &shared)
+            .await
+            .unwrap();
+        assert!(list_job_config_templates(&pool, "acct-a")
+            .await
+            .unwrap()
+            .is_empty());
+        let private = list_job_config_templates(&pool, "acct-b")
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(private.id, template.id);
+        assert_eq!(private.account_id.as_deref(), Some("acct-b"));
+        assert!(delete_job_config_template(&pool, "acct-a", &private.id)
+            .await
+            .is_err());
+
+        shared.scope = JobConfigTemplateScope::Shared;
+        update_job_config_template(&pool, "acct-b", &shared)
+            .await
+            .unwrap();
+        delete_job_config_template(&pool, "acct-a", &shared.id)
+            .await
+            .unwrap();
+        assert!(list_job_config_templates(&pool, "acct-b")
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn legacy_job_config_keeps_its_original_account() {
+        use super::{list_job_config_templates, JobConfigTemplateScope};
+
+        let mut template = crate::state::default_job_config_templates().remove(0);
+        template.id = "legacy-custom".into();
+        template.built_in = false;
+        template.account_id = Some("acct-a".into());
+        let mut payload = serde_json::to_value(&template).unwrap();
+        payload.as_object_mut().unwrap().remove("scope");
+
+        for (schema, insert) in [
+            (
+                "create table job_config_templates (id text primary key, name text not null, payload text not null)",
+                "insert into job_config_templates values (?1, ?2, ?3)",
+            ),
+            (
+                "create table job_config_templates (
+                    account_id text not null, id text not null, name text not null, payload text not null,
+                    primary key (account_id, id)
+                )",
+                "insert into job_config_templates values ('acct-a', ?1, ?2, ?3)",
+            ),
+        ] {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::query(schema).execute(&pool).await.unwrap();
+            sqlx::query(insert)
+                .bind(&template.id)
+                .bind(&template.name)
+                .bind(payload.to_string())
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            migrate(&pool).await.unwrap();
+            migrate(&pool).await.unwrap();
+
+            let migrated = list_job_config_templates(&pool, "acct-a").await.unwrap().remove(0);
+            assert_eq!(migrated.id, template.id);
+            assert_eq!(migrated.scope, JobConfigTemplateScope::Private);
+            assert_eq!(migrated.account_id, template.account_id);
+            assert_eq!(migrated.payload_template, template.payload_template);
+            assert!(list_job_config_templates(&pool, "acct-b").await.unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn account_template_variable_values_are_isolated() {
+        use super::{
+            delete_aws_account, list_account_template_variables, save_account_template_variables,
+        };
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        migrate(&pool).await.unwrap();
+        for (account, environment) in [("acct-a", "dev"), ("acct-b", "prod")] {
+            sqlx::query("insert into aws_accounts (id, name, region, payload) values (?1, ?1, 'us-east-1', '{}')")
+                .bind(account)
+                .execute(&pool)
+                .await
+                .unwrap();
+            save_account_template_variables(
+                &pool,
+                account,
+                &[("ENV".into(), environment.into())].into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            list_account_template_variables(&pool, "acct-a")
+                .await
+                .unwrap()["ENV"],
+            "dev"
+        );
+        assert_eq!(
+            list_account_template_variables(&pool, "acct-b")
+                .await
+                .unwrap()["ENV"],
+            "prod"
+        );
+        delete_aws_account(&pool, "acct-a").await.unwrap();
+        assert!(list_account_template_variables(&pool, "acct-a")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            list_account_template_variables(&pool, "acct-b")
+                .await
+                .unwrap()["ENV"],
+            "prod"
+        );
+    }
 
     #[tokio::test]
     async fn list_job_history_filters_by_keyword_in_cached_payload() {
