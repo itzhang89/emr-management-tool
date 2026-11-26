@@ -1,4 +1,4 @@
-import { type Completion, type CompletionContext, type CompletionSource } from "@codemirror/autocomplete";
+import { insertCompletionText, pickedCompletion, type Completion, type CompletionSource } from "@codemirror/autocomplete";
 import { BUILTIN_TEMPLATE_VARIABLES, TEMPLATE_VARIABLE_PATTERN } from "@/services/templateEngine";
 
 export interface TemplateVariableMatch {
@@ -52,21 +52,26 @@ export function diagnoseUnknownTemplateVariables(
 }
 
 export function createTemplateVariableCompletion(getKnown: () => string[]): CompletionSource {
-  return (context: CompletionContext) => {
-    const before = context.matchBefore(/\$\{[a-zA-Z0-9_]*$/);
+  return (context) => {
+    const before = context.matchBefore(/\$\{\w*$/);
     if (!before) return null;
-    const typed = before.text.slice(2); // after `${`
-    const options: Completion[] = getKnown()
-      .filter((name) => name.toLowerCase().startsWith(typed.toLowerCase()))
-      .map((name) => ({
-        label: name,
-        type: "variable",
-        apply: `\${${name}}`
-      }));
+    const options: Completion[] = getKnown().map((name) => ({
+      label: name,
+      type: "variable",
+      apply(view, completion, from, to) {
+        const line = view.state.doc.lineAt(to);
+        const suffix = /^\w*(:[^"}]+)?\}/.exec(line.text.slice(to - line.from));
+        const insert = `${name}${suffix?.[1] ?? ""}}`;
+        view.dispatch({
+          ...insertCompletionText(view.state, insert, from, to + (suffix?.[0].length ?? 0)),
+          annotations: pickedCompletion.of(completion)
+        });
+      }
+    }));
     return {
-      from: before.from,
+      from: before.from + 2,
       options,
-      validFor: /^\$\{[a-zA-Z0-9_]*$/
+      validFor: /^\w*$/
     };
   };
 }

@@ -1,5 +1,6 @@
 import { CompletionContext } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
   buildKnownTemplateVariables,
@@ -34,17 +35,27 @@ describe("jsonTemplateVariables", () => {
     expect(diagnostics[0]?.severity).toBe("warning");
   });
 
-  it("completes matching variable names with full placeholders", async () => {
+  it("lets CodeMirror filter by the variable name after the opening delimiter", async () => {
     const completion = createTemplateVariableCompletion(() => ["virtualClusterId", "submitUser"]);
     const state = EditorState.create({ doc: "${vir" });
-    const result = await completion(new CompletionContext(state, state.doc.length, true));
+    const result = await completion(new CompletionContext(state, state.doc.length, false));
 
-    expect(result?.from).toBe(0);
-    expect(result?.options).toEqual([
-      expect.objectContaining({
-        label: "virtualClusterId",
-        apply: "${virtualClusterId}"
-      })
-    ]);
+    expect(result?.from).toBe(2);
+    expect(result?.options.map(({ label }) => label)).toEqual(["virtualClusterId", "submitUser"]);
+  });
+
+  it("replaces a variable name inside an existing placeholder while preserving its date format", async () => {
+    const completion = createTemplateVariableCompletion(() => ["datetime"]);
+    const state = EditorState.create({ doc: '"${date:YYYY-MM-DD}"', selection: { anchor: 5 } });
+    const view = new EditorView({ state });
+    try {
+      const result = await completion(new CompletionContext(state, 5, false));
+      const option = result?.options[0];
+      if (!result || !option || typeof option.apply !== "function") throw new Error("Expected a variable completion");
+      option.apply(view, option, result.from, 5);
+      expect(view.state.doc.toString()).toBe('"${datetime:YYYY-MM-DD}"');
+    } finally {
+      view.destroy();
+    }
   });
 });

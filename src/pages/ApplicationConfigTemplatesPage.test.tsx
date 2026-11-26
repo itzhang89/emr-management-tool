@@ -1,5 +1,7 @@
+import { EditorSelection } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -37,6 +39,16 @@ vi.mock("@/hooks/useTemplates", () => ({
     data: {
       resourceTemplates: [{ id: "tiny", name: "Tiny", resources: {}, builtIn: true, createdAt: "", updatedAt: "" }]
     }
+  })
+}));
+
+vi.mock("@/hooks/useAwsSettings", () => ({
+  useActiveAwsAccount: () => ({ data: { id: "active-account" } })
+}));
+
+vi.mock("@/hooks/useAccountTemplateVariables", () => ({
+  useAccountTemplateVariables: (accountId?: string) => ({
+    data: accountId === "active-account" ? { ACCOUNT_BUCKET: { value: "example-bucket" } } : undefined
   })
 }));
 
@@ -196,6 +208,52 @@ describe("ApplicationConfigTemplatesPage", () => {
     await user.click(screen.getByRole("button", { name: /Template/i }));
 
     expect(screen.getByRole("textbox", { name: "Payload JSON" })).toHaveClass("json-template-editor");
+  });
+
+  it("completes built-in, current-account, and draft variables inside the editor dialog", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("button", { name: "Template" }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Add Variable" }));
+    const variableName = within(dialog).getByPlaceholderText("Variable name");
+    await user.clear(variableName);
+    await user.type(variableName, "DRAFT_KEY");
+
+    const editor = within(dialog).getByRole("textbox", { name: "Payload JSON" });
+    const view = EditorView.findFromDOM(editor.querySelector(".cm-editor")!);
+    if (!view) throw new Error("Expected CodeMirror editor view");
+    act(() => {
+      view.focus();
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: '{"name":"${}"}' },
+        selection: EditorSelection.cursor(11),
+        userEvent: "input.type"
+      });
+    });
+
+    const options = await within(dialog).findByRole("listbox");
+    expect(within(options).getByRole("option", { name: "AWS_REGION" })).toBeInTheDocument();
+    expect(within(options).getByRole("option", { name: "ACCOUNT_BUCKET" })).toBeInTheDocument();
+    expect(within(options).getByRole("option", { name: "DRAFT_KEY" })).toBeInTheDocument();
+    expect(within(options).queryByRole("option", { name: "VAR_1" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).queryByRole("listbox")).not.toBeInTheDocument();
+
+    act(() => {
+      view.dispatch({
+        changes: { from: 11, insert: "acc" },
+        selection: EditorSelection.cursor(14),
+        userEvent: "input.type"
+      });
+    });
+    const accountVariable = await within(dialog).findByRole("option", { name: "ACCOUNT_BUCKET" });
+    expect(within(dialog).queryByRole("option", { name: "DRAFT_KEY" })).not.toBeInTheDocument();
+    await user.click(accountVariable);
+    expect(dialog).toBeInTheDocument();
+    expect(view.state.doc.toString()).toBe('{"name":"${ACCOUNT_BUCKET}"}');
   });
 
   it("numbers custom variables and lets users reorder them", async () => {

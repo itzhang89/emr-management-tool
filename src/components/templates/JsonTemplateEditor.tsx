@@ -96,6 +96,8 @@ const fillHeightTheme = EditorView.theme({
   }
 });
 
+const noVariables: string[] = [];
+
 function createVariableExtensions(getKnown: () => string[]): Extension {
   const templateVariableDecoration = Decoration.mark({ class: "cm-template-variable" });
   const templateVariableHighlights = ViewPlugin.fromClass(
@@ -147,7 +149,7 @@ function createVariableExtensions(getKnown: () => string[]): Extension {
 export function JsonTemplateEditor({
   value,
   onChange,
-  knownVariables = [],
+  knownVariables = noVariables,
   className,
   readOnly = false,
   enableTemplateVariables = true,
@@ -180,7 +182,14 @@ export function JsonTemplateEditor({
   );
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const dialog = container.closest<HTMLElement>('[role="dialog"]');
+    const tooltipHost = dialog ? document.createElement("div") : null;
+    if (tooltipHost) {
+      tooltipHost.className = "pointer-events-none absolute inset-0 [&_.cm-tooltip]:pointer-events-auto";
+      dialog?.appendChild(tooltipHost);
+    }
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -198,7 +207,11 @@ export function JsonTemplateEditor({
       json(),
       linter(jsonParseLinter()),
       lintGutter(),
-      tooltips({ parent: document.body }),
+      tooltips(tooltipHost ? {
+        parent: tooltipHost,
+        position: "absolute",
+        tooltipSpace: () => tooltipHost.getBoundingClientRect()
+      } : { parent: document.body }),
       editorTheme,
       ...(fillHeight ? [fillHeightTheme] : []),
       compartments.variables.of(
@@ -210,12 +223,13 @@ export function JsonTemplateEditor({
 
     const view = new EditorView({
       state: EditorState.create({ doc: value, extensions }),
-      parent: containerRef.current
+      parent: container
     });
     viewRef.current = view;
 
     return () => {
       view.destroy();
+      tooltipHost?.remove();
       viewRef.current = null;
     };
   }, [compartments, fillHeight]);
@@ -231,9 +245,11 @@ export function JsonTemplateEditor({
 
   useEffect(() => {
     const view = viewRef.current;
-    if (view && enableTemplateVariables) {
+    if (view) {
       view.dispatch({
-        effects: compartments.variables.reconfigure(createVariableExtensions(() => knownRef.current))
+        effects: compartments.variables.reconfigure(
+          enableTemplateVariables ? createVariableExtensions(() => knownRef.current) : []
+        )
       });
     }
   }, [knownVariables, compartments, enableTemplateVariables]);

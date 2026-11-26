@@ -109,6 +109,7 @@ const templates: TranslationDictionary = {
 
   // Payload editor and variable editor.
   "Payload JSON": "JSON 载荷",
+  'Type "${" to see available variables.': '输入「${」查看可用变量。',
   "Custom Variables": "自定义变量",
   "Add Variable": "添加变量",
   "Variable name": "变量名称",

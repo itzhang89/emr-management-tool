@@ -1,3 +1,5 @@
+import { closeCompletion, completionStatus } from "@codemirror/autocomplete";
+import { EditorView } from "@codemirror/view";
 import { ArrowDown, ArrowUp, CircleHelp, Copy, Download, Edit2, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -366,7 +368,16 @@ function JobConfigTemplateDialog({
 
   return (
     <Dialog open={Boolean(editing)} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden">
+      <DialogContent
+        className="flex max-h-[90vh] max-w-4xl flex-col overflow-hidden"
+        onEscapeKeyDown={(event) => {
+          const view = event.target instanceof HTMLElement ? EditorView.findFromDOM(event.target) : null;
+          if (view && completionStatus(view.state) === "active") {
+            event.preventDefault();
+            closeCompletion(view);
+          }
+        }}
+      >
         <DialogHeader className="shrink-0">
           <DialogTitle>
             {template ? t("Edit application config template") : t("Create application config template")}
@@ -411,7 +422,10 @@ function JobConfigTemplateDialog({
             </div>
           ) : null}
           <div className="flex items-center justify-between">
-            <Label>{t("Payload JSON")}</Label>
+            <div className="space-y-1">
+              <Label>{t("Payload JSON")}</Label>
+              <p className="text-xs text-muted-foreground">{t('Type "${" to see available variables.')}</p>
+            </div>
             <div className="flex gap-2">
               <Button
                 type="button"
