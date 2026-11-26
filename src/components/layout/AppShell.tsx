@@ -14,8 +14,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AboutDialog } from "@/components/help/AboutDialog";
 import { ShortcutsDialog } from "@/components/help/ShortcutsDialog";
 import { UpdateAvailableIcon } from "@/components/icons/UpdateAvailableIcon";
+import { canActivateAwsAccount, useAwsAccountActivation } from "@/components/settings/AwsAccountActivation";
 import { SessionExpiryLabel } from "@/components/settings/SessionExpiryLabel";
-import { useAwsAccounts, useSetActiveAwsAccount } from "@/hooks/useAwsSettings";
+import { useAwsAccounts } from "@/hooks/useAwsSettings";
 import { useT, type Translator } from "@/i18n";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -77,7 +78,7 @@ export function AppShell() {
   const accounts = useAwsAccounts();
   const accountList = accounts.data ?? [];
   const activeAccount = accountList.find((account) => account.isActive);
-  const setActiveAccount = useSetActiveAwsAccount();
+  const { activateAccount: requestAccountActivation, authenticationDialog, isActivating } = useAwsAccountActivation();
   // Logs live inside Job History now: go there and ask for a tab.
   const openLogsPage = useCallback((job: JobRunSummary) => {
     setLogTabIntent((current) => ({
@@ -129,22 +130,18 @@ export function AppShell() {
   const activateAccount = useCallback(
     (accountId: string) => {
       const account = accounts.data?.find((item) => item.id === accountId);
-      if (!account || account.isActive || setActiveAccount.isPending) {
-        setAccountDialogOpen(false);
-        setSelectedAccountId(null);
+      if (isActivating || !account) return;
+      if (!canActivateAwsAccount(account)) {
+        handleAccountDialogOpenChange(false);
         return;
       }
 
-      setActiveAccount.mutate(accountId, {
-        onSuccess: () => {
-          toast.success(t("{name} is now active.", { name: account.name }));
-          setAccountDialogOpen(false);
-          setSelectedAccountId(null);
-        },
-        onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to set active account.")
+      requestAccountActivation(account, {
+        onSuccess: () => handleAccountDialogOpenChange(false),
+        onAuthRequired: () => handleAccountDialogOpenChange(false)
       });
     },
-    [accounts.data, setActiveAccount, t]
+    [accounts.data, handleAccountDialogOpenChange, isActivating, requestAccountActivation]
   );
   const cycleAccountSelection = useCallback(() => {
     if (accountList.length === 0) return;
@@ -214,6 +211,7 @@ export function AppShell() {
 
       if (isAccountSwitchKey(event)) {
         event.preventDefault();
+        if (isActivating) return;
         if (accountDialogOpen) {
           cycleAccountSelection();
         } else {
@@ -275,6 +273,7 @@ export function AppShell() {
     activateAccount,
     activePage,
     cycleAccountSelection,
+    isActivating,
     navigateToPage,
     openAccountDialog,
     selectedAccountId,
@@ -508,6 +507,7 @@ export function AppShell() {
             ) : null}
             {accounts.data?.map((account) => {
               const selected = account.id === selectedAccountId;
+              const canActivate = canActivateAwsAccount(account);
               return (
                 <div
                   key={account.id}
@@ -536,14 +536,14 @@ export function AppShell() {
                   <Button
                     type="button"
                     variant={account.isActive ? "secondary" : "outline"}
-                    disabled={account.isActive || setActiveAccount.isPending}
+                    disabled={!canActivate || isActivating}
                     onClick={(event) => {
                       event.stopPropagation();
                       activateAccount(account.id);
                     }}
                   >
                     <CheckCircle2 data-icon="inline-start" />
-                    {account.isActive ? t("Active") : t("Use")}
+                    {canActivate ? t("Use") : t("Active")}
                   </Button>
                 </div>
               );
@@ -551,6 +551,7 @@ export function AppShell() {
           </div>
         </DialogContent>
       </Dialog>
+      {authenticationDialog}
       <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
       <AboutDialog open={aboutDialogOpen} onOpenChange={setAboutDialogOpen} />
     </div>

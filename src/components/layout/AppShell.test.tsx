@@ -2,11 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import App from "@/App";
 import { AppShell } from "./AppShell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AccountTemplateVariables } from "@/types/domain";
 
 const setActiveAccountMutate = vi.fn();
+const submitMfaCode = vi.fn();
 const saveAccountVariables = vi.fn();
 const accountVariablesById: Record<string, AccountTemplateVariables> = {
   "acct-test": { ENV: { value: "test" } },
@@ -46,7 +48,9 @@ vi.mock("@/hooks/useAwsSettings", () => ({
         name: "Production",
         region: "us-west-2",
         accessKeyIdMasked: "AKIB****",
-        isActive: false
+        isActive: false,
+        authMethod: "mfaSession",
+        sessionExpiresAt: "2020-01-01T00:00:00.000Z"
       }
     ],
     isLoading: false
@@ -57,7 +61,8 @@ vi.mock("@/hooks/useAwsSettings", () => ({
       identity: { arn: "arn:aws:iam::123456789012:user/alice", account: "123456789012", userId: "id" }
     }
   }),
-  useSetActiveAwsAccount: () => ({ mutate: setActiveAccountMutate, isPending: false })
+  useSetActiveAwsAccount: () => ({ mutate: setActiveAccountMutate, isPending: false }),
+  useSubmitAwsMfaCode: () => ({ mutateAsync: submitMfaCode, isPending: false })
 }));
 
 vi.mock("@/hooks/useTemplates", () => ({
@@ -397,6 +402,34 @@ describe("AppShell", () => {
 
     expect(setActiveAccountMutate).toHaveBeenCalledWith("acct-prod", expect.any(Object));
     expect(screen.queryByRole("dialog", { name: /Switch AWS Account/i })).not.toBeInTheDocument();
+  });
+
+  it("waits for an explicit switch before asking for MFA and resumes it after verification", async () => {
+    const user = userEvent.setup();
+    setActiveAccountMutate.mockImplementationOnce((_id, { onError }) => {
+      onError({ code: "MfaCodeRequired" });
+    });
+    submitMfaCode.mockResolvedValueOnce({ identity: { account: "123456789012" } });
+    render(<App />);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(setActiveAccountMutate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Switch AWS account/i }));
+    const switchDialog = screen.getByRole("dialog", { name: "Switch AWS Account" });
+    await user.click(within(switchDialog).getByRole("option", { name: "Production" }));
+    expect(setActiveAccountMutate).not.toHaveBeenCalled();
+
+    await user.click(within(switchDialog).getByRole("button", { name: "Use" }));
+    const mfa = screen.getByRole("dialog", { name: "Enter MFA Code" });
+    expect(mfa).toHaveTextContent("Production");
+    expect(setActiveAccountMutate).toHaveBeenCalledTimes(1);
+
+    await user.type(within(mfa).getByLabelText("MFA token"), "123456");
+    await user.click(within(mfa).getByRole("button", { name: "Continue" }));
+    expect(submitMfaCode).toHaveBeenCalledWith({ accountId: "acct-prod", tokenCode: "123456" });
+    expect(setActiveAccountMutate).toHaveBeenCalledTimes(2);
+    expect(setActiveAccountMutate).toHaveBeenLastCalledWith("acct-prod", expect.any(Object));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens a job's logs as a tab inside Job History", async () => {

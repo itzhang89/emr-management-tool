@@ -7,7 +7,7 @@ export type SessionRemaining = {
   durationLabel: string;
 };
 
-export const SESSION_REFRESH_WITHIN_MS = 10 * 60 * 1000;
+const SESSION_EXPIRY_WARNING_MS = 10 * 60 * 1000;
 
 /** Format a temporary-session expiry for Settings / toasts. */
 export function getSessionRemaining(
@@ -25,40 +25,9 @@ export function getSessionRemaining(
 
   return {
     msLeft,
-    tone: msLeft <= SESSION_REFRESH_WITHIN_MS ? "warn" : "ok",
+    tone: msLeft <= SESSION_EXPIRY_WARNING_MS ? "warn" : "ok",
     durationLabel: formatRemainingDuration(msLeft)
   };
-}
-
-/** True when a temporary session should be refreshed (≤10m left or already expired). */
-export function shouldProactivelyRefresh(
-  expiresAt: string | undefined | null,
-  nowMs = Date.now()
-): boolean {
-  const remaining = getSessionRemaining(expiresAt, nowMs);
-  return remaining !== null && remaining.tone !== "ok";
-}
-
-export function canSilentRefresh(account: {
-  authMethod?: string;
-  mfaSerial?: string | null;
-}): boolean {
-  if (account.authMethod === "sso") return true;
-  if (account.authMethod === "assumeRole") {
-    return !account.mfaSerial?.trim();
-  }
-  return false;
-}
-
-export function needsInteractiveMfaRefresh(account: {
-  authMethod?: string;
-  mfaSerial?: string | null;
-}): boolean {
-  if (account.authMethod === "mfaSession") return true;
-  if (account.authMethod === "assumeRole") {
-    return Boolean(account.mfaSerial?.trim());
-  }
-  return false;
 }
 
 export function formatRemainingDuration(ms: number): string {

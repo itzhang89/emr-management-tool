@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AccountFormDialog } from "@/components/settings/AccountFormDialog";
+import { canActivateAwsAccount, useAwsAccountActivation } from "@/components/settings/AwsAccountActivation";
 import { DeleteAccountDialog } from "@/components/settings/DeleteAccountDialog";
 import { ImportCliProfileDialog } from "@/components/settings/ImportCliProfileDialog";
 import { LanguageCard } from "@/components/settings/LanguageCard";
@@ -20,7 +21,6 @@ import {
   useDeleteAwsAccount,
   useImportAwsCliProfile,
   useLoadAwsCliProfile,
-  useSetActiveAwsAccount,
   useSignOutAwsSso,
   useStartAwsSsoLogin
 } from "@/hooks/useAwsSettings";
@@ -60,7 +60,7 @@ export function SettingsPage() {
   const accounts = useAwsAccounts();
   const importCliProfile = useImportAwsCliProfile();
   const loadCliProfile = useLoadAwsCliProfile();
-  const setActiveAccount = useSetActiveAwsAccount();
+  const { activateAccount, authenticationDialog, isActivating } = useAwsAccountActivation();
   const deleteAccount = useDeleteAwsAccount();
   const startSsoLogin = useStartAwsSsoLogin();
   const cancelSsoLogin = useCancelAwsSsoLogin();
@@ -110,14 +110,6 @@ export function SettingsPage() {
         onError: (error) => toast.error(errorMessage(error, "Failed to import AWS CLI profile."))
       }
     );
-  };
-
-  const activateAccount = (account: AwsAccountSummary) => {
-    if (account.isActive || setActiveAccount.isPending) return;
-    setActiveAccount.mutate(account.id, {
-      onSuccess: () => toast.success(`${account.name} is now active.`),
-      onError: (error) => toast.error(errorMessage(error, "Failed to set active account."))
-    });
   };
 
   const handleSsoSignIn = (account: AwsAccountSummary) => {
@@ -338,13 +330,13 @@ export function SettingsPage() {
                       size="icon"
                       className="size-9 2xl:size-10"
                       aria-label={`Use ${account.name}`}
-                      disabled={account.isActive || setActiveAccount.isPending}
+                      disabled={!canActivateAwsAccount(account) || isActivating}
                       onClick={() => activateAccount(account)}
                     >
                       <CheckCircle2 className="size-4 2xl:size-[18px]" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>{account.isActive ? "Already active" : "Use this account"}</TooltipContent>
+                  <TooltipContent>{canActivateAwsAccount(account) ? "Use this account" : "Already active"}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -419,6 +411,7 @@ export function SettingsPage() {
           });
         }}
       />
+      {authenticationDialog}
       <MfaCodeDialog
         open={Boolean(mfaAccount)}
         accountId={mfaAccount?.id ?? null}

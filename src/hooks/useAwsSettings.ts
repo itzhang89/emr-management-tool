@@ -7,6 +7,7 @@ import type {
   ImportAwsCliProfileRequest
 } from "@/types/domain";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
+import { getSessionRemaining } from "@/services/authSessionDisplay";
 import { useSessionStore } from "@/stores/sessionStore";
 
 export function useAwsSettings() {
@@ -90,16 +91,50 @@ export function useSetActiveAwsAccount() {
   const resetAccountScopedSession = useSessionStore((state) => state.resetAccountScopedSession);
 
   return useMutation({
-    mutationFn: (accountId: string) => awsCredentialsService.setActiveAccount(accountId),
+    mutationFn: async (accountId: string) => {
+      const account = queryClient
+        .getQueryData<AwsAccountSummary[]>(["aws-accounts"])
+        ?.find((item) => item.id === accountId);
+      if (account?.authMethod && account.authMethod !== "accessKey") {
+        const auth = await awsCredentialsService.getAuthStatus(accountId);
+        const remaining = getSessionRemaining(auth.sessionExpiresAt);
+        // The backend starts treating credentials as stale before they expire.
+        // Only start an interactive login once they have actually expired.
+        if (auth.status !== "signedIn" && (!remaining || remaining.tone === "expired")) {
+          if (auth.status === "needsMfa" || auth.status === "needsLogin") {
+            throw {
+              kind: "auth",
+              code: auth.status === "needsMfa" ? "MfaCodeRequired" : "SsoLoginRequired",
+              message: auth.message
+            };
+          }
+          try {
+            await awsCredentialsService.refreshSession(accountId);
+          } catch (error) {
+            if (
+              auth.authMethod === "sso" && error && typeof error === "object" &&
+              "service" in error && error.service === "sso" &&
+              "code" in error && error.code === "UnauthorizedException"
+            ) {
+              throw { kind: "auth", code: "SsoLoginRequired" };
+            }
+            throw error;
+          }
+        }
+      }
+      return awsCredentialsService.setActiveAccount(accountId);
+    },
     onSuccess: (activeAccount) => {
+      const previous = queryClient
+        .getQueryData<AwsAccountSummary[]>(["aws-accounts"])
+        ?.find((account) => account.id === activeAccount.id);
       queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
         if (!accounts) return [activeAccount];
-        return accounts.map((account) => ({
-          ...account,
-          isActive: account.id === activeAccount.id
-        }));
+        return accounts.map((account) =>
+          account.id === activeAccount.id ? activeAccount : { ...account, isActive: false }
+        );
       });
-      resetAccountScopedSession();
+      if (!previous?.isActive) resetAccountScopedSession();
       invalidateAccountScopedQueries(queryClient);
     }
   });
@@ -216,29 +251,6 @@ export function useSignOutAwsSso() {
   return useMutation({
     mutationFn: (accountId: string) => awsCredentialsService.signOutSso(accountId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
-      void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
-    }
-  });
-}
-
-export function useRefreshAwsAccountSession() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (accountId: string) => awsCredentialsService.refreshSession(accountId),
-    onSuccess: (result) => {
-      queryClient.setQueryData<AwsAccountSummary[]>(["aws-accounts"], (accounts) => {
-        if (!accounts) return accounts;
-        return accounts.map((account) =>
-          account.id === result.accountId
-            ? {
-                ...account,
-                identity: result.identity,
-                sessionExpiresAt: result.sessionExpiresAt
-              }
-            : account
-        );
-      });
       void queryClient.invalidateQueries({ queryKey: ["aws-accounts"] });
       void queryClient.invalidateQueries({ queryKey: ["aws-account-auth-status"] });
     }

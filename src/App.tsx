@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/layout/AppShell";
-import { SessionRefreshWatcher } from "@/components/settings/SessionRefreshWatcher";
 import { bindNativeMenuLanguage } from "@/services/nativeMenuLanguage";
 
 const queryClient = new QueryClient({
@@ -24,7 +23,6 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AppShell />
-        <SessionRefreshWatcher />
         <Toaster richColors position="top-right" />
       </TooltipProvider>
     </QueryClientProvider>

@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  canSilentRefresh,
-  formatRemainingDuration,
-  getSessionRemaining,
-  needsInteractiveMfaRefresh,
-  shouldProactivelyRefresh
-} from "./authSessionDisplay";
+import { formatRemainingDuration, getSessionRemaining } from "./authSessionDisplay";
 
 describe("formatRemainingDuration", () => {
   it("formats hours and minutes", () => {
@@ -44,29 +38,5 @@ describe("getSessionRemaining", () => {
     const remaining = getSessionRemaining("2026-11-17T14:00:00.000Z", now);
     expect(remaining?.tone).toBe("ok");
     expect(remaining?.durationLabel).toBe("12h");
-  });
-
-  it("flags proactive refresh near expiry", () => {
-    expect(shouldProactivelyRefresh("2026-11-17T02:08:00.000Z", now)).toBe(true);
-    expect(shouldProactivelyRefresh("2026-11-17T14:00:00.000Z", now)).toBe(false);
-  });
-});
-
-describe("refresh capability helpers", () => {
-  it("allows silent refresh for SSO and AssumeRole without MFA", () => {
-    expect(canSilentRefresh({ authMethod: "sso" })).toBe(true);
-    expect(canSilentRefresh({ authMethod: "assumeRole" })).toBe(true);
-    expect(canSilentRefresh({ authMethod: "assumeRole", mfaSerial: "arn:aws:iam::1:mfa/u" })).toBe(
-      false
-    );
-    expect(canSilentRefresh({ authMethod: "mfaSession" })).toBe(false);
-  });
-
-  it("requires interactive MFA for MFA session and AssumeRole with MFA", () => {
-    expect(needsInteractiveMfaRefresh({ authMethod: "mfaSession" })).toBe(true);
-    expect(
-      needsInteractiveMfaRefresh({ authMethod: "assumeRole", mfaSerial: "arn:aws:iam::1:mfa/u" })
-    ).toBe(true);
-    expect(needsInteractiveMfaRefresh({ authMethod: "sso" })).toBe(false);
   });
 });

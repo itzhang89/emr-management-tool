@@ -39,7 +39,7 @@ export function MfaCodeDialog({
   }, [open, accountId]);
 
   const submit = async () => {
-    if (!accountId) return;
+    if (!accountId || tokenCode.length < 6 || submitMfa.isPending) return;
     try {
       const result = await submitMfa.mutateAsync({ accountId, tokenCode });
       const remaining = getSessionRemaining(result.sessionExpiresAt);
@@ -51,8 +51,8 @@ export function MfaCodeDialog({
           ? `${base} · ${t("{duration} left", { duration: remaining.durationLabel })}`
           : base
       );
-      onOpenChange(false);
       onSuccess?.();
+      onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error, "Failed to submit MFA code."));
     }

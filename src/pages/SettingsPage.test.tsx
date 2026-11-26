@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   setActiveMutate: vi.fn(),
+  startSsoLogin: vi.fn(),
   deleteMutate: vi.fn(),
   createMutateAsync: vi.fn(),
   updateMutateAsync: vi.fn(),
@@ -94,7 +95,7 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useTestAwsCredentials: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTestAwsAccount: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useActiveAwsAccount: () => ({ data: mocks.accounts[0], isLoading: false, error: null }),
-  useStartAwsSsoLogin: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartAwsSsoLogin: () => ({ mutate: mocks.startSsoLogin, isPending: false }),
   useCancelAwsSsoLogin: () => ({ mutate: vi.fn(), isPending: false }),
   useSignOutAwsSso: () => ({ mutate: vi.fn(), isPending: false }),
   useSubmitAwsMfaCode: () => ({ mutateAsync: vi.fn(), isPending: false })
@@ -175,6 +176,32 @@ describe("SettingsPage updates", () => {
     await user.dblClick(screen.getByText("staging"));
 
     expect(mocks.setActiveMutate).toHaveBeenCalledWith("acct-2", expect.any(Object));
+  });
+
+  it("lets the user cancel SSO reauthentication or complete it to activate the account", async () => {
+    const user = userEvent.setup();
+    const requireSso = (_id: string, { onError }: { onError: (error: unknown) => void }) => {
+      onError({ code: "SsoLoginRequired" });
+    };
+    mocks.setActiveMutate.mockImplementationOnce(requireSso).mockImplementationOnce(requireSso);
+    mocks.startSsoLogin.mockImplementationOnce((_id, { onSuccess }) => onSuccess());
+    renderSettingsPage();
+
+    const activate = screen.getByRole("button", { name: "Use staging" });
+    await user.click(activate);
+    const dialog = screen.getByRole("dialog", { name: "Sign in with SSO" });
+    expect(dialog).toHaveTextContent("staging");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(mocks.startSsoLogin).not.toHaveBeenCalled();
+    expect(mocks.setActiveMutate).toHaveBeenCalledTimes(1);
+
+    await user.click(activate);
+    await user.click(within(screen.getByRole("dialog", { name: "Sign in with SSO" }))
+      .getByRole("button", { name: "Sign in with SSO" }));
+    expect(mocks.startSsoLogin).toHaveBeenCalledWith("acct-2", expect.any(Object));
+    expect(mocks.setActiveMutate).toHaveBeenCalledTimes(3);
+    expect(mocks.setActiveMutate).toHaveBeenLastCalledWith("acct-2", expect.any(Object));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens edit dialog with locked account name and masked credentials", async () => {

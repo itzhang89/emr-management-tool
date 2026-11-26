@@ -29,6 +29,9 @@ const settings: TranslationDictionary = {
   "MFA token": "MFA 验证码",
   "Verifying...": "正在验证...",
   "Opening the system browser for SSO sign-in...": "正在打开系统浏览器进行 SSO 登录...",
+  "Sign in with SSO": "使用 SSO 登录",
+  "Sign in with SSO to activate {name}.": "请使用 SSO 登录以激活 {name}。",
+  "Complete SSO sign-in in your browser to continue.": "请在浏览器中完成 SSO 登录以继续。",
   "Signed in as {arn}": "已使用 {arn} 登录",
   "SSO sign-in completed.": "SSO 登录成功。",
   "Signed out of {name}.": "已退出 {name}。",
@@ -56,17 +59,8 @@ const settings: TranslationDictionary = {
     "权限集 / 角色名，例如 AdministratorAccess",
   "Secret key paired with the access key": "与访问密钥配对的私有密钥",
   "Session expired": "会话已过期",
-  "Session for {name} expired. Enter an MFA code to continue.":
-    "{name} 的会话已过期，请输入 MFA 验证码以继续。",
-  "Session for {name} expires soon. Enter an MFA code to refresh.":
-    "{name} 的会话即将过期，请输入 MFA 验证码以刷新。",
   "Session name shown in CloudTrail, e.g. emr-management-tool":
     "CloudTrail 中显示的会话名，例如 emr-management-tool",
-  "Session refresh failed for {name}.": "{name} 的会话刷新失败。",
-  "Session refresh failed for {name}. Sign in with SSO again.":
-    "{name} 的会话刷新失败，请重新进行 SSO 登录。",
-  "Session refreshed for {name}.": "已刷新 {name} 的会话。",
-  "Session refreshed for {name} · {duration} left": "已刷新 {name} 的会话 · 剩余 {duration}",
   "Session: {duration} left": "会话剩余 {duration}",
   "12-digit AWS account ID, e.g. 123456789012": "12 位 AWS 账户 ID，例如 123456789012",
   "Already imported as “{name}”.": "已导入为“{name}”。",

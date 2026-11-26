@@ -4,12 +4,15 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { awsCredentialsService } from "@/services/awsCredentialsService";
 import { useSessionStore } from "@/stores/sessionStore";
+import type { AwsAccountSummary } from "@/types/domain";
 import { useActiveAwsAccount, useSetActiveAwsAccount } from "./useAwsSettings";
 
 vi.mock("@/services/awsCredentialsService", () => ({
   awsCredentialsService: {
     listAccounts: vi.fn(),
-    setActiveAccount: vi.fn()
+    setActiveAccount: vi.fn(),
+    getAuthStatus: vi.fn(),
+    refreshSession: vi.fn()
   }
 }));
 
@@ -113,5 +116,82 @@ describe("useAwsSettings account scoping helpers", () => {
 
     await waitFor(() => expect(result.current.setActive.isSuccess).toBe(true));
     expect(result.current.active.data?.id).toBe("acct-b");
+  });
+
+  it.each([
+    { authMethod: "mfaSession", status: "needsMfa", code: "MfaCodeRequired" },
+    { authMethod: "assumeRole", status: "needsMfa", code: "MfaCodeRequired" },
+    { authMethod: "sso", status: "needsLogin", code: "SsoLoginRequired" }
+  ] as const)("requires authentication before activating an expired $authMethod account", async ({ authMethod, status, code }) => {
+    const account: AwsAccountSummary = {
+      id: "acct-b", name: "B", region: "us-west-2", accessKeyIdMasked: "ASIA****", isActive: false, authMethod
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["aws-accounts"], [account]);
+    vi.mocked(awsCredentialsService.getAuthStatus).mockResolvedValue({
+      accountId: account.id, authMethod, status, sessionExpiresAt: "2020-01-01T00:00:00.000Z"
+    });
+    const { result } = renderHook(() => useSetActiveAwsAccount(), { wrapper: wrapper(queryClient) });
+
+    result.current.mutate(account.id);
+
+    await waitFor(() => expect(result.current.error).toMatchObject({ code }));
+    expect(awsCredentialsService.getAuthStatus).toHaveBeenCalledExactlyOnceWith(account.id);
+    expect(awsCredentialsService.setActiveAccount).not.toHaveBeenCalled();
+  });
+
+  it("activates a near-expiry MFA account without requesting a fresh code", async () => {
+    const account: AwsAccountSummary = {
+      id: "acct-b", name: "B", region: "us-west-2", accessKeyIdMasked: "ASIA****", isActive: false,
+      authMethod: "mfaSession"
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["aws-accounts"], [account]);
+    vi.mocked(awsCredentialsService.getAuthStatus).mockResolvedValue({
+      accountId: account.id, authMethod: "mfaSession", status: "needsMfa",
+      sessionExpiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    vi.mocked(awsCredentialsService.setActiveAccount).mockResolvedValue({ ...account, isActive: true });
+    const { result } = renderHook(() => useSetActiveAwsAccount(), { wrapper: wrapper(queryClient) });
+
+    result.current.mutate(account.id);
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(awsCredentialsService.refreshSession).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("tries to renew an expired SSO session before activation (rejected token: %s)", async (tokenRejected) => {
+    const account: AwsAccountSummary = {
+      id: "acct-b", name: "B", region: "us-west-2", accessKeyIdMasked: "ASIA****", isActive: false, authMethod: "sso"
+    };
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["aws-accounts"], [account]);
+    vi.mocked(awsCredentialsService.getAuthStatus).mockResolvedValue({
+      accountId: account.id, authMethod: "sso", status: "expired", sessionExpiresAt: "2020-01-01T00:00:00.000Z"
+    });
+    if (tokenRejected) {
+      vi.mocked(awsCredentialsService.refreshSession).mockRejectedValue({
+        service: "sso", code: "UnauthorizedException"
+      });
+    } else {
+      vi.mocked(awsCredentialsService.refreshSession).mockResolvedValue({
+        accountId: account.id,
+        identity: { account: "123456789012", userId: "id", arn: "arn:aws:sts::123456789012:assumed-role/example/user" },
+        sessionExpiresAt: new Date(Date.now() + 3_600_000).toISOString()
+      });
+    }
+    vi.mocked(awsCredentialsService.setActiveAccount).mockResolvedValue({ ...account, isActive: true });
+    const { result } = renderHook(() => useSetActiveAwsAccount(), { wrapper: wrapper(queryClient) });
+
+    result.current.mutate(account.id);
+
+    if (tokenRejected) {
+      await waitFor(() => expect(result.current.error).toMatchObject({ code: "SsoLoginRequired" }));
+      expect(awsCredentialsService.setActiveAccount).not.toHaveBeenCalled();
+    } else {
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(awsCredentialsService.refreshSession).toHaveBeenCalledBefore(vi.mocked(awsCredentialsService.setActiveAccount));
+    }
+    expect(awsCredentialsService.refreshSession).toHaveBeenCalledExactlyOnceWith(account.id);
   });
 });
