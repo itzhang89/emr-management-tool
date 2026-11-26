@@ -796,6 +796,8 @@ pub struct S3CreateFolderRequest {
     pub bucket: String,
     pub parent_prefix: Option<String>,
     pub folder_name: String,
+    #[serde(default)]
+    pub append_aws_username: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

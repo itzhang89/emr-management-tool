@@ -17,8 +17,9 @@ export const s3Service = {
     tauriClient.downloadS3Object({ accountId, bucket, key }),
   deleteObject: (accountId: string, bucket: string, key: string) =>
     tauriClient.deleteS3Object({ accountId, bucket, key }),
-  createFolder: (accountId: string, bucket: string, parentPrefix: string | undefined, folderName: string) =>
-    tauriClient.createS3Folder({ accountId, bucket, parentPrefix, folderName }),
+  getIamUsername: (accountId: string) => tauriClient.getS3IamUsername({ accountId }),
+  createFolder: (accountId: string, bucket: string, parentPrefix: string | undefined, folderName: string, appendAwsUsername?: boolean) =>
+    tauriClient.createS3Folder({ accountId, bucket, parentPrefix, folderName, appendAwsUsername }),
   describePrefixDeletion: (accountId: string, bucket: string, key: string) =>
     tauriClient.describeS3PrefixDeletion({ accountId, bucket, key }),
   deletePrefix: (accountId: string, bucket: string, key: string) =>

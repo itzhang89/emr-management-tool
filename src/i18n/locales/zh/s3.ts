@@ -52,7 +52,11 @@ const s3: TranslationDictionary = {
   // Create folder dialog
   "Create a new folder under {path}": "在 {path} 下新建文件夹",
   "Select a bucket first.": "请先选择存储桶。",
-  "folder-name": "文件夹名称",
+  "Relative folder path": "相对文件夹路径",
+  "users or team/reports": "例如 users 或 team/reports",
+  "Append AWS username": "追加 AWS 用户名",
+  "Resolving AWS username…": "正在获取 AWS 用户名…",
+  "Select an AWS account to resolve the username.": "请先选择 AWS 账户以获取用户名。",
   "Creating...": "正在创建…",
 
   // Upload conflict dialog

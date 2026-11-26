@@ -3,6 +3,7 @@ import { type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent,
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
   useDeleteS3Prefix,
   useRenameS3Object,
   useS3Buckets,
+  useS3IamUsername,
   useS3Objects,
   useS3TextObject,
   useSaveS3TextObject
@@ -42,7 +44,7 @@ import {
   formatS3Path,
   parentPrefix,
   parseS3PathInput,
-  validateS3FolderName
+  validateS3FolderPath
 } from "@/services/s3PathUtils";
 import { getS3ObjectEditability } from "@/services/s3Rules";
 import {
@@ -91,6 +93,13 @@ export function S3BrowserPage() {
   const [deleteSummaryLoading, setDeleteSummaryLoading] = useState(false);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [appendAwsUsername, setAppendAwsUsername] = useState(false);
+  const iamUsername = useS3IamUsername(createFolderOpen && appendAwsUsername);
+  const awsUsername = appendAwsUsername && !iamUsername.isFetching && !iamUsername.error
+    ? iamUsername.data
+    : undefined;
+  const folderKey = buildFolderKey(prefix, newFolderName, awsUsername);
+  const folderPreviewReady = !appendAwsUsername || Boolean(awsUsername);
   const [renamingKey, setRenamingKey] = useState<string>();
   const [renameValue, setRenameValue] = useState("");
   const [sortKey, setSortKey] = useState<S3SortKey>("modified");
@@ -453,29 +462,27 @@ export function S3BrowserPage() {
 
   const submitCreateFolder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedBucket) return;
+    if (!selectedBucket || !folderPreviewReady) return;
 
-    const validationError = validateS3FolderName(newFolderName);
+    const validationError = validateS3FolderPath(newFolderName, appendAwsUsername);
     if (validationError) {
       toast.error(validationError);
       return;
     }
 
-    const folderKey = buildFolderKey(prefix, newFolderName);
-    const folderExists = (objects.data ?? []).some((object) => object.key === folderKey);
-    if (folderExists) {
-      toast.error(`Folder "${displayObjectName(folderKey, prefix, "folder")}" already exists.`);
+    if (objects.data?.some((object) => object.key === folderKey)) {
+      toast.error(`Folder "${folderKey.slice(prefix.length)}" already exists.`);
       return;
     }
 
     try {
-      await createFolder.mutateAsync({
+      const folder = await createFolder.mutateAsync({
         bucket: selectedBucket,
         parentPrefix: prefix,
-        folderName: newFolderName.trim()
+        folderName: newFolderName.trim(),
+        appendAwsUsername
       });
-      await objects.refetch();
-      toast.success(t("Created {name}/", { name: newFolderName.trim() }));
+      toast.success(t("Created {name}/", { name: folder.key.slice(prefix.length, -1) }));
       setCreateFolderOpen(false);
       setNewFolderName("");
     } catch (error) {
@@ -690,6 +697,7 @@ export function S3BrowserPage() {
                 disabled={!selectedBucket || createFolder.isPending}
                 onClick={() => {
                   setNewFolderName("");
+                  setAppendAwsUsername(false);
                   setCreateFolderOpen(true);
                 }}
               >
@@ -964,20 +972,41 @@ export function S3BrowserPage() {
                   : t("Select a bucket first.")}
               </DialogDescription>
             </DialogHeader>
-            <div className="py-4">
+            <div className="space-y-3 py-4">
               <Input
                 autoFocus
+                aria-label={t("Relative folder path")}
                 value={newFolderName}
-                placeholder={t("folder-name")}
+                placeholder={t("users or team/reports")}
                 className="font-mono text-sm"
                 onChange={(event) => setNewFolderName(event.target.value)}
               />
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={appendAwsUsername}
+                  onCheckedChange={(checked) => setAppendAwsUsername(checked === true)}
+                />
+                {t("Append AWS username")}
+              </label>
+              {folderPreviewReady ? (
+                <p className="break-all font-mono text-xs text-muted-foreground" aria-live="polite">
+                  {formatS3Path(selectedBucket, folderKey)}
+                </p>
+              ) : iamUsername.error ? (
+                <p role="alert" className="text-xs text-destructive">
+                  {formatAppError(iamUsername.error, "Failed to resolve the AWS username.")}
+                </p>
+              ) : (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {accountId ? t("Resolving AWS username…") : t("Select an AWS account to resolve the username.")}
+                </p>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateFolderOpen(false)}>
                 {t("Cancel")}
               </Button>
-              <Button type="submit" disabled={createFolder.isPending || !selectedBucket}>
+              <Button type="submit" disabled={createFolder.isPending || !selectedBucket || !folderPreviewReady}>
                 {createFolder.isPending ? t("Creating...") : t("Create")}
               </Button>
             </DialogFooter>

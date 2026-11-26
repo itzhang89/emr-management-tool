@@ -222,7 +222,8 @@ export function createTauriClient(invoke: InvokeFunction = defaultInvoke) {
     openTextFile: () => call<string | undefined>("open_text_file"),
     deleteS3Object: (request: { accountId?: string; bucket: string; key: string }) =>
       call("delete_s3_object", request),
-    createS3Folder: (request: { accountId?: string; bucket: string; parentPrefix?: string; folderName: string }) =>
+    getS3IamUsername: (request: AwsCommandContext) => call<string>("get_s3_iam_username", request),
+    createS3Folder: (request: { accountId?: string; bucket: string; parentPrefix?: string; folderName: string; appendAwsUsername?: boolean }) =>
       call<S3ObjectEntry>("create_s3_folder", request),
     describeS3PrefixDeletion: (request: { accountId?: string; bucket: string; key: string }) =>
       call<S3PrefixDeletionSummary>("describe_s3_prefix_deletion", request),

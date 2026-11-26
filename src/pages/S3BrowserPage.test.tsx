@@ -8,6 +8,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 
 const refetchObjects = vi.fn();
 const useS3Buckets = vi.fn();
+const useS3IamUsername = vi.fn();
 const useS3Objects = vi.fn();
 const useS3TextObject = vi.fn();
 const useSaveS3TextObject = vi.fn();
@@ -65,6 +66,7 @@ vi.mock("@/services/s3Service", () => ({
 
 vi.mock("@/hooks/useS3", () => ({
   useS3Buckets: (...args: unknown[]) => useS3Buckets(...args),
+  useS3IamUsername: (...args: unknown[]) => useS3IamUsername(...args),
   useS3Objects: (...args: unknown[]) => useS3Objects(...args),
   useS3TextObject: (...args: unknown[]) => useS3TextObject(...args),
   useSaveS3TextObject: (...args: unknown[]) => useSaveS3TextObject(...args),
@@ -142,6 +144,7 @@ describe("S3BrowserPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    useS3IamUsername.mockReturnValue({ data: "Alice", isFetching: false });
     activeAccountId = "acct-test";
     useSessionStore.setState({
       selectedS3Bucket: undefined,
@@ -652,21 +655,62 @@ describe("S3BrowserPage", () => {
     expect(refetchObjects).toHaveBeenCalled();
   });
 
-  it("creates a folder when the name does not already exist", async () => {
+  it("creates the IAM user's folder in a manually selected bucket without bucket listing", async () => {
     const user = userEvent.setup();
+    useS3Buckets.mockReturnValue({ error: new Error("AccessDenied"), isSuccess: false });
+    useS3Objects.mockReturnValue({ error: new Error("AccessDenied") });
+    createFolderMutateAsync.mockResolvedValue({
+      bucket: "logs-bucket", key: "users/Alice/", kind: "folder", size: 0
+    });
 
     renderS3BrowserPage();
 
+    await user.click(screen.getByRole("button", { name: /^Browse S3 path$/i }));
+    const picker = within(screen.getByRole("dialog", { name: /Select S3 path/i }));
+    await user.type(picker.getByPlaceholderText("bucket/folder/"), "s3://logs-bucket/");
+    await user.click(picker.getByRole("button", { name: /^Use path$/i }));
     await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
-    await user.type(screen.getByPlaceholderText("folder-name"), "reports");
-    await user.click(within(screen.getByRole("dialog", { name: /Create folder/i })).getByRole("button", { name: /^Create$/i }));
+    const dialog = within(screen.getByRole("dialog", { name: /Create folder/i }));
+    const checkbox = dialog.getByRole("checkbox", { name: /Append AWS username/i });
+    expect(checkbox).not.toBeChecked();
+    expect(useS3IamUsername).not.toHaveBeenCalledWith(true);
+    await user.type(dialog.getByRole("textbox", { name: /Relative folder path/i }), "users");
+    expect(dialog.getByText("s3://logs-bucket/users/")).toBeInTheDocument();
+    await user.click(checkbox);
+    expect(useS3IamUsername).toHaveBeenLastCalledWith(true);
+    expect(dialog.getByText("s3://logs-bucket/users/Alice/")).toBeInTheDocument();
+    expect(dialog.queryByText(/\$\{aws:username\}/)).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: /^Create$/i }));
 
     expect(createFolderMutateAsync).toHaveBeenCalledWith({
       bucket: "logs-bucket",
       parentPrefix: "",
-      folderName: "reports"
+      folderName: "users",
+      appendAwsUsername: true
     });
-    expect(toastSuccess).toHaveBeenCalledWith("Created reports/");
+    expect(toastSuccess).toHaveBeenCalledWith("Created users/Alice/");
+  });
+
+  it("creates a multi-level folder without appending the username when unchecked", async () => {
+    const user = userEvent.setup();
+    createFolderMutateAsync.mockResolvedValue({
+      bucket: "logs-bucket", key: "team/reports/", kind: "folder", size: 0
+    });
+
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
+    const dialog = within(screen.getByRole("dialog", { name: /Create folder/i }));
+    await user.type(dialog.getByRole("textbox", { name: /Relative folder path/i }), "team/reports/");
+    await user.click(dialog.getByRole("button", { name: /^Create$/i }));
+
+    expect(createFolderMutateAsync).toHaveBeenCalledWith({
+      bucket: "logs-bucket",
+      parentPrefix: "",
+      folderName: "team/reports/",
+      appendAwsUsername: false
+    });
+    expect(toastSuccess).toHaveBeenCalledWith("Created team/reports/");
   });
 
   it("rejects creating a folder that already exists", async () => {
@@ -675,11 +719,31 @@ describe("S3BrowserPage", () => {
     renderS3BrowserPage();
 
     await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
-    await user.type(screen.getByPlaceholderText("folder-name"), "logs");
-    await user.click(within(screen.getByRole("dialog", { name: /Create folder/i })).getByRole("button", { name: /^Create$/i }));
+    const dialog = within(screen.getByRole("dialog", { name: /Create folder/i }));
+    await user.type(dialog.getByRole("textbox", { name: /Relative folder path/i }), "logs");
+    await user.click(dialog.getByRole("button", { name: /^Create$/i }));
 
     expect(createFolderMutateAsync).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith('Folder "logs/" already exists.');
+  });
+
+  it("waits for the IAM username before creating and allows opting out", async () => {
+    const user = userEvent.setup();
+    useS3IamUsername.mockReturnValue({ isFetching: true });
+    renderS3BrowserPage();
+
+    await user.click(screen.getByRole("button", { name: /^Create folder$/i }));
+    const dialog = within(screen.getByRole("dialog", { name: /Create folder/i }));
+    const checkbox = dialog.getByRole("checkbox", { name: /Append AWS username/i });
+    const submit = dialog.getByRole("button", { name: /^Create$/i });
+    await user.type(dialog.getByRole("textbox", { name: /Relative folder path/i }), "users");
+    await user.click(checkbox);
+    expect(dialog.getByRole("status")).toHaveTextContent("Resolving AWS username…");
+    expect(submit).toBeDisabled();
+
+    await user.click(checkbox);
+    expect(dialog.getByText("s3://logs-bucket/users/")).toBeInTheDocument();
+    expect(submit).toBeEnabled();
   });
 
   it("shows folder deletion summary before deleting a non-empty directory", async () => {

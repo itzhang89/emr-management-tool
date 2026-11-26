@@ -79,11 +79,14 @@ async fn resolve_bucket_region(runtime: &AwsRuntime, bucket: &str) -> AppResult<
 }
 
 async fn head_bucket_region(client: &aws_sdk_s3::Client, bucket: &str) -> Option<String> {
-    let response = client.head_bucket().bucket(bucket).send().await.ok()?;
-    response
-        .bucket_region()
-        .map(str::to_string)
-        .filter(|region| !region.is_empty())
+    let region = match client.head_bucket().bucket(bucket).send().await {
+        Ok(response) => response.bucket_region().map(str::to_string),
+        Err(error) => error
+            .raw_response()
+            .and_then(|response| response.headers().get("x-amz-bucket-region"))
+            .map(str::to_string),
+    };
+    region.filter(|region| !region.is_empty())
 }
 
 fn cached_bucket_region(account_id: &str, bucket: &str) -> Option<String> {

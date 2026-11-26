@@ -88,6 +88,18 @@ export function useDeleteS3Object() {
   });
 }
 
+export function useS3IamUsername(enabled: boolean) {
+  const accountId = useActiveAccountId();
+
+  return useQuery({
+    queryKey: ["s3-iam-username", accountId],
+    queryFn: () => s3Service.getIamUsername(accountId!),
+    enabled: enabled && Boolean(accountId),
+    retry: false,
+    refetchOnWindowFocus: false
+  });
+}
+
 export function useCreateS3Folder() {
   const accountId = useActiveAccountId();
   const queryClient = useQueryClient();
@@ -96,12 +108,14 @@ export function useCreateS3Folder() {
     mutationFn: ({
       bucket,
       parentPrefix,
-      folderName
+      folderName,
+      appendAwsUsername
     }: {
       bucket: string;
       parentPrefix?: string;
       folderName: string;
-    }) => s3Service.createFolder(accountId!, bucket, parentPrefix, folderName),
+      appendAwsUsername: boolean;
+    }) => s3Service.createFolder(accountId!, bucket, parentPrefix, folderName, appendAwsUsername),
     onSuccess: (object) => {
       void queryClient.invalidateQueries({ queryKey: ["s3-objects", accountId, object.bucket] });
     }

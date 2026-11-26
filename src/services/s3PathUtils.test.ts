@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   appendSlashForMatching,
+  buildFolderKey,
   formatCompactS3Path,
   listS3PathOptions,
   listS3PathSuggestions,
   parsePathInputForSuggestions,
-  resolvePathInputEnterAction
+  resolvePathInputEnterAction,
+  validateS3FolderPath
 } from "./s3PathUtils";
 
 describe("appendSlashForMatching", () => {
@@ -145,11 +147,19 @@ describe("formatCompactS3Path", () => {
   });
 });
 
-describe("validateS3FolderName", () => {
-  it("rejects empty and invalid folder names", async () => {
-    const { validateS3FolderName, buildFolderKey } = await import("./s3PathUtils");
-    expect(validateS3FolderName("")).toBe("Folder name is required.");
-    expect(validateS3FolderName("bad/name")).toBe("Folder name cannot contain '/'.");
-    expect(buildFolderKey("logs/", "reports")).toBe("logs/reports/");
+describe("validateS3FolderPath", () => {
+  it("accepts nested relative paths with an optional trailing slash", () => {
+    expect(validateS3FolderPath("team/reports/", false)).toBeUndefined();
+    expect(buildFolderKey("logs/", "team/reports/")).toBe("logs/team/reports/");
+  });
+
+  it("allows empty input only when the username supplies the folder name", () => {
+    expect(validateS3FolderPath("", false)).toBe("Folder name is required.");
+    expect(validateS3FolderPath("", true)).toBeUndefined();
+    expect(buildFolderKey("users/", "", "Alice")).toBe("users/Alice/");
+  });
+
+  it.each(["/users", "users//reports", "users/../reports", "users\\reports"])("rejects invalid path %s", (path) => {
+    expect(validateS3FolderPath(path, false)).toBe("Enter a valid relative folder path.");
   });
 });

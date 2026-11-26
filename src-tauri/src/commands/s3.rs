@@ -1,3 +1,4 @@
+use crate::aws::auth::sso::caller_identity;
 use crate::aws::runtime::runtime_for_context;
 use crate::aws::s3_client;
 use crate::aws::s3_rules::s3_object_editability;
@@ -1010,6 +1011,12 @@ pub async fn delete_s3_object(app: AppHandle, request: S3ObjectRequest) -> AppRe
 const S3_PREFIX_SCAN_LIMIT: usize = 10_000;
 
 #[tauri::command]
+pub async fn get_s3_iam_username(app: AppHandle, request: AwsCommandContext) -> AppResult<String> {
+    let runtime = runtime_for_context(&app, request).await?;
+    resolve_iam_username(&runtime.config).await
+}
+
+#[tauri::command]
 pub async fn create_s3_folder(
     app: AppHandle,
     request: S3CreateFolderRequest,
@@ -1018,40 +1025,80 @@ pub async fn create_s3_folder(
         return Err(AppError::validation("Bucket is required."));
     }
 
-    let folder_name = request.folder_name.trim();
-    if folder_name.is_empty() {
+    let input = request.folder_name.trim();
+    let folder_path = input.strip_suffix('/').unwrap_or(input);
+    if input.is_empty() && !request.append_aws_username {
         return Err(AppError::validation("Folder name is required."));
     }
-    if folder_name.contains('/') {
-        return Err(AppError::validation("Folder name cannot contain '/'."));
+    if !input.is_empty()
+        && (folder_path.contains('\\')
+            || folder_path
+                .split('/')
+                .any(|part| part.trim().is_empty() || matches!(part, "." | "..")))
+    {
+        return Err(AppError::validation("Enter a valid relative folder path."));
     }
 
     let parent_prefix = normalize_s3_prefix(request.parent_prefix.as_deref().unwrap_or_default());
-    let folder_key = format!("{parent_prefix}{folder_name}/");
 
     let runtime = runtime_for_context(
         &app,
         AwsCommandContext {
-            account_id: request.account_id.clone(),
+            account_id: request.account_id,
         },
     )
     .await?;
-    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
 
-    if prefix_exists(&client, &request.bucket, &parent_prefix, folder_name).await? {
-        return Err(AppError::validation(format!(
-            "Folder '{folder_name}/' already exists."
-        )));
+    let mut folder_key = parent_prefix;
+    if !folder_path.is_empty() {
+        folder_key.push_str(folder_path);
+        folder_key.push('/');
+    }
+    if request.append_aws_username {
+        let username = resolve_iam_username(&runtime.config).await?;
+        folder_key.push_str(&username);
+        folder_key.push('/');
+    }
+    if folder_key.len() > 1024 {
+        return Err(AppError::validation("S3 folder key exceeds 1,024 bytes."));
+    }
+
+    let client = s3_client::client_for_bucket(&runtime, &request.bucket).await?;
+    let already_exists = || AppError::validation(format!("Folder '{folder_key}' already exists."));
+
+    // Preserve duplicate-prefix detection for callers who can list this prefix.
+    match client
+        .list_objects_v2()
+        .bucket(&request.bucket)
+        .prefix(&folder_key)
+        .max_keys(1)
+        .send()
+        .await
+    {
+        Ok(response) if !response.contents().is_empty() => return Err(already_exists()),
+        Ok(_) => {}
+        Err(error) if error.raw_response().is_some_and(|r| r.status().as_u16() == 403) => {}
+        Err(error) => return Err(AppError::aws_for_account_sdk("s3", runtime.account.id, error)),
     }
 
     client
         .put_object()
         .bucket(&request.bucket)
         .key(&folder_key)
+        .if_none_match("*")
         .body(ByteStream::from_static(b""))
         .send()
         .await
-        .map_err(|error| AppError::aws_for_account_sdk("s3", runtime.account.id, error))?;
+        .map_err(|error| {
+            if error
+                .raw_response()
+                .is_some_and(|response| response.status().as_u16() == 412)
+            {
+                already_exists()
+            } else {
+                AppError::aws_for_account_sdk("s3", runtime.account.id, error)
+            }
+        })?;
 
     Ok(object(
         &request.bucket,
@@ -1129,40 +1176,24 @@ pub async fn delete_s3_prefix(app: AppHandle, request: S3ObjectRequest) -> AppRe
     Ok(())
 }
 
-async fn prefix_exists(
-    client: &aws_sdk_s3::Client,
-    bucket: &str,
-    parent_prefix: &str,
-    folder_name: &str,
-) -> AppResult<bool> {
-    let folder_key = format!("{parent_prefix}{folder_name}/");
-    let response = client
-        .list_objects_v2()
-        .bucket(bucket)
-        .prefix(&folder_key)
-        .max_keys(1)
-        .send()
-        .await
-        .map_err(|error| AppError::aws("s3", error))?;
+async fn resolve_iam_username(config: &aws_config::SdkConfig) -> AppResult<String> {
+    let identity = caller_identity(config).await?;
+    iam_username(&identity.arn).map(str::to_string).ok_or_else(|| {
+        AppError::validation("The current AWS identity has no IAM username. This option requires IAM user credentials.")
+    })
+}
 
-    if !response.contents().is_empty() {
-        return Ok(true);
+fn iam_username(arn: &str) -> Option<&str> {
+    let mut parts = arn.splitn(6, ':');
+    if parts.next()? != "arn" || parts.nth(1)? != "iam" {
+        return None;
     }
-
-    let delimiter_response = client
-        .list_objects_v2()
-        .bucket(bucket)
-        .prefix(parent_prefix)
-        .delimiter("/")
-        .send()
-        .await
-        .map_err(|error| AppError::aws("s3", error))?;
-
-    Ok(delimiter_response
-        .common_prefixes()
-        .iter()
-        .filter_map(|entry| entry.prefix())
-        .any(|entry| entry == folder_key))
+    parts
+        .nth(2)?
+        .strip_prefix("user/")?
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
 }
 
 struct ListedPrefixObjects {
@@ -1340,12 +1371,36 @@ fn parse_s3_job_log_object(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_prefix_children, decode_s3_log_content, next_conflict_file_name, normalize_s3_prefix,
-        parse_s3_job_log_object,
+        count_prefix_children, decode_s3_log_content, iam_username, next_conflict_file_name,
+        normalize_s3_prefix, parse_s3_job_log_object,
     };
 
     const JOB: &str = "0000000381t77o3g8f5";
     const VC: &str = "virtual-cluster-1";
+
+    #[test]
+    fn extracts_iam_username_without_the_iam_path() {
+        assert_eq!(
+            iam_username("arn:aws:iam::123456789012:user/Alice"),
+            Some("Alice")
+        );
+        assert_eq!(
+            iam_username("arn:aws-cn:iam::123456789012:user/team/data/Alice"),
+            Some("Alice")
+        );
+    }
+
+    #[test]
+    fn rejects_identities_without_an_iam_username() {
+        for arn in [
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/Analyst",
+            "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Analyst/Alice",
+            "arn:aws:sts::123456789012:federated-user/Alice",
+        ] {
+            assert_eq!(iam_username(arn), None, "{arn}");
+        }
+    }
 
     #[test]
     fn control_log_objects_keep_their_gz_key_but_drop_the_suffix_from_the_stream() {

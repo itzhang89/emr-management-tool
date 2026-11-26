@@ -13,17 +13,21 @@ export function formatPathInput(bucket: string | undefined, prefix: string) {
   return bucket ? `${bucket}/${prefix}` : "";
 }
 
-export function validateS3FolderName(name: string) {
-  const trimmed = name.trim();
-  if (!trimmed) return "Folder name is required.";
-  if (trimmed.includes("/")) return "Folder name cannot contain '/'.";
-  if (trimmed.includes("\\")) return "Folder name cannot contain '\\'.";
+export function validateS3FolderPath(path: string, appendAwsUsername: boolean) {
+  const trimmed = path.trim();
+  if (!trimmed) return appendAwsUsername ? undefined : "Folder name is required.";
+  const segments = trimmed.replace(/\/$/, "").split("/");
+  if (trimmed.includes("\\") || segments.some((segment) => !segment.trim() || segment === "." || segment === "..")) {
+    return "Enter a valid relative folder path.";
+  }
   return undefined;
 }
 
-export function buildFolderKey(parentPrefix: string, folderName: string) {
+export function buildFolderKey(parentPrefix: string, folderPath: string, awsUsername?: string) {
   const normalizedParent = parentPrefix && !parentPrefix.endsWith("/") ? `${parentPrefix}/` : parentPrefix;
-  return `${normalizedParent}${folderName.trim()}/`;
+  const path = folderPath.trim();
+  const relativePrefix = path && !path.endsWith("/") ? `${path}/` : path;
+  return normalizedParent + relativePrefix + (awsUsername ? `${awsUsername}/` : "");
 }
 
 export function parseS3PathInput(value: string) {

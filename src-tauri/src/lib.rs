@@ -97,6 +97,7 @@ pub fn run() {
             commands::s3::download_s3_object_to_disk,
             commands::s3::rename_s3_object,
             commands::s3::delete_s3_object,
+            commands::s3::get_s3_iam_username,
             commands::s3::create_s3_folder,
             commands::s3::describe_s3_prefix_deletion,
             commands::s3::delete_s3_prefix,
