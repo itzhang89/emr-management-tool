@@ -42,6 +42,7 @@ import {
 import { parameterizeSourcePayloadForTemplate } from "@/services/parameterizeEntryPointArguments";
 import {
   getDefaultCustomVariableValues,
+  isBuiltinTemplateVariable,
   MissingTemplateVariablesError,
   resolveTemplatePayload,
   toStartJobRunRequest,
@@ -54,7 +55,7 @@ import {
   writeSubmitJobLastTemplate
 } from "@/services/submitJobFormStorage";
 import { useSessionStore } from "@/stores/sessionStore";
-import type { JobConfigTemplate, JobRunSummary, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest, TemplateVariableDefinition } from "@/types/domain";
+import type { AwsAccountSummary, JobConfigTemplate, JobRunSummary, ResolvedJobPayload, SparkResourceConfig, StartJobRunRequest, TemplateVariableDefinition } from "@/types/domain";
 
 const SUBMIT_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_JOB);
 const PREVIEW_JSON_SHORTCUT = getShortcutPrimaryKey(SHORTCUT_IDS.SUBMIT_PREVIEW_JSON);
@@ -69,16 +70,17 @@ type SubmitJobPageProps = {
 };
 
 export function SubmitJobPage(props: SubmitJobPageProps) {
-  const accountId = useActiveAwsAccount().data?.id;
-  return <AccountSubmitJobPage key={accountId} accountId={accountId} {...props} />;
+  const account = useActiveAwsAccount().data;
+  return <AccountSubmitJobPage key={account?.id} account={account} {...props} />;
 }
 
 function AccountSubmitJobPage({
-  accountId,
+  account,
   onOpenLogs,
   onOpenAiAssistant
-}: SubmitJobPageProps & { accountId?: string }) {
+}: SubmitJobPageProps & { account?: AwsAccountSummary }) {
   const t = useT();
+  const accountId = account?.id;
   const setSelectedVirtualClusterId = useSessionStore((state) => state.setSelectedVirtualClusterId);
   const clonedJobRequest = useSessionStore((state) => state.clonedJobRequest);
   const setClonedJobRequest = useSessionStore((state) => state.setClonedJobRequest);
@@ -128,6 +130,7 @@ function AccountSubmitJobPage({
     const formVariables: TemplateVariableDefinition[] = [];
     const accountVariableNames: string[] = [];
     for (const variable of selectedTemplate?.customVariables ?? []) {
+      if (isBuiltinTemplateVariable(variable.name)) continue;
       if (accountVariables && Object.hasOwn(accountVariables, variable.name)) {
         accountVariableNames.push(variable.label ?? variable.name);
       } else {
@@ -249,24 +252,32 @@ function AccountSubmitJobPage({
     try {
       return {
         payload: resolveTemplatePayload(selectedTemplate, {
-          templateName: selectedTemplate.name,
           virtualClusterId,
           submitUser: submitUserQuery.data ?? "user",
+          account,
           customVariables,
           accountVariables
         })
       };
     } catch (error) {
-      return {
-        error: error instanceof MissingTemplateVariablesError
-          ? t("Missing template variables: {names}. Set them in Templates → Account Variables or provide template values.", {
-              names: error.variables.join(", ")
-            })
-          : t("Could not resolve template JSON.")
-      };
+      if (!(error instanceof MissingTemplateVariablesError)) return { error: t("Could not resolve template JSON.") };
+      const builtins = error.variables.filter(isBuiltinTemplateVariable);
+      const custom = error.variables.filter((name) => !isBuiltinTemplateVariable(name));
+      const messages = [];
+      if (builtins.length) {
+        messages.push(t("Built-in template variables unavailable for the current account: {names}.", {
+          names: builtins.join(", ")
+        }));
+      }
+      if (custom.length) {
+        messages.push(t("Missing template variables: {names}. Set them in Templates → Account Variables or provide template values.", {
+          names: custom.join(", ")
+        }));
+      }
+      return { error: messages.join(" ") };
     }
   }, [
-    accountVariables, accountVariablesQuery.isError, cloneRequest, customVariables, restoredTemplateId,
+    account, accountVariables, accountVariablesQuery.isError, cloneRequest, customVariables, restoredTemplateId,
     selectedTemplate, submitUserQuery.data, t, virtualClusterId
   ]);
   const { payload: resolvedPayload, error: resolutionError } = resolution;

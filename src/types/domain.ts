@@ -323,9 +323,9 @@ export interface ResolvedJobPayload {
 }
 
 export interface TemplateResolveContext {
-  templateName: string;
   virtualClusterId: string;
   submitUser: string;
+  account?: Pick<AwsAccountSummary, "identity" | "region" | "ssoAccountId" | "roleArn">;
   customVariables: Record<string, string | number | boolean | string[]>;
   accountVariables?: AccountTemplateVariables;
   now?: Date;

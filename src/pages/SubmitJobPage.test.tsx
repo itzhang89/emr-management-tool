@@ -80,7 +80,7 @@ vi.mock("@/hooks/useAccountTemplateVariables", () => ({
 }));
 
 vi.mock("@/hooks/useAwsSettings", () => ({
-  useActiveAwsAccount: () => ({ data: { id: "acct-test" } })
+  useActiveAwsAccount: () => ({ data: { id: "acct-test", region: "us-east-1" } })
 }));
 
 vi.mock("@/hooks/useEmr", () => ({
@@ -237,7 +237,7 @@ describe("SubmitJobPage", () => {
     mocks.accountVariables = { ENV: "account-prod" };
     const template = mocks.jobConfigTemplates[0];
     template.customVariables = [{ ...template.customVariables[0], required: true }];
-    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ENV}"]');
+    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ENV}", "${AWS_REGION}"]');
     writeSubmitJobFormCache("acct-test", template.id, {
       resourceTemplateId: "tiny",
       customVariables: { ENV: "cached-dev" }
@@ -248,18 +248,19 @@ describe("SubmitJobPage", () => {
 
     expect(mocks.startJobRun).toHaveBeenCalledWith(expect.objectContaining({
       accountId: "acct-test",
-      arguments: ["account-prod"]
+      arguments: ["account-prod", "us-east-1"]
     }));
   });
 
   it("identifies a missing variable and blocks the job", async () => {
     const template = mocks.jobConfigTemplates[0];
-    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ACCOUNT_BUCKET}"]');
+    template.payloadTemplate = template.payloadTemplate.replace('"entryPointArguments": []', '"entryPointArguments": ["${ACCOUNT_BUCKET}", "${AWS_USERNAME}"]');
     renderPage();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Submit" }));
 
     expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("Missing template variables: ACCOUNT_BUCKET"));
+    expect(mocks.toastError).toHaveBeenCalledWith(expect.stringContaining("Built-in template variables unavailable for the current account: AWS_USERNAME"));
     expect(mocks.startJobRun).not.toHaveBeenCalled();
   });
 

@@ -51,7 +51,10 @@ vi.mock("@/hooks/useAwsSettings", () => ({
     isLoading: false
   }),
   useActiveAwsAccount: () => ({
-    data: { id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true }
+    data: {
+      id: "acct-test", name: "Test", region: "us-east-1", accessKeyIdMasked: "AKIA****", isActive: true,
+      identity: { arn: "arn:aws:iam::123456789012:user/alice", account: "123456789012", userId: "id" }
+    }
   }),
   useSetActiveAwsAccount: () => ({ mutate: setActiveAccountMutate, isPending: false })
 }));
@@ -323,8 +326,13 @@ describe("AppShell", () => {
     expect(panel.getByText(/Current account: Test/)).toBeInTheDocument();
     expect(panel.queryByRole("combobox")).not.toBeInTheDocument();
     expect(panel.getByRole("heading", { name: "Built-in variables" })).toBeInTheDocument();
+    expect(panel.getByText(/template_name uses the actual name/)).toBeInTheDocument();
+    expect(panel.getByText("Daily ETL Jar")).toBeInTheDocument();
+    expect(panel.getByText("123456789012")).toBeInTheDocument();
     await user.click(panel.getByRole("button", { name: "Copy value of submitUser" }));
     expect(copy).toHaveBeenCalledWith("tester");
+    await user.click(panel.getByRole("button", { name: "Copy value of AWS_USERNAME" }));
+    expect(copy).toHaveBeenCalledWith("alice");
 
     const environment = panel.getByRole("textbox", { name: "Variable value 1" });
     expect(environment).toHaveValue("test");

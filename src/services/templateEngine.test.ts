@@ -45,6 +45,9 @@ describe("templateEngine", () => {
       "template_name",
       "virtualClusterId",
       "submitUser",
+      "AWS_USERNAME",
+      "AWS_ACCOUNT_ID",
+      "AWS_REGION",
       "date",
       "datetime"
     ]);
@@ -54,7 +57,6 @@ describe("templateEngine", () => {
 
   it("replaces built-in and custom variables", () => {
     const resolved = resolveTemplatePayload(template, {
-      templateName: "Daily ETL",
       virtualClusterId: "vc-123",
       submitUser: "john_doe",
       customVariables: { ENV: "dev" },
@@ -66,12 +68,40 @@ describe("templateEngine", () => {
     expect(resolved.jobDriver.sparkSubmitJobDriver.entryPointArguments).toEqual(["--env=dev"]);
   });
 
+  it("resolves AWS variables and submitUser", () => {
+    const awsTemplate = {
+      ...template,
+      payloadTemplate: '{"name":"${template_name}-${submitUser}-${AWS_USERNAME}-${AWS_ACCOUNT_ID}-${AWS_REGION}"}'
+    };
+    expect(resolveTemplatePayload(awsTemplate, {
+      virtualClusterId: "vc-123",
+      submitUser: "tester",
+      account: {
+        identity: { arn: "arn:aws-cn:iam::123456789012:user/platform/alice", account: "123456789012", userId: "id" },
+        region: "cn-north-1"
+      },
+      customVariables: {},
+      accountVariables: { AWS_USERNAME: "override" }
+    }).name).toBe("Daily ETL-tester-alice-123456789012-cn-north-1");
+  });
+
+  it.each([
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Admin/alice"
+  ])("reports AWS_USERNAME as missing without an IAM user identity (%s)", (arn) => {
+    expect(() => resolveTemplatePayload({ ...template, payloadTemplate: '{"name":"${AWS_USERNAME}"}' }, {
+      virtualClusterId: "vc-123",
+      submitUser: "tester",
+      account: { identity: { arn, account: "123456789012", userId: "id" }, region: "us-east-1" },
+      customVariables: {}
+    })).toThrow(expect.objectContaining({ variables: ["AWS_USERNAME"] }));
+  });
+
   it("renders account-only values and safely substitutes JSON strings", () => {
     const value = 's3://bucket/quote"and\\slash';
     const resolved = resolveTemplatePayload(
       { ...template, payloadTemplate: template.payloadTemplate.replace("s3://bucket/app.jar", "${ENTRY_POINT}") },
       {
-        templateName: "Daily ETL",
         virtualClusterId: "vc-123",
         submitUser: "tester",
         customVariables: { ENV: "dev" },
@@ -88,7 +118,6 @@ describe("templateEngine", () => {
       buildVariableMap(
         template,
         {
-          templateName: "Daily ETL",
           virtualClusterId: "vc-123",
           submitUser: "tester",
           customVariables: {}
@@ -106,7 +135,6 @@ describe("templateEngine", () => {
       buildVariableMap(
         template,
         {
-          templateName: "Daily ETL",
           virtualClusterId: "vc-123",
           submitUser: "tester",
           customVariables: {}
@@ -119,8 +147,7 @@ describe("templateEngine", () => {
   });
 
   it("validates required custom variables and payload shape", () => {
-    const resolved = resolveTemplatePayload(template, {
-      templateName: "Daily-ETL",
+    const resolved = resolveTemplatePayload({ ...template, name: "Daily-ETL" }, {
       virtualClusterId: "vc-123",
       submitUser: "tester",
       customVariables: { ENV: "prod" },
@@ -135,7 +162,6 @@ describe("templateEngine", () => {
 
   it("rejects EMR job names with characters that StartJobRun does not allow", () => {
     const resolved = resolveTemplatePayload(template, {
-      templateName: "Daily ETL",
       virtualClusterId: "vc-123",
       submitUser: "tester",
       customVariables: { ENV: "prod" },
@@ -152,7 +178,6 @@ describe("templateEngine", () => {
 
   it("builds a start job request from resolved payload", () => {
     const resolved = resolveTemplatePayload(template, {
-      templateName: "Daily ETL",
       virtualClusterId: "vc-123",
       submitUser: "tester",
       customVariables: { ENV: "prod" },
@@ -194,7 +219,6 @@ describe("templateEngine", () => {
     };
 
     const resolved = resolveTemplatePayload(booleanTemplate, {
-      templateName: "bool-test",
       virtualClusterId: "vc-123",
       submitUser: "tester",
       customVariables: { enabled: true, enabled_numeric: false },
@@ -211,7 +235,6 @@ describe("templateEngine", () => {
         customVariables: [{ name: "enabled", type: "boolean", defaultValue: false }]
       },
       {
-        templateName: "bool-test",
         virtualClusterId: "vc-123",
         submitUser: "tester",
         customVariables: { enabled: true }

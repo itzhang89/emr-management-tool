@@ -7,8 +7,9 @@ import { useJobConfigTemplates, useSubmitUser } from "@/hooks/useJobConfigTempla
 import { useT } from "@/i18n";
 import { readSubmitJobLastTemplate } from "@/services/submitJobFormStorage";
 import { BUILTIN_TEMPLATE_VARIABLES, getBuiltinTemplateVariableValues } from "@/services/templateEngine";
+import type { AwsAccountSummary } from "@/types/domain";
 
-export function BuiltinTemplateVariables({ accountId }: { accountId: string }) {
+export function BuiltinTemplateVariables({ account }: { account: AwsAccountSummary }) {
   const t = useT();
   const { data: templates } = useJobConfigTemplates();
   const { data: submitUser } = useSubmitUser();
@@ -19,26 +20,31 @@ export function BuiltinTemplateVariables({ accountId }: { accountId: string }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const lastTemplateId = readSubmitJobLastTemplate(accountId);
+  const lastTemplateId = readSubmitJobLastTemplate(account.id);
   const template = templates?.find((item) => item.id === lastTemplateId) ?? templates?.[0];
-  const values = getBuiltinTemplateVariableValues({
-    templateName: template?.name ?? "",
+  const values = getBuiltinTemplateVariableValues(template?.name, {
     virtualClusterId: clusterId ?? "",
-    submitUser: submitUser ?? "user"
+    submitUser: submitUser ?? "user",
+    account
   }, now);
 
   return (
     <section className="space-y-2">
       <h2 className="text-base font-medium">{t("Built-in variables")}</h2>
       <p className="text-sm text-muted-foreground">
-        {t("Read-only preview. Template name and cluster follow your selections when submitting.")}
+        {t("Read-only preview. template_name uses the actual name of the template selected for submission. example is the name of the sample template.")}
       </p>
       <dl className="divide-y rounded-md border">
         {BUILTIN_TEMPLATE_VARIABLES.map((name) => {
           const value = values[name];
           return (
             <div key={name} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-2 px-3 py-1">
-              <dt className="break-all font-mono text-sm">{name}</dt>
+              <dt className="min-w-0 break-words text-sm">
+                <code>{name}</code>
+                {name === "AWS_USERNAME" && (
+                  <p className="text-xs text-muted-foreground">{t("IAM user name (aws:username).")}</p>
+                )}
+              </dt>
               <dd className="flex min-w-0 items-center gap-2">
                 <code className="min-w-0 break-all text-sm">{value || t("Unavailable")}</code>
                 <Button
@@ -49,6 +55,7 @@ export function BuiltinTemplateVariables({ accountId }: { accountId: string }) {
                   aria-label={t("Copy value of {name}", { name })}
                   disabled={!value}
                   onClick={async () => {
+                    if (!value) return;
                     try {
                       await navigator.clipboard.writeText(value);
                       toast.success(t("Copied to clipboard"));

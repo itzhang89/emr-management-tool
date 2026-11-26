@@ -14,6 +14,9 @@ const BUILTIN_VARIABLES: &[&str] = &[
     "template_name",
     "virtualClusterId",
     "submitUser",
+    "AWS_USERNAME",
+    "AWS_ACCOUNT_ID",
+    "AWS_REGION",
     "date",
     "datetime",
 ];

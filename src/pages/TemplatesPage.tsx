@@ -70,7 +70,7 @@ function AccountVariablesPanel() {
       <p className="text-sm text-muted-foreground">
         {t("Current account: {name}", { name: account.name })} · {account.region}
       </p>
-      <BuiltinTemplateVariables accountId={account.id} />
+      <BuiltinTemplateVariables account={account} />
       <AccountTemplateVariablesEditor accountId={account.id} />
     </div>
   );

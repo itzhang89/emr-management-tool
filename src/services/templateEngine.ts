@@ -14,12 +14,14 @@ export const BUILTIN_TEMPLATE_VARIABLES = [
   "template_name",
   "virtualClusterId",
   "submitUser",
+  "AWS_USERNAME",
+  "AWS_ACCOUNT_ID",
+  "AWS_REGION",
   "date",
   "datetime"
 ] as const;
 
 export type BuiltinTemplateVariable = (typeof BUILTIN_TEMPLATE_VARIABLES)[number];
-
 export function isBuiltinTemplateVariable(name: string) {
   return BUILTIN_TEMPLATE_VARIABLES.some((builtin) => builtin === name);
 }
@@ -57,13 +59,19 @@ export function resolveTemplatePayload(
 }
 
 export function getBuiltinTemplateVariableValues(
-  context: Pick<TemplateResolveContext, "templateName" | "virtualClusterId" | "submitUser">,
+  templateName: string | undefined,
+  { virtualClusterId, submitUser, account }: Pick<TemplateResolveContext, "virtualClusterId" | "submitUser" | "account">,
   now: Date
-): Record<BuiltinTemplateVariable, string> {
+): Record<BuiltinTemplateVariable, string | undefined> {
+  const iamUserPath = account?.identity?.arn.match(/^arn:[^:]+:iam::\d{12}:user\/(.+)$/)?.[1];
+  const roleAccountId = account?.roleArn?.match(/^arn:[^:]+:iam::(\d{12}):role\//)?.[1];
   return {
-    template_name: context.templateName,
-    virtualClusterId: context.virtualClusterId,
-    submitUser: context.submitUser,
+    template_name: templateName,
+    virtualClusterId,
+    submitUser,
+    AWS_USERNAME: iamUserPath?.split("/").at(-1),
+    AWS_ACCOUNT_ID: account?.identity?.account || account?.ssoAccountId || roleAccountId,
+    AWS_REGION: account?.region || undefined,
     date: formatWithPattern(now, defaultFormatForVariableType("date")),
     datetime: formatWithPattern(now, defaultFormatForVariableType("dateTime"))
   };
@@ -74,7 +82,10 @@ export function buildVariableMap(
   context: TemplateResolveContext,
   now: Date
 ): Record<string, string> {
-  const variables: Record<string, string> = Object.assign(Object.create(null), getBuiltinTemplateVariableValues(context, now));
+  const variables: Record<string, string> = Object.create(null);
+  for (const [name, value] of Object.entries(getBuiltinTemplateVariableValues(template.name, context, now))) {
+    if (value !== undefined) variables[name] = value;
+  }
 
   for (const definition of template.customVariables) {
     if (isBuiltinTemplateVariable(definition.name)) continue;
