@@ -17,15 +17,15 @@ import {
 export function useS3PathPicker({
   open,
   initialPath,
-  appendSubmitUser
+  appendAwsUsername
 }: {
   open: boolean;
   initialPath: string;
-  appendSubmitUser?: boolean;
+  appendAwsUsername?: boolean;
 }) {
   const buckets = useS3Buckets();
   const [pathInput, setPathInput] = useState("");
-  const [appendUser, setAppendUser] = useState(appendSubmitUser ?? false);
+  const [appendUser, setAppendUser] = useState(appendAwsUsername ?? false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
 
@@ -34,10 +34,10 @@ export function useS3PathPicker({
     const parsed = parseS3PathInput(initialPath);
     const fallbackBucket = parsed?.bucket ?? buckets.data?.[0]?.name;
     setPathInput(formatPathInput(fallbackBucket, parsed?.prefix ?? ""));
-    setAppendUser(appendSubmitUser ?? false);
+    setAppendUser(appendAwsUsername ?? false);
     setHighlightIndex(-1);
     setSuggestionsOpen(false);
-  }, [open, initialPath, buckets.data, appendSubmitUser]);
+  }, [open, initialPath, buckets.data, appendAwsUsername]);
 
   const context = useMemo(() => parsePathInputForSuggestions(pathInput), [pathInput]);
   const folderObjects = useS3Objects(

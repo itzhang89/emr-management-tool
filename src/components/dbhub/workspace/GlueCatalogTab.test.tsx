@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GlueCatalogTab } from "./GlueCatalogTab";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { mergeAthenaPreferences } from "@/services/athenaPreferencesStorage";
 import type { AthenaQueryExecution } from "@/types/domain";
 
 /**
@@ -25,33 +26,13 @@ vi.mock("@/hooks/useAwsSettings", () => ({
   useActiveAwsAccount: () => ({ data: { id: "acct-a", name: "Test", region: "us-east-1" } })
 }));
 
-vi.mock("@/hooks/useJobConfigTemplates", () => ({
-  useSubmitUser: () => ({ data: "tester" })
-}));
-
-const setLastDatabase = vi.fn();
-vi.mock("@/hooks/useAthenaAccountPreferences", () => ({
-  useAthenaAccountPreferences: () => ({
-    ready: true,
-    preferences: {},
-    // A configured results path, so the query-settings dialog stays shut and a
-    // run is allowed to be a run.
-    outputBasePath: "s3://example-results/athena",
-    appendSubmitUser: true,
-    workgroup: "primary",
-    catalogCollapsed: false,
-    // The LOCATION reminder is its own dialog with its own tests upstream; here
-    // it would sit between the click and the run being asserted.
-    skipCreateLocationReminder: true,
-    lastDatabase: undefined,
-    updatePreferences: vi.fn(),
-    setOutputBasePath: vi.fn(),
-    setAppendSubmitUser: vi.fn(),
-    setWorkgroup: vi.fn(),
-    setCatalogCollapsed: vi.fn(),
-    setLastDatabase,
-    setSkipCreateLocationReminder: vi.fn()
-  })
+const getIamUsername = vi.fn();
+vi.mock("@/services/s3Service", () => ({
+  s3Service: {
+    getIamUsername: (...args: unknown[]) => getIamUsername(...args),
+    listBuckets: async () => [{ name: "example-results" }],
+    listObjects: async () => []
+  }
 }));
 
 const startQuery = vi.fn();
@@ -133,6 +114,12 @@ function editorTab(title: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
+  mergeAthenaPreferences("acct-a", {
+    outputBasePath: "s3://example-results/athena",
+    skipCreateLocationReminder: true
+  });
+  getIamUsername.mockReset().mockResolvedValue("Alice");
   // `clearAllMocks` drops calls but keeps implementations, so anything a test
   // relies on being unset has to be unset here rather than left to the default.
   executionById.clear();
@@ -141,6 +128,54 @@ beforeEach(() => {
   // "● " in front of its name, which is not what these names are about.
   startQuery.mockResolvedValue({ queryExecutionId: "exec-1", state: "SUCCEEDED" });
   vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("GlueCatalogTab query output", () => {
+  it("previews and submits the IAM user's path selected in the S3 picker", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Query settings" }));
+    const settings = within(screen.getByRole("dialog", { name: "Query settings" }));
+    expect(settings.getByRole("checkbox", { name: "Append AWS username" })).not.toBeChecked();
+    expect(getIamUsername).not.toHaveBeenCalled();
+    await user.click(settings.getByRole("button", { name: "Browse S3 results path" }));
+
+    const picker = within(screen.getByRole("dialog", { name: "Select S3 path" }));
+    await user.click(picker.getByRole("checkbox", { name: "Append AWS username" }));
+    expect(await picker.findByText("s3://example-results/athena/Alice/")).toBeInTheDocument();
+    expect(getIamUsername).toHaveBeenCalledWith("acct-a");
+    await user.click(picker.getByRole("button", { name: "Use path" }));
+    expect(await settings.findByText("s3://example-results/athena/Alice/")).toBeInTheDocument();
+    expect(settings.getByRole("checkbox", { name: "Append AWS username" })).toBeChecked();
+    await user.click(settings.getByRole("button", { name: "Done" }));
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(startQuery).toHaveBeenCalledWith(expect.objectContaining({
+      outputLocation: "s3://example-results/athena/Alice/"
+    })));
+  });
+
+  it("preserves a saved append setting and blocks submission when the IAM username is unavailable", async () => {
+    const user = userEvent.setup();
+    mergeAthenaPreferences("acct-a", { appendSubmitUser: true });
+    getIamUsername.mockRejectedValue(new Error("This option requires IAM user credentials."));
+    renderWorkspace();
+
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    const settings = within(await screen.findByRole("dialog", { name: "Query settings" }));
+    expect(await settings.findByText("This option requires IAM user credentials.")).toBeInTheDocument();
+    const append = settings.getByRole("checkbox", { name: "Append AWS username" });
+    expect(append).toBeChecked();
+    expect(startQuery).not.toHaveBeenCalled();
+
+    await user.click(append);
+    await user.click(settings.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Run query" }));
+    await waitFor(() => expect(startQuery).toHaveBeenCalledWith(expect.objectContaining({
+      outputLocation: "s3://example-results/athena/"
+    })));
+  });
 });
 
 /** A finished run whose results are ready to be fetched. */

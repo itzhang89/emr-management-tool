@@ -97,7 +97,6 @@ const s3: TranslationDictionary = {
   "Loading...": "正在加载…",
   "No matching buckets.": "没有匹配的存储桶。",
   "No matching folders under this prefix.": "该前缀下没有匹配的文件夹。",
-  "Append submitUser subdirectory": "追加 submitUser 子目录",
   "Athena results path:": "Athena 结果路径：",
   "Use path": "使用该路径",
 

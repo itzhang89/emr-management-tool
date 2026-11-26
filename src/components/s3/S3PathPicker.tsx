@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useS3IamUsername } from "@/hooks/useS3";
 import { useS3PathPicker } from "@/hooks/useS3PathPicker";
 import { useT } from "@/i18n";
 import { formatAppError } from "@/services/appErrorMessage";
@@ -97,29 +98,30 @@ export function S3PathPickerDialog({
   onOpenChange,
   initialPath,
   onSelect,
-  appendSubmitUser,
-  onAppendSubmitUserChange,
-  submitUser
+  appendAwsUsername,
+  onAppendAwsUsernameChange
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialPath: string;
   onSelect: (path: string) => void;
-  appendSubmitUser?: boolean;
-  onAppendSubmitUserChange?: (value: boolean) => void;
-  submitUser?: string;
+  appendAwsUsername?: boolean;
+  onAppendAwsUsernameChange?: (value: boolean) => void;
 }) {
   const t = useT();
-  const picker = useS3PathPicker({ open, initialPath, appendSubmitUser });
-  const effectivePath = resolveAthenaOutputLocation(picker.currentPath, submitUser ?? "user", picker.appendUser);
+  const picker = useS3PathPicker({ open, initialPath, appendAwsUsername });
+  const iamUsername = useS3IamUsername(open && Boolean(onAppendAwsUsernameChange) && picker.appendUser);
+  const awsUsername = iamUsername.isFetching || iamUsername.error ? undefined : iamUsername.data;
+  const effectivePath = resolveAthenaOutputLocation(picker.currentPath, awsUsername, picker.appendUser);
+  const usernameUnavailable = picker.appendUser && !awsUsername;
 
   const confirmSelection = () => {
     if (!picker.parsedPathInput?.bucket) {
       toast.error("Select an S3 bucket first.");
       return;
     }
-    if (onAppendSubmitUserChange && picker.appendUser !== appendSubmitUser) {
-      onAppendSubmitUserChange(picker.appendUser);
+    if (onAppendAwsUsernameChange && picker.appendUser !== appendAwsUsername) {
+      onAppendAwsUsernameChange(picker.appendUser);
     }
     onSelect(picker.currentPath);
   };
@@ -222,24 +224,25 @@ export function S3PathPickerDialog({
             </div>
           </div>
 
-          {onAppendSubmitUserChange ? (
+          {onAppendAwsUsernameChange ? (
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={picker.appendUser}
                 onCheckedChange={(checked) => picker.setAppendUser(checked === true)}
               />
-              <span>
-                {t("Append submitUser subdirectory")}
-                <span className="font-mono text-muted-foreground"> ({submitUser ?? "user"})</span>
-              </span>
+              {t("Append AWS username")}
             </label>
           ) : null}
 
-          {onAppendSubmitUserChange ? (
-            <p className="overflow-hidden text-xs text-muted-foreground">
+          {onAppendAwsUsernameChange ? (
+            <p className="overflow-hidden text-xs text-muted-foreground" aria-live="polite">
               {t("Athena results path:")}{" "}
               <span className="block truncate font-mono text-foreground" title={effectivePath || undefined}>
-                {effectivePath || "—"}
+                {usernameUnavailable
+                  ? !iamUsername.isFetching && iamUsername.error
+                    ? formatAppError(iamUsername.error, "Failed to resolve the AWS username.")
+                    : t("Resolving AWS username…")
+                  : effectivePath || "—"}
               </span>
             </p>
           ) : null}

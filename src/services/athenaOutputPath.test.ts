@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   displayAthenaResultsPath,
-  hasSubmitUserSuffix,
   isAthenaManagedResultsWorkgroup,
   isAthenaOutputPathRequired,
   normalizeS3Path,
@@ -14,18 +13,22 @@ describe("athenaOutputPath", () => {
     expect(normalizeS3Path("my-bucket/athena/")).toBe("s3://my-bucket/athena/");
   });
 
-  it("appends submitUser when enabled", () => {
+  it("appends the IAM username when enabled", () => {
     expect(resolveAthenaOutputLocation("s3://bucket/results/", "john_doe", true)).toBe("s3://bucket/results/john_doe/");
   });
 
-  it("does not duplicate submitUser suffix", () => {
+  it("does not duplicate the IAM username suffix", () => {
     expect(resolveAthenaOutputLocation("s3://bucket/results/john_doe/", "john_doe", true)).toBe(
       "s3://bucket/results/john_doe/"
     );
   });
 
-  it("detects existing submitUser suffix without trailing slash", () => {
-    expect(hasSubmitUserSuffix("s3://bucket/results/john_doe", "john_doe")).toBe(true);
+  it("appends the IAM username to a bucket with the same name", () => {
+    expect(resolveAthenaOutputLocation("s3://alice/", "alice", true)).toBe("s3://alice/alice/");
+  });
+
+  it("does not resolve a client output path when the enabled IAM username is unavailable", () => {
+    expect(resolveAthenaOutputLocation("s3://bucket/results/", undefined, true)).toBe("");
   });
 
   it("skips append when disabled", () => {

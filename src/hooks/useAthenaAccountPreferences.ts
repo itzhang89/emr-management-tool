@@ -36,9 +36,9 @@ export function useAthenaAccountPreferences(accountId?: string) {
     [updatePreferences]
   );
 
-  const setAppendSubmitUser = useCallback(
-    (appendSubmitUser: boolean) => {
-      updatePreferences({ appendSubmitUser });
+  const setAppendAwsUsername = useCallback(
+    (appendAwsUsername: boolean) => {
+      updatePreferences({ appendAwsUsername });
     },
     [updatePreferences]
   );
@@ -75,13 +75,13 @@ export function useAthenaAccountPreferences(accountId?: string) {
     ready,
     preferences,
     outputBasePath: preferences.outputBasePath ?? "",
-    appendSubmitUser: preferences.appendSubmitUser ?? true,
+    appendAwsUsername: preferences.appendAwsUsername ?? preferences.appendSubmitUser ?? false,
     workgroup: preferences.lastWorkgroup ?? "primary",
     catalogCollapsed: preferences.catalogCollapsed ?? false,
     lastDatabase: preferences.lastDatabase,
     skipCreateLocationReminder: preferences.skipCreateLocationReminder ?? false,
     setOutputBasePath,
-    setAppendSubmitUser,
+    setAppendAwsUsername,
     setWorkgroup,
     setCatalogCollapsed,
     setLastDatabase,

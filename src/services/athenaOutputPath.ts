@@ -5,30 +5,24 @@ export function normalizeS3Path(path: string): string {
   return withScheme.endsWith("/") ? withScheme : `${withScheme}/`;
 }
 
-export function resolveAthenaOutputLocation(basePath: string, submitUser: string, appendEnabled: boolean): string {
+export function resolveAthenaOutputLocation(
+  basePath: string,
+  awsUsername: string | undefined,
+  appendEnabled: boolean
+): string {
   const normalized = normalizeS3Path(basePath);
   if (!normalized || !appendEnabled) {
     return normalized;
   }
 
-  const user = submitUser.trim();
-  if (!user) {
-    return normalized;
-  }
+  if (!awsUsername) return "";
 
   const withoutTrailingSlash = normalized.replace(/\/+$/, "");
-  if (withoutTrailingSlash.endsWith(`/${user}`)) {
+  if (withoutTrailingSlash.slice("s3://".length).includes("/") && withoutTrailingSlash.endsWith(`/${awsUsername}`)) {
     return `${withoutTrailingSlash}/`;
   }
 
-  return `${normalized}${user}/`;
-}
-
-export function hasSubmitUserSuffix(basePath: string, submitUser: string): boolean {
-  const user = submitUser.trim();
-  if (!user) return false;
-  const normalized = normalizeS3Path(basePath).replace(/\/+$/, "");
-  return normalized.endsWith(`/${user}`);
+  return `${normalized}${awsUsername}/`;
 }
 
 export interface AthenaWorkgroupOutputHints {

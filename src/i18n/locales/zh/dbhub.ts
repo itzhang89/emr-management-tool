@@ -476,7 +476,6 @@ const dbhub: TranslationDictionary = {
   "Not configured": "未配置",
   "Loading saved settings...": "正在加载已保存的设置...",
   "Browse S3 results path": "浏览 S3 结果路径",
-  "Append submit user folder ({user})": "追加提交用户文件夹（{user}）",
   Done: "完成",
 
   // --- schemaObjects (service) ---------------------------------------------

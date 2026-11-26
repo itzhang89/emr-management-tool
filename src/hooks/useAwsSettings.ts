@@ -137,6 +137,7 @@ export function useUpdateAwsAccount() {
         if (!accounts) return [updated];
         return accounts.map((account) => (account.id === updated.id ? { ...account, ...updated } : account));
       });
+      void queryClient.invalidateQueries({ queryKey: ["s3-iam-username", updated.id] });
 
       if (regionChanged && updated.isActive) {
         resetAccountScopedSession();

@@ -29,9 +29,9 @@ export function AthenaQuerySettingsDialog({
   onWorkgroupChange,
   outputBasePath,
   onOutputBasePathChange,
-  appendSubmitUser,
-  onAppendSubmitUserChange,
-  submitUser,
+  appendAwsUsername,
+  onAppendAwsUsernameChange,
+  awsUsernameStatus,
   displayResultsPath,
   managedResultsEnabled,
   outputPathRequired,
@@ -46,9 +46,9 @@ export function AthenaQuerySettingsDialog({
   onWorkgroupChange: (value: string) => void;
   outputBasePath: string;
   onOutputBasePathChange: (value: string) => void;
-  appendSubmitUser: boolean;
-  onAppendSubmitUserChange: (value: boolean) => void;
-  submitUser: string;
+  appendAwsUsername: boolean;
+  onAppendAwsUsernameChange: (value: boolean) => void;
+  awsUsernameStatus?: string;
   displayResultsPath: string;
   managedResultsEnabled: boolean;
   outputPathRequired: boolean;
@@ -165,13 +165,14 @@ export function AthenaQuerySettingsDialog({
               <div className="flex min-w-0 items-stretch gap-2">
                 <p
                   id="athena-output-path"
+                  aria-live="polite"
                   className={cn(
                     "min-h-9 min-w-0 flex-1 break-all rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs leading-snug",
                     outputPathRequired ? "border-destructive/50 text-destructive" : "text-muted-foreground"
                   )}
                 >
                   {preferencesReady
-                    ? displayResultsPath ||
+                    ? awsUsernameStatus || displayResultsPath ||
                       (outputPathRequired ? t("Not configured") : "s3://bucket/athena-results/")
                     : t("Loading saved settings...")}
                 </p>
@@ -188,12 +189,12 @@ export function AthenaQuerySettingsDialog({
               </div>
               <div className="flex min-w-0 items-start gap-2">
                 <Checkbox
-                  id="append-submit-user"
-                  checked={appendSubmitUser}
-                  onCheckedChange={(checked) => onAppendSubmitUserChange(checked === true)}
+                  id="append-aws-username"
+                  checked={appendAwsUsername}
+                  onCheckedChange={(checked) => onAppendAwsUsernameChange(checked === true)}
                 />
-                <Label htmlFor="append-submit-user" className="min-w-0 text-xs font-normal break-words">
-                  {t("Append submit user folder ({user})", { user: submitUser || "user" })}
+                <Label htmlFor="append-aws-username" className="min-w-0 text-xs font-normal break-words">
+                  {t("Append AWS username")}
                 </Label>
               </div>
               {outputPathRequired ? (
@@ -214,9 +215,8 @@ export function AthenaQuerySettingsDialog({
         open={s3DialogOpen}
         onOpenChange={setS3DialogOpen}
         initialPath={outputBasePath}
-        appendSubmitUser={appendSubmitUser}
-        onAppendSubmitUserChange={onAppendSubmitUserChange}
-        submitUser={submitUser}
+        appendAwsUsername={appendAwsUsername}
+        onAppendAwsUsernameChange={onAppendAwsUsernameChange}
         onSelect={(path) => {
           onOutputBasePathChange(path);
           setS3DialogOpen(false);

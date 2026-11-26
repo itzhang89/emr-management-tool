@@ -41,7 +41,7 @@ import {
   useUpdateGlueDatabase,
   useUpdateGlueTable
 } from "@/hooks/useGlue";
-import { useSubmitUser } from "@/hooks/useJobConfigTemplates";
+import { useS3IamUsername } from "@/hooks/useS3";
 import { useT } from "@/i18n";
 import { useAthenaAccountPreferences } from "@/hooks/useAthenaAccountPreferences";
 import {
@@ -140,8 +140,6 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const queryClient = useQueryClient();
   const activeAccount = useActiveAwsAccount();
   const accountId = activeAccount.data?.id;
-  const submitUserQuery = useSubmitUser();
-  const submitUser = submitUserQuery.data ?? "user";
 
   const [queryTabs, setQueryTabs] = useState<AthenaQueryTab[]>(() => [blankQueryTab("Query 1")]);
   const [activeQueryTabId, setActiveQueryTabId] = useState<string>();
@@ -158,7 +156,7 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   const [selectedTable, setSelectedTable] = useState<string>();
   const athenaPrefs = useAthenaAccountPreferences(accountId);
   const outputBasePath = athenaPrefs.outputBasePath;
-  const appendSubmitUser = athenaPrefs.appendSubmitUser;
+  const appendAwsUsername = athenaPrefs.appendAwsUsername;
   const workgroup = athenaPrefs.workgroup;
   const catalogCollapsed = athenaPrefs.catalogCollapsed;
   const skipCreateLocationReminder = athenaPrefs.skipCreateLocationReminder;
@@ -289,9 +287,18 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
     Boolean(activeResultTab?.queryExecutionId)
   );
 
+  const iamUsername = useS3IamUsername(
+    active && athenaPrefs.ready && appendAwsUsername && (Boolean(outputBasePath.trim()) || querySettingsOpen)
+  );
+  const awsUsername = iamUsername.isFetching || iamUsername.error ? undefined : iamUsername.data;
+  const awsUsernameStatus = appendAwsUsername && !awsUsername
+    ? !iamUsername.isFetching && iamUsername.error
+      ? formatAppError(iamUsername.error, "Failed to resolve the AWS username.")
+      : t("Resolving AWS username…")
+    : undefined;
   const effectiveOutputLocation = useMemo(
-    () => resolveAthenaOutputLocation(outputBasePath, submitUser, appendSubmitUser),
-    [appendSubmitUser, outputBasePath, submitUser]
+    () => resolveAthenaOutputLocation(outputBasePath, awsUsername, appendAwsUsername),
+    [appendAwsUsername, awsUsername, outputBasePath]
   );
 
   const selectedWorkgroup = useMemo(
@@ -300,11 +307,14 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
   );
 
   const managedResultsEnabled = isAthenaManagedResultsWorkgroup(selectedWorkgroup);
-
-  const outputPathRequired = useMemo(
-    () => isAthenaOutputPathRequired(selectedWorkgroup, effectiveOutputLocation),
-    [effectiveOutputLocation, selectedWorkgroup]
+  const needsAwsUsername = Boolean(
+    outputBasePath.trim() &&
+    awsUsernameStatus &&
+    !managedResultsEnabled &&
+    !(selectedWorkgroup?.enforceConfiguration && selectedWorkgroup.outputLocation?.trim())
   );
+
+  const outputPathRequired = isAthenaOutputPathRequired(selectedWorkgroup, outputBasePath);
 
   const queryOutputLocation = useMemo(
     () => resolveAthenaQueryOutputLocation(effectiveOutputLocation),
@@ -648,6 +658,10 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
       toast.error(
         "The selected workgroup is Spark-enabled. Choose an Athena SQL workgroup to run queries here."
       );
+      return;
+    }
+    if (needsAwsUsername) {
+      openQuerySettings({ highlight: "s3" });
       return;
     }
     if (outputPathRequired) {
@@ -1172,9 +1186,9 @@ export function GlueCatalogTab({ active = true }: { active?: boolean } = {}) {
         onWorkgroupChange={athenaPrefs.setWorkgroup}
         outputBasePath={outputBasePath}
         onOutputBasePathChange={athenaPrefs.setOutputBasePath}
-        appendSubmitUser={appendSubmitUser}
-        onAppendSubmitUserChange={athenaPrefs.setAppendSubmitUser}
-        submitUser={submitUser}
+        appendAwsUsername={appendAwsUsername}
+        onAppendAwsUsernameChange={athenaPrefs.setAppendAwsUsername}
+        awsUsernameStatus={awsUsernameStatus}
         displayResultsPath={displayResultsPath}
         managedResultsEnabled={managedResultsEnabled}
         outputPathRequired={outputPathRequired}

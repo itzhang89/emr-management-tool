@@ -686,6 +686,8 @@ export interface SqlFavoriteEntry {
 
 export interface AthenaAccountPreferences {
   outputBasePath?: string;
+  appendAwsUsername?: boolean;
+  /** Saved by versions that used the local submit user. */
   appendSubmitUser?: boolean;
   lastWorkgroup?: string;
   catalogCollapsed?: boolean;

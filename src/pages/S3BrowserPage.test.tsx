@@ -227,7 +227,7 @@ describe("S3BrowserPage", () => {
     await user.click(screen.getByRole("button", { name: /^Browse S3 path$/i }));
 
     const dialog = screen.getByRole("dialog", { name: /Select S3 path/i });
-    expect(within(dialog).queryByText(/Append submitUser subdirectory/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: /Append AWS username/i })).not.toBeInTheDocument();
 
     const pathInput = within(dialog).getByPlaceholderText("bucket/folder/");
     await user.clear(pathInput);
